@@ -894,6 +894,52 @@ KNOWN_GAPS = {
         "private-only (a screenshot of an account-specific page); no committed "
         "data/*.json or *.csv extracts the dollar figure from it, so there is no "
         "public-ok source for the exact number the tool quoted"),
+    # THE OTHER HALF OF THE SAME CELL, and the reason it is a token at all.
+    #
+    # Section 3's fifth column is headed "<utility>'s own tool says", and its
+    # household row used to answer it in FIXED MARKUP:
+    #
+    #     <td>{{UTILITY_TOOL_BEST_PLAN_FIGURE}} — "Your Best Plan" ✓</td>
+    #
+    # The figure was a token; the verdict beside it was not. So the page
+    # asserted that the utility's tool had named THIS household's plan its
+    # best one, for every household, with nothing able to make that false --
+    # the same shape as the three assertions issue #196 removed from this row,
+    # the card above it and the lead-in below it. It is worse than a stale
+    # sentence: the two rankings can legitimately disagree, and the
+    # disagreement is exactly what a reader of that column wants to see.
+    #
+    # WHY THE LABEL ITSELF STAYS LITERAL IN THE TEMPLATE. The tidier shape is
+    # one token owning the whole cell, and it cannot work here.
+    # generate_report.render() HTML-escapes every substituted token value with
+    # quote=True (its own adversarial-review finding 4), so a human answer
+    # carrying `"Your Best Plan"` publishes as `&quot;Your Best Plan&quot;`.
+    # The straight quotes in the published cell can therefore only come from
+    # the template. So the template keeps the LABEL -- the tool's own words,
+    # the thing being asked about -- and this token carries the ANSWER that
+    # follows it. Nothing in the fixed half says the label applies.
+    #
+    # WHY IT IS A GAP AND NOT SOURCED, even though this checkout's
+    # research/sdge-plan-comparison-capture.md writes the tool's verdict down.
+    # That note is prose a person typed after reading a screenshot -- the same
+    # attestation this token asks for, one file over -- and nothing here reads
+    # a token out of research/. Same standing as the FIGURE above, which has
+    # sat in this dict with that note already committed. Making research/ a
+    # token source is a real proposal and a different one: it needs a parse
+    # contract every household's own capture note has to meet.
+    "UTILITY_TOOL_BEST_PLAN_VERDICT": (
+        "whether the utility's plan-comparison tool applied the \"Your Best Plan\" "
+        "label in section 3's fifth column to THIS household's plan, and which plan "
+        "it named if not. Same capture as UTILITY_TOOL_BEST_PLAN_FIGURE above and "
+        "uncommitted for the same reason: DATA-SOURCES-CHEATSHEET.md's "
+        "plan_comparison_capture is a private-only screenshot of an account-specific "
+        "page, and no committed data/*.json or *.csv reads a verdict out of it. It "
+        "cannot be derived either -- data/plan_results.csv ranks THIS repo's modeled "
+        "annual totals, and where a third party's tool puts the same plans is a fact "
+        "about that tool, not an arithmetic result. Answer with the mark that follows "
+        "the label: a bare check where the tool named this plan, or a short phrase "
+        "naming the plan it named instead. Answer nothing and the run refuses, which "
+        "is the point: this repo cannot state either verdict on the human's behalf"),
     "EXPANSION_PAYBACK_YEARS": (
         "a payback needs a YIELD PRICED THE RIGHT WAY and a COST, and neither "
         "half is committed here. On the yield side, what one more kW of panels "
@@ -2057,53 +2103,78 @@ def _wildcard_scenario(ctx):
     return f"{_join_plan_names(rivals)} wildcard", standing
 
 
-def _matrix_standing(ctx):
-    """The battery×plan matrix as ONE scenario: the worse of its two columns.
+# The one clause that keeps section 0's card honest about a SPLIT battery
+# matrix, and the reason it is a clause rather than a fourth scenario.
+#
+# THE DEFECT IT EXISTS TO REMOVE. The card scored the matrix as ONE scenario
+# taken at the WORSE of its two columns, and three different households came
+# out as one sentence:
+#
+#     loses no-batt, WINS with-batt   ->  "Cheapest in 2 of the 3 ... beaten in the rest"
+#     WINS no-batt, loses with-batt   ->  the same sentence
+#     loses BOTH columns              ->  the same sentence again
+#
+# So a household the matrix ranks cheapest in one of its two columns was
+# published as having lost that scenario outright, indistinguishable from one
+# that lost both. That is issue #178's finding one section along: the weaker of
+# two columns is RIGHT for a row's CSS class, whose badge may say only what
+# BOTH columns support, and WRONG for a sentence, which is all this card is.
+#
+# WHY NOT SCORE THE TWO COLUMNS AS TWO SCENARIOS (a count out of four). It is
+# the tidier shape and it was written first, but the card's label is pinned
+# CHARACTER FOR CHARACTER to the one index.html publishes
+# (test_report_tokens.case_section_3s_published_chrome_round_trips_into_index
+# _html), and naming two matrix columns in the parenthetical rewrites that
+# label for the winning household too -- a silent rewrite of a published page,
+# on the one path this issue is not about. Counting rankings the parenthetical
+# does not name would be worse: the card would claim tests it does not list.
+# So the matrix stays ONE named scenario, scored at the standing the matrix as
+# a whole supports (cheapest in one of two columns is not cheapest in the
+# matrix -- the same rule section 4's row applies), and the label carves the
+# won column out of its own absolutes with this clause. The winning path never
+# reaches it: a split pair needs a trailing column, and every branch above the
+# clause requires none.
+def _matrix_split_clause(worst, strongest):
+    """The exception clause for a matrix whose two columns disagree, or "".
 
-    S4_ROW_CLASS is built by sorting the two columns' standings worst-first
-    and joining them, so the worst is the leading segment of its name. Taken
-    from that token rather than re-ranked here, because section 0's card and
-    section 4's row are two statements about one artifact and a second
-    ranking of it would eventually answer a tie differently.
+    Only a pair that TRAILS in one column and is cheapest in the other needs
+    it. A win/tie pair is counted as "tie" and the tie branches already say
+    "level with a rival", which is true of the column that ties and understates
+    nothing the reader is owed; a pair that agrees has no exception to carve.
     """
-    standing = _s4_row_class(ctx).split("-")[0]
-    if standing not in _PLAN_STANDINGS:
-        raise SystemExit(
-            f"report_tokens: S0_BEST_PLAN_CARD reads the battery matrix's standing off "
-            f"S4_ROW_CLASS, whose vocabulary now leads with {standing!r} -- not one of "
-            f"{list(_PLAN_STANDINGS)}. The card counts scenarios this plan is cheapest "
-            "in, so it cannot score a state it does not recognise")
-    return standing
+    if worst != "trails" or strongest == "trails":
+        return ""
+    return (", except in one of the battery×plan matrix's two columns, where it "
+            + ("is the cheapest plan" if strongest == "win" else "ties for cheapest"))
 
 
-def _s0_best_plan_card(ctx):
-    """Section 0's plan card label -- the card whose fixed text read "Best plan
-    in every scenario — the solid conclusion".
+def _plan_card_label(csv_standing, matrix_pair, wildcard):
+    """Section 0's card label, FROM STANDINGS ALONE -- no artifact reads, so
+    the whole product of standings that can reach it is enumerable against the
+    English it produces (test_report_tokens.case_section_0s_card_is_true_of_
+    every_ranking_it_can_be_handed walks all 108 of them).
 
-    "IN EVERY SCENARIO" IS A QUANTIFIER, and it was written as fixed markup
-    over three scenarios nothing checked. It is now counted: the no-battery
-    ranking (data/plan_results.csv, the same one both verdict sentences use),
-    the battery×plan matrix (both of its columns, through S4_ROW_CLASS), and
-    section 9's wildcard workup (data/deep_results.json:wildcard). The
-    scenarios NAMED in the label are exactly the ones scored, so the
-    parenthetical cannot claim a test that did not happen.
+    csv_standing:  data/plan_results.csv's ranking of this household's plan.
+    matrix_pair:   data/battery_plan_matrix.json's two columns, (worst,
+                   strongest), sorted by _bpm_standing_pair.
+    wildcard:      (phrase, standing), or None when deep_results.json cannot
+                   rank this plan against another -- in which case the
+                   scenario is DROPPED rather than counted, since a ranking
+                   that could not be taken was not a test.
 
     The label states the strongest true summary and nothing above it: sole
     cheapest everywhere is "Best plan in every scenario tested"; a tie
     somewhere drops "best" for "cheapest ... level with a rival"; anything
-    beaten counts instead of quantifying, and the plan table in section 3 has
-    the ranking that produced the count.
-
-    It adds no failure mode of its own. The two refusals it can inherit --
-    a matrix that does not price this plan, a column that is not made of
-    numbers -- belong to S4_ROW_CLASS and _plan_ranking, both of which
-    report-template.html already resolves for section 3 and section 4.
+    beaten counts instead of quantifying, and section 3's plan table has the
+    ranking that produced the count. Every branch is a claim about HOW MANY of
+    the scenarios NAMED in the parenthetical price this plan cheapest, plus
+    _matrix_split_clause's exception where the matrix is half won.
     """
-    scenarios = [("no-battery", _plan_standing(ctx, "S0_BEST_PLAN_CARD")[0]),
-                 ("battery×plan matrix", _matrix_standing(ctx))]
-    wildcard = _wildcard_scenario(ctx)
+    worst, strongest = matrix_pair
+    scenarios = [("no-battery", csv_standing), ("battery×plan matrix", worst)]
     if wildcard:
         scenarios.append(wildcard)
+    split = _matrix_split_clause(worst, strongest)
     tested = ", ".join(phrase for phrase, _standing in scenarios)
     standings = [standing for _phrase, standing in scenarios]
     total, cheapest_in = len(standings), sum(s != "trails" for s in standings)
@@ -2115,14 +2186,40 @@ def _s0_best_plan_card(ctx):
                 f"in {tied_in} of the {total} — nothing priced beats it")
     if cheapest_in:
         return (f"Cheapest in {cheapest_in} of the {total} scenarios tested ({tested}) "
-                "— beaten in the rest")
+                f"— beaten in the rest{split}")
     return (f"Not the cheapest in any of the {total} scenarios tested ({tested}) "
-            "— a cheaper plan exists in each")
+            f"— a cheaper plan exists in each{split}")
+
+
+def _s0_best_plan_card(ctx):
+    """Section 0's plan card label -- the card whose fixed text read "Best plan
+    in every scenario — the solid conclusion".
+
+    "IN EVERY SCENARIO" IS A QUANTIFIER, and it was written as fixed markup
+    over three rankings nothing checked. They are read now: the no-battery
+    ranking (data/plan_results.csv, the same one both verdict sentences use),
+    the battery×plan matrix (data/battery_plan_matrix.json -- BOTH of its
+    columns, through _bpm_standing_pair, with a half-won matrix carved out of
+    the label's absolutes rather than collapsed into a loss; see
+    _matrix_split_clause), and section 9's wildcard workup
+    (data/deep_results.json:wildcard). The scenarios NAMED in the label are
+    exactly the ones scored, so the parenthetical cannot claim a test that did
+    not happen.
+
+    It adds no failure mode of its own. The two refusals it can inherit --
+    a matrix that does not price this plan, a column that is not made of
+    numbers -- belong to _bpm_best/_bpm_cheapest and _plan_ranking, all of
+    which report-template.html already resolves for section 3 and section 4.
+    """
+    return _plan_card_label(_plan_standing(ctx, "S0_BEST_PLAN_CARD")[0],
+                            _bpm_standing_pair("S0_BEST_PLAN_CARD"),
+                            _wildcard_scenario(ctx))
 
 
 _tok("S0_BEST_PLAN_CARD", kind="derived", get=_s0_best_plan_card,
      sources=["data/plan_results.csv (the household provider's total column)",
-              "data/battery_plan_matrix.json:plans (both columns, via S4_ROW_CLASS)",
+              "data/battery_plan_matrix.json:plans (both columns, via "
+              "_bpm_standing_pair)",
               "data/deep_results.json:wildcard",
               "private/household.yaml:household.plan",
               "private/household.yaml:household.cca (which provider column ranks)"])
@@ -2438,6 +2535,83 @@ def _bpm_cheapest(token, column):
 #   win     the plan stores the minimum and no other plan does.
 _S4_COLUMN_STANDINGS = ("trails", "tie", "win")
 
+# The same three words section 3 ranks the CSV in, ordered the other way round.
+# Section 0's card scores a matrix COLUMN against a CSV standing and a wildcard
+# standing in one count, so the two vocabularies have to be the same set or the
+# card is counting a state it cannot read. Checked at import rather than at each
+# caller: this is a fact about two tuples, and the runtime guard it replaces
+# (_matrix_standing's, which parsed a standing back out of a CSS class name)
+# only existed because the card used to read this ranking through S4_ROW_CLASS.
+assert set(_S4_COLUMN_STANDINGS) == set(_PLAN_STANDINGS), (
+    "report_tokens: the matrix's per-column standings "
+    f"{_S4_COLUMN_STANDINGS} and the CSV's {_PLAN_STANDINGS} are no longer the same "
+    "vocabulary, so S0_BEST_PLAN_CARD cannot score them in one count")
+
+
+def _bpm_column_standings(token):
+    """[(column, phrase, standing)] -- where battery_plan_matrix.json puts the
+    household's plan in EACH of its columns, in _BPM_COLUMNS order.
+
+    ONE RANKING OF THE MATRIX, READ BY BOTH SENTENCES THAT QUOTE IT. Section
+    4's row class needs the PAIR (sorted worst first and joined, so a badge
+    says only what both columns support) and section 0's card needs each
+    column ON ITS OWN (so a count is a count of rankings, not of artifacts).
+    Those are two views of one three-way test, so the test is taken here,
+    once. Two independent rankings of the same two columns drift over exactly
+    the cases that matter -- whether a tie counts as cheapest, which column
+    decides -- which is the rule _s4_row_class's docstring already keeps
+    against the heading directly above it.
+
+    Ranked through _bpm_cheapest, so its refusals stand for both callers: a
+    column that is not made of numbers, and (through _bpm_best) a household
+    plan the matrix does not price at all. `token` names the caller in those
+    refusals.
+
+    Identity on the STORED cells: battery_plan_matrix.py rounds every cell to
+    whole dollars and round() is non-decreasing, so a cell above the minimum
+    came from a strictly dearer bill and equal cells are a tie the artifact
+    cannot separate. _BPM_TIE_USD bounds a SIZE and has no business here.
+    """
+    plan, _row = _bpm_best()
+    out = []
+    for column, phrase in _BPM_COLUMNS:
+        winners = _bpm_cheapest(token, column)
+        out.append((column, phrase,
+                    "trails" if plan not in winners
+                    else "tie" if len(winners) > 1 else "win"))
+    return out
+
+
+def _bpm_standing_pair(token):
+    """(worst, strongest) -- the two columns' standings, sorted worst first.
+
+    A LIST SORTED, never a set: the two columns agreeing is a state of its own
+    ("win", "tie", "trails") and not a duplicate to be collapsed away.
+
+    THE PAIR IS THE SHARED FACT. Section 4's row class is the pair joined, and
+    section 0's card counts the WORSE of it while carving out the stronger
+    column when they disagree -- two readings of one ranking, both taken here
+    so a tie cannot be answered one way by the card and another by the row a
+    screen below it.
+
+    Exactly two, checked rather than assumed: min() used to catch the empty
+    case by raising ValueError and nothing at all caught a third column, which
+    would have silently produced "trails-tie" from three standings and a card
+    clause that says "two columns" over a table with more.
+    """
+    standings = sorted((s for _column, _phrase, s in _bpm_column_standings(token)),
+                       key=_S4_COLUMN_STANDINGS.index)
+    if len(standings) != 2:
+        raise SystemExit(
+            f"report_tokens: {token} states one standing per battery column and "
+            f"report_tokens._BPM_COLUMNS now names {len(standings)} of them "
+            f"({[c for c, _p in _BPM_COLUMNS]}); section 4's row class is a pair and "
+            "section 0's card's split clause counts two columns in as many words, so "
+            "the vocabulary in _S4_ROW_CLASSES, the clause in _matrix_split_clause and "
+            "the rules in report-template.html's <style> block all have to be "
+            "re-derived before either can name a state")
+    return tuple(standings)
+
 
 # The states section 4's household ROW can be in, as the CSS class names
 # report-template.html styles: ONE PER UNORDERED PAIR of the two columns'
@@ -2536,28 +2710,12 @@ def _s4_row_class(ctx):
     price at all (_bpm_best). Neither leaves a standing this token could
     state honestly.
     """
-    plan, _row = _bpm_best()
-    # A LIST, sorted worst first -- never a set. Both standings are carried
-    # into the class name, so the two columns agreeing is a state of its own
-    # ("win", "tie", "trails") and not a duplicate to be collapsed away.
-    standings = sorted(
-        ("trails" if plan not in winners else "tie" if len(winners) > 1 else "win"
-         for winners in (_bpm_cheapest("S4_ROW_CLASS", column)
-                         for column, _phrase in _BPM_COLUMNS)),
-        key=_S4_COLUMN_STANDINGS.index)
-    # The name is built from EXACTLY two standings, so a _BPM_COLUMNS that
-    # stops holding exactly two columns has to refuse rather than emit a
-    # class nothing paints. Checked, not assumed: min() used to catch the
-    # empty case by raising ValueError and nothing at all caught a third
-    # column, which would have silently produced "trails-tie" from three.
-    if len(standings) != 2:
-        raise SystemExit(
-            "report_tokens: section 4's household row states one standing per battery "
-            f"column and report_tokens._BPM_COLUMNS now names {len(standings)} of them "
-            f"({[c for c, _p in _BPM_COLUMNS]}); the row's class is a pair, so the "
-            "vocabulary in _S4_ROW_CLASSES and the rules in report-template.html's "
-            "<style> block both have to be re-derived before this token can name a state")
-    worst, strongest = standings
+    # Off _bpm_standing_pair, which section 0's card reads the same two columns
+    # through: the pair this class is built from and the standing that card
+    # counts are one ranking seen twice, and a second ranking here would
+    # eventually answer a tie differently from the card a screen above it.
+    # That helper also owns the "exactly two columns" refusal, for both.
+    worst, strongest = _bpm_standing_pair("S4_ROW_CLASS")
     return worst if worst == strongest else f"{worst}-{strongest}"
 
 

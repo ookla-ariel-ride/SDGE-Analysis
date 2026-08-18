@@ -4575,6 +4575,28 @@ _S3_CHROME_ASSERTIONS = (
     "Why {{BEST_PLAN}} wins:",
     '<tr class="win"><td>{{BEST_PLAN}}',
 )
+# THE SAME ASSERTION, ONE LAYER BACK: the AUTHORING PROMPTS. Sections 0 and 3
+# each carry <!-- TODO --> blocks that generate_report.py hands to a model
+# together with the token values in that block's own scope, and a reference
+# voice reading "stay on {{BEST_PLAN}} -- cheapest with or without a battery
+# ... and a battery only widens its lead" is the fixed win-claim again, in the
+# one place no rendered-markup case looks. It shipped: BEST_PLAN resolves for a
+# beaten household now, so on the path issue #196 newly opens the prompt told
+# the model to recommend a plan the card beside it calls beaten, under a
+# verdict line saying a cheaper plan exists.
+#
+# Phrases that ASSERT this household's plan is the cheapest one. A prompt is
+# free to use any of them -- the winning household needs a reference voice too
+# -- but only tied to the token that decides the standing, never as the flat
+# instruction they were.
+_PLAN_WIN_ASSERTIONS = ("stay on", "clear of the runner-up", "widens its lead",
+                        "wins", "cheapest with or without")
+# The tokens that STATE the standing. Naming one of these inside the block is
+# what puts its value in the block's own scope (report_blocks.tokens_mentioned,
+# or already-live-in-section) and so in front of the model that reads the
+# prompt.
+_PLAN_STANDING_TOKENS = ("S0_BEST_PLAN_CARD", "S0_VERDICT", "S3_VERDICT",
+                         "S3_WHY_LEAD", "S3_ROW_CLASS")
 # What replaced them, keyed by the slot each one fills: the section 0 card's
 # label, the class on section 3's household row, and the bold lead-in over the
 # paragraph that explains the ranking.
@@ -4694,13 +4716,14 @@ def case_section_3s_plan_chrome_states_what_the_ranking_supports():
             "this checkout's deep_results.json:wildcard does not rank the household's "
             "plan ahead, so section 0's card cannot reach its every-scenario wording")
         _baseline_ok, baseline_refused = _sweep_every_token()
-        # The card scores the matrix by taking the WORSE of its two column
-        # standings off S4_ROW_CLASS's own name, which is built worst-first.
-        # Every class that token can reach must therefore lead with a standing
-        # this module recognises, or the card is scoring a state it cannot read.
-        for cls in rt._S4_ROW_CLASSES:
-            assert cls.split("-")[0] in rt._PLAN_STANDINGS, (
-                f"section 4's class {cls!r} does not lead with one of "
+        # The card reads BOTH matrix columns, through the same helper section
+        # 4's row class ranks with, and counts them against a CSV standing and
+        # a wildcard standing. So every standing that helper can hand it has to
+        # be one this module recognises, or the card is scoring a state it
+        # cannot read.
+        for standing in rt._bpm_standing_pair("S0_BEST_PLAN_CARD"):
+            assert standing in rt._PLAN_STANDINGS, (
+                f"the matrix column standing {standing!r} is not one of "
                 f"{list(rt._PLAN_STANDINGS)}, so section 0's card cannot score it")
         for standing, rival_total in (("win", own + 1), ("tie", own),
                                       ("trails", own - 1)):
@@ -4844,6 +4867,11 @@ def case_section_0s_card_counts_every_scenario_it_names():
     names and does not read -- which is the fixed-text defect with a token
     wrapped round it.
 
+    THE MATRIX IS DRIVEN TO A WHOLE LOSS HERE, both columns together, which is
+    the only drive that leaves the count at two of three with nothing carved
+    out of it. A matrix lost in ONE column is a different published sentence
+    and case_section_0s_card_reads_a_half_won_battery_matrix owns it.
+
     The wildcard is moved by repricing data/deep_results.json:wildcard's own
     key for this household's plan, since that artifact's keys are prose and
     the module identifies the household's entry by parsing them."""
@@ -4883,6 +4911,13 @@ def case_section_0s_card_counts_every_scenario_it_names():
                 f"losing the {scenario} scenario did not drop section 0's card to two of "
                 f"three; the card names that scenario and does not read it: {card}")
             assert "every scenario tested" not in card and "Best plan" not in card, card
+            # A WHOLE loss carries no exception clause: the split wording is
+            # for a matrix cheapest in one of its two columns, and stamping it
+            # on a scenario lost outright would be the mirror of the defect
+            # case_section_0s_card_reads_a_half_won_battery_matrix is about.
+            assert "except in one of the battery×plan matrix" not in card, (
+                f"losing the {scenario} scenario outright published the half-won matrix's "
+                f"exception clause: {card}")
             for phrase in named:
                 assert phrase in card, (
                     f"the card stopped naming the {phrase!r} scenario once this household "
@@ -4894,6 +4929,337 @@ def case_section_0s_card_counts_every_scenario_it_names():
     return (f"section 0's card reads all three scenarios it names ({', '.join(named)}): "
             "each one driven to a loss on its own drops the count to two of three and "
             "takes the every-scenario claim off the card, and all three stay named")
+
+
+@case
+def case_the_plan_prompts_in_sections_0_and_3_assert_no_standing():
+    """ISSUE #196, THE PROMPT SIDE. Section 0's item-1 brief read:
+
+        Reference voice: "Plan: stay on {{BEST_PLAN}} — cheapest with or
+        without a battery (~{{PLAN_MARGIN_VS_RUNNER_UP}}/yr clear of the
+        runner-up), and a battery only widens its lead."
+
+    Fixed text, no condition, and BEST_PLAN resolves for a beaten household
+    now -- so on the path this issue opens, generate_report.py handed a model
+    that instruction beside an S0_BEST_PLAN_CARD reading "Not the cheapest in
+    any of the 3 scenarios tested" and an S0_VERDICT reading "a cheaper rate
+    plan exists". Three contradictions on one page, and every rendered-markup
+    case passed: the defect was in the brief, not in the render.
+
+    THE RULE, over every TODO block in sections 0 and 3: a block may use a
+    phrase that asserts this household's plan is cheapest ONLY if it also
+    names a token that STATES the standing, and only if it says what the other
+    standing looks like. Naming the token is not decoration -- it is what puts
+    that value in the block's own scope (report_blocks.scope_tokens_for_block),
+    which is asserted here too, so the model is actually handed the answer it
+    is being told to follow rather than pointed at a name it cannot see.
+
+    Sections 0 and 3 only, which is where the standing is stated. Prompts
+    elsewhere that lean on the same assumption are reported rather than
+    rewritten here; §4's conclusion brief ("by how much it moves the lead")
+    and §7's "All packages keep {{BEST_PLAN}}" are the two live examples.
+
+    A TOKEN THAT WROTE THE RECOMMENDATION would move the choice out of the
+    model's hands, and was not the fix: "switch to X" is an ACTION, and no
+    committed artifact prices switching -- plan_results.csv ranks modeled
+    annual totals on one rate vintage, and eligibility, the utility's own
+    comparison tool and the switch itself are outside it. Every other sentence
+    in this family (S0_VERDICT, S3_VERDICT, S3_WHY_LEAD, this card) states the
+    STANDING and stops, so the prompt routes the model to those and lets it
+    write the recommendation the standing supports."""
+    import report_blocks as rb                                    # noqa: PLC0415
+
+    html = rt.TEMPLATE.read_text()
+    blocks = [b for b in rb.parse_todo_blocks(html) if b.section in ("s0", "s3")]
+    assert blocks, "no TODO blocks parsed out of sections 0 and 3"
+    checked = {}
+    for block in blocks:
+        asserted = [p for p in _PLAN_WIN_ASSERTIONS if p in block.text]
+        if not asserted:
+            continue
+        named = [t for t in _PLAN_STANDING_TOKENS if t in block.text]
+        assert named, (
+            f"report-template.html's {block.id} brief asserts this household's plan is "
+            f"cheapest ({asserted}) without naming any of {list(_PLAN_STANDING_TOKENS)}, "
+            "so the model is told to recommend a plan the page beside it may call beaten")
+        scope = rb.scope_tokens_for_block(html, block)
+        missing = [t for t in named if t not in scope]
+        assert not missing, (
+            f"{block.id} points the model at {missing}, which are not in that block's own "
+            f"scope -- so generate_report.py never hands the value over and the "
+            "instruction cannot be followed")
+        assert "beaten" in block.text, (
+            f"{block.id} tells the model what to write when this plan is cheapest and "
+            "nothing about the standing where it is not; a reference voice with only the "
+            "winning branch is the flat instruction again")
+        checked[block.id] = (asserted, named)
+    assert checked, (
+        "no block in sections 0 or 3 uses any of "
+        f"{list(_PLAN_WIN_ASSERTIONS)}, so this guard read nothing -- either the phrase "
+        "list has gone stale or the plan briefs have been rewritten out from under it")
+    return ("every plan brief in sections 0 and 3 that asserts a win ties it to a token "
+            "that states the standing, in its own scope, and says what a beaten plan "
+            "reads like ("
+            + "; ".join(f"{bid}: {a} -> {n}" for bid, (a, n) in sorted(checked.items()))
+            + ")")
+
+
+@case
+def case_section_0s_card_reads_a_half_won_battery_matrix():
+    """THE MIXED MATRIX, BOTH WAYS ROUND, against the two controls.
+
+    The card scored data/battery_plan_matrix.json as ONE scenario taken at the
+    WORSE of its two columns, and three different households came out as one
+    sentence:
+
+        loses no-batt, WINS with-batt  ->  "Cheapest in 2 of the 3 ... beaten in the rest"
+        WINS no-batt, loses with-batt  ->  the same sentence
+        loses BOTH columns             ->  the same sentence
+
+    So a household the matrix ranks cheapest in one of its two columns was
+    published as having lost that scenario outright, and no reader could tell
+    it from a household that lost both. That is issue #178's finding one
+    section along: the weaker of two columns is right for a row's CSS CLASS,
+    whose badge may say only what BOTH columns support, and wrong for a
+    sentence, which is all this card is.
+
+    ONLY THE MATRIX MOVES. data/plan_results.csv and the wildcard are left as
+    committed, so the household stays alone-cheapest in both and every
+    difference between the four cards below comes from the two columns this
+    case is about.
+
+    WHAT EACH STATE MUST PUBLISH. The count still scores the matrix as a whole
+    (cheapest in one of two columns is not cheapest in the matrix -- section
+    4's row applies the same rule), and the label carves the won column out of
+    its own absolute: a half-won matrix says "beaten in the rest, except in one
+    of the battery×plan matrix's two columns, where it is the cheapest plan",
+    and a matrix lost outright does not. Both mixed directions publish the same
+    sentence, which is correct -- it is true of both -- and WHICH column was
+    won is section 4's row to state, so its class is read here too.
+
+    The whole token set is swept in each state, against the winning path's own
+    baseline: a household half-priced by the matrix must still get a report,
+    which is the claim issue #196 is about."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    m_rival = min((p for p in plans if p != cheapest),
+                  key=lambda p: plans[p]["no_battery"])
+    own_nb, own_wb = plans[cheapest]["no_battery"], plans[cheapest]["with_battery"]
+    exception = ("— beaten in the rest, except in one of the battery×plan matrix's two "
+                 "columns, where it is the cheapest plan")
+    # (label, the rival's two cells, the wording the state must publish)
+    states = (
+        ("wins both columns", (own_nb + 1, own_wb + 1),
+         "Best plan in every scenario tested ("),
+        ("loses the no-battery column only", (own_nb - 1, own_wb + 1),
+         "Cheapest in 2 of the 3 scenarios tested ("),
+        ("loses the with-battery column only", (own_nb + 1, own_wb - 1),
+         "Cheapest in 2 of the 3 scenarios tested ("),
+        ("loses both columns", (own_nb - 1, own_wb - 1),
+         "Cheapest in 2 of the 3 scenarios tested ("),
+    )
+    cards, classes = {}, {}
+    with _stub_plan(cheapest, provider):
+        assert rt.resolve_token("S4_ROW_CLASS") == "win", (
+            "this checkout's matrix does not price the household's plan alone cheapest in "
+            "both columns, so these four states are not the ones this case describes")
+        assert rt._wildcard_scenario(rt.CTX)[1] == "win", (
+            "this checkout's wildcard does not rank the household's plan ahead, so the "
+            "counts below would not be the ones this case reads")
+        _baseline_ok, baseline_refused = _sweep_every_token()
+        for label, cells, opening in states:
+            with _matrix_priced(plans, {m_rival: cells}):
+                cards[label] = rt.resolve_token("S0_BEST_PLAN_CARD")
+                classes[label] = rt.resolve_token("S4_ROW_CLASS")
+                rendered, refused = _sweep_every_token()
+            _assert_no_new_refusals(baseline_refused, refused,
+                                    f"a household that {label} of the battery matrix")
+            assert set(rendered) >= set(_BEST_PLAN_TOKENS), (
+                f"{sorted(set(_BEST_PLAN_TOKENS) - set(rendered))} refused while this "
+                f"household {label}")
+            assert cards[label].startswith(opening), (
+                f"a household that {label} is published as {cards[label]!r}, which does "
+                f"not open {opening!r}")
+        # THE HALF-WON MATRIX IS DISTINGUISHABLE FROM THE WHOLE LOSS, and each
+        # sentence is true of its own state -- the whole of this finding.
+        for direction in ("loses the no-battery column only",
+                          "loses the with-battery column only"):
+            assert cards[direction].endswith(exception), (
+                f"a household that {direction} is published without the clause that says "
+                f"it is the cheapest plan in the other one: {cards[direction]!r}")
+            assert cards[direction] != cards["loses both columns"], (
+                "a household cheapest in one of the matrix's two columns is published "
+                f"exactly like one that lost both: {cards[direction]!r}")
+        assert not cards["loses both columns"].endswith(exception), (
+            "a household beaten in BOTH matrix columns is published as cheapest in one of "
+            f"them: {cards['loses both columns']!r}")
+        assert (cards["loses the no-battery column only"]
+                == cards["loses the with-battery column only"]), cards
+        # Section 4's row separates the two directions from the total loss, so
+        # which column was won is still on the page.
+        assert classes["loses the no-battery column only"] == "trails-win", classes
+        assert classes["loses the with-battery column only"] == "trails-win", classes
+        assert classes["loses both columns"] == "trails", classes
+        assert rt.resolve_token("S4_ROW_CLASS") == "win", (
+            "a substituted matrix leaked out of this case")
+    return ("section 0's card tells a half-won battery matrix from a lost one: "
+            + "; ".join(f"{label} -> {cards[label][cards[label].index(')') + 1:].strip()}"
+                        for label, _cells, _opening in states))
+
+
+# Every standing the wildcard can be in: the card's own vocabulary plus the one
+# thing that scenario can do and the others cannot -- not be there at all
+# (_wildcard_scenario returns None when deep_results.json cannot rank this
+# household's plan against another, and the card DROPS it rather than counting
+# a test that did not happen).
+_CARD_WILDCARD_STATES = rt._PLAN_STANDINGS + (None,)
+
+# The label's four branches, each parsed back to what the sentence CLAIMS:
+# (cheapest_in, tied_in, named, exception). Read out of the sentence rather
+# than recomputed from the standings that produced it -- a checker that
+# re-derives the counts agrees with the formula by construction and proves
+# nothing about the English around them. `tied_in` is None where the branch
+# does not state one; `exception` is the split-matrix carve-out or "".
+_CARD_EXCEPTION_RE = (r"(?P<exception>, except in one of the battery×plan matrix's two "
+                      r"columns, where it (?:is the cheapest plan|ties for cheapest))?")
+_CARD_CLAIM_PATTERNS = (
+    (re.compile(r"^Best plan in every scenario tested \((?P<named>.*)\) — "
+                r"the solid conclusion$"),
+     lambda m, total: (total, 0)),
+    (re.compile(r"^Cheapest plan in every scenario tested \((?P<named>.*)\), level with "
+                r"a rival in (?P<tied>\d+) of the (?P<total>\d+) — nothing priced "
+                r"beats it$"),
+     lambda m, total: (total, int(m.group("tied")))),
+    (re.compile(r"^Cheapest in (?P<cheapest>\d+) of the (?P<total>\d+) scenarios tested "
+                r"\((?P<named>.*)\) — beaten in the rest" + _CARD_EXCEPTION_RE + "$"),
+     lambda m, total: (int(m.group("cheapest")), None)),
+    (re.compile(r"^Not the cheapest in any of the (?P<total>\d+) scenarios tested "
+                r"\((?P<named>.*)\) — a cheaper plan exists in each"
+                + _CARD_EXCEPTION_RE + "$"),
+     lambda m, total: (0, None)),
+)
+
+
+def _card_claim(label, scenarios):
+    """(cheapest_in, tied_in, named, exception) READ OUT OF the card's own
+    sentence.
+
+    The stated total is checked against the number of scenarios the label was
+    handed, and every branch that prints a total prints it in the same place.
+    A label no branch matches raises rather than passing unread."""
+    for pattern, counts in _CARD_CLAIM_PATTERNS:
+        m = pattern.fullmatch(label)
+        if not m:
+            continue
+        if "total" in m.groupdict():
+            assert int(m.group("total")) == len(scenarios), (
+                f"the card says {m.group('total')} scenarios and was handed "
+                f"{len(scenarios)}: {label}")
+        cheapest_in, tied_in = counts(m, len(scenarios))
+        return (cheapest_in, tied_in, m.group("named").split(", "),
+                m.groupdict().get("exception") or "")
+    raise AssertionError(
+        f"section 0's card produced wording no branch of this guard recognises, so "
+        f"nothing here checked whether it is true: {label!r}")
+
+
+@case
+def case_section_0s_card_is_true_of_every_ranking_it_can_be_handed():
+    """THE WHOLE PRODUCT OF STANDINGS THAT CAN REACH THE LABEL, enumerated.
+
+    Three artifacts reach section 0's card and one of them is ranked twice:
+    data/plan_results.csv's standing, data/battery_plan_matrix.json's two
+    COLUMNS, and the wildcard -- which can also be absent. Three standings
+    each for the first three, four states for the wildcard: 3 x 3 x 3 x 4 =
+    108 combinations, small enough to enumerate exhaustively rather than in
+    equivalence classes, so this case does. The two matrix columns are walked
+    in both orders, which is how the mixed directions get here.
+
+    Each label is PARSED BACK to what it claims and every claim is checked
+    against the standings that produced it:
+
+      * the number of scenarios claimed cheapest is the number of SCORED
+        scenarios that are not "trails", where the matrix scores as ONE, at the
+        standing both its columns support;
+      * a stated tie count is the number that are "tie";
+      * the stated total is the number of scenarios handed over, and the
+        parenthetical names all of them and nothing else;
+      * the "except in one of the battery×plan matrix's two columns" clause
+        appears EXACTLY when the matrix trails one column and is cheapest in
+        the other, and says "is the cheapest plan" / "ties for cheapest" as
+        that other column supports;
+      * where no exception is stated, every uncounted scenario really is a
+        clean loss -- which is what "beaten in the rest" and "a cheaper plan
+        exists in each" assert.
+
+    AND THE WORDING SEPARATES THE STATES A READER HAS TO TELL APART: no label
+    is published for two different (cheapest-in count, matrix pair) readings.
+    "Lost half the matrix" against "lost the whole matrix" is the pair this
+    finding is about, and it is asserted over every pair in the enumeration
+    rather than that one.
+
+    Driven through rt._plan_card_label rather than the artifacts, because 108
+    combinations of three artifacts is not a fixture; the artifact path is
+    driven by the cases above, which share that function."""
+    wildcard_phrase = "TEST-PLAN wildcard"
+    by_reading, checked = {}, 0
+    for csv_standing in rt._PLAN_STANDINGS:
+        for nb in rt._PLAN_STANDINGS:
+            for wb in rt._PLAN_STANDINGS:
+                pair = tuple(sorted((nb, wb), key=rt._S4_COLUMN_STANDINGS.index))
+                for wc in _CARD_WILDCARD_STATES:
+                    wildcard = None if wc is None else (wildcard_phrase, wc)
+                    label = rt._plan_card_label(csv_standing, pair, wildcard)
+                    # The scenarios the card SCORES: the CSV, the matrix as one
+                    # (at the standing both columns support), and the wildcard
+                    # when it exists.
+                    scored = [("no-battery", csv_standing),
+                              ("battery×plan matrix", pair[0])]
+                    if wildcard:
+                        scored.append(wildcard)
+                    standings = [s for _p, s in scored]
+                    cheapest_in, tied_in, named, exception = _card_claim(label, scored)
+                    truth = sum(s != "trails" for s in standings)
+                    ties = sum(s == "tie" for s in standings)
+                    assert cheapest_in == truth, (
+                        f"the card claims this plan is cheapest in {cheapest_in} of "
+                        f"{len(standings)} scenarios standing {standings}, where the "
+                        f"true count is {truth}: {label!r}")
+                    if tied_in is not None:
+                        assert tied_in == ties, (
+                            f"the card claims {tied_in} tie(s) over standings "
+                            f"{standings}, where there are {ties}: {label!r}")
+                    assert named == [p for p, _s in scored], (
+                        f"the card names {named} for scenarios "
+                        f"{[p for p, _s in scored]}: {label!r}")
+                    half_won = pair[0] == "trails" and pair[1] != "trails"
+                    assert bool(exception) == half_won, (
+                        f"the split-matrix clause is {'present' if exception else 'absent'}"
+                        f" for matrix columns {pair}, which is {'' if half_won else 'not '}"
+                        f"a half-won matrix: {label!r}")
+                    if half_won:
+                        wanted = ("is the cheapest plan" if pair[1] == "win"
+                                  else "ties for cheapest")
+                        assert exception.endswith(wanted), (
+                            f"the matrix's won column stands {pair[1]!r} and the card says "
+                            f"{exception!r}: {label!r}")
+                    else:
+                        # No exception is stated, so the absolutes have to hold:
+                        # every scenario not counted as cheapest is a clean loss.
+                        assert truth + sum(s == "trails" for s in standings) \
+                            == len(standings), (standings, label)
+                    by_reading.setdefault(label, set()).add((truth, pair))
+                    checked += 1
+    assert checked == 108, checked
+    ambiguous = {label: readings for label, readings in by_reading.items()
+                 if len({(count, p[0] == "trails" and p[1] != "trails")
+                         for count, p in readings}) > 1}
+    assert not ambiguous, (
+        "one label is published for two readings a reader has to tell apart "
+        f"(scenarios won, half-won matrix or not): {ambiguous}")
+    return (f"all {checked} standing combinations that can reach section 0's card parse "
+            f"back to the claims they state, over {len(by_reading)} distinct labels, none "
+            "shared between two readings")
 
 
 # What section 3's row is allowed to stamp on the plan-name cell, per state:
@@ -5051,6 +5417,259 @@ def case_section_3s_published_chrome_round_trips_into_index_html():
     return ("section 0's plan card, section 3's household row and its lead-in each render "
             "into index.html verbatim at the published household's standing ("
             + "; ".join(f"{k}: {v[:60]!r}" for k, v in checked.items()) + ")")
+
+
+# ---------------------------------------------------------------------------
+# SECTION 3'S FIFTH COLUMN -- "<utility>'s own tool says" -- and the last
+# fixed win-claim left in that row.
+# ---------------------------------------------------------------------------
+# Marks that state a verdict all by themselves. None may sit in the FIXED half
+# of that cell: a check beside the tool's label is the claim "the tool named
+# this plan", written where nothing can make it false. The row's FIRST cell
+# keeps its own "✓ current", which says which row is the household's and
+# nothing about any ranking -- so this list is applied to the fifth cell only.
+_TOOL_VERDICT_MARKS = ("✓", "✔", "✅", "✗", "✘", "❌", "×")
+# The two halves of that cell, both KNOWN_GAPS: what the tool quoted and what
+# the tool concluded. Neither is derivable here -- see report_tokens.KNOWN_GAPS.
+_S3_TOOL_CELL_GAPS = ("UTILITY_TOOL_BEST_PLAN_FIGURE", "UTILITY_TOOL_BEST_PLAN_VERDICT")
+
+
+def _s3_row_line():
+    """report-template.html's section 3 household row, cut at any comment."""
+    return _s3_chrome_lines()["row"].split("<!--")[0].rstrip()
+
+
+def _s3_tool_cell():
+    """That row's FIFTH <td> -- the utility-tool column's cell."""
+    cells = re.findall(r"<td>(.*?)</td>", _s3_row_line())
+    assert len(cells) == 5, (
+        f"section 3's household row no longer carries the five cells its <thead> "
+        f"declares ({len(cells)}); the utility-tool column is the fifth and these cases "
+        f"read it by position: {_s3_row_line()!r}")
+    return cells[4]
+
+
+def _s3_row_rendered(answers):
+    """That row as generate_report.render() would write it: every resolvable
+    token resolved, every KNOWN_GAPS token taken from `answers` -- which is
+    how generate_report.run() fills them, out of human_answers["TOKEN:<name>"]
+    -- and EVERY substituted value HTML-escaped with quote=True, the same
+    _sub() the published page goes through.
+
+    The escaping is not incidental here, it is the constraint that shaped the
+    fix: a human answer carrying `"Your Best Plan"` publishes as
+    `&quot;Your Best Plan&quot;`, so the straight quotes index.html carries can
+    only come from the template. The tool's LABEL therefore stays fixed and
+    this row's tokens carry the FIGURE and the VERDICT beside it.
+
+    A gap with no attested answer raises rather than defaulting, which is what
+    generate_report does with one (it appends a "gap-token" failure and writes
+    nothing)."""
+    def fill(m):
+        name = m.group(1)
+        if rt.TOKENS.get(name, {}).get("kind") == "gap":
+            if name not in answers:
+                raise KeyError(name)
+            return _htmllib.escape(answers[name], quote=True)
+        return _htmllib.escape(rt.resolve_token(name), quote=True)
+
+    return re.sub(r"\{\{([A-Z0-9_]+)\}\}", fill, _s3_row_line())
+
+
+def _published_tool_answers():
+    """(index.html's section 3 household row, {gap token: the value the human
+    attested when that page was published}).
+
+    RECOVERED FROM THE PAGE, never typed here: the figure is read off an
+    account-specific screenshot and CLAUDE.md section 4 keeps that class of
+    answer out of a committed file.
+
+    The recovery is itself the assertion. The template line is turned into a
+    regex whose ONLY wildcards are the two gap slots, so a match proves the
+    fixed markup around them is character-for-character what index.html
+    carries, and the captured groups are exactly what the two tokens have to
+    supply to reproduce it."""
+    index_html = (rt.ROOT / "index.html").read_text()
+    names, pattern = [], []
+    for part in re.split(r"(\{\{[A-Z0-9_]+\}\})", _s3_row_line()):
+        m = re.fullmatch(r"\{\{([A-Z0-9_]+)\}\}", part)
+        if m is None:
+            pattern.append(re.escape(part))
+        elif rt.TOKENS.get(m.group(1), {}).get("kind") == "gap":
+            names.append(m.group(1))
+            pattern.append("(.+?)")
+        else:
+            pattern.append(re.escape(
+                _htmllib.escape(rt.resolve_token(m.group(1)), quote=True)))
+    hits = list(re.finditer("".join(pattern), index_html))
+    assert len(hits) == 1, (
+        f"section 3's household row renders markup index.html carries {len(hits)} "
+        "time(s) once its two KNOWN_GAPS slots are left open; regenerating the report "
+        f"would change the published page:\n  pattern: {''.join(pattern)!r}")
+    return hits[0].group(0), dict(zip(names, hits[0].groups()))
+
+
+@case
+def case_the_utility_tools_verdict_is_attested_rather_than_asserted():
+    """ISSUE #196, THE LAST CELL. Section 3's household row ended:
+
+        <td>{{UTILITY_TOOL_BEST_PLAN_FIGURE}} — "Your Best Plan" ✓</td>
+
+    The figure was a token; the verdict beside it was fixed markup. So the
+    page told every household that the utility's own comparison tool had named
+    ITS plan the best one, with nothing able to make that false -- the same
+    shape as the three assertions this issue removed from the card above, the
+    row's class and the lead-in below. On a household the ranking beats it was
+    a fourth contradiction, sitting inside the very row S0_BEST_PLAN_CARD,
+    S0_VERDICT and S3_VERDICT had just been taught to report honestly.
+
+    WHY IT IS NOT SIMPLY DELETED. The two rankings can legitimately disagree,
+    and the disagreement is the most informative thing that column can show: a
+    third party pricing the same plans and reaching another answer is worth
+    printing, next to a repo that says so plainly. What is not defensible is
+    this repo choosing which of the two verdicts to print. It cannot: nothing
+    committed reads a verdict out of DATA-SOURCES-CHEATSHEET.md's
+    plan_comparison_capture (a private-only screenshot), and
+    data/plan_results.csv ranks THIS repo's modeled totals, which is evidence
+    about the model and none at all about the tool. So the verdict became a
+    KNOWN_GAPS token beside the figure, and a human attests both.
+
+    WHY THE LABEL STAYS IN THE TEMPLATE. One token owning the whole cell is
+    the tidier shape and it cannot work: generate_report.render() escapes
+    every substituted value with quote=True, so an answer carrying
+    `"Your Best Plan"` publishes as `&quot;Your Best Plan&quot;` and this
+    household's page would silently change. The template therefore keeps the
+    tool's own WORDS -- the label being asked about, under a <th> that names
+    whose tool it is -- and the token carries the ANSWER that follows them.
+    Asserted below both ways: no verdict mark survives in the fixed half, and
+    the published row round-trips character for character.
+
+    FOUR STATES, all printed by this case: the tool agreeing, the tool naming
+    another plan, the same attestation under all three of this repo's own
+    standings (it must not move -- the column is somebody else's), and the
+    answer withheld, where the row refuses to render rather than defaulting to
+    either verdict."""
+    index_html = (rt.ROOT / "index.html").read_text()
+    head = re.search(r'<tr class="([a-z0-9-]+)"><td>([A-Za-z0-9-]+) ✓ current</td>',
+                     index_html)
+    assert head, "index.html has no section 3 household row for this case to read"
+    published_plan = head.group(2)
+    provider, cheapest, priced = _plan_ranking_inputs()
+    template = rt.TEMPLATE.read_text()
+
+    # 1. THE CELL IS ATTRIBUTED, and its fixed half states nothing.
+    headers = [ln for ln in template.splitlines() if "'s own tool says" in ln]
+    assert len(headers) == 1 and "{{UTILITY_NAME}}" in headers[0], (
+        "section 3's fifth column no longer carries exactly one header naming whose "
+        f"tool it reports ({headers}); without it the cell below reads as this report's "
+        "own verdict rather than a third party's")
+    cell = _s3_tool_cell()
+    fixed_half = re.sub(r"\{\{[A-Z0-9_]+\}\}", "", cell)
+    asserted = [mark for mark in _TOOL_VERDICT_MARKS if mark in fixed_half]
+    assert not asserted, (
+        f"section 3's utility-tool cell states the tool's verdict in fixed markup "
+        f"({asserted}) -- true for every household, false for any whose tool named "
+        f"another plan, and unanswerable by the tokens beside it: {cell!r}")
+    for name in _S3_TOOL_CELL_GAPS:
+        assert "{{" + name + "}}" in cell, (
+            f"section 3's utility-tool cell no longer carries {{{{{name}}}}}, so the "
+            f"half of that cell it owns is being stated by something else: {cell!r}")
+        assert rt.TOKENS.get(name, {}).get("kind") == "gap", (
+            f"{name} is no longer a KNOWN_GAPS token, so this cell claims a source "
+            "this repo does not have")
+
+    # 2. THE ATTESTATION DOES NOT FOLLOW THIS REPO'S RANKING. One answer,
+    #    rendered under a sole win, a tie and a loss in data/plan_results.csv:
+    #    the cell must be identical in all three, because the column is headed
+    #    with somebody else's name. (The row's CLASS must move, or the drive
+    #    did nothing and the claim above is vacuous.)
+    own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
+    rival = min((r for r in priced if r["plan"] != cheapest),
+                key=lambda r: float(r["total"]))["plan"]
+    agrees = {"UTILITY_TOOL_BEST_PLAN_FIGURE": "$1,234.56",
+              "UTILITY_TOOL_BEST_PLAN_VERDICT": "✓"}
+    names_other = {"UTILITY_TOOL_BEST_PLAN_FIGURE": "$1,234.56",
+                   "UTILITY_TOOL_BEST_PLAN_VERDICT": f"✗ it names {rival}"}
+    seen, classes = {}, {}
+    with _stub_plan(cheapest, provider):
+        for standing, rival_total in (("win", own + 1), ("tie", own),
+                                      ("trails", own - 1)):
+            with _plan_repriced(provider, {cheapest: own, rival: rival_total}):
+                rows = {label: _s3_row_rendered(a)
+                        for label, a in (("agrees", agrees), ("names-other", names_other))}
+            classes[standing] = re.search(r'<tr class="([a-z0-9-]+)"',
+                                          rows["agrees"]).group(1)
+            seen[standing] = {label: re.findall(r"<td>(.*?)</td>", row)[4]
+                              for label, row in rows.items()}
+    assert len(set(classes.values())) == 3, (
+        f"the three standings did not move section 3's row class ({classes}), so "
+        "'the cell is the same in all three' is asserting nothing")
+    for label in ("agrees", "names-other"):
+        rendered = {seen[s][label] for s in seen}
+        assert len(rendered) == 1, (
+            f"the {label!r} attestation renders {len(rendered)} different utility-tool "
+            f"cells across this repo's own three standings ({sorted(rendered)}); that "
+            "column reports a third party's tool and cannot track our ranking")
+    agreed, other = seen["win"]["agrees"], seen["win"]["names-other"]
+    assert agreed != other, (
+        f"the tool agreeing and the tool naming {rival} publish the same cell: {agreed!r}")
+    assert all(v in agreed for v in agrees.values()), (agreed, agrees)
+    assert rival in other and "✓" not in other, (
+        f"the cell for a tool that names {rival} instead still reads as agreement: "
+        f"{other!r}")
+
+    # 3. WITHHELD. Neither half resolves, both refuse by name with the reason
+    #    generate_report shows the human, and the row cannot be rendered at
+    #    all -- no default verdict, in either direction.
+    refusals = {}
+    for name in _S3_TOOL_CELL_GAPS:
+        try:
+            value = rt.resolve_token(name)
+        except SystemExit as e:
+            refusals[name] = str(e)
+        else:
+            raise AssertionError(
+                f"{name} resolved to {value!r}; a verdict this repo cannot read must "
+                "refuse, not produce a value")
+        assert name in refusals[name] and rt.KNOWN_GAPS[name][:20] in refusals[name], (
+            f"{name}'s refusal does not name the token and its reason: {refusals[name]}")
+    with _stub_plan(cheapest, provider):
+        try:
+            published_anyway = _s3_row_rendered({})
+        except KeyError as e:
+            withheld = str(e)
+        else:
+            raise AssertionError(
+                "section 3's household row rendered with nothing attested about the "
+                f"utility's tool: {published_anyway!r}")
+
+    # 4. AND THE PUBLISHED HOUSEHOLD'S ROW IS UNCHANGED, character for
+    #    character, once its own two answers are supplied -- recovered from
+    #    index.html rather than typed, so this runs with or without the
+    #    private archive and cannot drift from the page it is about.
+    with _stub_plan(published_plan, provider):
+        published_row, answers = _published_tool_answers()
+        assert set(answers) == set(_S3_TOOL_CELL_GAPS), (
+            f"the published row's open slots are {sorted(answers)}, not the two this "
+            f"cell declares ({sorted(_S3_TOOL_CELL_GAPS)})")
+        assert _s3_row_rendered(answers) == published_row, (
+            "section 3's household row does not reproduce the one index.html "
+            f"publishes:\n  rendered:  {_s3_row_rendered(answers)!r}\n  published: "
+            f"{published_row!r}")
+        for name, value in answers.items():
+            # Escape-stable, which is what forces the tool's label to stay in
+            # the template: an answer containing a straight quote would render
+            # &quot; and could not reproduce this row.
+            assert _htmllib.escape(value, quote=True) == value, (
+                f"the published value for {name} does not survive render()'s escaping "
+                f"({value!r} -> {_htmllib.escape(value, quote=True)!r}), so it cannot be "
+                "supplied as a human answer")
+    return ("section 3's utility-tool cell attributes its verdict instead of asserting "
+            f"it: fixed half {fixed_half!r} states none, one attestation renders the "
+            f"same cell under all three of our standings ({classes}), agreement "
+            f"{agreed!r} and disagreement {other!r} are different cells, withholding it "
+            f"refuses ({withheld}), and the published row round-trips into index.html "
+            f"verbatim over {sorted(answers)}")
 
 
 @case
