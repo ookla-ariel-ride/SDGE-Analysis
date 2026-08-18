@@ -3302,38 +3302,56 @@ def case_section_4s_row_class_refuses_a_column_count_it_cannot_name():
     columns are real ones (a duplicate rather than an invented key, so the
     ranking underneath still reads live cells and the refusal can only be the
     count), and the message has to name the token and the columns it was
-    handed."""
+    handed.
+
+    STUBBED, NOT GATED, for _stub_household's reason. S4_ROW_CLASS ranks the
+    household's plan, so it needs an answer for household.plan -- and
+    .github/workflows/tests.yml runs this suite with no private archive, where
+    a case behind _require_household() skips and cannot stop this refusal
+    regressing on the one machine a bad merge is caught on. household.plan is
+    the ONLY household answer under this token (the cells it ranks are the
+    committed matrix's own), so substituting it is enough: the household's
+    real plan where the archive is staged, the plan the matrix prices cheapest
+    where it is not, and the same three resolutions exercised either way.
+    Unstubbed and archive-less, every resolve_token below refuses for the
+    missing archive rather than for the column count: the one at the top sits
+    outside any try and aborts the whole suite before the first probe, and the
+    two inside the loop would be judged on the wording of a household.yaml
+    message instead of on the count they were handed."""
+    _plans, cheapest_plan, _near, _rest = _matrix_pair()
+    plan = rt.hh1("household.plan") if rt.hh.PATH.is_file() else cheapest_plan
     saved = rt._BPM_COLUMNS
-    published = rt.resolve_token("S4_ROW_CLASS")
     probes = {
         "one column": (("no_battery", "without a battery"),),
         "three columns": saved + (("no_battery", "without a battery"),),
     }
     refusals = {}
-    try:
-        for label, columns in probes.items():
-            rt._BPM_COLUMNS = columns
-            try:
-                value = rt.resolve_token("S4_ROW_CLASS")
-            except SystemExit as e:
-                msg = str(e)
-                assert "S4_ROW_CLASS" in msg or "row" in msg, (
-                    f"the {label} refusal does not say which token could not name a "
-                    f"state: {msg}")
-                assert str(len(columns)) in msg and "_BPM_COLUMNS" in msg, (
-                    f"the {label} refusal does not name the column count it was handed "
-                    f"or where that count comes from: {msg}")
-                refusals[label] = msg.split(";")[0]
-            else:
-                raise AssertionError(
-                    f"S4_ROW_CLASS resolved {value!r} off {len(columns)} battery "
-                    f"column(s). Every state in {list(rt._S4_ROW_CLASSES)} is a claim "
-                    f"about the two columns section 4's table prints, so this is a badge "
-                    f"the artifact cannot support rather than a state of this household")
-    finally:
-        rt._BPM_COLUMNS = saved
-    assert rt.resolve_token("S4_ROW_CLASS") == published, (
-        "the substituted column list leaked out of this case (S4_ROW_CLASS)")
+    with _stub_household({"household.plan": plan}):
+        published = rt.resolve_token("S4_ROW_CLASS")
+        try:
+            for label, columns in probes.items():
+                rt._BPM_COLUMNS = columns
+                try:
+                    value = rt.resolve_token("S4_ROW_CLASS")
+                except SystemExit as e:
+                    msg = str(e)
+                    assert "S4_ROW_CLASS" in msg or "row" in msg, (
+                        f"the {label} refusal does not say which token could not name a "
+                        f"state: {msg}")
+                    assert str(len(columns)) in msg and "_BPM_COLUMNS" in msg, (
+                        f"the {label} refusal does not name the column count it was handed "
+                        f"or where that count comes from: {msg}")
+                    refusals[label] = msg.split(";")[0]
+                else:
+                    raise AssertionError(
+                        f"S4_ROW_CLASS resolved {value!r} off {len(columns)} battery "
+                        f"column(s). Every state in {list(rt._S4_ROW_CLASSES)} is a claim "
+                        f"about the two columns section 4's table prints, so this is a badge "
+                        f"the artifact cannot support rather than a state of this household")
+        finally:
+            rt._BPM_COLUMNS = saved
+        assert rt.resolve_token("S4_ROW_CLASS") == published, (
+            "the substituted column list leaked out of this case (S4_ROW_CLASS)")
     return ("S4_ROW_CLASS refuses rather than naming a state off a column count its "
             "vocabulary cannot describe (" + "; ".join(f"{k}: {v}" for k, v in
                                                         refusals.items()) + ")")
@@ -10550,6 +10568,116 @@ def case_section_0_states_the_exclusion_rate_beside_the_floor():
             f"{lead.count('(') + lead.count(chr(8212))} asides)")
 
 
+# ---------------------------------------------------------------------------
+# THE CHECK BEHIND report_tokens.is_attribute_only.
+#
+# The flag is a promise a token makes about ITSELF -- "my value lands in an
+# HTML attribute, not in a sentence" -- and generate_report.build_scope_values
+# acts on it by keeping the token out of every prose block's LLM scope. A
+# promise nothing verifies is the whole objection to declaring this rather
+# than deriving it, so it is verified here, from report-template.html, BOTH
+# ways: a flagged token that turns up in running text fails, and so does an
+# unflagged one that only ever appears inside a tag.
+#
+# WHAT THE DETECTOR BELOW RECOGNISES, exactly:
+#   masked   inside <!-- --> or inside a <script>/<style> BODY. Neither is
+#            markup text and neither is an attribute; a token there (the five
+#            CHART_TITLE_* and the three *_IMPORT_SHARE_PCT ones live in the
+#            chart config) is out of this case's jurisdiction and must not be
+#            flagged, since it is prose the reader sees on a chart.
+#   attribute inside a <tag ...> in the unmasked remainder.
+#   text     everywhere else in the unmasked remainder.
+# Masking the script body FIRST is the load-bearing step. The chart config
+# contains `c.p1DataIndex<=D.spBreak.summer`, and to a scan that just looks
+# for "< ... >" that `<` opens a tag which stays open for hundreds of
+# characters -- long enough to swallow {{CHART_TITLE_SPREAD}} and report it
+# as an attribute value. That false positive is not hypothetical: it is what
+# the naive version of this detector says about this template today.
+#
+# WHAT IT DOES NOT RECOGNISE, and how it says so instead of guessing: a
+# document whose angle brackets do not all belong to a comment, a script or
+# style body, or a tag it matched. Every unmasked `<` and `>` must be part of
+# a tag this case's own regex matched; a literal `>` in body text, an
+# unbalanced `<` in an attribute value, or a masking regex outrun by a new
+# construct leaves residue, and the residue assertion fails FIRST, by
+# position and context. So the detector never silently reclassifies a token
+# on a template it has stopped understanding.
+# ---------------------------------------------------------------------------
+_MASKED_RE = re.compile(r"<!--.*?-->|<(script|style)\b[^>]*>.*?</\1\s*>", re.S | re.I)
+_TAG_RE = re.compile(r"<[a-zA-Z/!][^<>]*>")
+
+
+def _template_token_positions():
+    """{token_name: {"attribute" | "text", ...}} for every LIVE occurrence in
+    report-template.html, plus the stray-angle-bracket residue list."""
+    text = rt.TEMPLATE.read_text()
+    masked = [m.span() for m in _MASKED_RE.finditer(text)]
+
+    # Blank the masked spans (newlines kept so offsets and line numbers in a
+    # failure message still line up with the file) so the tag scan below
+    # cannot see a comparison operator inside JS as the start of a tag.
+    buf = list(text)
+    for start, end in masked:
+        for i in range(start, end):
+            if buf[i] != "\n":
+                buf[i] = " "
+    scan = "".join(buf)
+
+    tags = [m.span() for m in _TAG_RE.finditer(scan)]
+    covered = bytearray(len(scan))
+    for start, end in tags:
+        covered[start:end] = b"\x01" * (end - start)
+    residue = [(i, scan[max(0, i - 60):i + 60])
+               for i, ch in enumerate(scan) if ch in "<>" and not covered[i]]
+
+    def in_span(spans, pos):
+        return any(s <= pos < e for s, e in spans)
+
+    positions = {}
+    for m in rt._TOKEN_RE.finditer(text):
+        name = m.group(1)
+        if not name or in_span(masked, m.start()):
+            continue
+        where = "attribute" if in_span(tags, m.start()) else "text"
+        positions.setdefault(name, set()).add(where)
+    return positions, residue
+
+
+@case
+def case_attribute_only_flags_match_where_the_template_puts_each_token():
+    """report_tokens' attribute_only flag agrees with report-template.html,
+    in both directions, so the flag cannot drift from the markup it
+    describes. Needs nothing but the template and TOKENS -- no archive.
+
+    A flagged token is one generate_report.build_scope_values keeps out of
+    every prose block's LLM scope, so a wrong flag is not cosmetic: flag a
+    token that appears in a sentence and the model loses a value it is
+    supposed to cite; leave one unflagged and a CSS class name is offered as
+    citable prose ("the matrix rates this plan win.")."""
+    positions, residue = _template_token_positions()
+    assert not residue, (
+        "this case's detector no longer understands report-template.html: "
+        f"{len(residue)} angle bracket(s) outside every comment, <script>/<style> body "
+        f"and matched tag, first at offset {residue[0][0]} in {residue[0][1]!r}. Fix the "
+        "masking before trusting any attribute/text verdict it gives")
+
+    derived = {n for n, where in positions.items() if where == {"attribute"}}
+    declared = {n for n in rt.TOKENS if rt.is_attribute_only(n)}
+    assert declared == derived, (
+        f"attribute_only is declared for {sorted(declared)} but report-template.html puts "
+        f"{sorted(derived)} inside a tag and nowhere else. Declared-not-derived "
+        f"{sorted(declared - derived)} would be silently withheld from prose that can see "
+        f"it in the page; derived-not-declared {sorted(derived - declared)} is a markup "
+        "value being offered to an LLM as a sentence it may write")
+    mixed = {n for n, where in positions.items() if len(where) > 1}
+    assert not mixed, (
+        f"{sorted(mixed)} appear BOTH inside a tag and in running text, so one flag cannot "
+        "describe them; split the token before flagging either use")
+    return (f"attribute_only is declared for exactly the {len(derived)} token(s) "
+            f"report-template.html puts only inside a tag ({sorted(derived)}), over "
+            f"{len(positions)} live tokens outside its comments, <script> and <style>")
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (
@@ -10565,6 +10693,25 @@ def main():
             skipped += 1
         except AssertionError as e:
             print(f"FAIL {fn.__name__}\n     AssertionError: {e}")
+            raise SystemExit(1)
+        except SystemExit as exc:
+            # THE ONE FAILURE THIS RUNNER USED TO SWALLOW THE NAME OF.
+            # report_tokens fails closed with SystemExit for every refusal --
+            # a missing private/household.yaml, a token it cannot source, a
+            # non-finite cell -- and SystemExit inherits from BaseException,
+            # not Exception. So a case that resolved a token outside a try
+            # walked straight past `except Exception` and out of this loop:
+            # no FAIL line, no case name, just report_tokens' own message and
+            # exit 1, which reads like the SUITE failed rather than one case.
+            # That is what hid an ungated household-dependent case in CI, and
+            # it cost a no-archive reproduction to find a name this loop had
+            # in hand the whole time.
+            #
+            # NOT swallowed -- named and re-raised, exactly like the clauses
+            # above. The `raise SystemExit(1)` in those clauses is raised FROM
+            # a handler, not from fn(), so it is not caught here and still
+            # exits 1 without being re-reported as a case failure.
+            print(f"FAIL {fn.__name__}\n     SystemExit: {exc}")
             raise SystemExit(1)
         except Exception as exc:  # noqa: BLE001
             print(f"FAIL {fn.__name__}\n     {type(exc).__name__}: {exc}")

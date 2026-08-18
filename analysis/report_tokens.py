@@ -941,6 +941,46 @@ def _tok(name, **spec):
     TOKENS[name] = spec
 
 
+def is_attribute_only(name):
+    """True for a token whose value is MARKUP, not language: it lands inside
+    an HTML tag (a class, an id, an href) and never in text a reader reads.
+
+    WHY THIS EXISTS. generate_report.py hands a prose block's LLM the values
+    of every token live in that block's <h2> section, under the heading
+    "Values you may cite by writing their {{TOKEN}} name", and accepts a
+    returned fragment citing any of them. That is right for a figure and
+    wrong for an attribute value: S4_ROW_CLASS resolves to a bare CSS class
+    name ("win", "trails-tie"), carries no digit for the numeral guard to
+    object to, and is a real in-scope token -- so a sentence reading "the
+    matrix rates this plan {{S4_ROW_CLASS}}" clears every guard there is and
+    publishes as "the matrix rates this plan win." The same value also feeds
+    the block's cache key, so a row that changes standing re-authors two
+    §4 prose blocks that never mentioned it. Neither is about the render:
+    the token still resolves and still fills its attribute exactly as before.
+
+    A FLAG, NOT A TEMPLATE SCAN, and the reason is measurable in this very
+    template. Deriving "attribute-only" at runtime from the token's own
+    position means deciding, in regex, whether an offset sits inside a tag.
+    A plain "is it between < and >" scan answers YES for CHART_TITLE_SPREAD,
+    which sits in a JS string in the chart config -- the `<=` in
+    `c.p1DataIndex<=D.spBreak.summer` a few lines above opens a tag that
+    never closes until the next `>`. Getting it right needs comment masking,
+    <script>/<style> masking and a real tag scan, i.e. a small HTML parser
+    on the path that decides what the model is allowed to see, where its
+    next false positive is silent: a token quietly leaves a block's scope
+    and the only symptom is prose that no longer cites a figure it should.
+
+    So the declaration is the runtime rule (a dict lookup, which cannot
+    misfire), and that parser lives in the TEST instead, where it is checked
+    BOTH ways and a disagreement is a named failure:
+    test_report_tokens.case_attribute_only_flags_match_where_the_template_
+    puts_each_token asserts every flagged token occurs only inside a tag and
+    every unflagged one never does. Move this token into running text, or
+    flag one that already lives there, and that case fails.
+    """
+    return bool(TOKENS.get(name, {}).get("attribute_only"))
+
+
 for _gap_name, _gap_reason in KNOWN_GAPS.items():
     _tok(_gap_name, kind="gap", reason=_gap_reason)
 
@@ -2336,7 +2376,11 @@ def _s4_row_class(ctx):
 # half of the defect this token exists to fix.
 # case_section_4s_row_class_is_a_state_the_stylesheet_can_paint holds the
 # whole vocabulary to report-template.html's own <style> block.
+#
+# attribute_only=True: this value is markup, not language. See
+# is_attribute_only() below for what the flag does and what checks it.
 _tok("S4_ROW_CLASS", kind="derived", get=_s4_row_class, fmt="raw",
+     attribute_only=True,
      sources=["data/battery_plan_matrix.json:plans (both columns)",
               "private/household.yaml:household.plan"])
 
