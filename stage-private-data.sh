@@ -250,39 +250,100 @@ fi
 # to the real repository's answer rather than replacing which repository
 # answers, and clearing it would break the ssh/credential machinery of any git
 # command a later edit adds. The narrower instrument is to switch off the
-# ambient configuration for git only:
+# ambient configuration for git only -- and that is done TWICE, by two
+# mechanisms of very different ages, because one of them is silently inert on an
+# older git and the other is not.
 #
-#   GIT_CONFIG_GLOBAL=/dev/null   $HOME/.gitconfig and $XDG_CONFIG_HOME/git/
-#                                 config are not read (git >= 2.32)
-#   GIT_CONFIG_SYSTEM=/dev/null   the system gitconfig is not read (git >= 2.32)
-#   GIT_CONFIG_NOSYSTEM=1         the same, for a git that predates the two
-#                                 above and would silently ignore them
-#   GIT_CONFIG_COUNT=1            core.excludesFile is forced to an empty file.
-#   GIT_CONFIG_KEY_0=             Measured, not assumed: the three above do NOT
-#     core.excludesFile           close the hole, because the DEFAULT excludes
-#   GIT_CONFIG_VALUE_0=/dev/null  path ($XDG_CONFIG_HOME/git/ignore, else
-#                                 $HOME/.config/git/ignore) is a hardcoded
-#                                 fallback and not a config file -- with all
-#                                 three set, a $HOME/.config/git/ignore listing
-#                                 data/leak.json STILL returned 0. Forcing the
-#                                 key is what takes the last one out, and it
-#                                 also overrides a core.excludesFile set in the
-#                                 destination's own .git/config, which is
-#                                 per-clone local configuration and no more part
-#                                 of the repository's shared ignore rules than
-#                                 the operator's ~/.gitconfig is
+# WHAT EACH MECHANISM IS, and when git learned it. Pinned by archaeology in
+# git.git rather than by recall: each version below is the first release whose
+# tag CONTAINS the introducing commit and whose predecessor does not.
+#
+#   -c core.excludesFile=/dev/null   git 1.7.2, Jul 2010 (commit 8b1fa778). A
+#                                    top-level option, passed on EVERY git
+#                                    command below by the _git wrapper. Highest
+#                                    precedence there is: git-config(1) SCOPES
+#                                    orders system < global < local < worktree <
+#                                    GIT_CONFIG_COUNT/KEY/VALUE < -c, and says of
+#                                    the variables that they "will be overridden
+#                                    by any explicit options passed via git -c".
+#                                    Measured here too: with both set to
+#                                    different values, `config --show-origin
+#                                    --get core.excludesFile` reports "command
+#                                    line: <the -c value>"
+#   GIT_CONFIG_NOSYSTEM=1            git 1.5.5, Apr 2008 (commit ab88c363;
+#                                    undocumented until 1.8.1.1). Suppresses the
+#                                    SYSTEM gitconfig only; says nothing about
+#                                    global
+#   GIT_CONFIG_COUNT / _KEY_<n> /    git 2.31, Mar 2021 (commit d8d77153)
+#     _VALUE_<n>
+#   GIT_CONFIG_GLOBAL / _SYSTEM      git 2.32, Jun 2021 (commit 4179b489)
+#
+# WHY BOTH, and why the -c is the load-bearing one. An older git does not reject
+# a variable it does not know -- the name appears nowhere in its config.c, so
+# there is no getenv to fail and nothing to report -- and git documents no rule
+# either way, so this is an implementation fact and is treated as one: it is
+# MEASURED, with a PATH shim whose `git` removes GIT_CONFIG_GLOBAL,
+# GIT_CONFIG_SYSTEM, GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0 and GIT_CONFIG_VALUE_0
+# from the environment and then execs the real git. A process that never reads a
+# variable and a process that never receives it cannot be told apart, so that is
+# the old git exactly, not an approximation of one (`check-ignore -q --
+# ./data/leak.json`; 0 = "ignored", the answer that lets a committable
+# destination through):
+#
+#                                             no        the 6       -c
+#   ambient route                        isolation  variables  excludesFile
+#   $HOME/.gitconfig core.excludesFile           0          0          1
+#   $XDG_CONFIG_HOME/git/config the same         0          0          1
+#   $HOME/.config/git/ignore (no config key)     0          0          1
+#   $HOME/.gitconfig include.path -> the key     0          0          1
+#   $HOME/.gitconfig includeIf gitdir: -> it     0          0          1
+#
+# The middle column is the hole: on such a git every ambient route is still open
+# and this script would stage the archive into a destination whose own .gitignore
+# does not cover private/. The right-hand column is the same run with the -c,
+# and it closes all five -- including the two INCLUDE routes, which matter
+# because an include is how a global config reaches a key without naming it, and
+# because precedence, not file-reading, is what -c wins on.
+#
+# The six variables are kept anyway, and they are not decoration: on a git that
+# reads them they switch the ambient configuration off WHOLESALE rather than
+# key by key, which covers the next core.* key somebody finds a use for. What
+# they may no longer do is carry the property on their own.
+#
+# The value forced into core.excludesFile is /dev/null in both mechanisms: an
+# empty excludes file, not an absent setting. It also overrides a
+# core.excludesFile set in the destination's own .git/config, which is per-clone
+# local configuration and no more part of the repository's shared ignore rules
+# than the operator's ~/.gitconfig is (measured: local .git/config manufactures
+# the "ignored" answer without either mechanism, and does not with either).
 #
 # WHAT SURVIVES, checked rather than hoped: the destination's own tracked
 # .gitignore files and its .git/info/exclude, which is exactly the answer this
-# guard wants. Measured under all six values above -- './private/foo' (covered
-# by the fixture's .gitignore) still exits 0, and a path listed in
+# guard wants. Measured under every column of the table above -- './private/foo'
+# (covered by the fixture's .gitignore) still exits 0, and a path listed in
 # .git/info/exclude still exits 0. The isolation must not throw away the answer
 # it is protecting.
+#
+# WHAT ELSE COULD REACH THE VERDICT, asked in the same suspicious spirit that
+# turned up the default ignore path -- because the first remedy proposed for
+# #193 looked complete and was not. Two other configuration keys could move an
+# answer this script acts on: core.ignoreCase widens pattern matching, which is
+# the direction that turns "not ignored" into "ignored", and core.worktree moves
+# --show-toplevel, which the destination guard compares. Measured on the old-git
+# shim with the -c in place, neither is an AMBIENT lever: ignoreCase is answered
+# from the destination's own .git/config, which git init writes and which
+# outranks global, and a core.worktree in global config did not move
+# --show-toplevel at all. The excludes file is the ambient input, and it is the
+# one that is forced.
 #
 # The remedy for a REFUSAL this causes is local and inside the destination: put
 # the pattern in that working tree's .gitignore or .git/info/exclude. That is
 # the property that separates it from clearing HOME, whose refusals the
 # operator could not fix by editing anything in the repository.
+#
+# AND IT IS PROVED, not assumed, once per run before the first write: see
+# _require_isolation_proven below. Version numbers are what this comment can
+# offer; what the guard acts on is the git in front of it.
 #
 # EXPORTED into this shell, like the clearing above and for the same reason:
 # the verdict and everything it authorizes run in one environment. SET rather
@@ -297,10 +358,27 @@ for _kv in GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
   export "$_kv"
   _forced="$_forced ${_kv%%=*}"
 done
-echo "stage-private-data.sh: asking git from repository-local configuration only:$_forced" >&2
-echo "  Global, XDG and system git config -- including a core.excludesFile naming a" >&2
-echo "  global ignore file -- are switched off for every probe below, so the ignore" >&2
-echo "  verdict comes from the destination's own .gitignore and .git/info/exclude." >&2
+
+# EVERY git invocation in this script goes through here, and none goes round it
+# (asserted by test_stage_private_data.case_every_git_invocation_carries_the_
+# configuration_override, which reads this file). A wrapper rather than the
+# option repeated at seven call sites, for the reason the clearing above is done
+# once in this shell: a probe a later edit adds inherits the isolation instead of
+# having to remember it.
+_git() {
+  command git -c core.excludesFile=/dev/null "$@"
+}
+
+echo "stage-private-data.sh: asking git from repository-local configuration only" >&2
+echo "  every git command below carries -c core.excludesFile=/dev/null, and these are" >&2
+echo "  exported:$_forced" >&2
+echo "  So a core.excludesFile in global, XDG or system config -- and git's default" >&2
+echo "  global ignore file, which is a hardcoded path rather than a config setting --" >&2
+echo "  cannot decide what this run treats as ignored; the destination's own .gitignore" >&2
+echo "  and .git/info/exclude do. The -c is what makes that version-independent: all" >&2
+echo "  but GIT_CONFIG_NOSYSTEM are read by git 2.31 and newer only, and an older git" >&2
+echo "  ignores them in silence, while 'git -c' has worked since 1.7.2. Not assumed --" >&2
+echo "  verified against the git in front of us before anything is written." >&2
 
 # ---------------------------------------------------------------------------
 # DESTINATION GUARD (issue #184) -- runs BEFORE the first write.
@@ -349,10 +427,10 @@ _physical() { (cd -- "$1" >/dev/null 2>&1 && pwd -P); }
 _common_git_dir() {   # absolute, symlink-resolved --git-common-dir of $1, or fail
   local d=$1 out
   [ -d "$d" ] || return 1
-  if ! out=$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+  if ! out=$(_git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
     # git < 2.31 has no --path-format; its output is relative to $d (git -C
     # already chdir'd there), so normalize rather than compare it raw.
-    out=$(git -C "$d" rev-parse --git-common-dir 2>/dev/null) || return 1
+    out=$(_git -C "$d" rev-parse --git-common-dir 2>/dev/null) || return 1
   fi
   [ -n "$out" ] || return 1
   case "$out" in /*) ;; *) out="$d/$out" ;; esac
@@ -472,7 +550,7 @@ fi
 # tree of its own -- the .git directory itself is the reachable case. Handled
 # explicitly so it fails with a message rather than dying on rev-parse's own
 # exit status, which under `set -e` would be a silent 128.
-if ! DST_TOP_RAW=$(git -C "$DST_REAL" rev-parse --show-toplevel 2>/dev/null) \
+if ! DST_TOP_RAW=$(_git -C "$DST_REAL" rev-parse --show-toplevel 2>/dev/null) \
    || [ -z "$DST_TOP_RAW" ] || ! DST_TOP=$(_physical "$DST_TOP_RAW"); then
   echo "stage-private-data.sh: REFUSED -- destination has no working tree of its own (nothing was written)" >&2
   echo "  destination: $DST  (resolved: $DST_REAL)" >&2
@@ -621,7 +699,7 @@ _scan_record() {   # $1 = one porcelain record, however it was delimited
 _rec=""
 while IFS= read -r -d '' _rec || [ -n "$_rec" ]; do
   _scan_record "$_rec"
-done < <(git -C "$SELF_GIT" worktree list --porcelain -z 2>/dev/null)
+done < <(_git -C "$SELF_GIT" worktree list --porcelain -z 2>/dev/null)
 _match_pending
 
 # Retry the line-based listing whenever the -z parse did not settle it -- not
@@ -636,7 +714,7 @@ _z_entries=$_entries
 if [ "$_dst_registered" -ne 1 ]; then
   _pending=""
   _line=""
-  if DST_WORKTREES=$(git -C "$SELF_GIT" worktree list --porcelain 2>/dev/null) \
+  if DST_WORKTREES=$(_git -C "$SELF_GIT" worktree list --porcelain 2>/dev/null) \
      && [ -n "$DST_WORKTREES" ]; then
     while IFS= read -r _line || [ -n "$_line" ]; do
       _scan_record "$_line"
@@ -755,7 +833,7 @@ _refuse() {   # $1 = headline, remaining args = detail lines.
 # means the question was not answered -- and an unanswered question is refused
 # rather than read as either verdict.
 #
-# Asked OF THE DESTINATION (`git -C "$DST_REAL"`, paths relative to its root),
+# Asked OF THE DESTINATION (`_git -C "$DST_REAL"`, paths relative to its root),
 # because the answer comes from the destination's own .gitignore, its
 # info/exclude and its index, not from this checkout's -- and asked in the
 # sanitized shell above, because an inherited GIT_CONFIG could otherwise supply
@@ -765,8 +843,63 @@ _refuse() {   # $1 = headline, remaining args = detail lines.
 # "CONFIGURATION ISOLATION" above; what is left is the destination's own
 # .gitignore, its info/exclude and its index.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# ... AND THE ISOLATION IS PROVED FIRST, on the git that is actually going to
+# answer (issue #193, adversarial review).
+#
+# The block above can cite the version each mechanism arrived in; it cannot know
+# which git is installed here, and a guard that reasons about versions it has not
+# looked at is the shape of the defect this check exists to close -- an isolation
+# that is silently inert reads exactly like an isolation that works. So the
+# question is put to the running git directly, in the destination, where every
+# configuration file that could reach the ignore verdict is already in the stack:
+#
+#   _git -C "$DST_REAL" config --get core.excludesFile   must print /dev/null
+#
+# and if it prints anything else, or nothing, the ambient configuration is still
+# in charge of what counts as ignored and this script must not write. It is
+# version-independent in a way the mechanisms it checks are not: `git config
+# --get` is as old as git.
+#
+# It is the whole isolation that is on trial here, not one option. Whatever
+# delivered the value -- the -c, the six variables, some later git's own
+# rules -- the check asks for the RESULT, so it keeps holding if the mechanisms
+# change, and it fails closed if a future git changes precedence under us.
+#
+# ASKED FOR EVERY PATH, not once and remembered, and the extra cost is two
+# read-only git commands per run. A configuration file is an ordinary file: it
+# can be rewritten between the first probe and the last, and a guard that
+# obtains a fact once and trusts it for the rest of the call is the shape of
+# every other defect review has found in this script. It is called from the top
+# of _require_uncommittable for that reason, and private_egress.py calls its own
+# copy from the same place.
+# ---------------------------------------------------------------------------
+_require_isolation_proven() {
+  local effective rc=0
+  effective=$(_git -C "$DST_REAL" config --get core.excludesFile 2>/dev/null) || rc=$?
+  if [ "$effective" != "/dev/null" ]; then
+    _refuse "this git could not be isolated from the operator's own configuration" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "found:       core.excludesFile reads back as '${effective:-<unset>}'" \
+      "             ('git config --get core.excludesFile' exited $rc)" \
+      "expected:    /dev/null, which is what this script forces -- with 'git -c'" \
+      "             on every command, and with GIT_CONFIG_COUNT/KEY/VALUE" \
+      "git version: $(_git --version 2>/dev/null || echo unknown)" \
+      "The ignore check below asks the destination whether it would let this" \
+      "household's archive be committed. If the operator's global, XDG or system" \
+      "configuration can still supply core.excludesFile, that answer is about" \
+      "this machine rather than about the repository, and a destination that" \
+      "does NOT ignore private/ can answer that it does. 'git -c' has existed" \
+      "since git 1.7.2 (2010), so a git that ignores it is far older than" \
+      "anything this script has been run on: upgrade git, and re-run." \
+      "Nothing was written, and nothing about the destination is at fault."
+  fi
+}
+
 _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_REAL
   local rel=$1 rc=0 tracked
+  _require_isolation_proven
   # TRACKED first, and the order is the whole point. check-ignore consults the
   # index, so a path that is tracked-though-ignored reports rc 1 -- measured on
   # a fixture whose .gitignore holds `private/` and which force-added
@@ -776,7 +909,7 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
   # therefore answer "your .gitignore does not cover this" for a file whose
   # .gitignore covers it perfectly well and which is committed anyway, sending
   # the operator to edit the wrong file.
-  if ! tracked=$(git -C "$DST_REAL" ls-files -- "$rel"); then
+  if ! tracked=$(_git -C "$DST_REAL" ls-files -- "$rel"); then
     _refuse "the destination could not be asked which paths it tracks" \
       "destination: $DST  (resolved: $DST_REAL)" \
       "path:        $rel" \
@@ -791,7 +924,7 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
     "expected:    an untracked path. A tracked file stays in the index whatever" \
     "             .gitignore says, so staging the archive over one puts it" \
     "             straight into the next commit's diff."
-  git -C "$DST_REAL" check-ignore -q -- "$rel" || rc=$?
+  _git -C "$DST_REAL" check-ignore -q -- "$rel" || rc=$?
   case "$rc" in
     0) ;;
     1) _refuse "the destination does not gitignore a path this script writes" \

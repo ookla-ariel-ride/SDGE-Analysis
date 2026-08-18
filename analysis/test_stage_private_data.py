@@ -1067,7 +1067,15 @@ def case_refuses_a_plain_directory_with_every_forgeable_variable_set_at_once():
     # explanation above the loop names these variables too.
     code = [(n, line) for n, line in enumerate(text.splitlines())
             if line.strip() and not line.lstrip().startswith("#")]
-    first_git = min(n for n, line in code if re.search(r'\bgit\s+-C\b', line))
+    # Every probe now goes through the _git wrapper (see the case below), so the
+    # first probe is the first line that CALLS it -- matched without the leading
+    # underscore, which `\bgit` would not see, and excluding the wrapper's own
+    # definition and the `command git` inside it.
+    git_lines = [n for n, line in code
+                 if re.search(r'(?<![\w.-])_git\s+-C\b', line)]
+    assert git_lines, ("no _git -C probe found in the script -- this case can no "
+                       "longer tell whether the sanitizing happens first")
+    first_git = min(git_lines)
     first_unset = min(n for n, line in code if line.strip().startswith("unset "))
     assert first_unset < first_git, (
         "the environment must be cleared before the first git probe, not after")
@@ -1083,6 +1091,54 @@ def case_refuses_a_plain_directory_with_every_forgeable_variable_set_at_once():
     return (f"all {len(_FORGEABLE)} forgeable variables are refused together, "
             f"announced, and cleared -- and the forced configuration exported -- "
             f"before the first git probe")
+
+
+@case
+def case_every_git_invocation_carries_the_configuration_override():
+    """Issue #193, adversarial review. The environment half of the configuration
+    isolation is read only by git 2.31 and newer; an older git ignores those
+    variables in silence, and the guard's ignore verdict goes back to whatever
+    the operator's ~/.gitconfig says. What closes that on every version is
+    `-c core.excludesFile=...` on the command line, and a command-line option is
+    per-invocation: a probe that goes round the wrapper is a probe without it.
+
+    So this reads the script rather than running it. Every git invocation in the
+    executable text must be a call to the _git wrapper; the wrapper's own
+    `command git -c ...` line is the one exception, and it must carry at least
+    one override. `git` inside a quoted message is not an invocation and is
+    skipped, which is why the quote parity is counted rather than the word.
+
+    The behavioural half -- that the override really does defeat an ambient
+    excludes file on a git that ignores the variables -- is
+    test_private_egress.case_a_git_that_ignores_the_config_variables_cannot_be_
+    told_a_committable_path_is_ignored, which runs this script under a PATH shim.
+    """
+    text = SCRIPT.read_text()
+    m = re.search(r"^_git\(\) \{\n\s*command git ((?:-c \S+ )+)\"\$@\"\n\}$",
+                  text, re.M)
+    assert m, ("stage-private-data.sh no longer defines a _git wrapper that passes "
+               "-c options -- the ignore verdict is back on whatever the running "
+               "git's version happens to make of GIT_CONFIG_GLOBAL and friends")
+    overrides = [tok for tok in m.group(1).split() if tok != "-c"]
+    assert overrides, "the wrapper passes no configuration override at all"
+
+    strays = []
+    for n, line in enumerate(text.splitlines(), 1):
+        code = line.split("#", 1)[0] if line.lstrip().startswith("#") else line
+        if line.lstrip().startswith("#"):
+            continue
+        for hit in re.finditer(r"(?<![\w./-])git\b", code):
+            if code[:hit.start()].count('"') % 2:
+                continue                       # inside a quoted message
+            if code[:hit.start()].rstrip().endswith("command"):
+                continue                       # the wrapper's own line
+            strays.append(f"line {n}: {line.strip()[:90]}")
+    assert not strays, (
+        "these git invocations do not go through the _git wrapper, so they run "
+        "without the configuration override:\n  " + "\n  ".join(strays))
+    calls = len(re.findall(r"(?<![\w./-])_git\s", text))
+    return (f"every git invocation in the script goes through _git, which passes "
+            f"{len(overrides)} override(s): {' '.join(overrides)} ({calls} call sites)")
 
 
 @case
@@ -1269,7 +1325,8 @@ def case_refuses_a_forged_gitfile_under_a_forged_environment_too():
     code = [(n, line) for n, line in enumerate(SCRIPT.read_text().splitlines())
             if line.strip() and not line.lstrip().startswith("#")]
     first_unset = min(n for n, line in code if line.strip().startswith("unset "))
-    git_calls = [n for n, line in code if re.search(r'\bgit\s+-C\b', line)]
+    git_calls = [n for n, line in code
+                 if re.search(r'(?<![\w.-])_git\s+-C\b', line)]
     assert git_calls, "the script no longer asks git anything"
     assert min(git_calls) > first_unset, (
         "a git invocation runs before the environment is cleared, so it reads "
@@ -1451,7 +1508,7 @@ def case_accepts_a_registered_worktree_whose_path_the_line_parser_cannot_read():
     # one string and matches nothing. The listing has to be read through a
     # process substitution, and this is the line that says it is.
     text = SCRIPT.read_text()
-    assert 'done < <(git -C "$SELF_GIT" worktree list --porcelain -z' in text, (
+    assert 'done < <(_git -C "$SELF_GIT" worktree list --porcelain -z' in text, (
         "the register listing is no longer read with -z through a process "
         "substitution -- a command substitution would silently drop the NUL "
         "separators and match nothing")

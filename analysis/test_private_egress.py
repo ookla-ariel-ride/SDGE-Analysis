@@ -996,6 +996,8 @@ SHELL_HEADLINES = {
     "the destination could not say whether it ignores a path this script writes":
         "ignore_unanswerable",
     "the destination could not be asked which paths it tracks": "tracked_unanswerable",
+    "this git could not be isolated from the operator's own configuration":
+        "isolation_unproven",
     "a destination path is a symbolic link": "symlink_component",
     "a destination directory does not resolve to itself": "symlink_component",
     "a destination path exists and is not a directory": "not_a_directory",
@@ -1436,6 +1438,12 @@ API_REACH = {
     "special_under":        (frozenset({"tree"}), "only a recursive copy descends"),
     "hardlink_under":       (frozenset({"tree"}), "only a recursive copy descends"),
     "scan_unreadable":      (frozenset({"tree"}), "only a recursive copy descends"),
+    "isolation_unproven":   (ALL_KINDS - {"root"},
+                             "raised at the top of _require_uncommittable, so it "
+                             "reaches exactly the kinds that ask the committability "
+                             "question: a kind='root' destination is never asked "
+                             "whether it is ignored, so no answer about it depends "
+                             "on the isolation being in force"),
     "tracked_path":         (ALL_KINDS - {"root"},
                              "no checkout ignores its own root, so the question is "
                              "not asked of one"),
@@ -1982,6 +1990,32 @@ def _shell_forced_config(text):
     return tuple(pairs)
 
 
+def _shell_config_overrides(text):
+    """The `-c NAME=VALUE` options stage-private-data.sh puts on EVERY git
+    command, parsed from its own _git wrapper (issue #193, adversarial review).
+
+    This is the half that does not depend on the git version, so it is the half
+    a comparison against the python module most needs to be honest about: the
+    six environment variables are read by git 2.31 and newer, and a shell script
+    and a python module that agreed only about those would agree about a
+    mechanism that is inert on an older git in both.
+    """
+    m = re.search(r"^_git\(\) \{\n\s*command git ((?:-c \S+ )+)\"\$@\"\n\}$",
+                  text, re.M)
+    assert m, ("stage-private-data.sh: the _git wrapper could not be found, or it "
+               "no longer passes any -c option -- the configuration isolation is "
+               "back to environment variables alone, which an older git ignores "
+               "in silence")
+    pairs = []
+    for tok in m.group(1).split():
+        if tok == "-c":
+            continue
+        name, sep, value = tok.partition("=")
+        assert sep, f"not a NAME=VALUE pair in the shell's _git wrapper: {tok!r}"
+        pairs.append((name, value))
+    return tuple(pairs)
+
+
 @case
 def case_the_environment_this_module_clears_matches_the_shell_script():
     """Both implementations must blind themselves to the same variables AND
@@ -1989,16 +2023,18 @@ def case_the_environment_this_module_clears_matches_the_shell_script():
     variable added there and not here leaves the python predicate answering a
     question the caller -- or the caller's ~/.gitconfig -- controls.
 
-    TWO lists now, and they are the two halves of one rule (issues #193, #194).
-    CLEARED covers what an inherited environment supplies: which repository
-    answers (GIT_DIR and friends), what a bare relative path means (CDPATH), and
-    what a PATHSPEC means (the four GIT_*_PATHSPECS). FORCED covers what is
-    simply there without anybody supplying it: the operator's global, XDG and
-    system git configuration, and the default global ignore file the first three
-    do not reach. Both are compared against the SHELL SCRIPT'S OWN TEXT, never
-    against a second python constant -- a second constant would make this case
-    agree with itself while the implementation that actually handles the archive
-    drifted.
+    THREE lists now, and they are the three halves of one rule (issues #193,
+    #194). CLEARED covers what an inherited environment supplies: which
+    repository answers (GIT_DIR and friends), what a bare relative path means
+    (CDPATH), and what a PATHSPEC means (the four GIT_*_PATHSPECS). FORCED and
+    OVERRIDDEN both cover what is simply there without anybody supplying it --
+    the operator's global, XDG and system git configuration, and the default
+    global ignore file the first three do not reach -- by two mechanisms of
+    different ages: the environment variables git 2.31 and newer read, and the
+    `-c` option every git since 1.7.2 reads. All three are compared against the
+    SHELL SCRIPT'S OWN TEXT, never against a second python constant -- a second
+    constant would make this case agree with itself while the implementation that
+    actually handles the archive drifted.
     """
     text = SCRIPT.read_text()
     shell = _shell_cleared_vars(text)
@@ -2021,6 +2057,29 @@ def case_the_environment_this_module_clears_matches_the_shell_script():
         "a forced value outside the GIT_CONFIG* family -- this case's order "
         "argument below no longer covers it")
 
+    overrides = _shell_config_overrides(text)
+    assert overrides == PE.GIT_CONFIG_OVERRIDES, (
+        f"the two implementations put different -c options on their git commands "
+        f"--\n  shell:  {list(overrides)}\n  python: {list(PE.GIT_CONFIG_OVERRIDES)}")
+    # The two mechanisms must force the SAME KEY to the SAME VALUE, or the older
+    # git and the newer one are being isolated differently by the same script and
+    # only one of them was ever measured.
+    forced_map = dict(forced)
+    for name, value in overrides:
+        assert forced_map.get("GIT_CONFIG_KEY_0") == name, (
+            f"the -c forces {name} and the environment half forces "
+            f"{forced_map.get('GIT_CONFIG_KEY_0')!r} -- an older git and a newer "
+            "one would then be isolated from different configuration")
+        assert forced_map.get("GIT_CONFIG_VALUE_0") == value, (
+            f"the two mechanisms force {name} to different values: "
+            f"{value!r} on the command line, "
+            f"{forced_map.get('GIT_CONFIG_VALUE_0')!r} in the environment")
+    # And the proof reads back the key the isolation actually forces, rather than
+    # a key someone typed twice.
+    assert (PE.ISOLATION_PROOF_KEY, PE.ISOLATION_PROOF_VALUE) in overrides, (
+        "_require_isolation_proven checks a key/value pair the isolation does not "
+        "force, so it would pass while proving nothing")
+
     env = PE.sanitized_env({"GIT_DIR": "/x", "GIT_CONFIG_KEY_0": "core.worktree",
                             "GIT_CONFIG_COUNT": "9", "GIT_NOGLOB_PATHSPECS": "1",
                             "GIT_ICASE_PATHSPECS": "1", "CDPATH": "/y",
@@ -2029,7 +2088,8 @@ def case_the_environment_this_module_clears_matches_the_shell_script():
                        **dict(PE.GIT_CONFIG_ISOLATION)), env
     return (f"both implementations clear the same {len(ours)} variables plus the "
             f"GIT_CONFIG* family, force the same {len(forced)} configuration "
-            "values, and keep GIT_EXEC_PATH")
+            f"values, put the same {len(overrides)} -c override on every git "
+            "command, and keep GIT_EXEC_PATH")
 
 
 # ===========================================================================
@@ -2240,6 +2300,347 @@ def case_the_destinations_own_ignore_rules_survive_the_configuration_isolation()
     return ("with the ambient configuration off, a destination's own .gitignore "
             "and .git/info/exclude still decide, and a path covered by neither "
             "is still refused")
+
+
+# ===========================================================================
+# 4c. THE VERSION QUESTION (issue #193, adversarial review). Everything above
+# measures the isolation on the git installed here. These two ask what it is
+# worth on a git that does not read the variables it is written in.
+#
+# The GIT_CONFIG_COUNT/KEY/VALUE family arrived in git 2.31 (Mar 2021) and
+# GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM in git 2.32 (Jun 2021). An older git does
+# not reject them: the name appears nowhere in its config.c, so it is never read
+# and nothing is reported, and an isolation written in those variables alone is
+# INERT there while looking exactly like one that works. Both implementations
+# already carry deliberate fallbacks for older git -- --path-format is git 2.31
+# and `worktree list -z` is git 2.36 -- so this is not a version nobody claims
+# to support.
+#
+# HOW THAT IS TESTED WITHOUT AN OLD GIT: a PATH shim whose `git` removes those
+# variables from the environment and then execs the real git. A process that
+# never reads a variable and a process that never receives it cannot tell each
+# other apart -- there is no third behaviour an old git could have -- so the
+# shim reproduces "a git that ignores them" exactly rather than approximately.
+# The second shim additionally strips the `-c` options, which models a git older
+# than 1.7.2 (Jul 2010) or one whose precedence has moved: not a version worth
+# supporting, but the case that decides whether the guard notices.
+# ===========================================================================
+# Every forced variable except the 2008 one. Derived rather than typed out, so a
+# variable added to the isolation is hidden by the shim too and this case keeps
+# asking the question it was written to ask.
+NEW_GIT_CONFIG_VARS = tuple(name for name, _ in PE.GIT_CONFIG_ISOLATION
+                            if name != "GIT_CONFIG_NOSYSTEM")
+
+
+def _version_shim(td, name, *, hide_vars=(), hide_dash_c=False):
+    """A directory holding a `git` that hides things from the real git.
+
+    `hide_vars` are unset before the exec, which is what a git that has never
+    heard of them does. `hide_dash_c` strips leading `-c NAME=VALUE` pairs from
+    the argument vector, which is what a git predating the option does (it would
+    actually fail to parse them; stripping is the SAFER model, because it lets
+    the run continue and therefore lets the guard be caught accepting something).
+    Everything else passes through untouched, so every other answer -- identity,
+    register, tracked -- is the real git's.
+    """
+    real = shutil.which("git")
+    if not real:
+        raise SkipCase("no git on PATH to shim")
+    d = pathlib.Path(td) / name
+    d.mkdir()
+    body = ["#!/bin/sh"]
+    if hide_vars:
+        body.append("unset " + " ".join(hide_vars))
+    if hide_dash_c:
+        body.append('while [ "$1" = "-c" ]; do shift; shift; done')
+    body.append(f'exec {shlex.quote(real)} "$@"')
+    (d / "git").write_text("\n".join(body) + "\n")
+    (d / "git").chmod(0o755)
+    return d
+
+
+def _ambient_excludes_homes(td, patterns):
+    """Fixtures for every way ambient configuration can name an excludes file,
+    as {label: environment overrides}. `patterns` is what the excludes file
+    lists. None means "unset this variable".
+
+    Five spellings, because closing one is not closing the mechanism: two write
+    core.excludesFile into a config file git reads by default, one uses no
+    configuration key at all (git's hardcoded default ignore path), and two
+    reach the key through an INCLUDE -- which is how a global config sets a key
+    without naming it, and the case a fix aimed at file-reading rather than at
+    precedence would miss.
+    """
+    base = pathlib.Path(td)
+    ex = base / "the-excludes-file"
+    ex.write_text("".join(p + "\n" for p in patterns))
+    cfg = f"[core]\n\texcludesFile = {ex}\n"
+    out = {}
+
+    h = base / "h-gitconfig"; h.mkdir()
+    (h / ".gitconfig").write_text(cfg)
+    out["$HOME/.gitconfig core.excludesFile"] = {"HOME": str(h), "XDG_CONFIG_HOME": None}
+
+    x = base / "xdg"; (x / "git").mkdir(parents=True)
+    (x / "git" / "config").write_text(cfg)
+    out["$XDG_CONFIG_HOME/git/config core.excludesFile"] = {
+        "HOME": str(base / "h-empty"), "XDG_CONFIG_HOME": str(x)}
+    (base / "h-empty").mkdir()
+
+    d = base / "h-default"; (d / ".config" / "git").mkdir(parents=True)
+    (d / ".config" / "git" / "ignore").write_text("".join(p + "\n" for p in patterns))
+    out["$HOME/.config/git/ignore (git's default, no config key)"] = {
+        "HOME": str(d), "XDG_CONFIG_HOME": None}
+
+    i = base / "h-include"; i.mkdir()
+    (i / "included.cfg").write_text(cfg)
+    (i / ".gitconfig").write_text(f"[include]\n\tpath = {i / 'included.cfg'}\n")
+    out["$HOME/.gitconfig include.path -> core.excludesFile"] = {
+        "HOME": str(i), "XDG_CONFIG_HOME": None}
+
+    c = base / "h-includeif"; c.mkdir()
+    (c / "included.cfg").write_text(cfg)
+    (c / ".gitconfig").write_text(
+        f'[includeIf "gitdir/i:**/"]\n\tpath = {c / "included.cfg"}\n')
+    out["$HOME/.gitconfig includeIf gitdir: -> core.excludesFile"] = {
+        "HOME": str(c), "XDG_CONFIG_HOME": None}
+    return out
+
+
+@case
+def case_a_git_that_ignores_the_config_variables_cannot_be_told_a_committable_path_is_ignored():
+    """ISSUE #193, adversarial review, both implementations. The reproduction and
+    the fix, on a git that reads none of the 2021 GIT_CONFIG_* variables.
+
+    Under the shim the environment half of the isolation does exactly nothing,
+    and that is MEASURED here rather than argued: with all six variables set, raw
+    git still calls a committable path ignored, through all five ambient
+    spellings. That is the state the finding describes -- the guard's
+    security-critical probe answering from ~/.gitconfig with nothing forged.
+
+    What closes it on every version is `-c core.excludesFile=<devnull>` on the
+    command line: git 1.7.2 (Jul 2010), and it outranks every configuration file
+    rather than suppressing the reading of one, which is why it also closes the
+    two include routes. The same run with the -c is measured beside it.
+
+    THIS CASE FAILS IF THE ISOLATION IS REVERTED to environment variables alone.
+    Empty GIT_CONFIG_OVERRIDES, or take the -c out of the shell's _git wrapper,
+    and the module and the script go back to accepting a committable destination
+    here while every other case in this suite still passes.
+    """
+    target = ROOT / "data" / "leak.json"
+    assert _single_verdict(target, "file") == "not_ignored", (
+        "the premise is gone: this checkout now ignores or tracks data/leak.json")
+
+    with tempfile.TemporaryDirectory() as td:
+        shim = _version_shim(td, "old-git", hide_vars=NEW_GIT_CONFIG_VARS)
+        spellings = _ambient_excludes_homes(td, ["data/leak.json"])
+        oldpath = f"{shim}{os.pathsep}{os.environ['PATH']}"
+        dashc = [tok for name, value in PE.GIT_CONFIG_OVERRIDES
+                 for tok in ("-c", f"{name}={value}")]
+        assert dashc, ("GIT_CONFIG_OVERRIDES is empty, so the version-independent "
+                       "half of the isolation is gone")
+
+        proven = []
+        for what, forged in sorted(spellings.items()):
+            env = {k: v for k, v in forged.items() if v is not None}
+            # 1. the shim really does model an old git: with the six variables
+            #    set, the ambient excludes file still decides.
+            inert = _raw_git(["check-ignore", "-q", "--", "./data/leak.json"], ROOT,
+                             PATH=oldpath, **dict(PE.GIT_CONFIG_ISOLATION), **env)
+            if inert.returncode != 0:
+                raise SkipCase(
+                    f"this git no longer honours {what}, so it cannot manufacture "
+                    "the verdict this case exists to refuse")
+            # 2. and the -c is what takes it away, on that same git.
+            fixed = _raw_git(dashc + ["check-ignore", "-q", "--", "./data/leak.json"],
+                             ROOT, PATH=oldpath, **dict(PE.GIT_CONFIG_ISOLATION), **env)
+            assert fixed.returncode == 1, (
+                f"{what}: with the -c override on the command line, a git that "
+                f"ignores the GIT_CONFIG_* variables still exits "
+                f"{fixed.returncode} -- the version-independent half does not work")
+            # 3. so the module must refuse, through the PUBLIC doors, with the
+            #    forged values really in this process's environment.
+            with _environ(PATH=oldpath, **forged):
+                assert PE.refusal(target, kind="file") == "not_ignored", (
+                    f"{what} made a committable destination acceptable through "
+                    "check_destination() on a git that ignores the GIT_CONFIG_* "
+                    "variables -- the isolation is environment-only again")
+                try:
+                    PE.check_write_set(ROOT, leaves=("data/leak.json",))
+                except PE.DestinationRefused as e:
+                    assert e.reason == "not_ignored", e.reason
+                else:
+                    raise AssertionError(
+                        f"{what} made a committable destination acceptable through "
+                        "check_write_set() on a git that ignores the variables")
+            proven.append(what)
+
+        # ... and the implementation that actually handles the archive, on the
+        # same shim. XDG_CONFIG_HOME rather than HOME for the reason the case
+        # above gives: _synthetic_src's stand-in interpreter resolves through the
+        # real HOME, and forging it breaks `import yaml` inside the run for a
+        # reason that has nothing to do with this check.
+        src = _synthetic_src(td)
+        xdg = pathlib.Path(td) / "xdg"
+        (xdg / "git").mkdir(parents=True, exist_ok=True)
+        (xdg / "git" / "config").write_text(
+            f"[core]\n\texcludesFile = {pathlib.Path(td) / 'shell-excludes'}\n")
+        (pathlib.Path(td) / "shell-excludes").write_text("private/\n")
+        with _register_entries_confined_to(td), _worktree(td, "old-git-dst") as wt:
+            _worktree_not_ignoring_private(td, wt)
+            shell_env = dict(os.environ, XDG_CONFIG_HOME=str(xdg), PATH=oldpath)
+            raw = _raw_git(["check-ignore", "-q", "--", "./private/1-raw-data"], wt,
+                           PATH=oldpath, XDG_CONFIG_HOME=str(xdg),
+                           **dict(PE.GIT_CONFIG_ISOLATION))
+            if raw.returncode != 0:
+                raise SkipCase("the ambient excludes file no longer makes this "
+                               "worktree call private/1-raw-data ignored")
+            res = _run_shell(src, wt, cwd=td, env=shell_env)
+            assert res.returncode != 0, (
+                "stage-private-data.sh staged the archive into a worktree that does "
+                "NOT gitignore private/, because on a git that ignores the "
+                "GIT_CONFIG_* variables the operator's excludes file still decided")
+            assert _shell_verdict(res) == "not_ignored", res.stderr[-800:]
+            assert not (wt / "private" / "household.yaml").exists(), (
+                "the guard refused and the archive was written anyway")
+
+    return ("on a git that reads none of the 2021 GIT_CONFIG_* variables, the "
+            f"command-line override still refuses a committable destination "
+            f"through all {len(proven)} ambient spellings, in both implementations")
+
+
+@case
+def case_every_git_invocation_carries_the_configuration_override():
+    """Structural, and the reason it is here rather than left to the two
+    behavioural cases: those prove the funnel is isolated, not that everything
+    goes through the funnel. A probe a later edit adds with its own
+    subprocess.run(["git", ...]) would answer from the operator's ~/.gitconfig
+    while every case in this suite still passed.
+
+    So the module's AST is read: every argument vector whose first element is
+    "git" must be _git()'s own, and _git()'s must start with the overrides. The
+    other implementation is checked the same way, against the shell's own text,
+    by test_stage_private_data.case_every_git_invocation_carries_the_
+    configuration_override.
+    """
+    module = ast.parse((ANALYSIS / "private_egress.py").read_text())
+    inside = {n for fn in ast.walk(module)
+              if isinstance(fn, ast.FunctionDef) and fn.name == "_git"
+              for n in ast.walk(fn)}
+    strays = []
+    for node in ast.walk(module):
+        if not isinstance(node, ast.List) or not node.elts:
+            continue
+        head = node.elts[0]
+        if isinstance(head, ast.Constant) and head.value == "git" and node not in inside:
+            strays.append(getattr(node, "lineno", "?"))
+    assert not strays, (
+        f"private_egress.py builds a git argument vector outside _git() at line(s) "
+        f"{strays} -- that probe runs without the -c override and answers from the "
+        "operator's own configuration")
+
+    # And _git() really puts them there, ahead of -C, so they are read as written
+    # whatever the working directory turns out to be.
+    argv = []
+    real_run = subprocess.run
+
+    def spy(cmd, *a, **kw):
+        argv.append(list(cmd))
+        return real_run(cmd, *a, **kw)
+
+    PE.subprocess.run = spy
+    try:
+        PE._git(["rev-parse", "--git-dir"], ROOT)
+    finally:
+        PE.subprocess.run = real_run
+    expect = ["git"] + [tok for name, value in PE.GIT_CONFIG_OVERRIDES
+                        for tok in ("-c", f"{name}={value}")] + ["-C", str(ROOT)]
+    assert argv and argv[0][:len(expect)] == expect, (
+        f"_git() ran {argv[0][:6]}, not {expect}")
+    return (f"every git this module runs is _git()'s, and _git() prepends all "
+            f"{len(PE.GIT_CONFIG_OVERRIDES)} -c override(s) before -C")
+
+
+@case
+def case_a_git_that_cannot_apply_the_isolation_is_refused_rather_than_believed():
+    """The fail-closed half. A guard that cannot prove its own isolation must not
+    go on to copy private data.
+
+    The comment blocks in both implementations can cite the version each
+    mechanism arrived in. Neither can know which git is installed on the machine
+    in front of it, and that gap is the whole finding: a git that silently
+    ignores half the isolation gives an answer indistinguishable from a git that
+    applied it. So the answer is not reasoned about, it is read back --
+    `git config --get core.excludesFile` must return what the isolation forces --
+    and a git that reports anything else is refused.
+
+    Modelled with a shim that strips the -c options as well as the variables:
+    a git older than 1.7.2, or a future one that reorders precedence. The
+    refusal must arrive with NOTHING forged, because the failure is the guard's
+    own and not the destination's -- asserted first, on a destination this
+    checkout ignores perfectly well.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        shim = _version_shim(td, "ancient-git", hide_vars=NEW_GIT_CONFIG_VARS,
+                             hide_dash_c=True)
+        blindpath = f"{shim}{os.pathsep}{os.environ['PATH']}"
+
+        # 1. no forgery at all: the isolation cannot be applied, so nothing is
+        #    believed -- including about a path this checkout really does ignore.
+        with _environ(PATH=blindpath):
+            for rel, kind in (("private/1-raw-data", "dir"), ("data/leak.json", "file")):
+                assert PE.refusal(ROOT / rel, kind=kind) == "isolation_unproven", (
+                    f"{rel}: a git the isolation cannot be applied to was believed")
+            try:
+                PE.check_write_set(ROOT, leaves=("private/household.yaml",))
+            except PE.DestinationRefused as e:
+                assert e.reason == "isolation_unproven", e.reason
+            else:
+                raise AssertionError("check_write_set() believed an unisolated git")
+        OBSERVED.update({("dir", "isolation_unproven"), ("file", "isolation_unproven")})
+
+        # 2. and with a forgery, the refusal is still the guard's own: the
+        #    ambient excludes file is what leaks back in, and it is named.
+        spellings = _ambient_excludes_homes(td, ["data/leak.json"])
+        forged = spellings["$HOME/.gitconfig core.excludesFile"]
+        with _environ(PATH=blindpath, **forged):
+            try:
+                PE.check_destination(ROOT / "data" / "leak.json", kind="file")
+            except PE.DestinationRefused as e:
+                assert e.reason == "isolation_unproven", e.reason
+                assert "the-excludes-file" in e.detail, (
+                    "the refusal does not say what core.excludesFile read back as, "
+                    f"so the operator cannot see what is in charge: {e.detail}")
+            else:
+                raise AssertionError(
+                    "an unisolated git called a committable path ignored and was "
+                    "believed")
+
+        # 3. the script that actually handles the archive, on a destination it
+        #    would otherwise accept.
+        src = _synthetic_src(td)
+        with _register_entries_confined_to(td), _worktree(td, "ancient-git-dst") as wt:
+            ok = _run_shell(src, wt, cwd=td, env=dict(os.environ))
+            assert ok.returncode == 0, (
+                "this destination is refused for some other reason, so the case "
+                f"below would prove nothing: {ok.stderr[-600:]}")
+            shutil.rmtree(wt / "private", ignore_errors=True)
+            res = _run_shell(src, wt, cwd=td,
+                             env=dict(os.environ, PATH=blindpath))
+            assert res.returncode != 0, (
+                "stage-private-data.sh staged the archive using a git it could not "
+                "isolate from the operator's own configuration")
+            assert _shell_verdict(res) == "isolation_unproven", res.stderr[-800:]
+            assert "git version" in res.stderr, (
+                "the refusal does not name the git version, so the operator is "
+                f"told to upgrade without being told from what: {res.stderr[-600:]}")
+            assert not (wt / "private" / "household.yaml").exists(), (
+                "the guard refused and the archive was written anyway")
+
+    return ("a git the configuration isolation cannot be applied to is refused by "
+            "both implementations, before any write, with the git version and the "
+            "value that leaked back in named")
 
 
 # What each pathspec variable really does to the two probes this module runs.
@@ -4489,6 +4890,20 @@ TRUSTED_FACTS = {
               "asks about the ancestor it names",
         answer="reorder",
         proof="case_a_path_outside_every_registered_worktree_is_refused"),
+
+    "is this git isolated from the operator's own configuration": dict(
+        oracle="git", where=("_require_isolation_proven",),
+        about="the effective core.excludesFile of the destination's git, read back "
+              "from the running binary rather than assumed from the options and "
+              "variables handed to it",
+        stale="no -- it exists BECAUSE the version-shaped version of this fact went "
+              "stale: an isolation written in the 2021 GIT_CONFIG_* variables is "
+              "inert on an older git and says nothing. So it is re-asked for every "
+              "path rather than once, since a configuration file is an ordinary "
+              "file that can be rewritten between the first probe and the last",
+        answer="recheck",
+        proof="case_a_git_that_cannot_apply_the_isolation_is_refused_rather_than_"
+              "believed"),
 
     "is this path committable in that worktree": dict(
         oracle="git", where=("_require_uncommittable",),
