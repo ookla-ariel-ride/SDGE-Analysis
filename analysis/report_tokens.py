@@ -941,6 +941,46 @@ def _tok(name, **spec):
     TOKENS[name] = spec
 
 
+def is_attribute_only(name):
+    """True for a token whose value is MARKUP, not language: it lands inside
+    an HTML tag (a class, an id, an href) and never in text a reader reads.
+
+    WHY THIS EXISTS. generate_report.py hands a prose block's LLM the values
+    of every token live in that block's <h2> section, under the heading
+    "Values you may cite by writing their {{TOKEN}} name", and accepts a
+    returned fragment citing any of them. That is right for a figure and
+    wrong for an attribute value: S4_ROW_CLASS resolves to a bare CSS class
+    name ("win", "trails-tie"), carries no digit for the numeral guard to
+    object to, and is a real in-scope token -- so a sentence reading "the
+    matrix rates this plan {{S4_ROW_CLASS}}" clears every guard there is and
+    publishes as "the matrix rates this plan win." The same value also feeds
+    the block's cache key, so a row that changes standing re-authors two
+    §4 prose blocks that never mentioned it. Neither is about the render:
+    the token still resolves and still fills its attribute exactly as before.
+
+    A FLAG, NOT A TEMPLATE SCAN, and the reason is measurable in this very
+    template. Deriving "attribute-only" at runtime from the token's own
+    position means deciding, in regex, whether an offset sits inside a tag.
+    A plain "is it between < and >" scan answers YES for CHART_TITLE_SPREAD,
+    which sits in a JS string in the chart config -- the `<=` in
+    `c.p1DataIndex<=D.spBreak.summer` a few lines above opens a tag that
+    never closes until the next `>`. Getting it right needs comment masking,
+    <script>/<style> masking and a real tag scan, i.e. a small HTML parser
+    on the path that decides what the model is allowed to see, where its
+    next false positive is silent: a token quietly leaves a block's scope
+    and the only symptom is prose that no longer cites a figure it should.
+
+    So the declaration is the runtime rule (a dict lookup, which cannot
+    misfire), and that parser lives in the TEST instead, where it is checked
+    BOTH ways and a disagreement is a named failure:
+    test_report_tokens.case_attribute_only_flags_match_where_the_template_
+    puts_each_token asserts every flagged token occurs only inside a tag and
+    every unflagged one never does. Move this token into running text, or
+    flag one that already lives there, and that case fails.
+    """
+    return bool(TOKENS.get(name, {}).get("attribute_only"))
+
+
 for _gap_name, _gap_reason in KNOWN_GAPS.items():
     _tok(_gap_name, kind="gap", reason=_gap_reason)
 
@@ -1823,9 +1863,12 @@ def _best_plan(ctx, token):
 
     report-template.html does not ASK whether this plan wins; it ASSERTS it, in
     fixed markup no token can reach: a section 0 card labelled "Best plan in
-    every scenario — the solid conclusion", `<tr class="win">` rows carrying
-    {{BEST_PLAN}} in sections 3 and 4, and the running line "Why {{BEST_PLAN}}
-    wins:". BEST_PLAN was a bare household.plan passthrough, so a household
+    every scenario — the solid conclusion", the `<tr class="win">` row carrying
+    {{BEST_PLAN}} in section 3, and the running line "Why {{BEST_PLAN}}
+    wins:". (Section 4's row carried the same assertion until issue #178 gave
+    its class a token; the three slots left are section 3's and section 0's,
+    and they are as fixed as they ever were.) BEST_PLAN was a bare
+    household.plan passthrough, so a household
     whose plan is NOT cheapest got section 3's own (correctly inverted) verdict
     -- "... is not the cheapest plan for this house" -- printed a few hundred
     pixels under a card calling that same plan the best in every scenario.
@@ -1860,7 +1903,7 @@ def _best_plan(ctx, token):
         f"{_join_plan_names(winners)} at {_usd0_signed(cheapest)}/yr",
         unsettled="report-template.html asserts the answer as fixed chrome this module "
                   "cannot reach (the section 0 card 'Best plan in every scenario', the "
-                  'class="win" rows in sections 3 and 4, and the line "Why {{BEST_PLAN}} '
+                  'class="win" row in section 3, and the line "Why {{BEST_PLAN}} '
                   'wins:"), so no value rendered into this slot makes the page true')
     return plan
 
@@ -1954,9 +1997,12 @@ _BPM_COLUMNS = (("no_battery", "without a battery"),
 # The band was briefly applied to identity as well ("cheapest" = every plan
 # within $1.00 of the minimum). That is the error this comment exists to stop
 # being repeated: it admitted a plan the artifact ranks SECOND into `winners`
-# below, and section 4 renders those cells inside a fixed class="win" row, so
-# a household would have been shown a runner-up as its winner. Rounding never
-# licensed that. It licenses only the hedged wording of a size.
+# below, and section 4 rendered those cells inside a fixed class="win" row, so
+# a household would have been shown a runner-up as its winner. That row's class
+# is a token now (_s4_row_class), which changes nothing here: the token decides
+# each column's standing on this same identity, so a band read into it would
+# still paint a runner-up as the winner -- one branch further along. Rounding
+# never licensed that. It licenses only the hedged wording of a size.
 #
 # PER COLUMN, never across columns. The bound above is for two cells rounded
 # the same way inside one column; the no-battery and with-battery columns are
@@ -1979,101 +2025,54 @@ _BPM_GAP_TIE_USD = 4 * 0.5   # == 2 * _BPM_TIE_USD
 
 
 def _best_plan_matrix_cell(token, key):
-    """A BEST_PLAN_*_MODELED / BATTERY_VALUE_BEST_PLAN figure, behind a chrome
-    gate on THE ARTIFACT THESE CELLS ARE RENDERED FROM.
+    """A BEST_PLAN_*_MODELED / BATTERY_VALUE_BEST_PLAN figure: one cell of the
+    household's own row in data/battery_plan_matrix.json.
 
-    These three tokens are the cells of section 4's `class="win"` row, and
-    every one of them comes out of data/battery_plan_matrix.json. The gate
-    used to run on data/plan_results.csv's ranking instead, via _best_plan.
-    Trace the two artifacts to their generators and they are not
-    interchangeable:
+    THE CHROME GATE THAT USED TO STAND HERE IS GONE (issue #178), because the
+    chrome it was compensating for is gone. These three tokens are the cells
+    of section 4's household row, and report-template.html used to open that
+    row as a fixed `<tr class="win">` -- markup ASSERTING this household is
+    on the plan the matrix prices cheapest, in a form no token could reach.
+    No figure rendered into a cell could make that assertion true, so the
+    three tokens refused whenever the matrix ranked this household second,
+    PER COLUMN. A refusal is a token-resolution failure, which stops
+    generate_report.py before it writes any index.html at all, so a household
+    second in EITHER column got no report -- precisely the household section
+    4 exists to help, and the trade the old docstring here recorded as
+    deliberate while naming the template as the place to fix it.
 
-      RELATIONSHIP, no_battery column: ONE DERIVED FROM THE OTHER, partially.
-      battery_plan_matrix.py asserts each of its three plans' no-battery
-      totals against plan_results.csv's CEA column to within $1.00 and
-      refuses to write the file otherwise. So the two agree about that
-      column -- for the THREE plans the matrix prices, out of the six
-      plan_results.csv ranks.
+    The row now opens `<tr class="{{S4_ROW_CLASS}}">`, and that token states
+    both columns' standings off the same two columns (see _s4_row_class).
+    There is no false sentence left for these figures to be rendered into: a
+    runner-up's modeled bills are as real as a winner's, and showing them
+    beside its standing is what the row is for. So they render.
 
-      RELATIONSHIP, with_battery and battery_value: NO RELATIONSHIP AT ALL.
-      plan_results.csv has no battery column. Nothing in it constrains,
-      corroborates or ranks either figure.
+    WHAT STILL REFUSES, because each of these is still true and none of them
+    is about the chrome:
 
-    Which is why the old gate passed while the row it guards went false:
-    move a rival plan's matrix with_battery below this household's and
-    plan_results.csv does not change by a cent, so BEST_PLAN's ranking still
-    said "cheapest" while section 4's own verdict -- correctly, off the
-    matrix -- read "trails by $500/yr with one" directly above a row marked
-    as the winner.
+      * a household plan the matrix does not price, and a matrix with no
+        plans in it at all -- both from _bpm_best(), which cannot return a
+        row that is not there;
+      * THIS TOKEN'S OWN CELL being non-finite, checked below by name.
 
-    So the gate ranks the matrix's OWN columns, at BOTH battery states,
-    because the win row spans both and section 4's heading question is
-    exactly whether the answer survives the battery. A tie is allowed
-    through, as it is in _best_plan: a plan tying for cheapest is a cheapest
-    plan.
-
-    The gate still sits at the TOKEN, never inside _bpm_best(), because
-    _bpm_best() is also what _runner_up(), S4_VERDICT_SHORT and
-    PLAN_MARGIN_VS_RUNNER_UP read -- and those three sentences are this
-    module's own, word themselves off the sign, and must keep rendering for a
-    household the matrix does not put first.
+    What is NOT checked here any more is the rest of the COLUMN. Ranking the
+    columns is now S4_ROW_CLASS's work and it refuses a column that is not
+    made of numbers (through _bpm_cheapest), so a matrix with a nan in a
+    rival's cell still fails the report closed -- at the token that reads
+    that cell, rather than at three tokens that do not. Each token guards
+    what it prints.
     """
     plan, row = _bpm_best()
-    plans = _bpm_plans()
-    for column, phrase in _BPM_COLUMNS:
-        totals = {p: v[column] for p, v in plans.items()}
-        # Finiteness first, for _plan_ranking's reason: a nan is equal to
-        # nothing, so it would empty `winners` and refuse with a message about
-        # the wrong thing.
-        bad = {p: t for p, t in totals.items() if not _finite(t)}
-        _claim(token, f"which plan the battery-vs-plan matrix prices cheapest {phrase}",
-               SUPPORTED if not bad else NOT_DETERMINED,
-               "data/battery_plan_matrix.json's " + column + " column prices " +
-               ", ".join(f"{p} at {t!r}" for p, t in sorted((bad or totals).items())))
-        cheapest = min(totals.values())
-        # `== cheapest`, on the stored values, because that is what the
-        # artifact genuinely determines: round() is non-decreasing, so a cell
-        # storing a dollar above the minimum was a dearer bill, full stop
-        # (see the derivation above). The band belongs to sentences that SIZE
-        # a gap, and applying it here admitted a plan this column ranks
-        # second into `winners` -- which would have rendered that plan's
-        # figures inside section 4's class="win" row and called it the
-        # winner. A household that really is second gets the refusal below
-        # instead, which is honest about a template that cannot say
-        # "second".
-        winners = sorted(p for p, t in totals.items() if t == cheapest)
-        _claim(
-            token, f"that this household is on the best plan {phrase}",
-            SUPPORTED if plan in winners else NOT_DETERMINED,
-            # _usd0_signed, same sweep, same reason: both cells are modeled
-            # annual BILLS under a plan (the two tokens below are declared
-            # with the signed formatter for exactly that), so an inline _usd0
-            # here refuses precisely for the household whose battery models
-            # its bill below zero.
-            #
-            # The two figures, and no arithmetic on them: the cells settle
-            # that this plan is the dearer, not by how much, so the message
-            # states the ranking and lets the reader read the difference.
-            f"data/battery_plan_matrix.json's {column} column prices {plan} at "
-            f"{_usd0_signed(totals[plan])}/yr against {_join_plan_names(winners)} at "
-            f"{_usd0_signed(cheapest)}/yr",
-            unsettled=(
-                "this household is not on the plan that column prices cheapest, and "
-                "report-template.html renders this figure inside section 4's "
-                'class="win" row, which asserts the opposite as fixed markup no token '
-                "can reach -- the template has no runner-up or near-tie state to "
-                "render instead, so no value in this slot makes the page true"))
-    # THE CELL THIS TOKEN ACTUALLY PRINTS, checked last and by name.
+    # THE CELL THIS TOKEN ACTUALLY PRINTS, checked by name.
     #
-    # The loop above ranks the two COLUMNS, and two of the three tokens read a
-    # cell inside one of them -- so for those two the finiteness test above
-    # already covered the value returned here. BATTERY_VALUE_BEST_PLAN does
-    # not: `battery_value` is a third field, in neither column, ranked by
-    # nothing, and it went out unchecked past a gate that had just verified
-    # six other numbers (issue #131 review round 5, finding 2). A guard that
-    # checks its neighbours and not its own return value is the shape this
-    # review keeps finding, so the return is checked on the way out rather
-    # than left to whichever column happens to contain it.
+    # This check used to sit after a loop that verified six OTHER numbers,
+    # and BATTERY_VALUE_BEST_PLAN went out past it unchecked: `battery_value`
+    # is a third field, in neither ranked column, so the loop's finiteness
+    # test never covered it (issue #131 review round 5, finding 2). A guard
+    # that checks its neighbours and not its own return value is the shape
+    # that review kept finding, which is why this one is anchored on `key` --
+    # the field the token returns -- and not on a column that happens to
+    # contain it.
     cell = row[key]
     _claim(token, f"what data/battery_plan_matrix.json prices {plan}'s {key} at",
            SUPPORTED if _finite(cell) else NOT_DETERMINED,
@@ -2226,6 +2225,166 @@ def _bpm_cheapest(token, column):
     return {p for p, t in totals.items() if t == cheapest}
 
 
+# The three standings ONE COLUMN of the matrix can put the household's plan
+# in, ORDERED WORST FIRST. A column settles three things and only two of them
+# are a win or a loss:
+#
+#   trails  some rival stores less. The plan is not cheapest in this column.
+#   tie     the plan stores this column's minimum and at least one rival
+#           stores it too. A tied plan IS a cheapest plan -- which is why it
+#           is not "trails" -- but it is not the only one.
+#   win     the plan stores the minimum and no other plan does.
+_S4_COLUMN_STANDINGS = ("trails", "tie", "win")
+
+
+# The states section 4's household ROW can be in, as the CSS class names
+# report-template.html styles: ONE PER UNORDERED PAIR of the two columns'
+# standings, each named worst-standing-first, the pairs ordered worst first.
+#
+# NOT THE WEAKEST OF THE TWO COLUMNS, which is what this was and why it had
+# to change. The row spans both columns, so a class carrying only the weaker
+# standing states something FALSE about the stronger one, and the stylesheet
+# prints that falsehood: a household alone cheapest without a battery and
+# beaten with one resolved "trails", and `tr.trails td:first-child::after`
+# stamps the plan-name cell "not the cheapest" -- beside a no-battery cell
+# that IS the cheapest in its column. That is issue #178's own defect (markup
+# asserting a standing this household's cells do not carry) one state along.
+# The mirror is the same thing pointing the other way: a plan alone cheapest
+# in one column and tied in the other took "tie", badging the whole row "ties
+# for cheapest" over a column it wins outright.
+#
+# So the class carries BOTH standings and every badge states only what both
+# columns support. SIX, because two columns drawn from three standings make
+# six unordered pairs, and the row is symmetric in them: WHICH column is
+# which is already on the page twice -- in the two cells the badge sits
+# beside, and in S4_VERDICT_SHORT's own clauses ("... without a battery, and
+# ... with one") -- so naming it here would buy nine classes and three more
+# badges to repeat what the reader is already looking at.
+#
+# DERIVED from the standings rather than written out, so no state can enter
+# this vocabulary without a pair of column standings that reaches it, and
+# none can leave it while a pair still does. The 9-way product of the two
+# columns is driven against it in
+# case_section_4s_row_class_is_a_state_the_stylesheet_can_paint, which also
+# holds every member to a badge in report-template.html's own <style> block.
+_S4_ROW_CLASSES = tuple(
+    worst if worst == strongest else f"{worst}-{strongest}"
+    for i, worst in enumerate(_S4_COLUMN_STANDINGS)
+    for strongest in _S4_COLUMN_STANDINGS[i:])
+
+
+def _s4_row_class(ctx):
+    """The CSS class on section 4's household row: one of _S4_ROW_CLASSES.
+
+    WHAT THIS TOKEN IS FOR (issue #178). The row used to open as a fixed
+    `<tr class="win">`, and `tr.win td` paints it as the winner. That is a
+    CLAIM about this household -- the matrix prices its plan cheapest -- made
+    in markup no token could reach, so the three cells inside it refused
+    rather than render figures the row around them contradicted, and a
+    household the matrix ranks second in either column got no report at all.
+    The claim now has a token, so it can come out true, false, or a tie, and
+    the report is written either way.
+
+    THE CLASS IS THE PAIR OF STANDINGS, not the weaker of them. One row spans
+    two battery columns, and a class reporting one standing for both prints a
+    badge that is false about the other -- "not the cheapest" beside a cell
+    that is the cheapest in its column, or "ties for cheapest" beside one the
+    plan wins outright. So the two columns' standings (_S4_COLUMN_STANDINGS:
+    trails / tie / win) are both carried, sorted worst first and joined, and
+    the badge report-template.html prints for each state says only what BOTH
+    columns support. The nine combinations, and the class each resolves to:
+
+        no battery   with battery   class         what its badge asserts
+        ----------   ------------   -----------   -----------------------------
+        win          win            win           cheapest, alone, both columns
+        win          tie            tie-win       cheapest in both, tied in one
+        tie          win            tie-win       "
+        tie          tie            tie           tied for cheapest in both
+        win          trails         trails-win    cheapest in one column only
+        trails       win            trails-win    "
+        tie          trails         trails-tie    tied cheapest in one only
+        trails       tie            trails-tie    "
+        trails       trails         trails        cheapest in neither column
+
+    Every badge is a statement about HOW MANY of the two columns price this
+    plan cheapest, and in how many of those it is the only one -- which is
+    exactly what the pair records, so it is true of both members of every
+    pair that has two. WHICH column is which is deliberately not in the
+    badge: the reader is looking at both cells, and S4_VERDICT_SHORT names
+    the columns in as many words directly above the table.
+
+    RANKED THROUGH _bpm_cheapest, the helper S4_VERDICT_SHORT decides its
+    Yes/No on, and never through a second ranking of the same columns. The
+    heading and the row directly beneath it are read together or not at all
+    (issue #141 review round 3), and two independent rankings of one artifact
+    drift over exactly the cases that matter: whether a tie counts as
+    cheapest, which column decides. One helper, one `==` on the stored cells,
+    one answer for both.
+
+    Identity on the STORED cells, with `==` and min(): battery_plan_matrix.py
+    rounds every cell to whole dollars and round() is non-decreasing, so a
+    cell above the minimum came from a strictly dearer bill and equal cells
+    are a tie the artifact cannot separate (the derivation above).
+    _BPM_TIE_USD bounds a SIZE and has no business here -- reading it into
+    "cheapest" is what once admitted a runner-up into a winners' set.
+
+    The refusals are the ones underneath it: a column that is not made of
+    numbers (_bpm_cheapest -- a nan equals nothing, so it would not lose the
+    ranking, it would empty it), and a household plan the matrix does not
+    price at all (_bpm_best). Neither leaves a standing this token could
+    state honestly.
+    """
+    plan, _row = _bpm_best()
+    # A LIST, sorted worst first -- never a set. Both standings are carried
+    # into the class name, so the two columns agreeing is a state of its own
+    # ("win", "tie", "trails") and not a duplicate to be collapsed away.
+    standings = sorted(
+        ("trails" if plan not in winners else "tie" if len(winners) > 1 else "win"
+         for winners in (_bpm_cheapest("S4_ROW_CLASS", column)
+                         for column, _phrase in _BPM_COLUMNS)),
+        key=_S4_COLUMN_STANDINGS.index)
+    # The name is built from EXACTLY two standings, so a _BPM_COLUMNS that
+    # stops holding exactly two columns has to refuse rather than emit a
+    # class nothing paints. Checked, not assumed: min() used to catch the
+    # empty case by raising ValueError and nothing at all caught a third
+    # column, which would have silently produced "trails-tie" from three.
+    if len(standings) != 2:
+        raise SystemExit(
+            "report_tokens: section 4's household row states one standing per battery "
+            f"column and report_tokens._BPM_COLUMNS now names {len(standings)} of them "
+            f"({[c for c, _p in _BPM_COLUMNS]}); the row's class is a pair, so the "
+            "vocabulary in _S4_ROW_CLASSES and the rules in report-template.html's "
+            "<style> block both have to be re-derived before this token can name a state")
+    worst, strongest = standings
+    return worst if worst == strongest else f"{worst}-{strongest}"
+
+
+# fmt="raw", and THE SEAM GUARD HAS NOTHING TO READ FOR IT -- said here
+# rather than left for whoever next wonders why this token is not in the
+# tables. This value lands inside an HTML attribute, and the three seam
+# classes test_report_tokens.py checks at every token seam (a doubled sigil,
+# a lost dimension, a figure echoed beside itself) are all anchored on a
+# FIGURE: a CSS class name has no digits, no unit, and no dimension a
+# declared format could say it lost, so all three are inert on it and
+# _SEAM_FMT_DIMENSIONS -- derived by running the numeric formatters -- has no
+# entry for "raw" by construction. The format spec is a statement that there
+# is nothing numeric here, not a dimension the guards can use.
+#
+# What an attribute token DOES need guarding is that its value is a class the
+# stylesheet paints: an unstyled class name is not a broken render, it is a
+# runner-up's row drawn exactly like every other row, which is the silent
+# half of the defect this token exists to fix.
+# case_section_4s_row_class_is_a_state_the_stylesheet_can_paint holds the
+# whole vocabulary to report-template.html's own <style> block.
+#
+# attribute_only=True: this value is markup, not language. See
+# is_attribute_only() below for what the flag does and what checks it.
+_tok("S4_ROW_CLASS", kind="derived", get=_s4_row_class, fmt="raw",
+     attribute_only=True,
+     sources=["data/battery_plan_matrix.json:plans (both columns)",
+              "private/household.yaml:household.plan"])
+
+
 def _s4_verdict_short(ctx):
     """Section 4's in-heading verdict.
 
@@ -2354,10 +2513,10 @@ def _s4_verdict_short(ctx):
     # the answer at both states". A tie in ONE column does not make that true.
     # us 100/100, B 100/200, C 300/300 ties B without a battery and beats it
     # outright with one, so the household's plan IS the answer at both states
-    # -- and section 4 renders its cells inside a fixed class="win" row (which
-    # resolves, because joint-cheapest passes that gate), so the old branch put
-    # a heading saying the question could not be settled directly above markup
-    # settling it. The mirror, us 100/100 against B 200/100, is the same shape.
+    # -- and section 4's row says so, reading "tie" off this same helper
+    # (joint-cheapest is cheapest), so the old branch put a heading saying the
+    # question could not be settled directly above a row settling it. The
+    # mirror, us 100/100 against B 200/100, is the same shape.
     # A heading and the row beneath it are read together or not at all.
     no_batt = _bpm_cheapest("S4_VERDICT_SHORT", "no_battery")
     with_batt = _bpm_cheapest("S4_VERDICT_SHORT", "with_battery")

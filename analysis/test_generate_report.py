@@ -1322,6 +1322,133 @@ def case_fill_chart_data_and_render_do_not_double_process_the_same_values():
     return "fill_chart_data() has no access to the resolved token map at all"
 
 
+# ---------------------------------------------------------------------------
+# ATTRIBUTE-ONLY TOKENS ARE NOT PROSE. report_blocks.scope_tokens_for_block
+# reads a block's <h2> section for the tokens LIVE in it and knows nothing
+# about where in the markup each one lands, so a token that only ever fills
+# an HTML attribute arrives in scope beside the figures. build_scope_values
+# is the one place that decides, and these three cases hold it to that from
+# the three directions it matters: what the model is offered, what a returned
+# fragment may cite, and what the egress gate is asked to label.
+#
+# NO ARCHIVE NEEDED, deliberately -- the question is which NAMES survive the
+# filter, not what they resolve to, so `resolved` is stubbed and every case
+# below runs in a bare checkout where a bad merge would be caught.
+# ---------------------------------------------------------------------------
+def _stub_resolved():
+    """A resolved-map stand-in: every non-gap token present with a value that
+    carries no digit (so the numeral guard's own rules never confuse a scope
+    question) and no gap token at all, exactly as resolve_tokens_with_gaps
+    splits them."""
+    gap_names = {n for n, spec in rt.TOKENS.items() if spec.get("kind") == "gap"}
+    resolved = {n: "stub value" for n in rt.TOKENS if n not in gap_names}
+    return resolved, gap_names
+
+
+@case
+def case_an_attribute_only_token_is_in_a_sections_tokens_but_never_in_its_scope():
+    html = rt.TEMPLATE.read_text()
+    resolved, gap_names = _stub_resolved()
+    attribute_only = {n for n in rt.TOKENS if rt.is_attribute_only(n)}
+    assert attribute_only, (
+        "no token declares attribute_only, so this case and the two below prove nothing; "
+        "if the flag has been retired, retire them with it")
+
+    in_raw_scope, in_built_scope, unexplained = set(), set(), {}
+    for b in rb.parse_todo_blocks(html):
+        raw = rb.scope_tokens_for_block(html, b)
+        built = set(gr.build_scope_values(html, b, resolved, gap_names))
+        in_raw_scope |= raw & attribute_only
+        in_built_scope |= built & attribute_only
+        # Everything build_scope_values dropped must be explained by one of
+        # its three documented reasons -- not in TOKENS, a gap, or
+        # attribute-only. Any other name leaving is this change reaching
+        # further than it was meant to.
+        dropped = (raw & set(rt.TOKENS)) - gap_names - built
+        if dropped - attribute_only:
+            unexplained[b.id] = sorted(dropped - attribute_only)
+    assert not unexplained, (
+        f"build_scope_values dropped token(s) no rule of its own accounts for: {unexplained}")
+    assert in_raw_scope == attribute_only, (
+        f"only {sorted(in_raw_scope)} of the attribute-only token(s) {sorted(attribute_only)} "
+        "is live in any block's section, so the exclusion is untested for the rest")
+    assert not in_built_scope, (
+        f"attribute-only token(s) {sorted(in_built_scope)} are still in a block's LLM scope")
+    return (f"{sorted(attribute_only)} is live in a section and so reaches "
+            f"scope_tokens_for_block, but is in no block's LLM scope; nothing else was "
+            "dropped from any of the 105 blocks")
+
+
+@case
+def case_the_numeral_guard_rejects_a_fragment_citing_an_attribute_only_token():
+    """The guard accepts any REAL token that is in the originating block's
+    scope, and a CSS class name carries no digit for the word-number or
+    numeral rules to object to -- so scope membership is the only thing
+    standing between "{{S4_ROW_CLASS}}" and a published sentence reading
+    "the matrix rates this plan win." Both sides are run here: the same
+    fragment against the same block's scope with the token restored (accepted)
+    and as build_scope_values now builds it (rejected)."""
+    html = rt.TEMPLATE.read_text()
+    resolved, gap_names = _stub_resolved()
+    attribute_only = sorted(n for n in rt.TOKENS if rt.is_attribute_only(n))
+    blocks = [b for b in rb.parse_todo_blocks(html)
+             if rb.CLASSIFICATION[b.id] == "prose"
+             and rb.scope_tokens_for_block(html, b) & set(attribute_only)]
+    assert blocks, ("fixture assumption broken: no PROSE block's section carries an "
+                    "attribute-only token, so no fragment could have cited one")
+    checked = []
+    for b in blocks:
+        scope = set(gr.build_scope_values(html, b, resolved, gap_names))
+        for name in attribute_only:
+            fragment = f"The matrix rates this plan {{{{{name}}}}}."
+            was = gr.find_fragment_violations(fragment, allowed_tokens=scope | {name})
+            now = gr.find_fragment_violations(fragment, allowed_tokens=scope)
+            assert was == [], (
+                f"fixture assumption broken: with {name} in scope the guard already "
+                f"rejected the fragment for another reason ({was}), so this case would "
+                "pass whether or not the exclusion works")
+            assert now, (f"{b.id}: the guard still accepts a fragment citing {name}")
+            checked.append((b.id, name))
+    return (f"a fragment citing an attribute-only token is accepted when the token is in "
+            f"scope and rejected once build_scope_values removes it, across "
+            f"{len(checked)} block/token pair(s): {checked}")
+
+
+@case
+def case_an_attribute_only_token_reaches_neither_the_prompt_nor_the_egress_gate():
+    """The two other consumers of a block's scope. build_user_prompt lists
+    every scoped value under "Values you may cite by writing their {{TOKEN}}
+    name"; build_preflight_items labels each one for llm_providers.preflight,
+    and _is_household_sourced answers True for S4_ROW_CLASS (its class is
+    decided partly by household.plan), which would route a CSS class name
+    through the household-token gate. Excluded upstream, it reaches neither."""
+    html = rt.TEMPLATE.read_text()
+    resolved, gap_names = _stub_resolved()
+    attribute_only = [n for n in rt.TOKENS if rt.is_attribute_only(n)]
+    offered, labelled = [], []
+    for b in rb.parse_todo_blocks(html):
+        if rb.CLASSIFICATION[b.id] != "prose":
+            continue
+        scope = gr.build_scope_values(html, b, resolved, gap_names)
+        prompt = gr.build_user_prompt(b, scope)
+        items = gr.build_preflight_items(b, scope)
+        for name in attribute_only:
+            if f"  {name} = " in prompt:
+                offered.append((b.id, name))
+            if any(kind == "household_token" and value[0] == name for kind, value in items):
+                labelled.append((b.id, name))
+    assert not offered, f"attribute-only token(s) still offered as citable prose: {offered}"
+    assert not labelled, (
+        f"attribute-only token(s) still sent to the egress gate as household values: "
+        f"{labelled}")
+    assert any(gr._is_household_sourced(n) for n in attribute_only), (
+        "fixture assumption broken: no attribute-only token is household-sourced, so the "
+        "preflight half of this case proves nothing")
+    return (f"no prose block offers {attribute_only} in its user prompt or hands it to "
+            "preflight as a household_token, though _is_household_sourced still calls it "
+            "household-sourced")
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

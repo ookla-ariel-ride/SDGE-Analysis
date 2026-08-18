@@ -22,7 +22,9 @@ PIPELINE
          otherwise the block is left unresolved and reported.
        - "prose": build a per-block request (that block's own TODO text plus
          ONLY the token values in its report_blocks.scope_tokens_for_block
-         scope -- never the surrounding HTML), run it through
+         scope, less gaps and less any token whose value is markup rather
+         than language -- see build_scope_values -- and never the
+         surrounding HTML), run it through
          llm_providers.preflight(), then llm_providers.call(). The returned
          fragment is checked by the numeral guard (find_fragment_violations);
          a violation gets ONE corrective retry, then the block hard-fails.
@@ -599,6 +601,12 @@ def find_fragment_violations(fragment, allowed_tokens=None):
 # Per-block scope, request assembly, caching.
 # ---------------------------------------------------------------------------
 def _is_household_sourced(name):
+    """Which egress label build_preflight_items puts on one scoped value.
+    Only ever asked about a name build_scope_values already kept, so a token
+    excluded there (a gap, or an attribute-only one) is never labelled at
+    all rather than being labelled and then withheld -- the question "is this
+    household-sourced" stays a fact about the token, and whether it travels
+    stays one decision, made upstream."""
     spec = rt.TOKENS.get(name, {})
     if spec.get("kind") == "household_yaml":
         return True
@@ -606,11 +614,31 @@ def _is_household_sourced(name):
 
 
 def build_scope_values(html, block, resolved, gap_names):
-    """{token_name: rendered_value} for a block's scope, EXCLUDING any token
-    that is a gap (no real value exists to hand over)."""
+    """{token_name: rendered_value} for a block's scope, EXCLUDING two kinds
+    of token: a gap (no real value exists to hand over), and one declared
+    report_tokens.is_attribute_only (a value that is markup rather than
+    language -- a CSS class, an id -- which report_blocks.scope_tokens_for_block
+    picks up like any other token live in the section, because it reads the
+    section's token inventory and nothing about where in the markup each one
+    lands).
+
+    THIS IS THE ONE CHOKE POINT, which is why the exclusion is here and not
+    in scope_tokens_for_block. Everything downstream that decides what an
+    LLM sees, keeps, or may cite is fed from this one dict: build_user_prompt
+    lists it under "Values you may cite", build_preflight_items labels each
+    entry for the egress gate, cache_key hashes it, and both
+    find_fragment_violations calls take `scope_values.keys()` as the set of
+    token names a returned fragment is allowed to name. Drop a token here
+    and it is out of all five at once; drop it in report_blocks and every
+    other reader of that function inherits a decision about prose it has no
+    stake in.
+
+    See report_tokens.is_attribute_only for what the flag promises and the
+    test that holds it to the template."""
     names = rb.scope_tokens_for_block(html, block)
     return {n: resolved[n] for n in sorted(names)
-           if n in rt.TOKENS and n not in gap_names and n in resolved}
+           if n in rt.TOKENS and n not in gap_names and n in resolved
+           and not rt.is_attribute_only(n)}
 
 
 def build_preflight_items(block, scope_values):
