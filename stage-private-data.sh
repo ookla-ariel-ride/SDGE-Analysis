@@ -356,9 +356,11 @@ fi
 # core.worktree, core.symlinks, core.fileMode, core.quotePath,
 # core.attributesFile, core.hooksPath, core.fsmonitor, core.sparseCheckout,
 # core.protectHFS, core.autocrlf, core.longpaths, core.checkStat,
-# core.untrackedCache, index.sparse, status.showUntrackedFiles, safe.directory,
+# core.untrackedCache, index.sparse, status.showUntrackedFiles,
 # and aliases named after the commands run here (git does not let an alias
-# shadow a builtin). core.bare needs its own sentence: an ambient bare=true does
+# shadow a builtin). safe.directory is inert IN THIS DIRECTION and is not inert
+# in the other one -- see "WHAT THE ISOLATION MUST NOT TAKE AWAY" below, which
+# is the question this list does not ask. core.bare needs its own sentence: an ambient bare=true does
 # make `git worktree list` report a MAIN checkout as bare, which the register
 # parse drops -- but only when the listing is made from inside a working tree.
 # This script lists from $SELF_GIT, the common git dir, where bareness is
@@ -374,9 +376,65 @@ fi
 # from clearing HOME, whose refusals the operator could not fix by editing
 # anything in the repository.
 #
+# WHAT THE ISOLATION MUST NOT TAKE AWAY (issue #193, /review round three). The
+# sweep above asks whether an ambient value MOVES a verdict in the admitting
+# direction. The opposite question -- does switching the ambient configuration
+# off REMOVE a value the probes NEED -- has its own answer, and it is
+# `safe.directory`.
+#
+# git refuses to work in a repository owned by another user at all ("fatal:
+# detected dubious ownership"), and the one way an operator lifts that is a
+# safe.directory entry, which git honours ONLY from protected configuration
+# (system, global, command line) -- precisely the scopes the three variables
+# above empty. A worktree on an SMB or NFS share, in a container bind-mount, or
+# created under sudo, that the operator declared safe long ago and uses every
+# day, became unanswerable HERE and nowhere else. Measured on git 2.50.1 with
+# the ownership check driven by GIT_TEST_ASSUME_DIFFERENT_OWNER=1 and
+# safe.directory in ~/.gitconfig, on every probe this script runs:
+#
+#                                  ambient config   this script's isolation
+#   rev-parse --git-common-dir          0                128  fatal
+#   rev-parse --show-toplevel           0                128  fatal
+#   worktree list --porcelain           0                128  fatal
+#   ls-files -- <path>                  0                128  fatal
+#   check-ignore -q -- <path>           0                128  fatal
+#
+# and the refusal that came out named none of it: _common_git_dir discards the
+# fatal, so the run died with "REFUSED -- this script is not inside a git
+# working tree" and a `git worktree add` remedy that cannot fix an ownership
+# problem. A guard that refuses correct callers is one that gets switched off --
+# this file's own argument, applied to itself.
+#
+# THE SWEEP in that second direction: 29 ambient keys, each set in the
+# operator's global config and read by all five probes above with the isolation
+# on and off. safe.directory is the ONLY one that turns an answer into a
+# failure. protocol.file.allow=never moves them the other way (every probe fatal
+# WITHOUT the isolation, answered with it), and the other 27 -- including
+# safe.bareRepository and uploadpack.packObjectsHook, the only other two keys
+# git reads from protected configuration alone -- are inert or admitting, which
+# the paragraphs above already settle.
+#
+# THE REPAIR is _load_ambient_protected_config below, re-injected with -c, and
+# it is narrow in four ways that together are why handing a protected-config key
+# back does not undo the isolation: it happens only AFTER git has refused to
+# answer at all (exit 128, and _git retries once), so it cannot change an answer
+# git did give; safe.directory decides WHETHER git reads a repository, not what
+# that repository's rules are (core.excludesFile) or how they match
+# (core.ignoreCase, core.precomposeUnicode), so it reaches no verdict here; the
+# values are taken from the `system` and `global` scopes ONLY, filtered on git's
+# own `config --show-scope`, so a safe.directory in the DESTINATION's own config
+# -- the one a forged destination could write -- is dropped rather than promoted
+# to the command line, which is the attack git's protected-configuration rule
+# exists to stop; and they are replayed RAW and in order, so `~/x`,
+# `%(prefix)/x`, `*` and the empty reset entry keep their meaning and a
+# directory nobody declared stays refused, now with git's own message and the
+# working remedy it carries.
+#
 # AND IT IS PROVED, not assumed, once per run before the first write: see
-# _require_isolation_proven below. Version numbers are what this comment can
-# offer; what the guard acts on is the git in front of it.
+# _require_isolation_proven below, which walks the keys THIS SCRIPT forces --
+# not the re-injected one, whose value is the operator's and which there is
+# nothing to prove about. Version numbers are what this comment can offer; what
+# the guard acts on is the git in front of it.
 #
 # EXPORTED into this shell, like the clearing above and for the same reason:
 # the verdict and everything it authorizes run in one environment. SET rather
@@ -392,15 +450,35 @@ for _kv in GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
   _forced="$_forced ${_kv%%=*}"
 done
 
+# The keys this script FORCES, in ONE place. The wrapper below passes them and
+# _require_isolation_proven reads back exactly this list, so a key added here is
+# a key the proof checks -- which is the property the first version of that
+# proof did not have: it restated `core.excludesFile=/dev/null` as a literal of
+# its own, and a third forced key would have been passed and never verified,
+# with the proof still passing. Nothing else in this file may name a forced -c.
+_GIT_FORCED_CONFIG=(-c core.excludesFile=/dev/null)
+
 # The destination-derived half of the -c list: the keys taken FROM the
-# destination rather than switched off, seeded with the value git itself uses
-# when no configuration states one, until _adopt_destination_config has read
-# what the destination says. git-config(1) documents that default for
-# core.ignoreCase; for core.precomposeUnicode it documents none and the value
-# here is measured. Safe as a seed in both directions -- it is the narrow one,
-# matching fewer paths rather than more -- so a probe running before the
-# adoption (none does today) could refuse but could not admit.
-_GIT_DEST_CONFIG=(-c core.ignoreCase=false -c core.precomposeUnicode=false)
+# destination rather than switched off. EMPTY until _adopt_destination_config
+# has read what the destination says, which is the same shape private_egress.py
+# has -- its _git() defaults to the forced table alone and the two probes whose
+# answer these keys move are handed the fuller list explicitly.
+#
+# It used to be seeded with git's own defaults, under a comment saying that a
+# probe running before the adoption was hypothetical ("none does today"). SIX
+# run: the two `rev-parse --git-common-dir` attempts in _common_git_dir and the
+# third _git_error_at makes on the refusal path, `rev-parse --show-toplevel`,
+# and both `worktree list --porcelain` listings. All six were carrying an
+# override the python side does not put on the same probes, and the seed was
+# measured inert for every one of them -- so the comment was false about the
+# only thing it claimed. An empty array is the honest version of "inert", and it
+# closes the divergence rather than documenting it.
+_GIT_DEST_CONFIG=()
+
+# The operator's own protected-scope values, handed back only where git refused
+# to answer -- see "WHAT THE ISOLATION MUST NOT TAKE AWAY" above. Empty until a
+# fatal makes _git ask for them.
+_GIT_AMBIENT_CONFIG=()
 
 # EVERY git invocation in this script goes through here, and none goes round it
 # (asserted by test_stage_private_data.case_every_git_invocation_carries_the_
@@ -408,8 +486,67 @@ _GIT_DEST_CONFIG=(-c core.ignoreCase=false -c core.precomposeUnicode=false)
 # option repeated at seven call sites, for the reason the clearing above is done
 # once in this shell: a probe a later edit adds inherits the isolation instead of
 # having to remember it.
+#
+# `${a[@]+"${a[@]}"}` rather than `"${a[@]}"`: under `set -u`, bash 3.2 -- what
+# macOS ships, and what this script runs on -- treats an EMPTY array's expansion
+# as an unbound variable and aborts.
+#
+# THE RETRY is the second half of the ambient-safe.directory repair. `|| rc=$?`
+# rather than a bare call, because `set -e` would otherwise abort the process
+# substitution the register listing runs in before the retry could happen. Only
+# 128, git's "I refused to do this at all": check-ignore's 1 and `config --get`'s
+# 1 are ANSWERS and are never retried. On a fatal git writes its message to
+# stderr and nothing to stdout, so the second attempt's output is the only
+# output any caller parses (measured for all six probe shapes).
 _git() {
-  command git -c core.excludesFile=/dev/null "${_GIT_DEST_CONFIG[@]}" "$@"
+  local rc=0 where="."
+  [ "${1:-}" != "-C" ] || where=${2:-.}
+  command git "${_GIT_FORCED_CONFIG[@]}" ${_GIT_DEST_CONFIG[@]+"${_GIT_DEST_CONFIG[@]}"} "$@" || rc=$?
+  if [ "$rc" -eq 128 ]; then
+    _load_ambient_protected_config "$where"
+    if [ ${#_GIT_AMBIENT_CONFIG[@]} -gt 0 ]; then
+      rc=0
+      command git "${_GIT_FORCED_CONFIG[@]}" \
+        ${_GIT_DEST_CONFIG[@]+"${_GIT_DEST_CONFIG[@]}"} \
+        "${_GIT_AMBIENT_CONFIG[@]}" "$@" || rc=$?
+    fi
+  fi
+  return "$rc"
+}
+
+# Read safe.directory from the operator's SYSTEM and GLOBAL configuration and
+# nowhere else, as -c options.
+#
+# The scope filter is the safety argument, not a detail: it is git's own rule
+# for this key, so a value in the DESTINATION's local or per-worktree config --
+# the one a forged destination could write for itself -- is dropped here instead
+# of being promoted to the command line, where git would honour it.
+#
+# `--show-scope` on an effective read, not `config --global`: measured on git
+# 2.50.1, `config --global --get-all safe.directory` reports NOTHING for a value
+# the same git reads and applies, because that spelling reads ~/.gitconfig alone
+# -- not $XDG_CONFIG_HOME/git/config and not an include from either. The
+# effective read with the scope printed beside each value returns both. A git
+# without --show-scope (2.26, Mar 2020) prints nothing and nothing is
+# re-injected, which is right rather than merely safe: safe.directory arrived in
+# 2.35.2 (Mar 2022), so that git has no ownership refusal to lift.
+#
+# -z, and a NUL-delimited read, because a config value may contain a newline.
+# The subshell unsets the isolation for this one read -- it has to see the files
+# the isolation empties -- and unsets the whole inherited GIT_CONFIG* family with
+# it, so an environment cannot supply a safe.directory that this read would then
+# hand to the command line.
+_load_ambient_protected_config() {
+  local scope value
+  _GIT_AMBIENT_CONFIG=()
+  while IFS= read -r -d '' scope && IFS= read -r -d '' value; do
+    case "$scope" in
+      system|global) _GIT_AMBIENT_CONFIG+=(-c "safe.directory=$value") ;;
+    esac
+  done < <(unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM \
+                 GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+           command git -C "$1" config --show-scope -z --get-all safe.directory \
+             2>/dev/null || true)
 }
 
 # Read those keys from the DESTINATION's own repository configuration and force
@@ -452,9 +589,10 @@ _adopt_destination_config() {
 }
 
 echo "stage-private-data.sh: asking git from repository-local configuration only" >&2
-echo "  every git command below carries -c core.excludesFile=/dev/null, plus" >&2
-echo "  core.ignoreCase and core.precomposeUnicode as the DESTINATION's own" >&2
-echo "  configuration states them, and these are exported:$_forced" >&2
+echo "  every git command below carries -c core.excludesFile=/dev/null; every one" >&2
+echo "  that asks ABOUT the destination also carries core.ignoreCase and" >&2
+echo "  core.precomposeUnicode as that repository's own configuration states them," >&2
+echo "  and these are exported:$_forced" >&2
 echo "  So a core.excludesFile in global, XDG or system config -- and git's default" >&2
 echo "  global ignore file, which is a hardcoded path rather than a config setting --" >&2
 echo "  cannot decide what this run treats as ignored, and neither can an ambient" >&2
@@ -465,6 +603,10 @@ echo "  version-independent: all" >&2
 echo "  but GIT_CONFIG_NOSYSTEM are read by git 2.31 and newer only, and an older git" >&2
 echo "  ignores them in silence, while 'git -c' has worked since 1.7.2. Not assumed --" >&2
 echo "  verified against the git in front of us before anything is written." >&2
+echo "  One thing is NOT switched off: if git refuses a repository outright as" >&2
+echo "  dubiously owned, that one command is retried with the safe.directory entries" >&2
+echo "  your system and global config already state -- the only scopes git reads them" >&2
+echo "  from, and the ones the isolation above would otherwise delete." >&2
 
 # ---------------------------------------------------------------------------
 # DESTINATION GUARD (issue #184) -- runs BEFORE the first write.
@@ -521,6 +663,28 @@ _common_git_dir() {   # absolute, symlink-resolved --git-common-dir of $1, or fa
   [ -n "$out" ] || return 1
   case "$out" in /*) ;; *) out="$d/$out" ;; esac
   _physical "$out"
+}
+
+# What git says about a directory it will not answer for -- stdout discarded,
+# stderr kept -- or nothing when it answers fine.
+#
+# A swallowed fatal reads exactly like "there is no repository here", and both
+# refusals below turn a failure of _common_git_dir into that sentence, with a
+# `git worktree add` remedy: right for a missing worktree, no remedy at all for
+# the two failures that are not about one -- dubious ownership, and a repository
+# whose configuration or object store git cannot read. git's own message says
+# which it is, and for ownership it carries the exact `git config --global --add
+# safe.directory ...` command, so it is quoted verbatim rather than paraphrased.
+#
+# Asked HERE rather than recorded inside _common_git_dir, and that is not a
+# style choice: every caller of that function reads it through `$(...)`, which
+# is a subshell, so a variable it set there would be gone by the time the
+# refusal printed it (measured -- the first version of this printed nothing).
+# private_egress.py returns the two together instead, since a python function
+# can; the two implementations agree on the message, not on the plumbing.
+_git_error_at() {
+  [ -d "$1" ] || return 0
+  _git -C "$1" rev-parse --git-common-dir 2>&1 >/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -584,6 +748,8 @@ if ! SELF_GIT=$(_common_git_dir "$SELF_DIR"); then
   echo "stage-private-data.sh: REFUSED -- this script is not inside a git working tree" >&2
   echo "  invoked as:  $SELF_PATH" >&2
   echo "  really in:   $SELF_DIR  (symbolic links resolved)" >&2
+  SELF_ERR=$(_git_error_at "$SELF_DIR")
+  [ -z "$SELF_ERR" ] || echo "  git said:    $SELF_ERR" >&2
   echo "  expected:    to be run from a checkout of this repository, whose worktrees are" >&2
   echo "               the only destinations it may stage private data into" >&2
   echo "  Nothing was written." >&2
@@ -610,6 +776,8 @@ if ! DST_GIT=$(_common_git_dir "$DST_REAL"); then
   echo "stage-private-data.sh: REFUSED -- destination is not a git working tree (nothing was written)" >&2
   echo "  destination: $DST  (resolved: $DST_REAL)" >&2
   echo "  found:       not a git repository" >&2
+  DST_ERR=$(_git_error_at "$DST_REAL")
+  [ -z "$DST_ERR" ] || echo "  git said:    $DST_ERR" >&2
   echo "  expected:    a working tree of this checkout (git common dir $SELF_GIT)" >&2
   echo "  This script stages one household's raw private archive and will only write it" >&2
   echo "  into a working tree of the checkout it lives in ($SELF_DIR)." >&2
@@ -972,20 +1140,55 @@ _refuse() {   # $1 = headline, remaining args = detail lines.
 # copy from the same place.
 # ---------------------------------------------------------------------------
 _require_isolation_proven() {
-  local effective rc kv key want
+  local effective rc kv key want said
+  local -a remedy
   _adopt_destination_config
-  for kv in "core.excludesFile=/dev/null" \
-            "${_GIT_DEST_CONFIG[@]}"; do
-    if [ "$kv" = "-c" ]; then continue; fi   # the array holds its own option flags
+  # DERIVED FROM THE WRAPPER, not restated. Both arrays are the ones _git puts
+  # on every command line, so a key added to the forcing above is read back here
+  # with no second edit -- the defect this loop had when it named
+  # core.excludesFile itself. _GIT_AMBIENT_CONFIG is deliberately not walked:
+  # its values are the operator's, multi-valued, and `config --get` of one prints
+  # whichever entry came first, so there is nothing here to compare.
+  for kv in "${_GIT_FORCED_CONFIG[@]}" ${_GIT_DEST_CONFIG[@]+"${_GIT_DEST_CONFIG[@]}"}; do
+    if [ "$kv" = "-c" ]; then continue; fi   # the arrays hold their own option flags
     key=${kv%%=*}
     want=${kv#*=}
     rc=0
     effective=$(_git -C "$DST_REAL" config --get "$key" 2>/dev/null) || rc=$?
     if [ "$effective" = "$want" ]; then continue; fi
+    # git's own words about the failure, so the message diagnoses itself rather
+    # than reporting a silence and guessing at the cause.
+    said=$(_git -C "$DST_REAL" config --get "$key" 2>&1 >/dev/null) || true
+    [ -n "$said" ] || said="(nothing on stderr)"
+    # The remedy is the one for THIS key, which the old message was not: it
+    # ended in "upgrade git" whatever had happened, and that is right only for
+    # the case it was written for -- the -c ignored. The two keys taken FROM the
+    # destination reach this refusal by a route the -c mechanism is not on trial
+    # in, and an operator sent to upgrade git for a config file that changed
+    # underneath the run fixes nothing and learns to distrust the refusal.
+    case "$key" in
+      core.ignoreCase|core.precomposeUnicode)
+        remedy=("This key is not switched off, it is taken FROM the destination:"
+                "the value above was read from that repository's own"
+                "--worktree/--local config a moment earlier. Either the file"
+                "changed underneath the run or git could not read it -- see 'git"
+                "said' above, re-run, and if it persists inspect the"
+                "destination's own .git/config. Upgrading git is NOT the remedy"
+                "here.") ;;
+      *)
+        remedy=("If git said nothing above, the -c option on the command line"
+                "did not take effect: 'git -c' has existed since git 1.7.2"
+                "(2010), so a git that ignores it is far older than anything this"
+                "script has been run on -- upgrade git, and re-run. If git"
+                "printed an error, that error is what to fix first: the isolation"
+                "is unproven because the question could not be asked, not because"
+                "the answer was wrong.") ;;
+    esac
     _refuse "this git could not be isolated from the operator's own configuration" \
       "destination: $DST  (resolved: $DST_REAL)" \
       "found:       $key reads back as '${effective:-<unset>}'" \
       "             ('git config --get $key' exited $rc)" \
+      "git said:    $said" \
       "expected:    $want, which is what this script forces -- with 'git -c'" \
       "             on every command, and, for core.excludesFile, with" \
       "             GIT_CONFIG_COUNT/KEY/VALUE as well" \
@@ -995,9 +1198,8 @@ _require_isolation_proven() {
       "configuration can still supply core.excludesFile -- or widen the matching" \
       "with core.ignoreCase or core.precomposeUnicode -- that answer is about" \
       "this machine rather than about the repository, and a destination that" \
-      "does NOT ignore private/ can answer that it does. 'git -c' has existed" \
-      "since git 1.7.2 (2010), so a git that ignores it is far older than" \
-      "anything this script has been run on: upgrade git, and re-run." \
+      "does NOT ignore private/ can answer that it does." \
+      "${remedy[@]}" \
       "Nothing was written, and nothing about the destination is at fault."
   done
 }

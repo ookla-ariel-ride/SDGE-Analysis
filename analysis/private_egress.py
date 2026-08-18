@@ -329,8 +329,10 @@ class Destination:
 # core.quotePath, core.attributesFile, core.hooksPath, core.fsmonitor,
 # core.sparseCheckout, core.protectHFS, core.autocrlf, core.longpaths,
 # core.checkStat, core.untrackedCache, index.sparse, status.showUntrackedFiles,
-# safe.directory, and aliases named after the three commands run here (git does
-# not let an alias shadow a builtin). core.bare is the one that needs its own
+# and aliases named after the three commands run here (git does not let an alias
+# shadow a builtin). safe.directory is inert IN THIS DIRECTION and is not inert
+# in the other one -- see "WHAT THE ISOLATION MUST NOT TAKE AWAY" below, which
+# is the question this list does not ask. core.bare is the one that needs its own
 # sentence: an ambient bare=true does make `git worktree list` report a MAIN
 # worktree as bare -- which _parse_worktree_records() drops, refusing a
 # destination inside it -- but only when the listing is made from inside a
@@ -341,10 +343,87 @@ class Destination:
 # Refusing-direction in either case, so it is left alone rather than made a
 # fourth forced key.
 #
+# AND WHAT THE ISOLATION MUST NOT TAKE AWAY (issue #193, /review round three).
+# The sweep above asks one question -- does an ambient value MOVE a verdict in
+# the admitting direction -- and the opposite question has its own answer: does
+# switching the ambient configuration off REMOVE a value the probes NEED? It
+# does, for exactly one key, and the key is `safe.directory`.
+#
+# git refuses to work in a repository owned by another user at all ("fatal:
+# detected dubious ownership"), and the one way an operator lifts that is a
+# `safe.directory` entry -- which git honours ONLY from protected configuration
+# (system, global, command line), precisely the scopes GIT_CONFIG_GLOBAL,
+# GIT_CONFIG_SYSTEM and GIT_CONFIG_NOSYSTEM empty. So a worktree on an SMB or
+# NFS share, in a container bind-mount, or created under sudo -- one the
+# operator has already declared safe and uses every day -- became unanswerable
+# HERE and nowhere else. MEASURED on git 2.50.1, with the ownership check driven
+# by GIT_TEST_ASSUME_DIFFERENT_OWNER=1 and safe.directory in the operator's
+# ~/.gitconfig, against every probe this module runs:
+#
+#                                  ambient config   this branch's isolation
+#   rev-parse --git-common-dir          0                128  fatal
+#   rev-parse --show-toplevel           0                128  fatal
+#   worktree list --porcelain           0                128  fatal
+#   ls-files -- <path>                  0                128  fatal
+#   check-ignore -q -- <path>           0                128  fatal
+#
+# and the refusal that came out named none of it: common_git_dir() returns None
+# on a fatal, so a correct caller was told "not inside a git working tree" with
+# a `git worktree add` remedy that cannot fix an ownership problem. A guard that
+# refuses correct callers is one that gets switched off -- this file's own
+# argument, applied to itself.
+#
+# THE SWEEP, in that second direction: 29 ambient keys, each set in the
+# operator's global config and each read by all five probes above with the
+# isolation on and off. safe.directory is the ONLY one that turns an answer into
+# a failure. protocol.file.allow=never moves them the other way (every probe is
+# fatal WITHOUT the isolation and answers with it), and the remaining 27 --
+# safe.bareRepository, uploadpack.packObjectsHook (the other two keys git reads
+# from protected configuration only), core.longpaths, core.protectHFS,
+# core.protectNTFS, core.symlinks, core.fileMode, core.quotePath,
+# core.attributesFile, core.hooksPath, core.untrackedCache, core.fsmonitor,
+# core.autocrlf, core.bare, core.worktree, core.sparseCheckout, index.sparse,
+# status.showUntrackedFiles, core.pager, core.checkStat, core.abbrev,
+# init.defaultBranch, worktree.useRelativePaths, advice.detachedHead and the
+# three keys this module forces -- are inert or move in the admitting direction,
+# which the paragraphs above already settle.
+#
+# THE REPAIR is AMBIENT_PROTECTED_KEYS below, re-injected with -c, and it is
+# narrow in four ways that together are why re-admitting a protected-config key
+# does not undo the isolation:
+#
+#   WHEN. Only after git has already refused to answer -- _git() re-runs a
+#         command that exited 128 (git's fatal status), once, and only then. A
+#         value that arrives only where there was no answer cannot change an
+#         answer, so no verdict this module acts on can be moved by it.
+#   WHICH. safe.directory decides WHETHER git will read a repository, not what
+#         that repository's rules are or how they match. It supplies no ignore
+#         rules (that is core.excludesFile) and no matching semantics (that is
+#         core.ignoreCase and core.precomposeUnicode), so there is no path by
+#         which it reaches the ignored/not-ignored verdict.
+#   FROM WHERE. Read from the `system` and `global` scopes only, filtered by
+#         git's own `config --show-scope`, which is the same rule git applies to
+#         the key. The DESTINATION's local and per-worktree config is dropped --
+#         promoting a repository-local safe.directory to the command line would
+#         let a forged destination declare itself trustworthy, which is the
+#         attack git's protected-configuration rule exists to stop. The read
+#         runs with the whole GIT_CONFIG* family dropped (_unisolated_env()), so
+#         an inherited environment cannot supply one either.
+#   HOW MUCH. The values are replayed RAW, in git's own order, so `~/x`,
+#         `%(prefix)/x`, `*` and the empty reset entry keep their meaning and a
+#         directory the operator never declared stays refused -- now with git's
+#         own message, which carries the working remedy.
+#
+# On a git old enough to lack `config --show-scope` (2.26, Mar 2020) the read
+# returns nothing and nothing is re-injected: safe.directory arrived in 2.35.2
+# (Mar 2022), so such a git has no ownership check to lift.
+#
 # AND IT IS PROVED, not assumed: _require_isolation_proven() below asks the
 # running git what each forced key actually reads back as, and refuses if any of
-# them is not ours. Version numbers are what this comment can offer; what the
-# guard acts on is the git in front of it.
+# them is not ours. The re-injected key is deliberately NOT in that list -- its
+# value is the operator's, not this module's, and there is nothing to prove
+# about a value we did not choose. Version numbers are what this comment can
+# offer; what the guard acts on is the git in front of it.
 #
 # The ORDER matters and is asserted by construction below: the inherited
 # GIT_CONFIG* family is dropped first, then the six are written in. An inherited
@@ -389,6 +468,18 @@ GIT_CONFIG_OVERRIDES = (
 # value it demands. Derived from the table above rather than restated, so the
 # proof cannot go on asserting a key the isolation has stopped forcing.
 ISOLATION_PROOF_KEY, ISOLATION_PROOF_VALUE = GIT_CONFIG_OVERRIDES[0]
+
+# The ambient keys the isolation must hand BACK when git refuses to answer, and
+# the only two config scopes they may be taken from -- git's own rule for them.
+# See "WHAT THE ISOLATION MUST NOT TAKE AWAY" above for the sweep that found
+# this list and the four limits that keep it from undoing the isolation.
+AMBIENT_PROTECTED_KEYS = ("safe.directory",)
+PROTECTED_SCOPES = ("system", "global")
+# git's own status for "I refused to do this at all", as opposed to 1 for a
+# question answered "no". check-ignore's 1, `config --get`'s 1 and ls-files'
+# empty success are answers; 128 is not, and it is the only status the
+# re-injection above is allowed to react to.
+GIT_FATAL = 128
 
 # The keys whose value is taken FROM THE DESTINATION rather than switched off,
 # with the value used when that repository states none. Boolean, and forced as
@@ -438,6 +529,24 @@ DESTINATION_CONFIG_KEYS = (
 DESTINATION_CONFIG_SCOPES = ("--worktree", "--local")
 
 
+def _unisolated_env(env=None):
+    """`env` (default os.environ) with every variable DROPPED that sanitized_env()
+    drops, and nothing written in its place.
+
+    The half of sanitized_env() that stops a caller REPLACING git's answer,
+    without the half that switches the operator's own configuration off. Exactly
+    one read is made in it -- _ambient_protected_config(), which has to see the
+    operator's system and global files to read them at all -- and dropping the
+    GIT_CONFIG* family first is what keeps an inherited environment from
+    supplying a safe.directory that read would then hand to the command line.
+    """
+    src = os.environ if env is None else env
+    drop = (set(GIT_IDENTITY_VARS) | set(PATH_MEANING_VARS)
+            | set(PATHSPEC_MEANING_VARS))
+    return {k: v for k, v in src.items()
+            if k not in drop and not k.startswith(GIT_CONFIG_PREFIX)}
+
+
 def sanitized_env(env=None):
     """`env` (default os.environ) with every variable that can move git's answer
     -- or change what a relative path or a pathspec means -- removed, and the
@@ -448,13 +557,50 @@ def sanitized_env(env=None):
     repository-local configuration alone. The drop comes first because the
     GIT_CONFIG* prefix covers the names the second half writes.
     """
-    src = os.environ if env is None else env
-    drop = (set(GIT_IDENTITY_VARS) | set(PATH_MEANING_VARS)
-            | set(PATHSPEC_MEANING_VARS))
-    out = {k: v for k, v in src.items()
-           if k not in drop and not k.startswith(GIT_CONFIG_PREFIX)}
+    out = _unisolated_env(env)
     out.update(GIT_CONFIG_ISOLATION)
     return out
+
+
+def _ambient_protected_config(cwd, env=None):
+    """The operator's own AMBIENT_PROTECTED_KEYS values, as (key, value) pairs,
+    taken from the system and global scopes only.
+
+    Read with `config --show-scope --get-all` and filtered on the scope git
+    itself reports, which is the whole of the safety argument: it is git's own
+    rule for these keys, so a value in the DESTINATION's local or per-worktree
+    config -- the one a forged destination could write -- is dropped here rather
+    than promoted to the command line, where it would count.
+
+    --show-scope, not `config --global`: measured on git 2.50.1, `config
+    --global --get-all safe.directory` reports NOTHING for a value the same git
+    reads and applies, because that spelling reads ~/.gitconfig alone -- not
+    $XDG_CONFIG_HOME/git/config, and not an `include.path` from either. The
+    effective read with the scope printed beside each value returns both
+    (measured: scope `global`, origins the XDG file and the included file), and
+    a `--local` value is labelled `local` and dropped here.
+
+    Values are returned RAW, exactly as git printed them, so `~/x`,
+    `%(prefix)/x`, `*` and the empty entry that RESETS the list keep the meaning
+    they have in the file, in the order git read them.
+
+    A git without --show-scope (2.26, Mar 2020) exits non-zero and this returns
+    nothing, which is correct rather than merely safe: safe.directory arrived in
+    2.35.2 (Mar 2022), so that git has no ownership refusal to lift.
+    """
+    out = []
+    for key in AMBIENT_PROTECTED_KEYS:
+        r = subprocess.run(
+            ["git", "-C", str(cwd), "config", "--show-scope", "-z",
+             "--get-all", key],
+            capture_output=True, text=True, env=_unisolated_env(env))
+        if r.returncode != 0:
+            continue
+        fields = r.stdout.split("\0")
+        for scope, value in zip(fields[0::2], fields[1::2]):
+            if scope in PROTECTED_SCOPES:
+                out.append((key, value))
+    return tuple(out)
 
 
 def _git(args, cwd, env=None, overrides=GIT_CONFIG_OVERRIDES):
@@ -473,11 +619,30 @@ def _git(args, cwd, env=None, overrides=GIT_CONFIG_OVERRIDES):
     which no destination-derived key moves. The two probes whose ANSWER those
     keys move are handed the fuller list _require_isolation_proven() has just
     proved -- see _destination_overrides().
+
+    AND ONE RETRY, on git's fatal status alone. Emptying the global and system
+    configuration also empties the operator's `safe.directory` entries, which
+    git honours from nowhere else, so a repository they have already declared
+    safe answers every probe with `fatal: detected dubious ownership` -- a
+    correct caller refused by the isolation itself. When that happens the
+    command is re-run once with those entries, and only those, put back on the
+    command line. It is deliberately reactive: a value that arrives only where
+    git gave no answer at all cannot change an answer it did give, so the
+    verdicts stay the isolation's. See "WHAT THE ISOLATION MUST NOT TAKE AWAY".
     """
     opts = [tok for name, value in overrides
             for tok in ("-c", f"{name}={value}")]
-    return subprocess.run(["git"] + opts + ["-C", str(cwd)] + list(args),
-                          capture_output=True, text=True, env=sanitized_env(env))
+
+    def run(extra):
+        return subprocess.run(["git"] + opts + extra + ["-C", str(cwd)] + list(args),
+                              capture_output=True, text=True, env=sanitized_env(env))
+
+    r = run([])
+    if r.returncode != GIT_FATAL:
+        return r
+    ambient = [tok for name, value in _ambient_protected_config(cwd, env)
+               for tok in ("-c", f"{name}={value}")]
+    return run(ambient) if ambient else r
 
 
 def _destination_config(worktree, key, default, env=None):
@@ -538,28 +703,42 @@ def _physical(path):
         return None
 
 
-def common_git_dir(path, env=None):
-    """`--git-common-dir` of `path`, absolute and symlink-resolved, or None.
+def _locate_common_git_dir(path, env=None):
+    """(the `--git-common-dir` of `path` -- absolute and symlink-resolved -- or
+    None, and what git said when it would not answer).
 
     --path-format=absolute is load-bearing: without it rev-parse returns a
     RELATIVE ".git" from a repo root and an ABSOLUTE path from a linked
     worktree, so a naive comparison rejects a legitimate destination. git < 2.31
     has no such flag, so its (already cwd-relative) answer is normalized instead
     of being compared raw.
+
+    THE SECOND HALF is the refusal's evidence, and it exists because a swallowed
+    fatal reads exactly like "no repository here". Every caller of this turns a
+    None into prose -- "not inside a git working tree", with a `git worktree
+    add` remedy -- and for the two failures that are not about a missing
+    repository at all (dubious ownership; a repository whose config or object
+    store git cannot read) that prose names the wrong cause and offers a remedy
+    that cannot work. git's own message says which it is, and for ownership it
+    carries the exact `git config --global --add safe.directory ...` command, so
+    it is passed through verbatim rather than paraphrased.
     """
     if not os.path.isdir(path):
-        return None
+        return None, ""
     r = _git(["rev-parse", "--path-format=absolute", "--git-common-dir"], path, env)
     if r.returncode != 0:
         r = _git(["rev-parse", "--git-common-dir"], path, env)
         if r.returncode != 0:
-            return None
+            return None, (r.stderr or "").strip()
     out = r.stdout.strip()
     if not out:
-        return None
-    if not os.path.isabs(out):
-        out = os.path.join(str(path), out)
-    return _physical(out)
+        return None, (r.stderr or "").strip()
+    return _physical(out if os.path.isabs(out) else os.path.join(str(path), out)), ""
+
+
+def common_git_dir(path, env=None):
+    """`--git-common-dir` of `path`, absolute and symlink-resolved, or None."""
+    return _locate_common_git_dir(path, env)[0]
 
 
 def self_common_git_dir(env=None):
@@ -570,7 +749,7 @@ def self_common_git_dir(env=None):
     decides which repository's worktrees are eligible, and a copy of this module
     on some other path must not authorize this checkout's destinations.
     """
-    return common_git_dir(str(ROOT), env)
+    return _locate_common_git_dir(str(ROOT), env)[0]
 
 
 def _parse_worktree_records(text, sep):
@@ -734,7 +913,7 @@ def _confirm_register_entry(wt_real, self_git, env=None):
     the DIRECTORY rather than the register. `self_git` is this checkout's common
     dir, resolved from the copy of this module that is running.
     """
-    now = common_git_dir(wt_real, env)
+    now, why = _locate_common_git_dir(wt_real, env)
     if now == self_git:
         return
     if not os.path.isdir(wt_real):
@@ -750,7 +929,8 @@ def _confirm_register_entry(wt_real, self_git, env=None):
             "there is in no git repository NOW: the worktree was deleted "
             "without 'git worktree remove' and a plain directory was put back "
             "at the same path. STALE ENTRY, not a missing one -- 'git worktree "
-            "prune' removes it, because the .git it recorded is gone", wt_real)
+            "prune' removes it, because the .git it recorded is gone"
+            + _git_said(why), wt_real)
     raise DestinationRefused(
         "different_repository",
         f"this checkout's register names this worktree, but the directory there "
@@ -762,15 +942,28 @@ def _confirm_register_entry(wt_real, self_git, env=None):
         f"directory and then run 'git worktree prune'", wt_real)
 
 
+def _git_said(stderr):
+    """git's own words about a probe it refused to answer, ready to append to a
+    refusal -- or nothing, when it said nothing.
+
+    One helper for all three sites, so a fatal cannot go on being reported as
+    "no repository here" at whichever exit a later edit forgets. Truncated
+    because a refusal is read by a person: the first line of a git fatal carries
+    the cause, and for dubious ownership the remedy comes with it.
+    """
+    said = " ".join((stderr or "").split())
+    return f" -- git said: {said[:300]}" if said else ""
+
+
 def _diagnose_outside(path, self_git, env):
     """Why `path` is in no registered worktree -- the shell's four distinct
     refusals, kept distinct because their remedies differ."""
     near = _nearest_existing(path)
     if near is None or _physical(near) is None:
         return "no_such_destination", "no existing directory on this path"
-    dst_git = common_git_dir(_physical(near), env)
+    dst_git, why = _locate_common_git_dir(_physical(near), env)
     if dst_git is None:
-        return "not_a_worktree", f"{near} is not inside a git repository"
+        return "not_a_worktree", f"{near} is not inside a git repository" + _git_said(why)
     if dst_git != self_git:
         return ("different_repository",
                 f"git common dir {dst_git}, expected {self_git}")
@@ -782,6 +975,26 @@ def _diagnose_outside(path, self_git, env):
             "reports this checkout's common dir but appears in no entry of "
             "'git worktree list' for it -- a .git gitfile can claim membership "
             "a copied or restored directory never had")
+
+
+def _self_git_or_refuse(lit, env):
+    """This checkout's common dir, or the self_unlocatable refusal -- carrying
+    what git said when it would not answer.
+
+    A separate function because the refusal has to quote git and the ordinary
+    lookup does not: "this file is not in a working tree" is the right sentence
+    for a module outside a checkout and the wrong one for a checkout git will
+    not read (dubious ownership, an unreadable config), and those two arrive
+    here identically as None.
+    """
+    self_git, why = _locate_common_git_dir(str(ROOT), env)
+    if not self_git:
+        raise DestinationRefused(
+            "self_unlocatable",
+            f"{__file__} does not resolve into a git working tree, so which "
+            "checkout's worktrees are eligible cannot be established"
+            + _git_said(why), lit)
+    return self_git
 
 
 KINDS = ("root", "tree", "dir", "file")
@@ -938,12 +1151,7 @@ def _check_destination(path, *, kind, require_ignored, worktrees, env):
     # refusal that needs it -- an unlocatable self must never read as "accepted".
     self_git = None
     if worktrees is None:
-        self_git = self_common_git_dir(env)
-        if not self_git:
-            raise DestinationRefused(
-                "self_unlocatable",
-                f"{__file__} does not resolve into a git working tree, so which "
-                "checkout's worktrees are eligible cannot be established", lit)
+        self_git = _self_git_or_refuse(lit, env)
 
     if kind == "root" and not os.path.isdir(lit):
         # Refused, never created: a directory that does not exist cannot be a
@@ -1136,6 +1344,35 @@ def _pathspec(relpath):
     return "./" + relpath
 
 
+def _isolation_remedy(key):
+    """What to actually do about a key that did not read back, which is not the
+    same sentence for every key that can reach this refusal.
+
+    The message here used to say "upgrade git" whatever had happened. That is
+    right for the case it was written for -- the -c option ignored, which only a
+    git predating 1.7.2 (2010) does -- and wrong for the others that reach it:
+    a `config --get` that failed for some other reason, a destination whose
+    configuration changed between the scope read and the readback, and, for the
+    two keys taken FROM the destination, a mechanism that is not on trial at
+    all. An operator sent to upgrade git for a stale config file fixes nothing
+    and learns to distrust the refusal.
+    """
+    if key in dict(DESTINATION_CONFIG_KEYS):
+        return (f"{key} is not switched off, it is taken FROM this destination: "
+                "the value above was read from its own --worktree/--local config "
+                "moments ago and forced with 'git -c'. A readback that disagrees "
+                "means that file changed underneath the run, or git could not read "
+                "it -- see what git said above, re-run, and if it persists inspect "
+                f"the destination's own .git/config. Upgrading git is NOT the "
+                "remedy here.")
+    return ("If git said nothing above, the -c option on the command line did not "
+            "take effect: 'git -c' has existed since git 1.7.2 (2010), so a git "
+            "that ignores it is older than anything this repository is developed "
+            "on -- upgrade git. If git printed an error, that error is the thing "
+            "to fix first: the isolation is unproven because the question could "
+            "not be asked, not because the answer was wrong.")
+
+
 def _require_isolation_proven(worktree, env=None):
     """The running git must really be answering from repository-local
     configuration -- refuses with 'isolation_unproven' when it is not.
@@ -1156,6 +1393,13 @@ def _require_isolation_proven(worktree, env=None):
     list the probes are given, which is why it RETURNS that list -- the caller
     runs its probes with the overrides this function has just proved, and there
     is no second derivation for the two to disagree about.
+
+    EVERY key THIS MODULE CHOOSES, which is what leaves AMBIENT_PROTECTED_KEYS
+    out of the loop: _git() hands git the operator's own safe.directory entries
+    back when git has refused to answer at all, and their value is the
+    operator's rather than ours. There is nothing to prove about a value we did
+    not choose, and nothing to compare it against -- it is multi-valued, and a
+    `config --get` of it prints whichever entry came first.
 
     It is the RESULT that is checked, not the mechanism, so this keeps holding if
     the mechanisms change and it fails closed if some later git reorders
@@ -1178,13 +1422,12 @@ def _require_isolation_proven(worktree, env=None):
             "isolation_unproven",
             f"{key} reads back as "
             f"{effective or '<unset>'!r} in {worktree}, not "
-            f"{value!r} ('git config --get' exited {r.returncode}; "
-            f"{version}). The ignore question below would then be answered by the "
+            f"{value!r} ('git config --get {key}' exited {r.returncode}"
+            + (_git_said(r.stderr) or " -- nothing on stderr")
+            + f"; {version}). The ignore question below would then be answered by the "
             "operator's global, XDG or system configuration rather than by the "
             "repository, and a destination that does NOT ignore private data could "
-            "answer that it does. 'git -c' has existed since git 1.7.2 (2010), so a "
-            "git that ignores it is older than anything this repository is developed "
-            "on: upgrade git", worktree)
+            "answer that it does. " + _isolation_remedy(key), worktree)
     return overrides
 
 
