@@ -1091,7 +1091,18 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
     for name in sorted(gap_names & rb.LIVE_GAP_TOKENS):
         override_key = f"TOKEN:{name}"
         if override_key in human_answers:
-            resolved[name] = human_answers[override_key]
+            # THROUGH THE CONTRACT, never straight into `resolved`. A human answer
+            # lands in fixed markup that already carries half the sentence -- section
+            # 3's cell reads `{{FIGURE}} - "Your Best Plan" {{VERDICT}}` -- so an empty
+            # or shapeless answer does not render as "unanswered", it renders as the
+            # surrounding words asserting themselves. That is the assertion issue #196
+            # removed, restored by a blank line in an answers file. Block answers have
+            # been validated all along (find_html_structure_violations); token answers
+            # were spliced unasked.
+            try:
+                resolved[name] = rt.validate_gap_answer(name, human_answers[override_key])
+            except SystemExit as e:
+                failures.append((name, "gap-token", str(e)))
         else:
             failures.append((name, "gap-token", rt.TOKENS[name].get("reason", "")))
 

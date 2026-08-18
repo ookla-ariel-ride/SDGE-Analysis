@@ -11,13 +11,17 @@ the real path rather than skipping.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_report_tokens.py
 """
+import ast
 import contextlib
 import copy
 import datetime as dt
 import html as _htmllib
+import itertools
 import pathlib
 import re
+import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -4884,7 +4888,7 @@ def case_section_0s_card_counts_every_scenario_it_names():
                   key=lambda p: plans[p]["no_battery"])
     wildcard = rt._json("deep_results.json")["wildcard"]
     ours = [k for k in wildcard
-            if re.split(r"\s*\+|\s+no battery", k)[0].strip() == cheapest]
+            if rt._wildcard_key_plan(k) == cheapest]
     assert len(ours) == 1, (
         f"deep_results.json:wildcard names {ours} for {cheapest}; this case moves exactly "
         "one entry")
@@ -5247,6 +5251,25 @@ def case_section_0s_card_reads_a_half_won_battery_matrix():
                         for label, _cells, _opening in states))
 
 
+def _wildcard_phrase_for(rivals, plan="TEST-PLAN"):
+    """The scenario phrase rt._wildcard_scenario builds for a workup pricing
+    `plan` against `rivals`.
+
+    TAKEN FROM THE MODULE, never typed: the phrase is one item of the card's
+    ", "-joined parenthetical, so how the rivals are joined is the card's
+    punctuation and not this file's opinion. A case that spells the phrase out
+    here would keep passing after the joining rule changed under it -- which is
+    how three rivals came to publish a five-item list inside a three-item
+    count."""
+    totals = {f"{plan} + PW3": 100, f"{plan} no battery": 140}
+    for i, rival in enumerate(rivals):
+        totals[f"{rival} + PW3"] = 200 + i
+        totals[f"{rival} no battery"] = 300 + i
+    with _stub_household({"household.plan": plan}), _wildcard_priced(totals):
+        phrase, _standing = rt._wildcard_scenario(rt.CTX)
+    return phrase
+
+
 # Every standing the wildcard can be in: the card's own vocabulary plus the one
 # thing that scenario can do and the others cannot -- not be there at all
 # (_wildcard_scenario returns None when deep_results.json cannot rank this
@@ -5258,8 +5281,26 @@ _CARD_WILDCARD_STATES = rt._PLAN_STANDINGS + (None,)
 # (cheapest_in, tied_in, named, exception). Read out of the sentence rather
 # than recomputed from the standings that produced it -- a checker that
 # re-derives the counts agrees with the formula by construction and proves
-# nothing about the English around them. `tied_in` is None where the branch
-# does not state one; `exception` is the split-matrix carve-out or "".
+# nothing about the English around them. `exception` is the split-matrix
+# carve-out or "".
+#
+# EVERY BRANCH STATES A TIE COUNT, and this guard used to let two of them not
+# to. `tied_in` was None for the "Cheapest in N of the M" and "Not the cheapest
+# in any" branches, so the tie assertion below SKIPPED exactly where the label
+# was silent about ties -- and the label was silent there because it collapsed
+# them: a plan tying in two scenarios and beaten in a third published "Cheapest
+# in 2 of the 3 scenarios tested (...) — beaten in the rest", claiming sole
+# cheapest in two scenarios it drew. The ambiguity check keyed on (count,
+# half-won) and could not see it either, so 108 cases passed over the branch
+# that needed them. A guard with a hole in it is worse than none, because it
+# gets cited: the count is read out of all four branches now.
+#
+# TWO WAYS A SENTENCE CAN STATE "no ties", both read here rather than assumed.
+# The partial branch adds ", level with a rival in N of those" only when there
+# is a tie to declare, so the clause's ABSENCE is the claim "none of the
+# counted scenarios is a tie" -- optional group, 0 when it does not fire. The
+# last branch counts nothing cheapest at all, and a tie IS a cheapest standing,
+# so "not the cheapest in any" says zero ties in as many words.
 _CARD_EXCEPTION_RE = (r"(?P<exception>, except in one of the battery×plan matrix's two "
                       r"columns, where it (?:is the cheapest plan|ties for cheapest))?")
 _CARD_CLAIM_PATTERNS = (
@@ -5271,18 +5312,20 @@ _CARD_CLAIM_PATTERNS = (
                 r"beats it$"),
      lambda m, total: (total, int(m.group("tied")))),
     (re.compile(r"^Cheapest in (?P<cheapest>\d+) of the (?P<total>\d+) scenarios tested "
-                r"\((?P<named>.*)\) — beaten in the rest" + _CARD_EXCEPTION_RE + "$"),
-     lambda m, total: (int(m.group("cheapest")), None)),
+                r"\((?P<named>.*)\)(?:, level with a rival in (?P<tied>\d+) of those)?"
+                r" — beaten in the rest" + _CARD_EXCEPTION_RE + "$"),
+     lambda m, total: (int(m.group("cheapest")),
+                       int(m.group("tied")) if m.group("tied") else 0)),
     (re.compile(r"^Not the cheapest in any of the (?P<total>\d+) scenarios tested "
                 r"\((?P<named>.*)\) — a cheaper plan exists in each"
                 + _CARD_EXCEPTION_RE + "$"),
-     lambda m, total: (0, None)),
+     lambda m, total: (0, 0)),
 )
 
 
 def _card_claim(label, scenarios):
     """(cheapest_in, tied_in, named, exception) READ OUT OF the card's own
-    sentence.
+    sentence -- every element of it, from every branch.
 
     The stated total is checked against the number of scenarios the label was
     handed, and every branch that prints a total prints it in the same place.
@@ -5321,7 +5364,11 @@ def case_section_0s_card_is_true_of_every_ranking_it_can_be_handed():
       * the number of scenarios claimed cheapest is the number of SCORED
         scenarios that are not "trails", where the matrix scores as ONE, at the
         standing both its columns support;
-      * a stated tie count is the number that are "tie";
+      * the tie count the label states -- in EVERY branch, whether it declares
+        one, leaves the declaring clause off, or counts nothing cheapest at
+        all -- is the number that are "tie". This assertion used to be skipped
+        wherever the branch said nothing about ties, which was exactly where
+        the label was collapsing them into outright wins;
       * the stated total is the number of scenarios handed over, and the
         parenthetical names all of them and nothing else;
       * the "except in one of the battery×plan matrix's two columns" clause
@@ -5333,73 +5380,286 @@ def case_section_0s_card_is_true_of_every_ranking_it_can_be_handed():
         exists in each" assert.
 
     AND THE WORDING SEPARATES THE STATES A READER HAS TO TELL APART: no label
-    is published for two different (cheapest-in count, matrix pair) readings.
-    "Lost half the matrix" against "lost the whole matrix" is the pair this
-    finding is about, and it is asserted over every pair in the enumeration
-    rather than that one.
+    is published for two different (cheapest-in count, TIE count, matrix pair)
+    readings. "Lost half the matrix" against "lost the whole matrix" is the
+    pair the split-clause finding was about; "won two" against "won one and
+    drew one" is the pair the tie collapse was about, and the key could not see
+    it until the tie count went into it. Both are asserted over every reading
+    in the enumeration rather than over the two named ones.
+
+    AND THE WILDCARD PHRASE IS DRIVEN AT BOTH SHAPES IT CAN TAKE, one rival
+    and three. The parenthetical is a ", "-joined list and the phrase is one
+    of its items, so a phrase carrying that separator publishes a list of five
+    beside a sentence counting three -- which the `named` assertion below
+    catches, but only if it is ever handed a multi-rival phrase. It was not.
+    The phrases come from rt._wildcard_scenario's own joining rule rather than
+    typed here, so a change to that rule is driven through this whole
+    enumeration instead of past it.
 
     Driven through rt._plan_card_label rather than the artifacts, because 108
     combinations of three artifacts is not a fixture; the artifact path is
     driven by the cases above, which share that function."""
-    wildcard_phrase = "TEST-PLAN wildcard"
+    wildcard_phrases = [_wildcard_phrase_for(["TEST-RIVAL"]),
+                        _wildcard_phrase_for(["TOU-DR-1", "TOU-DR-2", "TOU-DR-P"])]
     by_reading, checked = {}, 0
-    for csv_standing in rt._PLAN_STANDINGS:
-        for nb in rt._PLAN_STANDINGS:
-            for wb in rt._PLAN_STANDINGS:
-                pair = tuple(sorted((nb, wb), key=rt._S4_COLUMN_STANDINGS.index))
-                for wc in _CARD_WILDCARD_STATES:
-                    wildcard = None if wc is None else (wildcard_phrase, wc)
-                    label = rt._plan_card_label(csv_standing, pair, wildcard)
-                    # The scenarios the card SCORES: the CSV, the matrix as one
-                    # (at the standing both columns support), and the wildcard
-                    # when it exists.
-                    scored = [("no-battery", csv_standing),
-                              ("battery×plan matrix", pair[0])]
-                    if wildcard:
-                        scored.append(wildcard)
-                    standings = [s for _p, s in scored]
-                    cheapest_in, tied_in, named, exception = _card_claim(label, scored)
-                    truth = sum(s != "trails" for s in standings)
-                    ties = sum(s == "tie" for s in standings)
-                    assert cheapest_in == truth, (
-                        f"the card claims this plan is cheapest in {cheapest_in} of "
-                        f"{len(standings)} scenarios standing {standings}, where the "
-                        f"true count is {truth}: {label!r}")
-                    if tied_in is not None:
-                        assert tied_in == ties, (
-                            f"the card claims {tied_in} tie(s) over standings "
-                            f"{standings}, where there are {ties}: {label!r}")
-                    assert named == [p for p, _s in scored], (
-                        f"the card names {named} for scenarios "
-                        f"{[p for p, _s in scored]}: {label!r}")
-                    half_won = pair[0] == "trails" and pair[1] != "trails"
-                    assert bool(exception) == half_won, (
-                        f"the split-matrix clause is {'present' if exception else 'absent'}"
-                        f" for matrix columns {pair}, which is {'' if half_won else 'not '}"
-                        f"a half-won matrix: {label!r}")
-                    if half_won:
-                        wanted = ("is the cheapest plan" if pair[1] == "win"
-                                  else "ties for cheapest")
-                        assert exception.endswith(wanted), (
-                            f"the matrix's won column stands {pair[1]!r} and the card says "
-                            f"{exception!r}: {label!r}")
-                    else:
-                        # No exception is stated, so the absolutes have to hold:
-                        # every scenario not counted as cheapest is a clean loss.
-                        assert truth + sum(s == "trails" for s in standings) \
-                            == len(standings), (standings, label)
-                    by_reading.setdefault(label, set()).add((truth, pair))
-                    checked += 1
-    assert checked == 108, checked
+    for wildcard_phrase, csv_standing, nb, wb, wc in itertools.product(
+            wildcard_phrases, rt._PLAN_STANDINGS, rt._PLAN_STANDINGS,
+            rt._PLAN_STANDINGS, _CARD_WILDCARD_STATES):
+        pair = tuple(sorted((nb, wb), key=rt._S4_COLUMN_STANDINGS.index))
+        wildcard = None if wc is None else (wildcard_phrase, wc)
+        label = rt._plan_card_label(csv_standing, pair, wildcard)
+        # The scenarios the card SCORES: the CSV, the matrix as one (at the
+        # standing both columns support), and the wildcard when it exists.
+        scored = [("no-battery", csv_standing), ("battery×plan matrix", pair[0])]
+        if wildcard:
+            scored.append(wildcard)
+        standings = [s for _p, s in scored]
+        cheapest_in, tied_in, named, exception = _card_claim(label, scored)
+        truth = sum(s != "trails" for s in standings)
+        ties = sum(s == "tie" for s in standings)
+        assert cheapest_in == truth, (
+            f"the card claims this plan is cheapest in {cheapest_in} of "
+            f"{len(standings)} scenarios standing {standings}, where the "
+            f"true count is {truth}: {label!r}")
+        assert tied_in == ties, (
+            f"the card claims {tied_in} tie(s) over standings {standings}, where "
+            f"there are {ties}: {label!r}")
+        assert named == [p for p, _s in scored], (
+            f"the card names {named} for scenarios {[p for p, _s in scored]}: {label!r}")
+        half_won = pair[0] == "trails" and pair[1] != "trails"
+        assert bool(exception) == half_won, (
+            f"the split-matrix clause is {'present' if exception else 'absent'}"
+            f" for matrix columns {pair}, which is {'' if half_won else 'not '}"
+            f"a half-won matrix: {label!r}")
+        if half_won:
+            wanted = ("is the cheapest plan" if pair[1] == "win"
+                      else "ties for cheapest")
+            assert exception.endswith(wanted), (
+                f"the matrix's won column stands {pair[1]!r} and the card says "
+                f"{exception!r}: {label!r}")
+        else:
+            # No exception is stated, so the absolutes have to hold: every
+            # scenario not counted as cheapest is a clean loss.
+            assert truth + sum(s == "trails" for s in standings) \
+                == len(standings), (standings, label)
+        by_reading.setdefault(label, set()).add((truth, ties, pair))
+        checked += 1
+    assert checked == 108 * len(wildcard_phrases), checked
     ambiguous = {label: readings for label, readings in by_reading.items()
-                 if len({(count, p[0] == "trails" and p[1] != "trails")
-                         for count, p in readings}) > 1}
+                 if len({(count, tied, p[0] == "trails" and p[1] != "trails")
+                         for count, tied, p in readings}) > 1}
     assert not ambiguous, (
         "one label is published for two readings a reader has to tell apart "
-        f"(scenarios won, half-won matrix or not): {ambiguous}")
-    return (f"all {checked} standing combinations that can reach section 0's card parse "
-            f"back to the claims they state, over {len(by_reading)} distinct labels, none "
-            "shared between two readings")
+        f"(scenarios won, of those how many only tied, half-won matrix or not): "
+        f"{ambiguous}")
+    return (f"all {checked} standing combinations that can reach section 0's card "
+            f"({len(wildcard_phrases)} wildcard phrasings × 108 standings) parse back to "
+            f"the claims they state, ties included, over {len(by_reading)} distinct "
+            "labels, none shared between two readings")
+
+
+def _report_tokens_under_O(source, code):
+    """Run `code` under `python -O` against a report_tokens.py built from
+    `source`, returning the finished CompletedProcess.
+
+    The mutated module is written to a temp dir placed FIRST on sys.path so it
+    shadows the real one; its own imports (household, rates) still resolve out
+    of analysis/. Nothing in this repo is touched, and -O is the point: the
+    optimiser is what strips an assert statement out of the bytecode."""
+    with tempfile.TemporaryDirectory() as td:
+        pathlib.Path(td, "report_tokens.py").write_text(source)
+        return subprocess.run(
+            [sys.executable, "-O", "-B", "-c",
+             f"import sys; sys.path[:0] = [{td!r}, "
+             f"{str(pathlib.Path(rt.__file__).parent)!r}]\n" + code],
+            capture_output=True, text=True)
+
+
+@case
+def case_report_tokens_guards_survive_python_dash_O():
+    """A GUARD WRITTEN AS `assert` IS ABSENT UNDER `python -O`, which is the
+    run where nothing else is watching.
+
+    report_tokens checked its two standing vocabularies -- the matrix's
+    per-column words and the CSV's -- with a bare module-level assert. Under
+    -O that statement is not compiled at all, so a module whose vocabularies
+    had drifted apart imported cleanly and section 0's card went on scoring a
+    standing it cannot read, publishing "Best plan in every scenario tested"
+    off it. And when the assert DID fire it raised AssertionError at import of
+    report_tokens, taking report_blocks, generate_report and every suite down
+    with a message in none of this module's refusal vocabulary.
+
+    Both halves are checked here, on a real interpreter with -O actually set:
+    the module imports under -O, and a copy whose vocabularies disagree refuses
+    under -O by name. And the class is swept rather than the one site --
+    report_tokens.py is parsed and asserted to contain no assert statement
+    anywhere, module level or inside a function, so the next guard cannot be
+    written in the form this one was."""
+    source = pathlib.Path(rt.__file__).read_text()
+    asserts = [n.lineno for n in ast.walk(ast.parse(source))
+               if isinstance(n, ast.Assert)]
+    assert not asserts, (
+        f"report_tokens.py states a guard as an `assert` at line(s) {asserts}; "
+        "`python -O` compiles those out, so the check is absent exactly where the "
+        "module is being run for real. Raise instead")
+
+    clean = _report_tokens_under_O(
+        source, "import report_tokens as rt; print(rt._plan_card_label("
+                "'win', ('win', 'win'), None))")
+    assert clean.returncode == 0 and "Best plan in every scenario" in clean.stdout, (
+        f"report_tokens does not import under python -O: {clean.returncode}\n"
+        f"{clean.stderr}")
+
+    marker = '_S4_COLUMN_STANDINGS = ("trails", "tie", "win")'
+    assert source.count(marker) == 1, (
+        f"the matrix's standing vocabulary is no longer declared once as {marker!r}; "
+        "this case mutates that declaration to drive the guard")
+    broken = _report_tokens_under_O(
+        source.replace(marker, '_S4_COLUMN_STANDINGS = ("trails", "tie", "beats")'),
+        "import report_tokens as rt; print('SCORED:', rt._plan_card_label("
+        "'win', ('win', 'win'), None))")
+    assert broken.returncode != 0, (
+        "under python -O, a report_tokens whose matrix vocabulary ('trails', 'tie', "
+        "'beats') no longer matches the CSV's imported cleanly and section 0's card "
+        f"scored it anyway: {broken.stdout.strip()!r}")
+    assert "SCORED:" not in broken.stdout, broken.stdout
+    assert "report_tokens: the matrix's per-column standings" in broken.stderr, (
+        f"the refusal does not name this module and what drifted: {broken.stderr!r}")
+    assert "AssertionError" not in broken.stderr, (
+        "the vocabulary guard still raises AssertionError, which is neither this "
+        f"module's refusal vocabulary nor -O-proof: {broken.stderr!r}")
+    return ("report_tokens.py states no guard as an `assert` (0 assert statements in "
+            f"{len(source.splitlines())} lines), imports under python -O, and refuses "
+            "under python -O by name when its two standing vocabularies disagree: "
+            + broken.stderr.strip().splitlines()[-1][:110])
+
+
+def _s9_wildcard_heading():
+    """report-template.html's section 9 wildcard heading, rendered -- every
+    resolvable {{TOKEN}} filled and escaped the way generate_report.render()
+    fills it. The heading names WILDCARD_PLAN; the card a few screens up names
+    the same artifact's rivals, and this is the markup where a disagreement
+    between the two becomes visible."""
+    hits = [ln for ln in rt.TEMPLATE.read_text().splitlines()
+            if "{{WILDCARD_PLAN}}" in ln]
+    assert len(hits) == 1, (
+        f"report-template.html carries {len(hits)} line(s) naming the wildcard plan, "
+        f"not the one section 9 heading this case reads: {hits}")
+    return re.sub(r"\{\{([A-Z0-9_]+)\}\}",
+                  lambda m: _htmllib.escape(rt.resolve_token(m.group(1)), quote=True),
+                  hits[0])
+
+
+@case
+def case_the_card_and_section_9s_heading_name_the_same_wildcard_plan():
+    """data/deep_results.json:wildcard's keys are PROSE, and this module used
+    to parse them twice with two different rules:
+
+        _wildcard_totals   r"\\s*\\+|\\s+no battery"        (the card's rivals)
+        _wildcard_plan     r"\\s*\\+\\s*PW3|\\s+no battery"   (section 9's heading)
+
+    with this household's battery written into the second. Both agree on the
+    keys this checkout carries, which is why it shipped, and they part company
+    on any other battery. A workup labelled "Powerwall 3" left the card saying
+    "TOU-DR-P wildcard" while WILDCARD_PLAN resolved to the whole key, so
+    section 9 asked "can TOU-DR-P + Powerwall 3 (15 events dodged) + a battery
+    beat EV-TOU-5?" -- a battery named twice, a plan name that is not one, and
+    a heading naming something the card above it does not.
+
+    So the split lives in ONE place now (_wildcard_key_plan), and this case
+    drives batteries that checkout's regex never saw. The heading is rendered
+    from report-template.html rather than described, because the disagreement
+    was only ever visible in the markup.
+
+    Every household answer is stubbed and every artifact substituted in memory,
+    so this runs with or without the private archive."""
+    provider, plan, _priced = _plan_ranking_inputs()
+    rival = "TOU-DR-P" if plan != "TOU-DR-P" else "TOU-DR1"
+    batteries = ["PW3", "Powerwall 3", "PW3 (15 events dodged)",
+                 "Powerwall 3 (15 events dodged)", "IQ Battery 10C", "2 × PW3"]
+    seen = {}
+    with _stub_plan(plan, provider):
+        for battery in batteries:
+            totals = {f"{plan} + {battery}": 100, f"{plan} no battery": 140,
+                      f"{rival} + {battery}": 90, f"{rival} no battery": 300}
+            with _wildcard_priced(totals):
+                named = rt._wildcard_plan(rt.CTX)
+                phrase, standing = rt._wildcard_scenario(rt.CTX)
+                heading = _s9_wildcard_heading()
+                card = rt._plan_card_label("win", ("win", "win"), (phrase, standing))
+            assert named == rival, (
+                f"WILDCARD_PLAN reads {named!r} out of a workup pricing {plan} against "
+                f"{rival} with a battery labelled {battery!r}; the battery's name is not "
+                "part of the plan's")
+            assert phrase == f"{rival} wildcard", (
+                f"section 0's card calls the same scenario {phrase!r}: {totals}")
+            assert named in card and battery not in card, (
+                f"the card names a wildcard the heading does not, or carries the battery "
+                f"label {battery!r}: {card}")
+            assert f"can {named} + a battery" in heading, (
+                f"section 9's heading does not ask about {named!r}, the plan the card "
+                f"beside it names: {heading}")
+            assert battery not in heading, (
+                f"section 9's heading names the battery twice once the artifact labels it "
+                f"{battery!r}: {heading}")
+            seen[battery] = heading.strip()
+
+    # AND THE TWO READ THE SAME LIST. Both are derived from _wildcard_rivals,
+    # which is the point of the fix: the heading asks about its first entry and
+    # the card names all of them, off one parse of one artifact.
+    with _stub_household({"household.plan": plan}):
+        with _wildcard_priced({f"{plan} + PW3": 100, f"{plan} no battery": 140,
+                               "ZZ-PLAN + PW3": 90, "AA-PLAN no battery": 95}):
+            rivals = rt._wildcard_rivals(plan)
+            assert rivals == ["AA-PLAN", "ZZ-PLAN"], rivals
+            assert rt._wildcard_plan(rt.CTX) == rivals[0], (
+                "section 9's heading and section 0's card order the same rivals "
+                "differently")
+            phrase, _standing = rt._wildcard_scenario(rt.CTX)
+            assert all(r in phrase for r in rivals), (phrase, rivals)
+    return ("section 0's card and section 9's heading name the same wildcard plan for "
+            f"every battery label tested ({', '.join(map(repr, batteries))}), through one "
+            "split of deep_results.json:wildcard's keys; e.g. "
+            f"{seen['Powerwall 3 (15 events dodged)']!r}")
+
+
+@case
+def case_the_wildcard_phrase_stays_one_item_of_the_cards_list():
+    """The card lists the scenarios it scored in a ", "-joined parenthetical
+    and the wildcard phrase is one of its items, so the phrase may not contain
+    that separator. It did: _join_plan_names emits ", " from three names up, so
+    a workup pricing three rivals published
+
+        Cheapest in 2 of the 3 scenarios tested (no-battery, battery×plan
+        matrix, TOU-DR-1, TOU-DR-2 and TOU-DR-P wildcard)
+
+    -- five items in a list beside a sentence counting three, where the count
+    is the whole claim. The rivals are joined with "/" instead, which no reader
+    and no split can mistake for the list's own comma, and one rival renders
+    exactly as before.
+
+    Driven up to four rivals, and the parenthetical is split the way a reader
+    reads it rather than the way it was built."""
+    plan = "TEST-PLAN"
+    rows = []
+    for count in (1, 2, 3, 4):
+        rivals = [f"RIVAL-{i}" for i in range(1, count + 1)]
+        phrase = _wildcard_phrase_for(rivals, plan=plan)
+        assert ", " not in phrase, (
+            f"the wildcard phrase for {count} rival(s) carries the card's own list "
+            f"separator: {phrase!r}")
+        assert all(r in phrase for r in rivals) and phrase.endswith(" wildcard"), (
+            f"the phrase for {rivals} names something else: {phrase!r}")
+        card = rt._plan_card_label("tie", ("tie", "tie"), (phrase, "trails"))
+        named = card[card.index("(") + 1:card.index(")")].split(", ")
+        assert named == ["no-battery", "battery×plan matrix", phrase], (
+            f"the card's parenthetical reads as {len(named)} items over {count} "
+            f"rival(s): {card}")
+        rows.append(f"{count} rival(s) -> {phrase!r}")
+    assert _wildcard_phrase_for(["SOLO"]) == "SOLO wildcard", (
+        "the single-rival phrase, which is the one this household publishes, changed")
+    return ("the wildcard scenario stays one item of section 0's card's list at every "
+            "rival count (" + "; ".join(rows) + ")")
 
 
 # What section 3's row is allowed to stamp on the plan-name cell, per state:
@@ -5752,6 +6012,67 @@ def case_section_7s_package_footing_states_the_plan_it_prices_on():
             + "; ".join(f"{k}: {v[:70]!r}" for k, v in seen.items()) + ")")
 
 
+@case
+def case_section_7s_footing_agrees_with_however_many_plans_beat_this_one():
+    """A tie AT THE TOP puts two or more plans ahead of this household, and
+    section 7's footing has to point back at all of them.
+
+    Its verb already did -- "TOU-DR-P and TOU-DR-1 each price lower", not
+    "prices lower" -- and its closing clause did not: "and none of the savings
+    below includes switching to it" was fixed text, so the sentence made its
+    subject plural and then referred back to it in the singular, leaving the
+    reader to work out which of the two plans the packages below do not
+    include switching to. Half-fixed agreement is the shape worth guarding:
+    the verb was corrected when the winners' set became a set, and the pronoun
+    six words later was not.
+
+    Both counts are driven, at both standings that name other plans, off
+    data/plan_results.csv repriced in memory. Nothing here needs the private
+    archive: the household's plan is stubbed to a plan the committed CSV
+    prices."""
+    provider, plan, priced = _plan_ranking_inputs()
+    own = float(next(r["total"] for r in priced if r["plan"] == plan))
+    others = sorted(r["plan"] for r in priced if r["plan"] != plan)
+    assert len(others) >= 2, (
+        f"data/plan_results.csv prices {len(others)} rival(s) for {provider!r}; two are "
+        "needed to put a plural winners' set ahead of this household")
+    one, two = others[0], others[1]
+    seen = {}
+    with _stub_plan(plan, provider):
+        for label, prices in (
+                ("one plan ahead", {plan: own, one: own - 1}),
+                ("two plans tied ahead", {plan: own, one: own - 1, two: own - 1}),
+                ("one plan level", {plan: own, one: own}),
+                ("two plans level", {plan: own, one: own, two: own})):
+            with _plan_repriced(provider, prices):
+                footing = rt.resolve_token("S7_PLAN_FOOTING")
+                winners = rt._plan_standing(rt.CTX, "S7_PLAN_FOOTING")[4]
+            plural = len(winners) > 1
+            named = [p for p in (one, two) if p in prices and prices[p] <= own
+                     and p in winners]
+            assert all(p in footing for p in named), (
+                f"section 7's footing names {footing!r} where {named} rank at or above "
+                "this household")
+            if "not the cheapest one" in footing:
+                # The beaten branch: subject and pronoun, checked against the
+                # same winners' set rather than against each other.
+                assert ("each price lower" in footing) == plural, (
+                    f"section 7's footing disagrees in NUMBER with its own winners' set "
+                    f"{winners}: {footing!r}")
+                assert ("switching to any of them" in footing) == plural, (
+                    f"section 7's footing refers back to {len(winners)} plan(s) as "
+                    f"{'a single one' if plural else 'several'}: {footing!r}")
+                assert ("switching to it." in footing) == (not plural), footing
+            seen[label] = footing
+        # Inside the household stub, which is what makes this assertion (and
+        # this whole case) run on a checkout with no private archive.
+        assert rt.resolve_token("S7_PLAN_FOOTING") == ".", (
+            "the substituted plan totals leaked out of this case")
+    return ("section 7's footing agrees in number with the set of plans that rank at or "
+            "above this household, in its verb and in the pronoun it closes with ("
+            + "; ".join(f"{k}: {v.strip()[-58:]!r}" for k, v in seen.items()) + ")")
+
+
 # ---------------------------------------------------------------------------
 # SECTION 3'S FIFTH COLUMN -- "<utility>'s own tool says" -- and the last
 # fixed win-claim left in that row.
@@ -6003,6 +6324,127 @@ def case_the_utility_tools_verdict_is_attested_rather_than_asserted():
             f"{agreed!r} and disagreement {other!r} are different cells, withholding it "
             f"refuses ({withheld}), and the published row round-trips into index.html "
             f"verbatim over {sorted(answers)}")
+
+
+@case
+def case_an_answer_that_states_no_verdict_is_refused_rather_than_published():
+    """WITHHOLDING A GAP REFUSES; ANSWERING IT WITH NOTHING USED TO PUBLISH.
+
+    The case above proves the row cannot render with the utility-tool gaps
+    unanswered. It says nothing about an answer that is not one, and that is
+    the hole: the label "Your Best Plan" is fixed markup and only the mark
+    after it is a token, so an answer of "" publishes
+
+        <td>$4,519.65 — "Your Best Plan" </td>
+
+    which reads exactly as the tool having applied that label to this plan --
+    the fixed win-claim issue #196 removed, restored by an empty string. A
+    bare plan name reads the same way. Both went through silently: the answer
+    is spliced into the page with no check of any kind.
+
+    SO THE CONTRACT LIVES ON THE TOKEN. report_tokens.validate_gap_answer
+    refuses a blank answer for EVERY gap -- a gap exists because this repo
+    will not state something on the human's behalf, and an empty attestation
+    states it as loudly as a wrong one -- and refuses an answer that does not
+    carry what the sentence around the slot needs: a leading verdict mark for
+    the verdict, a digit for the figure.
+
+    WHAT THIS CASE CANNOT ASSERT, said plainly rather than left implied.
+    generate_report.run() splices the operator's answer with
+    `resolved[name] = human_answers[override_key]` and asks nothing; that call
+    site has to pass the value through validate_gap_answer for the refusal to
+    reach the page, and that file is not this change's to edit. So the render
+    below is the UNVALIDATED splice, deliberately: it shows what each refused
+    answer would publish, which is the whole argument for calling the
+    validator there.
+
+    The published household's own answers are recovered from index.html and
+    put through the contract too -- a rule that refuses the attestation this
+    page was published with would be a rule about nothing."""
+    contracts = {n: rt.TOKENS[n].get("answer_contract") for n in rt.KNOWN_GAPS}
+    assert set(rt.GAP_ANSWER_CONTRACTS) <= set(rt.KNOWN_GAPS), (
+        f"a shape rule is declared for {sorted(set(rt.GAP_ANSWER_CONTRACTS) - set(rt.KNOWN_GAPS))}, "
+        "which is not a gap token")
+
+    # 1. THE BLANK FLOOR, on every gap there is.
+    for name in rt.KNOWN_GAPS:
+        for blank in ("", "   ", "\n\t "):
+            try:
+                rt.validate_gap_answer(name, blank)
+            except SystemExit as e:
+                assert name in str(e) and rt.KNOWN_GAPS[name][:20] in str(e), (
+                    f"{name}'s blank-answer refusal does not name the token and what the "
+                    f"gap needs: {e}")
+            else:
+                raise AssertionError(
+                    f"{name} accepted {blank!r} as an attestation")
+    assert rt.validate_gap_answer("INCENTIVE_STATUS", "ITC expired 2025-12-31") == (
+        "ITC expired 2025-12-31"), "a gap with no shape rule stopped accepting an answer"
+
+    # The rendered rows below resolve section 3's own tokens, so the household
+    # answers they read are stubbed from the published page -- which is what
+    # lets this case run on a checkout with no private archive.
+    provider, _cheapest, _priced = _plan_ranking_inputs()
+    index_html = (rt.ROOT / "index.html").read_text()
+    m = re.search(r'<tr class="[a-z0-9-]+"><td>([A-Za-z0-9-]+) ✓ current</td>', index_html)
+    assert m, "index.html has no section 3 household row for this case to read"
+
+    # 2. THE UTILITY-TOOL CELL'S OWN SHAPES, and what each refused one would
+    #    publish if the splice asked nobody.
+    verdict, figure = _S3_TOOL_CELL_GAPS[1], _S3_TOOL_CELL_GAPS[0]
+    assert contracts[verdict] and contracts[figure], (
+        f"the two halves of section 3's utility-tool cell no longer declare what an "
+        f"answer has to carry: {contracts}")
+    accepted = {verdict: ["✓", "✔", "✗ it names TOU-DR-P instead", "× TOU-DR-P"],
+                figure: ["$1,234.56", "1234.56"]}
+    refused = {verdict: ["TOU-DR-P", "Your Best Plan", "the tool agrees", "n/a", "-"],
+                figure: ["n/a", "not captured", "—"]}
+    for name, answers in accepted.items():
+        for answer in answers:
+            assert rt.validate_gap_answer(name, answer) == answer, answer
+    published = {}
+    with _stub_plan(m.group(1), provider):
+        for name, answers in refused.items():
+            for answer in answers:
+                try:
+                    rt.validate_gap_answer(name, answer)
+                except SystemExit as e:
+                    assert name in str(e) and repr(answer) in str(e), (
+                        f"{name}'s refusal of {answer!r} does not say which answer it "
+                        f"read: {e}")
+                else:
+                    raise AssertionError(
+                        f"{name} accepted {answer!r}, which states no "
+                        f"{'verdict' if name == verdict else 'figure'}")
+                # What the unvalidated splice would put on the page.
+                others = {n: a[0] for n, a in accepted.items() if n != name}
+                row = _s3_row_rendered({name: answer, **others})
+                published[answer] = re.findall(r"<td>(.*?)</td>", row)[4]
+    for answer, cell in published.items():
+        assert "Your Best Plan" in cell, (answer, cell)
+
+    # 3. AND THE ATTESTATION THIS PAGE WAS PUBLISHED WITH PASSES.
+    with _stub_plan(m.group(1), provider):
+        _row, answers = _published_tool_answers()
+    for name, answer in answers.items():
+        assert rt.validate_gap_answer(name, answer) == answer, (
+            f"the contract on {name} refuses the answer index.html was published with "
+            f"({answer!r}), so it is a rule about no household at all")
+
+    # 4. AND IT IS A RULE ABOUT GAPS, not about tokens generally.
+    try:
+        rt.validate_gap_answer("BEST_PLAN", "EV-TOU-5")
+    except SystemExit as e:
+        assert "not a gap token" in str(e), e
+    else:
+        raise AssertionError(
+            "a hand-written answer was accepted for a token that resolves from a "
+            "committed source")
+    return ("every gap refuses a blank answer by name, section 3's utility-tool cell "
+            f"refuses {sorted(a for v in refused.values() for a in v)} -- each of which "
+            f"would otherwise publish e.g. {published['TOU-DR-P']!r} -- accepts "
+            f"{sorted(a for v in accepted.values() for a in v)}, and passes the "
+            f"attestation index.html carries ({sorted(answers)})")
 
 
 @case

@@ -974,6 +974,106 @@ KNOWN_GAPS = {
 
 
 # ---------------------------------------------------------------------------
+# WHAT AN ANSWER TO A GAP HAS TO CARRY.
+#
+# A gap token refuses to resolve, and the operator answers it by hand
+# (generate_report.py's --human-answers file, keyed "TOKEN:<name>"). That
+# answer is spliced straight into the published page. Nothing checked it, and
+# for one of these tokens the surrounding markup is a sentence the answer
+# COMPLETES rather than a slot it fills, so a non-answer does not render as a
+# blank -- it renders as an assertion:
+#
+#     <td>{{UTILITY_TOOL_BEST_PLAN_FIGURE}} — "Your Best Plan" {{..._VERDICT}}</td>
+#
+# The label is fixed markup (see the token's own note: render() escapes every
+# substituted value, so the straight quotes can only come from the template),
+# and only the mark after it is a token. Answer the verdict "" and the cell
+# publishes `$4,519.65 — "Your Best Plan" `, which reads exactly as the tool
+# having applied that label to this plan -- the fixed win-claim issue #196
+# removed, restored by an empty string. A bare plan name reads the same way:
+# `... "Your Best Plan" TOU-DR-P` says the tool named this plan and mentions
+# another one. Neither is a verdict, and both publish silently.
+#
+# So the contract lives here, beside the gap it constrains, and it is the
+# token's -- not the operator's, and not the renderer's. Two rules:
+#
+#   * every gap: an answer that is blank or only whitespace is not an answer.
+#     A gap exists because this repo will not state something on the human's
+#     behalf, and an empty attestation states it just as loudly as a wrong one.
+#   * named gaps: the shape the sentence around the slot requires. The verdict
+#     has to LEAD with a mark, which is what KNOWN_GAPS' own reason text asks
+#     for ("a bare check where the tool named this plan, or a short phrase
+#     naming the plan it named instead"), and it is the only part checkable
+#     without reading the screenshot: a mark negates or affirms the label
+#     beside it, and English after the mark can say whatever the capture shows.
+#     The figure has to carry a digit, for the same reason one slot along -- an
+#     empty figure publishes a verdict attached to a quotation that is not
+#     there.
+#
+# WHAT THIS MODULE CANNOT DO. generate_report.run() splices the operator's
+# answer with `resolved[name] = human_answers[override_key]` and never asks
+# this module whether the answer is one; that call site has to pass it through
+# validate_gap_answer() for a refusal to reach the page. The contract is
+# declared and enforced here, so the check is one call away and cannot be
+# reinvented differently at the splice; whether it is CALLED is that file's.
+# ---------------------------------------------------------------------------
+# Marks that state a verdict by themselves. Written out rather than derived
+# because this is a vocabulary, not a rule: a check, a cross, and the shapes of
+# each a capture note is likely to be typed with.
+GAP_VERDICT_MARKS = ("✓", "✔", "✅", "✗", "✘", "❌", "×")
+
+
+def _answer_leads_with_a_verdict_mark(answer):
+    return answer.strip().startswith(GAP_VERDICT_MARKS)
+
+
+def _answer_quotes_a_figure(answer):
+    return any(ch.isdigit() for ch in answer)
+
+
+GAP_ANSWER_CONTRACTS = {
+    "UTILITY_TOOL_BEST_PLAN_VERDICT": (
+        _answer_leads_with_a_verdict_mark,
+        "the answer completes a cell whose fixed half is the tool's own label "
+        "(<figure> — \"Your Best Plan\" <answer>), so it has to open with the mark "
+        "that answers it -- one of " + " ".join(GAP_VERDICT_MARKS) + " -- optionally "
+        "followed by the plan the tool named instead. An answer that states no "
+        "verdict leaves the label standing as this report's own claim about a third "
+        "party's tool"),
+    "UTILITY_TOOL_BEST_PLAN_FIGURE": (
+        _answer_quotes_a_figure,
+        "the answer is the dollar figure the utility's tool quoted, so it has to "
+        "carry a digit. Without one the cell publishes a verdict beside a quotation "
+        "that is not there"),
+}
+
+
+def validate_gap_answer(name, answer):
+    """The operator's answer to gap token `name`, or SystemExit saying what the
+    answer has to carry and why.
+
+    Returns the answer unchanged when it meets the contract -- callers can
+    substitute the return value and keep the check on the same line.
+    """
+    spec = TOKENS.get(name)
+    if spec is None or spec.get("kind") != "gap":
+        raise SystemExit(f"report_tokens: {name!r} is not a gap token, so there is no "
+                          "hand-written answer for it to carry -- it either resolves "
+                          "from a committed source or is not declared at all")
+    if not isinstance(answer, str) or not answer.strip():
+        raise SystemExit(
+            f"report_tokens: the answer given for gap token {name} is blank, and a "
+            "blank attestation is not an answer -- the slot publishes into a sentence "
+            f"that reads without it. What this gap needs: {spec['reason']}")
+    check = spec.get("answer_contract")
+    if check is not None and not check[0](answer):
+        raise SystemExit(
+            f"report_tokens: the answer given for gap token {name} ({answer!r}) does "
+            f"not carry what that slot has to state -- {check[1]}")
+    return answer
+
+
+# ---------------------------------------------------------------------------
 # 2. THE TOKEN MAP. One entry per sourceable token: the ones live in static
 #    markup AND the legitimate comment-only examples inside <!-- TODO -->
 #    blocks, which the brief for this module is explicit about ("legitimate
@@ -1033,7 +1133,10 @@ def is_attribute_only(name):
 
 
 for _gap_name, _gap_reason in KNOWN_GAPS.items():
-    _tok(_gap_name, kind="gap", reason=_gap_reason)
+    # The contract rides on the token, so validate_gap_answer needs the name
+    # and nothing else, and a gap with no shape rule still gets the blank floor.
+    _tok(_gap_name, kind="gap", reason=_gap_reason,
+         answer_contract=GAP_ANSWER_CONTRACTS.get(_gap_name))
 
 
 # ---- household / plan / utility identity -----------------------------------
@@ -2132,12 +2235,20 @@ def _s7_plan_footing(ctx):
         others = _join_plan_names([p for p in winners if p != plan])
         return (f" — the plan this house is on, level with {others} at the cheapest "
                 "modeled total in the rate plan comparison above.")
-    # Verb agreement on the winners' set, the same way S3_VERDICT takes it: two
-    # plans tied ahead of this one are "each price lower", not "prices lower".
-    verb = "prices" if len(winners) == 1 else "each price"
+    # AGREEMENT ON THE WINNERS' SET, in BOTH halves of the sentence. The verb
+    # takes it the same way S3_VERDICT does -- two plans tied ahead of this one
+    # are "each price lower", not "prices lower" -- and so does the pronoun the
+    # closing clause points back at them with. It said "switching to it" in
+    # every branch, so a household beaten by two tied plans read "TOU-DR-P and
+    # TOU-DR-1 each price lower ..., and none of the savings below includes
+    # switching to it": a singular referent for a subject the same sentence has
+    # just made plural, leaving the reader to guess which of the two it means.
+    plural = len(winners) > 1
+    verb = "each price" if plural else "prices"
+    switch_to = "any of them" if plural else "it"
     return (" — the plan this house is on, not the cheapest one. "
             f"{_join_plan_names(winners)} {verb} lower in the rate plan comparison "
-            "above, and none of the savings below includes switching to it.")
+            f"above, and none of the savings below includes switching to {switch_to}.")
 
 
 _tok("S7_PLAN_FOOTING", kind="derived", get=_s7_plan_footing,
@@ -2146,20 +2257,51 @@ _tok("S7_PLAN_FOOTING", kind="derived", get=_s7_plan_footing,
               "private/household.yaml:household.cca (which provider column ranks)"])
 
 
-def _wildcard_totals():
-    """{plan: [modeled annual totals]} off data/deep_results.json:wildcard.
+# data/deep_results.json:wildcard's keys are PROSE ("TOU-DR-P + PW3 (15 events
+# dodged)", "EV-TOU-5 no battery"), so the plan name is the leading run before
+# the "+ <battery>" or "no battery" qualifier. ONE regex, read here and nowhere
+# else, because the card and section 9's heading both name "the wildcard plan"
+# and a second split drifts from the first silently.
+#
+# IT ALREADY HAD. This split used to be written twice: here without the
+# battery's name and in _wildcard_plan as r"\s*\+\s*PW3|\s+no battery", with
+# this household's battery hardcoded into the second copy. Both agree on the
+# keys THIS checkout happens to carry and part company on any other battery: a
+# workup labelled "Powerwall 3" rather than "PW3" left the card saying
+# "TOU-DR-P wildcard" while WILDCARD_PLAN resolved to the whole prose key, so
+# section 9's heading read "can TOU-DR-P + Powerwall 3 (15 events dodged) + a
+# battery beat EV-TOU-5?" beside a section 0 card naming something else. A
+# hardcoded product name is not a parse rule; the qualifier is whatever follows
+# the "+".
+_WILDCARD_KEY_QUALIFIER_RE = re.compile(r"\s*\+|\s+no battery")
 
-    That artifact's keys are prose ("TOU-DR-P + PW3 (15 events dodged)"), so
-    the plan name is the leading run before the "+ <battery>" or "no battery"
-    qualifier -- the same split _wildcard_plan already reads them with, kept
-    in one shape so the card and the section 9 heading cannot disagree about
-    which plan the wildcard is about.
+
+def _wildcard_key_plan(key):
+    """The plan name one data/deep_results.json:wildcard key is about."""
+    return _WILDCARD_KEY_QUALIFIER_RE.split(key)[0].strip()
+
+
+def _wildcard_totals():
+    """{plan: [modeled annual totals]} off data/deep_results.json:wildcard,
+    keyed by _wildcard_key_plan -- the one split every reader of that artifact
+    takes, so the card and the section 9 heading cannot disagree about which
+    plan the wildcard is about.
     """
     totals = {}
     for key, value in _json("deep_results.json")["wildcard"].items():
-        totals.setdefault(re.split(r"\s*\+|\s+no battery", key)[0].strip(),
-                          []).append(value)
+        totals.setdefault(_wildcard_key_plan(key), []).append(value)
     return totals
+
+
+def _wildcard_rivals(plan):
+    """Every plan the wildcard workup prices OTHER than `plan`, sorted.
+
+    THE SHARED FACT behind both sentences that name the wildcard: section 0's
+    card names these plans in its parenthetical and section 9's heading asks
+    whether the first of them can beat this house's plan. One list, one order,
+    so the two cannot name different plans off the same artifact.
+    """
+    return sorted(name for name in _wildcard_totals() if name != plan)
 
 
 def _wildcard_scenario(ctx):
@@ -2213,13 +2355,23 @@ def _wildcard_scenario(ctx):
     if not _finite(*(t for values in totals.values() for t in values)):
         return None
     ours = totals.get(plan, [])
-    rivals = sorted(name for name in totals if name != plan)
+    rivals = _wildcard_rivals(plan)
     if not ours or not rivals:
         return None
     theirs = min(t for name in rivals for t in totals[name])
     ours = min(ours)
     standing = "win" if ours < theirs else "tie" if ours == theirs else "trails"
-    return f"{_join_plan_names(rivals)} wildcard", standing
+    # SLASH-JOINED, never _join_plan_names, and this is about the CARD's
+    # punctuation rather than about prose. _plan_card_label lists the scenarios
+    # it scored in a parenthetical joined with ", ", and _join_plan_names emits
+    # ", " itself from three names up. Three rivals therefore published
+    # "Cheapest in 2 of the 3 scenarios tested (no-battery, battery×plan
+    # matrix, TOU-DR-1, TOU-DR-2 and TOU-DR-P wildcard)" -- a parenthetical
+    # reading as five items beside a sentence counting three, and the count is
+    # the claim. A scenario phrase has to be ONE item, so the rivals are joined
+    # with a separator the list cannot mistake for its own. One name renders
+    # exactly as before.
+    return f"{'/'.join(rivals)} wildcard", standing
 
 
 # The one clause that keeps section 0's card honest about a SPLIT battery
@@ -2287,8 +2439,23 @@ def _plan_card_label(csv_standing, matrix_pair, wildcard):
     somewhere drops "best" for "cheapest ... level with a rival"; anything
     beaten counts instead of quantifying, and section 3's plan table has the
     ranking that produced the count. Every branch is a claim about HOW MANY of
-    the scenarios NAMED in the parenthetical price this plan cheapest, plus
-    _matrix_split_clause's exception where the matrix is half won.
+    the scenarios NAMED in the parenthetical price this plan cheapest AND how
+    many of those are ties, plus _matrix_split_clause's exception where the
+    matrix is half won.
+
+    A TIE IS NEVER LET READ AS A SOLE WIN, in any branch. The every-scenario
+    branch refuses to say "Best plan" once anything ties and quantifies the
+    ties instead; the partial branch used to print a bare count and did not,
+    so a plan tying in two scenarios and beaten in a third published "Cheapest
+    in 2 of the 3 scenarios tested (...) — beaten in the rest", asserting sole
+    cheapest in two scenarios it only drew. The same silence made two
+    different households one sentence: cheapest outright in two scenarios, and
+    cheapest in one with a tie in another, were byte-identical labels. The tie
+    count is stated wherever there is one to state. It cannot arise in the
+    last branch -- a tie IS a cheapest standing, so nothing counted cheapest
+    means nothing tied -- and the guard checks that rather than assuming it
+    (test_report_tokens.case_section_0s_card_is_true_of_every_ranking_it_can_
+    be_handed reads a tie count out of all four branches).
     """
     worst, strongest = matrix_pair
     scenarios = [("no-battery", csv_standing), ("battery×plan matrix", worst)]
@@ -2305,8 +2472,9 @@ def _plan_card_label(csv_standing, matrix_pair, wildcard):
         return (f"Cheapest plan in every scenario tested ({tested}), level with a rival "
                 f"in {tied_in} of the {total} — nothing priced beats it")
     if cheapest_in:
-        return (f"Cheapest in {cheapest_in} of the {total} scenarios tested ({tested}) "
-                f"— beaten in the rest{split}")
+        level = (f", level with a rival in {tied_in} of those" if tied_in else "")
+        return (f"Cheapest in {cheapest_in} of the {total} scenarios tested ({tested})"
+                f"{level} — beaten in the rest{split}")
     return (f"Not the cheapest in any of the {total} scenarios tested ({tested}) "
             f"— a cheaper plan exists in each{split}")
 
@@ -2662,10 +2830,23 @@ _S4_COLUMN_STANDINGS = ("trails", "tie", "win")
 # caller: this is a fact about two tuples, and the runtime guard it replaces
 # (_matrix_standing's, which parsed a standing back out of a CSS class name)
 # only existed because the card used to read this ranking through S4_ROW_CLASS.
-assert set(_S4_COLUMN_STANDINGS) == set(_PLAN_STANDINGS), (
-    "report_tokens: the matrix's per-column standings "
-    f"{_S4_COLUMN_STANDINGS} and the CSV's {_PLAN_STANDINGS} are no longer the same "
-    "vocabulary, so S0_BEST_PLAN_CARD cannot score them in one count")
+#
+# AN `if ... raise`, NOT AN `assert`, and the difference is the whole point of
+# a guard whose job is to stop a card scoring a standing it cannot read.
+# `python -O` compiles an assert statement out of the bytecode entirely, so the
+# check would be absent in exactly the run where nothing else is watching --
+# the card would go on counting a vocabulary that no longer matches and publish
+# a label off it. A raise survives -O. SystemExit and not AssertionError
+# because this module answers a condition it cannot honestly work around with
+# SystemExit everywhere else (resolve_token, _plan_ranking, _bpm_best,
+# _bpm_standing_pair), and it names itself in the message the way they do: an
+# import-time refusal is what stops report_blocks, generate_report and the
+# suites, so the message has to say which module refused and why.
+if set(_S4_COLUMN_STANDINGS) != set(_PLAN_STANDINGS):
+    raise SystemExit(
+        "report_tokens: the matrix's per-column standings "
+        f"{_S4_COLUMN_STANDINGS} and the CSV's {_PLAN_STANDINGS} are no longer the same "
+        "vocabulary, so S0_BEST_PLAN_CARD cannot score them in one count")
 
 
 def _bpm_column_standings(token):
@@ -3086,14 +3267,20 @@ _tok("S4_VERDICT_SHORT", kind="derived", get=_s4_verdict_short,
 
 
 def _wildcard_plan(ctx):
+    """The plan section 9's wildcard heading asks about.
+
+    OFF _wildcard_rivals, which is off _wildcard_totals, which is off
+    _wildcard_key_plan -- so this token and section 0's card read that
+    artifact's prose keys through one split instead of two. This function used
+    to carry its own, with this household's battery ("PW3") written into it;
+    see _WILDCARD_KEY_QUALIFIER_RE for what the two disagreed about.
+    """
     best = hh1("household.plan")
-    for key in _json("deep_results.json")["wildcard"]:
-        if best not in key and "+" in key or "no battery" in key:
-            name = re.split(r"\s*\+\s*PW3|\s+no battery", key)[0].strip()
-            if name != best:
-                return name
-    raise SystemExit("report_tokens: could not identify a wildcard plan name in "
-                      "deep_results.json:wildcard's keys")
+    rivals = _wildcard_rivals(best)
+    if not rivals:
+        raise SystemExit("report_tokens: could not identify a wildcard plan name in "
+                          "deep_results.json:wildcard's keys")
+    return rivals[0]
 
 
 _tok("WILDCARD_PLAN", kind="derived", get=_wildcard_plan,
