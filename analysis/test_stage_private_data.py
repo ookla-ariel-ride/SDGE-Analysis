@@ -864,11 +864,43 @@ def case_the_guard_is_what_refuses_and_it_runs_before_any_write():
 # subvert a probe on their own; the rest are the ones the script clears as
 # defence in depth, forged here together so shrinking that list shows up as a
 # behavioral failure rather than a silently narrower guard.
+#
+# The four GIT_*_PATHSPECS (issue #194) are the newest, and they forge a
+# different thing: not which repository answers but what the PATH handed to it
+# means. Each was measured -- LITERAL and NOGLOB empty a glob-backed `git
+# ls-files`, and all four make `git check-ignore` exit 128, which turns every
+# staging run into a refusal. Forged here alongside the rest, so the legitimate
+# destination below has to survive them too.
 _FORGEABLE = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE",
               "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
               "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
               "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_CONFIG_GLOBAL",
-              "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0")
+              "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+              "GIT_LITERAL_PATHSPECS", "GIT_NOGLOB_PATHSPECS",
+              "GIT_GLOB_PATHSPECS", "GIT_ICASE_PATHSPECS")
+
+
+def _forced_config():
+    """The NAME=VALUE pairs the script FORCES into its own environment (issue
+    #193), parsed from its own loop.
+
+    These are the other half of the sanitizing: the clearing above stops a
+    caller replacing the configuration, and this stops the operator's ORDINARY
+    global, XDG and system configuration -- a core.excludesFile there makes a
+    committable destination answer "ignored" with nothing forged at all. Read
+    from the script rather than retyped, so a value changed there is compared
+    against what the run really exports.
+    """
+    text = SCRIPT.read_text()
+    m = re.search(r"^for _kv in (.*?); do$", text, re.M | re.S)
+    assert m, ("stage-private-data.sh no longer forces its git configuration -- "
+               "the ignore verdict is back on the operator's ~/.gitconfig")
+    out = {}
+    for tok in m.group(1).replace("\\\n", " ").split():
+        name, sep, value = tok.partition("=")
+        assert sep, f"not a NAME=VALUE pair in the forcing loop: {tok!r}"
+        out[name] = value
+    return out
 
 
 def _common_dir_of(path):
@@ -920,6 +952,10 @@ def _forged_env(dst, forged_common, td):
         GIT_CONFIG_COUNT="1",
         GIT_CONFIG_KEY_0="core.worktree",
         GIT_CONFIG_VALUE_0=str(dst),
+        GIT_LITERAL_PATHSPECS="1",
+        GIT_NOGLOB_PATHSPECS="1",
+        GIT_GLOB_PATHSPECS="1",
+        GIT_ICASE_PATHSPECS="1",
     )
 
 
@@ -1008,8 +1044,16 @@ def case_refuses_a_plain_directory_with_every_forgeable_variable_set_at_once():
         before = _snapshot(dst)
         result = _run_script(src, dst, cwd=src, env=env)
         _assert_refused(result, dst, before, "a fully forged environment")
+        # Read out of the IGNORING lines only. The script also announces the
+        # configuration it FORCES (issue #193), and those lines name
+        # GIT_CONFIG_GLOBAL and friends too -- searching the whole of stderr
+        # would let the forcing announcement stand in for the ignoring one and
+        # this assertion would pass on a script that cleared nothing.
+        announced = " ".join(
+            ln for ln in result.stderr.splitlines()
+            if "stage-private-data.sh: ignoring inherited" in ln)
         for name in _FORGEABLE:
-            assert name in result.stderr, (
+            assert name in announced, (
                 f"{name} was set but the run never said it ignored it: {result.stderr}")
 
     text = SCRIPT.read_text()
@@ -1027,8 +1071,18 @@ def case_refuses_a_plain_directory_with_every_forgeable_variable_set_at_once():
     first_unset = min(n for n, line in code if line.strip().startswith("unset "))
     assert first_unset < first_git, (
         "the environment must be cleared before the first git probe, not after")
+    # Same requirement for the configuration the script FORCES (issue #193):
+    # exported after the clearing, because every forced name is in the
+    # GIT_CONFIG* family the clearing drops by prefix, and before the first
+    # probe, or the first probe still answers from the operator's ~/.gitconfig.
+    first_export = min(n for n, line in code if line.strip().startswith("export "))
+    assert first_unset < first_export < first_git, (
+        f"the forced configuration must be exported after the clearing "
+        f"(line {first_unset}) and before the first git probe (line {first_git}), "
+        f"not at line {first_export}")
     return (f"all {len(_FORGEABLE)} forgeable variables are refused together, "
-            f"announced, and cleared before the first git probe")
+            f"announced, and cleared -- and the forced configuration exported -- "
+            f"before the first git probe")
 
 
 @case
@@ -1068,7 +1122,19 @@ def case_the_cleared_environment_reaches_the_work_the_guard_authorized():
     The stand-in interpreter is REPLACED (os.replace, atomically, never an
     unlink) with a shell wrapper that records what it inherited and then execs
     the real interpreter, so the staging still completes and the recording
-    comes from a genuinely accepted run rather than a synthetic probe."""
+    comes from a genuinely accepted run rather than a synthetic probe.
+
+    TWO different requirements, and the difference is the whole point (issue
+    #193). Nothing the CALLER set may survive -- that is the original claim, and
+    every forged value must read back <unset>. But the script also FORCES its own
+    configuration, and those values must survive, for the same reason the
+    clearing has to: a run that isolated its own probes and then handed the
+    ambient configuration to the work it authorized would be checking one set of
+    ignore rules and copying under another. So a forced name is required to read
+    back as the script's value, not as <unset>, and a name that is neither
+    forged-and-cleared nor forced would be classified by neither rule -- which
+    is asserted rather than left to arithmetic."""
+    forced = _forced_config()
     with tempfile.TemporaryDirectory() as td:
         src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
         record = pathlib.Path(td) / "inherited-by-the-child.txt"
@@ -1078,7 +1144,7 @@ def case_the_cleared_environment_reaches_the_work_the_guard_authorized():
             f"REC={shlex.quote(str(record))}\n"
             ': > "$REC"\n'
             + "".join('printf "%s\\n" "{v}=${{{v}-<unset>}}" >> "$REC"\n'.format(v=v)
-                      for v in _FORGEABLE)
+                      for v in sorted(set(_FORGEABLE) | set(forced)))
             + f'exec {shlex.quote(sys.executable)} "$@"\n')
         wrapper.chmod(0o755)
         os.replace(wrapper, src / ".venv" / "bin" / "python")
@@ -1091,13 +1157,20 @@ def case_the_cleared_environment_reaches_the_work_the_guard_authorized():
                 "environment the copy step runs in")
             seen = dict(line.split("=", 1) for line in
                         record.read_text().splitlines() if "=" in line)
-            still_set = {k: v for k, v in seen.items() if v != "<unset>"}
-            assert not still_set, (
+            assert set(seen) == set(_FORGEABLE) | set(forced), seen
+            leaked = {k: v for k, v in seen.items()
+                      if k not in forced and v != "<unset>"}
+            assert not leaked, (
                 f"the guard cleared these for its own probes but handed them to "
-                f"the work it authorized: {still_set}")
-            assert set(seen) == set(_FORGEABLE), seen
-    return (f"all {len(_FORGEABLE)} variables are gone from the environment the "
-            f"post-guard work inherits, not just from the probes")
+                f"the work it authorized: {leaked}")
+            wrong = {k: seen[k] for k, v in forced.items() if seen[k] != v}
+            assert not wrong, (
+                f"the guard forced these for its own probes and then handed the "
+                f"ambient configuration to the work it authorized: {wrong} "
+                f"(expected {forced})")
+    return (f"all {len(set(_FORGEABLE) - set(forced))} forgeable variables are gone "
+            f"from the environment the post-guard work inherits, and the "
+            f"{len(forced)} values the script forces reach it unchanged")
 
 
 # --------------------------------------------------------------------------

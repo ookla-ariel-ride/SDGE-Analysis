@@ -95,6 +95,46 @@ DST="${2:?usage: stage-private-data.sh SOURCE_WORKING_COPY DEST_CLONE}"
 #                                     fix -- listed because they cost nothing
 #                                     and keep a later git-reading step honest
 #
+#   GIT_LITERAL_PATHSPECS             (issue #194) not identity variables at
+#   GIT_NOGLOB_PATHSPECS              all -- they change how git READS the
+#   GIT_GLOB_PATHSPECS                paths this script hands it, which is the
+#   GIT_ICASE_PATHSPECS               same lever one step over: the guard still
+#                                     asks the right repository, about a
+#                                     DIFFERENT path than the one named, or
+#                                     about no path at all. Measured on git
+#                                     2.50.1 in this checkout, each set alone:
+#
+#                                       ls-files -- './data/*.json'
+#                                         plain    -> 3 tracked files
+#                                         LITERAL  -> 0
+#                                         NOGLOB   -> 0
+#                                         GLOB     -> 3   (unchanged)
+#                                         ICASE    -> 3   (unchanged)
+#                                       check-ignore -q -- './private/foo'
+#                                         plain    -> 0   (ignored)
+#                                         LITERAL  -> 128 fatal: pathspec magic
+#                                         NOGLOB   -> 128        not supported
+#                                         GLOB     -> 128        by this command
+#                                         ICASE    -> 128
+#                                       ls-files -- './data/leak.json'
+#                                         plain    -> nothing
+#                                         ICASE    -> data/LEAK.json
+#
+#                                     So ALL FOUR were measured and all four
+#                                     move an answer -- none is here on the
+#                                     strength of the family name. NOGLOB and
+#                                     LITERAL empty a glob-backed listing;
+#                                     every one of the four turns check-ignore
+#                                     fatal, which this script fails closed on
+#                                     (rc 128 -> REFUSED) but as a denial of
+#                                     service: no destination can be validated
+#                                     at all, and a guard that refuses correct
+#                                     callers is the kind that gets switched
+#                                     off. ICASE additionally makes ls-files
+#                                     answer about a differently-cased path,
+#                                     naming a file the caller never asked
+#                                     about in the refusal
+#
 #   CDPATH                            not a git variable at all, and it belongs
 #                                     here for the reason this block exists:
 #                                     the environment can change WHAT A PATH
@@ -141,20 +181,24 @@ DST="${2:?usage: stage-private-data.sh SOURCE_WORKING_COPY DEST_CLONE}"
 # untouched environment to the work it approved has checked one repository and
 # written into another.
 #
-# Announced SEPARATELY by kind, because the two reasons are different and a
+# Announced SEPARATELY by kind, because the three reasons are different and a
 # message that gave CDPATH the git-variables explanation would be telling the
 # operator something untrue about their own environment.
 # ---------------------------------------------------------------------------
 _cleared=""
 _cleared_path=""
+_cleared_spec=""
 for _v in CDPATH GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_CEILING_DIRECTORIES \
           GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_OBJECT_DIRECTORY \
           GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_NAMESPACE \
+          GIT_LITERAL_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_GLOB_PATHSPECS \
+          GIT_ICASE_PATHSPECS \
           ${!GIT_CONFIG*}; do
   if [ -n "${!_v+set}" ]; then
     case "$_v" in
-      CDPATH) _cleared_path="$_cleared_path $_v" ;;
-      *)      _cleared="$_cleared $_v" ;;
+      CDPATH)             _cleared_path="$_cleared_path $_v" ;;
+      GIT_*_PATHSPECS)    _cleared_spec="$_cleared_spec $_v" ;;
+      *)                  _cleared="$_cleared $_v" ;;
     esac
     unset "$_v"
   fi
@@ -171,6 +215,92 @@ if [ -n "$_cleared_path" ]; then
   echo "  then run against that one. Relative paths are resolved from the current" >&2
   echo "  directory only. Nothing else was changed." >&2
 fi
+if [ -n "$_cleared_spec" ]; then
+  echo "stage-private-data.sh: ignoring inherited pathspec variable(s):$_cleared_spec" >&2
+  echo "  These change how git READS the paths below, not which repository answers: a" >&2
+  echo "  glob stops matching, or check-ignore refuses every path outright, so the checks" >&2
+  echo "  would evaluate less than they say they do. Paths are read as written." >&2
+fi
+
+# ---------------------------------------------------------------------------
+# CONFIGURATION ISOLATION (issue #193) -- the same rule from the other side.
+#
+# Clearing the inherited GIT_CONFIG* family above stops a caller REPLACING the
+# configuration. It does nothing about the configuration that is simply THERE:
+# `core.excludesFile` in $HOME/.gitconfig, in $XDG_CONFIG_HOME/git/config or in
+# the system gitconfig is a supported, ordinary git mechanism, and a path the
+# destination's own .gitignore does not cover can answer "ignored" because of
+# it. Measured on git 2.50.1, on a fixture repository whose .gitignore holds
+# `private/` and which does NOT ignore data/leak.json:
+#
+#   check-ignore -q -- './data/leak.json', excludesFile unset      -> 1
+#   ... with a $HOME/.gitconfig naming an excludes file listing it  -> 0
+#   ... with $XDG_CONFIG_HOME/git/config naming one                 -> 0
+#   ... with $HOME/.config/git/ignore listing it (NO config key)    -> 0
+#   ... with core.excludesFile set in the repo's own .git/config    -> 0
+#
+# and this script accepted the destination in every one of those. That is not
+# primarily a forgery -- it is an ordinary-configuration correctness problem: a
+# contributor with a global excludes file gets a different verdict about the
+# same repository, and the verdict this guard needs is the one the REPOSITORY
+# gives, because private data must be uncommittable for everyone rather than
+# for whoever happened to run the script.
+#
+# HOME IS NOT CLEARED, and that is deliberate. HOME supplies a legitimate input
+# to the real repository's answer rather than replacing which repository
+# answers, and clearing it would break the ssh/credential machinery of any git
+# command a later edit adds. The narrower instrument is to switch off the
+# ambient configuration for git only:
+#
+#   GIT_CONFIG_GLOBAL=/dev/null   $HOME/.gitconfig and $XDG_CONFIG_HOME/git/
+#                                 config are not read (git >= 2.32)
+#   GIT_CONFIG_SYSTEM=/dev/null   the system gitconfig is not read (git >= 2.32)
+#   GIT_CONFIG_NOSYSTEM=1         the same, for a git that predates the two
+#                                 above and would silently ignore them
+#   GIT_CONFIG_COUNT=1            core.excludesFile is forced to an empty file.
+#   GIT_CONFIG_KEY_0=             Measured, not assumed: the three above do NOT
+#     core.excludesFile           close the hole, because the DEFAULT excludes
+#   GIT_CONFIG_VALUE_0=/dev/null  path ($XDG_CONFIG_HOME/git/ignore, else
+#                                 $HOME/.config/git/ignore) is a hardcoded
+#                                 fallback and not a config file -- with all
+#                                 three set, a $HOME/.config/git/ignore listing
+#                                 data/leak.json STILL returned 0. Forcing the
+#                                 key is what takes the last one out, and it
+#                                 also overrides a core.excludesFile set in the
+#                                 destination's own .git/config, which is
+#                                 per-clone local configuration and no more part
+#                                 of the repository's shared ignore rules than
+#                                 the operator's ~/.gitconfig is
+#
+# WHAT SURVIVES, checked rather than hoped: the destination's own tracked
+# .gitignore files and its .git/info/exclude, which is exactly the answer this
+# guard wants. Measured under all six values above -- './private/foo' (covered
+# by the fixture's .gitignore) still exits 0, and a path listed in
+# .git/info/exclude still exits 0. The isolation must not throw away the answer
+# it is protecting.
+#
+# The remedy for a REFUSAL this causes is local and inside the destination: put
+# the pattern in that working tree's .gitignore or .git/info/exclude. That is
+# the property that separates it from clearing HOME, whose refusals the
+# operator could not fix by editing anything in the repository.
+#
+# EXPORTED into this shell, like the clearing above and for the same reason:
+# the verdict and everything it authorizes run in one environment. SET rather
+# than merely cleared, so it is announced unconditionally -- it always applies,
+# so a run that said nothing would be the silence the block above exists to
+# fix.
+# ---------------------------------------------------------------------------
+_forced=""
+for _kv in GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+           GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_COUNT=1 \
+           GIT_CONFIG_KEY_0=core.excludesFile GIT_CONFIG_VALUE_0=/dev/null; do
+  export "$_kv"
+  _forced="$_forced ${_kv%%=*}"
+done
+echo "stage-private-data.sh: asking git from repository-local configuration only:$_forced" >&2
+echo "  Global, XDG and system git config -- including a core.excludesFile naming a" >&2
+echo "  global ignore file -- are switched off for every probe below, so the ignore" >&2
+echo "  verdict comes from the destination's own .gitignore and .git/info/exclude." >&2
 
 # ---------------------------------------------------------------------------
 # DESTINATION GUARD (issue #184) -- runs BEFORE the first write.
@@ -629,7 +759,11 @@ _refuse() {   # $1 = headline, remaining args = detail lines.
 # because the answer comes from the destination's own .gitignore, its
 # info/exclude and its index, not from this checkout's -- and asked in the
 # sanitized shell above, because an inherited GIT_CONFIG could otherwise supply
-# a core.excludesFile that manufactures the "ignored" answer.
+# a core.excludesFile that manufactures the "ignored" answer, and an ambient
+# one (global, XDG or system config, or the default global ignore file) could
+# manufacture it without anybody having forged anything. Both are shut off by
+# "CONFIGURATION ISOLATION" above; what is left is the destination's own
+# .gitignore, its info/exclude and its index.
 # ---------------------------------------------------------------------------
 _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_REAL
   local rel=$1 rc=0 tracked
@@ -670,7 +804,11 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
          "This is the half of the 2026-08-13 incident a repository check cannot" \
          "see: the destination that took the archive did not ignore private/," \
          "which is why the data sat one 'git add -A' from a public commit." \
-         "Add the rule to that working tree's .gitignore and re-run." ;;
+         "Add the rule to that working tree's .gitignore and re-run. A GLOBAL" \
+         "excludes file does not count and is not consulted here (issue #193):" \
+         "the question is whether the REPOSITORY refuses the path, not whether" \
+         "this machine happens to. .gitignore or .git/info/exclude, in the" \
+         "destination itself, are the two places that answer it." ;;
     *) _refuse "the destination could not say whether it ignores a path this script writes" \
          "destination: $DST  (resolved: $DST_REAL)" \
          "path:        $rel" \

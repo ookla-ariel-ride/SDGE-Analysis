@@ -22,12 +22,18 @@ the other.
 
 THE RULE, matching what stage-private-data.sh already enforces:
 
-  1. the git environment is SANITIZED before any probe. `git rev-parse` answers
-     "which repository is this path in" from the environment first and the
-     filesystem second, so GIT_DIR/GIT_COMMON_DIR/GIT_WORK_TREE (and CDPATH,
-     which changes what a bare relative path even MEANS) turn every check below
-     into an answer the caller supplied. Cleared, not rejected, for the reason
-     the shell gives at length: GIT_DIR is exported by every git hook.
+  1. the git environment is SANITIZED before any probe, and the ambient git
+     CONFIGURATION is switched off for it. `git rev-parse` answers "which
+     repository is this path in" from the environment first and the filesystem
+     second, so GIT_DIR/GIT_COMMON_DIR/GIT_WORK_TREE (and CDPATH, which changes
+     what a bare relative path even MEANS, and the four GIT_*_PATHSPECS, which
+     change what a PATTERN means) turn every check below into an answer the
+     caller supplied. Cleared, not rejected, for the reason the shell gives at
+     length: GIT_DIR is exported by every git hook. Clearing is only half of it
+     -- a core.excludesFile in the operator's own global config manufactures the
+     "ignored" verdict with nothing forged at all -- so global, XDG and system
+     configuration are switched off for the probes while the destination's own
+     .gitignore and .git/info/exclude stay fully in effect. See sanitized_env().
   2. the destination lies inside a REGISTERED worktree of THIS checkout, and
      that worktree still IS one. Registration is decided against `git worktree
      list`, resolved from the common dir of the checkout THIS FILE lives in --
@@ -168,10 +174,83 @@ class Destination:
 # unbounded, and config can carry core.worktree -- a working-tree location under
 # another name.
 #
+# PATHSPEC_MEANING_VARS (issue #194) are not identity variables at all: they
+# leave the repository alone and change how git READS the path handed to it,
+# which is the same lever one step over -- the right repository, asked about a
+# DIFFERENT path than the one named, or about no path at all. All four were
+# measured on git 2.50.1 rather than taken on the family name, and all four move
+# an answer this module depends on:
+#
+#   git ls-files -- './data/*.json'      plain 3 tracked | LITERAL 0 | NOGLOB 0
+#                                        | GLOB 3 | ICASE 3
+#   git check-ignore -q -- './private/foo'  plain 0 (ignored) | LITERAL,
+#                                        NOGLOB, GLOB, ICASE all 128,
+#                                        "pathspec magic not supported by this
+#                                        command"
+#   git ls-files -- './data/leak.json'   plain nothing | ICASE data/LEAK.json
+#
+# So LITERAL and NOGLOB empty the glob-backed listing _expand()'s zero-match
+# branch relies on -- the leaf pattern is then evaluated against nothing while
+# the check still returns success. All four turn check-ignore fatal, which
+# _require_uncommittable() fails closed on (ignore_unanswerable) but as a denial
+# of service: no destination can be validated at all. And ICASE makes ls-files
+# answer about a differently-cased path, so a refusal names a file the caller
+# never asked about. Cleared, like the rest, rather than rejected.
+#
 # Deliberately kept: GIT_EXEC_PATH, GIT_SSH_COMMAND, GIT_TEMPLATE_DIR and the
 # like. They say HOW git runs, not which repository it is looking at, and on a
 # relocatable install clearing GIT_EXEC_PATH breaks git outright -- turning a
 # legitimate call into a refusal for no gain.
+#
+# GIT_CONFIG_ISOLATION (issue #193) is the other half, and it is SET rather than
+# cleared. Clearing the GIT_CONFIG* family stops a caller REPLACING the
+# configuration; it does nothing about the configuration that is simply THERE.
+# core.excludesFile in $HOME/.gitconfig, in $XDG_CONFIG_HOME/git/config or in
+# the system gitconfig is ordinary, supported git, and it makes a path the
+# destination's own .gitignore does not cover answer "ignored". Measured on git
+# 2.50.1 against a fixture whose .gitignore holds `private/` and which does not
+# ignore data/leak.json -- 'git check-ignore -q -- ./data/leak.json':
+#
+#   excludesFile unset                                       -> 1  not ignored
+#   $HOME/.gitconfig naming an excludes file listing it       -> 0  IGNORED
+#   $XDG_CONFIG_HOME/git/config naming one                    -> 0  IGNORED
+#   $HOME/.config/git/ignore listing it (no config key at all) -> 0  IGNORED
+#   core.excludesFile in the repository's own .git/config      -> 0  IGNORED
+#
+# and check_destination() accepted the path in every one of them. HOME is NOT
+# cleared to fix that: it supplies a legitimate input to the real repository's
+# answer rather than replacing which repository answers, and clearing it would
+# break the credential and ssh machinery of any git command a later edit adds.
+# The narrow instrument is to switch the ambient configuration off for git only.
+# What each of the six does, measured:
+#
+#   GIT_CONFIG_GLOBAL=/dev/null   $HOME/.gitconfig and $XDG_CONFIG_HOME/git/
+#                                 config go unread (git >= 2.32); closes rows
+#                                 two and three above
+#   GIT_CONFIG_SYSTEM=/dev/null   the system gitconfig goes unread (git >= 2.32)
+#   GIT_CONFIG_NOSYSTEM=1         the same, for a git predating those two, which
+#                                 would ignore them without saying so
+#   GIT_CONFIG_COUNT=1            forces core.excludesFile to an empty file, and
+#   GIT_CONFIG_KEY_0=             it is NOT redundant: the default global
+#     core.excludesFile           excludes path ($XDG_CONFIG_HOME/git/ignore,
+#   GIT_CONFIG_VALUE_0=/dev/null  else $HOME/.config/git/ignore) is a hardcoded
+#                                 fallback rather than a config file, so with the
+#                                 three above set, row four STILL returned 0.
+#                                 Forcing the key closes rows four and five
+#
+# WHAT SURVIVES, measured under all six: './private/foo', covered by the
+# fixture's own .gitignore, still exits 0, and a path listed in that fixture's
+# .git/info/exclude still exits 0. The isolation must not throw away the answer
+# it exists to protect. A refusal it does cause has a remedy inside the
+# destination -- name the path in that working tree's .gitignore or
+# .git/info/exclude -- which is the property that separates it from clearing
+# HOME, whose refusals an operator could not fix by editing anything in the
+# repository.
+#
+# The ORDER matters and is asserted by construction below: the inherited
+# GIT_CONFIG* family is dropped first, then these six are written in. An
+# inherited GIT_CONFIG_COUNT=5 left in place beside GIT_CONFIG_KEY_0 would
+# describe a configuration nobody meant.
 # ---------------------------------------------------------------------------
 GIT_IDENTITY_VARS = (
     "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_CEILING_DIRECTORIES",
@@ -179,16 +258,45 @@ GIT_IDENTITY_VARS = (
     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_INDEX_FILE", "GIT_NAMESPACE",
 )
 PATH_MEANING_VARS = ("CDPATH",)
+PATHSPEC_MEANING_VARS = (
+    "GIT_LITERAL_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_GLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+)
 GIT_CONFIG_PREFIX = "GIT_CONFIG"
+# os.devnull, not the literal, for the reason test_scripts_runnable's
+# case_no_absolute_paths_outside_the_repo gives: an absolute literal outside the
+# repo is a hardcoded machine assumption. It is the POSIX null device on every
+# platform that can run stage-private-data.sh, which is what makes the sides of
+# case_the_environment_this_module_clears_matches_the_shell_script comparable at
+# all -- the shell writes the literal, and on a platform where they differ the
+# shell script does not run.
+GIT_CONFIG_ISOLATION = (
+    ("GIT_CONFIG_GLOBAL", os.devnull),
+    ("GIT_CONFIG_SYSTEM", os.devnull),
+    ("GIT_CONFIG_NOSYSTEM", "1"),
+    ("GIT_CONFIG_COUNT", "1"),
+    ("GIT_CONFIG_KEY_0", "core.excludesFile"),
+    ("GIT_CONFIG_VALUE_0", os.devnull),
+)
 
 
 def sanitized_env(env=None):
     """`env` (default os.environ) with every variable that can move git's answer
-    -- or change what a relative path means -- removed."""
+    -- or change what a relative path or a pathspec means -- removed, and the
+    ambient git configuration switched off.
+
+    Two operations, in this order: DROP what the caller (or the caller's shell)
+    supplied, then WRITE the controlled values that make the probes answer from
+    repository-local configuration alone. The drop comes first because the
+    GIT_CONFIG* prefix covers the names the second half writes.
+    """
     src = os.environ if env is None else env
-    drop = set(GIT_IDENTITY_VARS) | set(PATH_MEANING_VARS)
-    return {k: v for k, v in src.items()
-            if k not in drop and not k.startswith(GIT_CONFIG_PREFIX)}
+    drop = (set(GIT_IDENTITY_VARS) | set(PATH_MEANING_VARS)
+            | set(PATHSPEC_MEANING_VARS))
+    out = {k: v for k, v in src.items()
+           if k not in drop and not k.startswith(GIT_CONFIG_PREFIX)}
+    out.update(GIT_CONFIG_ISOLATION)
+    return out
 
 
 def _git(args, cwd, env=None):
@@ -546,28 +654,38 @@ def _check_destination(path, *, kind, require_ignored, worktrees, env):
                               the git-read register is, so membership does not
                               depend on whether the caller spelled the path as a
                               realpath.
-      env={...}               is sanitized of the git IDENTITY variables (see
-                              sanitized_env), which is what stops a caller
-                              supplying the answer to "which repository is
-                              this". It does NOT clear HOME: an env whose HOME
-                              holds a .gitconfig with core.excludesFile can
-                              manufacture the "ignored" verdict, and
-                              data/leak.json is then accepted. The TRACKED half
-                              still refuses -- git ls-files is asked first and
-                              an excludes file cannot empty the index -- so the
-                              forgery costs a tracked path, not an ignored one.
-                              HOME stays UNCLEARED on purpose, and the reason is
-                              not oversight: HOME supplies a legitimate input to
-                              the real repository's answer rather than replacing
-                              which repository answers, clearing it would
-                              manufacture a divergence from the operator's own
-                              shell that no fixture here would catch, and the
-                              forgery needs an in-process caller who could
-                              equally call shutil.copy. The lever taken instead
-                              is the REACH of this parameter: it is not on a
-                              public door. See
-                              test_private_egress.case_no_public_entry_point_
-                              can_weaken_a_check, which records the decision.
+      env={...}               is sanitized of the git IDENTITY variables, the
+                              pathspec variables and the whole GIT_CONFIG*
+                              family, and has the ambient configuration switched
+                              off (see sanitized_env), which is what stops a
+                              caller supplying the answer to "which repository
+                              is this" or "what does this path mean". It used to
+                              be weaker still: HOME survives sanitizing, so an
+                              env whose HOME held a .gitconfig with
+                              core.excludesFile manufactured the "ignored"
+                              verdict and data/leak.json was accepted. That is
+                              closed -- not by clearing HOME, which supplies a
+                              legitimate input to the real repository's answer,
+                              but by GIT_CONFIG_ISOLATION, which switches the
+                              global, XDG and system configuration (and the
+                              default global ignore file) off for the probes
+                              while leaving the destination's own .gitignore and
+                              info/exclude in force.
+                              WHAT STILL MAKES IT A WEAKENER: `env` replaces the
+                              WHOLE environment the probes run in, PATH
+                              included, and PATH decides WHICH `git` answers.
+                              Measured, not asserted: with a shim named `git`
+                              ahead of the real one on PATH, exiting 0 for
+                              check-ignore and passing everything else through,
+                              check_destination(ROOT/"data/leak.json",
+                              kind="file", env=...) returns ACCEPTED where the
+                              same call without it is REFUSED [not_ignored]. No
+                              sanitizer closes that -- an env with no usable PATH
+                              cannot run git at all -- so the lever taken is the
+                              REACH of the parameter: it is not on a public door.
+                              See test_private_egress.case_no_public_entry_
+                              point_can_weaken_a_check, which records the
+                              decision and reproduces the shim.
 
     Why signatures and not a convention: this module's argument is that a check
     which CAN be waived will be waived. It exists because stage-private-data.sh
@@ -774,7 +892,17 @@ def _pathspec(relpath):
 
     './x' starts with '.', so no magic is parsed at all, while both commands
     still resolve it as the path x relative to the cwd -- literal names stay
-    literal and glob patterns keep globbing. Asserted rather than described, in
+    literal and glob patterns keep globbing.
+
+    Which is why the four GIT_*_PATHSPECS are in PATHSPEC_MEANING_VARS (issue
+    #194): they apply the magic this prefix exists to avoid, from the
+    environment, to every pathspec at once. An inherited GIT_NOGLOB_PATHSPECS
+    would leave './d/*.csv' matching nothing while the check still returned
+    success, and any of the four would make check-ignore exit 128 for every
+    path. Cleared in sanitized_env(), so the sentence above stays true whatever
+    the caller's shell holds.
+
+    Asserted rather than described, in
     test_private_egress.case_a_destination_that_looks_like_pathspec_magic_is_
     answered_about_itself: verdict-identical to the bare spelling for every path
     in its PATHSPEC_EQUIVALENT list (tracked files, tracked directories, ignored
@@ -797,7 +925,12 @@ def _require_uncommittable(worktree, relpath, env=None):
     Asked OF THE DESTINATION, because the answer comes from its own .gitignore,
     its info/exclude and its index -- and in the sanitized environment, because
     an inherited GIT_CONFIG could otherwise supply a core.excludesFile that
-    manufactures the "ignored" answer.
+    manufactures the "ignored" answer, an AMBIENT one (the operator's global,
+    XDG or system config, or the default global ignore file) could manufacture
+    it with nothing forged at all, and an inherited GIT_*_PATHSPECS could make
+    both questions below answer about a different path or refuse every path
+    outright. All three are settled in sanitized_env(); what is left is the
+    destination's own .gitignore, its info/exclude and its index.
 
     This is the ONLY place in this module where a caller-supplied path becomes a
     git PATHSPEC (everything else hands git a -C directory), so it is the one
@@ -824,7 +957,10 @@ def _require_uncommittable(worktree, relpath, env=None):
         raise DestinationRefused(
             "not_ignored",
             "that working tree's own git would offer this path to 'git add' -- "
-            "the half of the 2026-08-13 incident a repository check cannot see",
+            "the half of the 2026-08-13 incident a repository check cannot see. "
+            "Asked with global, XDG and system configuration off, so a global "
+            "excludes file does not count: the remedy is inside the destination, "
+            "in its .gitignore or its .git/info/exclude",
             os.path.join(worktree, relpath))
     raise DestinationRefused(
         "ignore_unanswerable",
