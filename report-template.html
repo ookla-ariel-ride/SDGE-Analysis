@@ -101,11 +101,15 @@
   th{font-family:var(--mono);color:var(--sub);font-weight:500;text-transform:uppercase;font-size:.68rem;letter-spacing:.1em;border-bottom:2px solid var(--ink)}
   td:first-child,th:first-child{text-align:left}
   td:first-child{font-family:var(--disp);font-size:.9rem}
-  tr.win td,tr.tie td{background:color-mix(in srgb,var(--sop) 9%,transparent);font-weight:600}
+  tr.win td,tr.tie-win td,tr.tie td{background:color-mix(in srgb,var(--sop) 9%,transparent);font-weight:600}
+  tr.trails-win td,tr.trails-tie td{background:color-mix(in srgb,var(--offpeak) 9%,transparent);font-weight:600}
   tr.trails td{background:color-mix(in srgb,var(--onpeak) 7%,transparent);font-weight:600}
-  tr.tie td:first-child::after,tr.trails td:first-child::after{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);margin-left:8px;white-space:nowrap}
-  tr.tie td:first-child::after{content:"ties for cheapest"}
-  tr.trails td:first-child::after{content:"not the cheapest"}
+  tr.tie-win td:first-child::after,tr.tie td:first-child::after,tr.trails-win td:first-child::after,tr.trails-tie td:first-child::after,tr.trails td:first-child::after{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);margin-left:8px;white-space:nowrap}
+  tr.tie-win td:first-child::after{content:"cheapest in both columns, tied in one"}
+  tr.tie td:first-child::after{content:"tied for cheapest in both columns"}
+  tr.trails-win td:first-child::after{content:"cheapest in one column only"}
+  tr.trails-tie td:first-child::after{content:"tied for cheapest in one column only"}
+  tr.trails td:first-child::after{content:"not the cheapest in either column"}
   .pill{display:inline-block;font-family:var(--mono);font-size:.64rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;padding:2px 8px;border-radius:3px;border:1.5px solid;vertical-align:middle}
   .pill.g{color:var(--sop);border-color:var(--sop)} .pill.y{color:var(--offpeak);border-color:var(--offpeak)} .pill.r{color:var(--onpeak);border-color:var(--onpeak)}
   .chartbox{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin:16px 0}

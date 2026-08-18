@@ -1960,7 +1960,7 @@ _BPM_COLUMNS = (("no_battery", "without a battery"),
 # below, and section 4 rendered those cells inside a fixed class="win" row, so
 # a household would have been shown a runner-up as its winner. That row's class
 # is a token now (_s4_row_class), which changes nothing here: the token decides
-# "win" / "tie" / "trails" on this same identity, so a band read into it would
+# each column's standing on this same identity, so a band read into it would
 # still paint a runner-up as the winner -- one branch further along. Rounding
 # never licensed that. It licenses only the hedged wording of a size.
 #
@@ -2001,8 +2001,8 @@ def _best_plan_matrix_cell(token, key):
     4 exists to help, and the trade the old docstring here recorded as
     deliberate while naming the template as the place to fix it.
 
-    The row now opens `<tr class="{{S4_ROW_CLASS}}">`, and that token says
-    "win", "tie" or "trails" off the same two columns (see _s4_row_class).
+    The row now opens `<tr class="{{S4_ROW_CLASS}}">`, and that token states
+    both columns' standings off the same two columns (see _s4_row_class).
     There is no false sentence left for these figures to be rendered into: a
     runner-up's modeled bills are as real as a winner's, and showing them
     beside its standing is what the row is for. So they render.
@@ -2185,22 +2185,56 @@ def _bpm_cheapest(token, column):
     return {p for p, t in totals.items() if t == cheapest}
 
 
-# The three states section 4's household row can be in, as the CSS class names
-# report-template.html styles -- ORDERED WORST FIRST, which is how
-# _s4_row_class picks between two columns that disagree.
+# The three standings ONE COLUMN of the matrix can put the household's plan
+# in, ORDERED WORST FIRST. A column settles three things and only two of them
+# are a win or a loss:
 #
-# A row is one row and the table it sits in has two battery states, so the
-# class has to be the WEAKEST standing the two columns support. Section 4's
-# heading question is exactly whether the plan choice survives the battery,
-# and a household can lead without one and trail with one -- S4_VERDICT_SHORT
-# says so in as many words when it happens. "win" over a table whose
-# with-battery column prices a rival lower is issue #178's own defect with a
-# different plan in it.
-_S4_ROW_CLASSES = ("trails", "tie", "win")
+#   trails  some rival stores less. The plan is not cheapest in this column.
+#   tie     the plan stores this column's minimum and at least one rival
+#           stores it too. A tied plan IS a cheapest plan -- which is why it
+#           is not "trails" -- but it is not the only one.
+#   win     the plan stores the minimum and no other plan does.
+_S4_COLUMN_STANDINGS = ("trails", "tie", "win")
+
+
+# The states section 4's household ROW can be in, as the CSS class names
+# report-template.html styles: ONE PER UNORDERED PAIR of the two columns'
+# standings, each named worst-standing-first, the pairs ordered worst first.
+#
+# NOT THE WEAKEST OF THE TWO COLUMNS, which is what this was and why it had
+# to change. The row spans both columns, so a class carrying only the weaker
+# standing states something FALSE about the stronger one, and the stylesheet
+# prints that falsehood: a household alone cheapest without a battery and
+# beaten with one resolved "trails", and `tr.trails td:first-child::after`
+# stamps the plan-name cell "not the cheapest" -- beside a no-battery cell
+# that IS the cheapest in its column. That is issue #178's own defect (markup
+# asserting a standing this household's cells do not carry) one state along.
+# The mirror is the same thing pointing the other way: a plan alone cheapest
+# in one column and tied in the other took "tie", badging the whole row "ties
+# for cheapest" over a column it wins outright.
+#
+# So the class carries BOTH standings and every badge states only what both
+# columns support. SIX, because two columns drawn from three standings make
+# six unordered pairs, and the row is symmetric in them: WHICH column is
+# which is already on the page twice -- in the two cells the badge sits
+# beside, and in S4_VERDICT_SHORT's own clauses ("... without a battery, and
+# ... with one") -- so naming it here would buy nine classes and three more
+# badges to repeat what the reader is already looking at.
+#
+# DERIVED from the standings rather than written out, so no state can enter
+# this vocabulary without a pair of column standings that reaches it, and
+# none can leave it while a pair still does. The 9-way product of the two
+# columns is driven against it in
+# case_section_4s_row_class_is_a_state_the_stylesheet_can_paint, which also
+# holds every member to a badge in report-template.html's own <style> block.
+_S4_ROW_CLASSES = tuple(
+    worst if worst == strongest else f"{worst}-{strongest}"
+    for i, worst in enumerate(_S4_COLUMN_STANDINGS)
+    for strongest in _S4_COLUMN_STANDINGS[i:])
 
 
 def _s4_row_class(ctx):
-    """The CSS class on section 4's household row: "trails", "tie" or "win".
+    """The CSS class on section 4's household row: one of _S4_ROW_CLASSES.
 
     WHAT THIS TOKEN IS FOR (issue #178). The row used to open as a fixed
     `<tr class="win">`, and `tr.win td` paints it as the winner. That is a
@@ -2211,18 +2245,33 @@ def _s4_row_class(ctx):
     The claim now has a token, so it can come out true, false, or a tie, and
     the report is written either way.
 
-    THREE STATES, because the cells settle three answers and only two of them
-    are a win or a loss:
+    THE CLASS IS THE PAIR OF STANDINGS, not the weaker of them. One row spans
+    two battery columns, and a class reporting one standing for both prints a
+    badge that is false about the other -- "not the cheapest" beside a cell
+    that is the cheapest in its column, or "ties for cheapest" beside one the
+    plan wins outright. So the two columns' standings (_S4_COLUMN_STANDINGS:
+    trails / tie / win) are both carried, sorted worst first and joined, and
+    the badge report-template.html prints for each state says only what BOTH
+    columns support. The nine combinations, and the class each resolves to:
 
-      win     no other plan stores this column's minimum: the plan is the
-              cheapest, alone.
-      tie     the plan stores the minimum and at least one rival stores it
-              too. A tied plan IS a cheapest plan -- which is why it is not
-              "trails", and why the template gives it the same highlight --
-              but it is not the only one, and a row painted as a sole winner
-              would claim a separation the artifact does not make. The
-              template adds a "ties for cheapest" badge to say so.
-      trails  some rival stores less. The plan is not cheapest here.
+        no battery   with battery   class         what its badge asserts
+        ----------   ------------   -----------   -----------------------------
+        win          win            win           cheapest, alone, both columns
+        win          tie            tie-win       cheapest in both, tied in one
+        tie          win            tie-win       "
+        tie          tie            tie           tied for cheapest in both
+        win          trails         trails-win    cheapest in one column only
+        trails       win            trails-win    "
+        tie          trails         trails-tie    tied cheapest in one only
+        trails       tie            trails-tie    "
+        trails       trails         trails        cheapest in neither column
+
+    Every badge is a statement about HOW MANY of the two columns price this
+    plan cheapest, and in how many of those it is the only one -- which is
+    exactly what the pair records, so it is true of both members of every
+    pair that has two. WHICH column is which is deliberately not in the
+    badge: the reader is looking at both cells, and S4_VERDICT_SHORT names
+    the columns in as many words directly above the table.
 
     RANKED THROUGH _bpm_cheapest, the helper S4_VERDICT_SHORT decides its
     Yes/No on, and never through a second ranking of the same columns. The
@@ -2246,15 +2295,28 @@ def _s4_row_class(ctx):
     state honestly.
     """
     plan, _row = _bpm_best()
-    states = {"trails" if plan not in winners else "tie" if len(winners) > 1 else "win"
-              for winners in (_bpm_cheapest("S4_ROW_CLASS", column)
-                              for column, _phrase in _BPM_COLUMNS)}
-    # min() over the worst-first order rather than a loop with a fallthrough:
-    # an empty `states` is a _BPM_COLUMNS with nothing in it, which is not a
-    # state this row could be in, and min() raises ValueError -- which
-    # resolve_token converts into this module's named refusal. A fallthrough
-    # would need an unreachable branch to say the same thing.
-    return min(states, key=_S4_ROW_CLASSES.index)
+    # A LIST, sorted worst first -- never a set. Both standings are carried
+    # into the class name, so the two columns agreeing is a state of its own
+    # ("win", "tie", "trails") and not a duplicate to be collapsed away.
+    standings = sorted(
+        ("trails" if plan not in winners else "tie" if len(winners) > 1 else "win"
+         for winners in (_bpm_cheapest("S4_ROW_CLASS", column)
+                         for column, _phrase in _BPM_COLUMNS)),
+        key=_S4_COLUMN_STANDINGS.index)
+    # The name is built from EXACTLY two standings, so a _BPM_COLUMNS that
+    # stops holding exactly two columns has to refuse rather than emit a
+    # class nothing paints. Checked, not assumed: min() used to catch the
+    # empty case by raising ValueError and nothing at all caught a third
+    # column, which would have silently produced "trails-tie" from three.
+    if len(standings) != 2:
+        raise SystemExit(
+            "report_tokens: section 4's household row states one standing per battery "
+            f"column and report_tokens._BPM_COLUMNS now names {len(standings)} of them "
+            f"({[c for c, _p in _BPM_COLUMNS]}); the row's class is a pair, so the "
+            "vocabulary in _S4_ROW_CLASSES and the rules in report-template.html's "
+            "<style> block both have to be re-derived before this token can name a state")
+    worst, strongest = standings
+    return worst if worst == strongest else f"{worst}-{strongest}"
 
 
 # fmt="raw", and THE SEAM GUARD HAS NOTHING TO READ FOR IT -- said here

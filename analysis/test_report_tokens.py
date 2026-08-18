@@ -2181,10 +2181,11 @@ def case_plan_lead_tokens_report_a_gap_the_matrix_does_not_call_a_lead():
 # `winners`, and section 4's household row was fixed class="win" markup -- so
 # the runner-up would have been published as the winner. Since issue #178 that
 # row's class is a token, which moves the same hazard one branch along: the
-# token decides "win"/"tie"/"trails" on this identity, so a band read into it
-# paints a runner-up as the winner just as surely. The cases below hold both
-# halves: identity is exact, sizes are hedged, and the household the matrix
-# ranks second gets a whole report whose row says "trails".
+# token decides each column's standing on this identity, so a band read into
+# it paints a runner-up as the winner just as surely. The cases below hold
+# both halves: identity is exact, sizes are hedged, and the household the
+# matrix ranks second in one column gets a whole report whose row says it is
+# cheapest in the other column only.
 # ---------------------------------------------------------------------------
 @contextlib.contextmanager
 def _matrix_priced(plans, cells):
@@ -2305,9 +2306,12 @@ def case_a_dollar_of_stored_difference_ranks_and_a_stored_tie_does_not():
     without one, unbeaten with one -- so staying on A is the answer whatever
     the battery does. That is also the only reading consistent with the markup
     this case resolves below: joint-cheapest is cheapest, so section 4's row
-    reads "tie" and keeps A's cells, and a heading calling the question
-    unsettleable would be contradicting the row underneath it (issue #141
-    review round 3). And the size clause still has to hedge the $1 lead it
+    reads "tie-win" -- cheapest in both columns, tied in one -- and keeps A's
+    cells, and a heading calling the question unsettleable would be
+    contradicting the row underneath it (issue #141 review round 3). The row
+    may not read a plain "tie" either: A is the SOLE cheapest plan without a
+    battery, and that badge would deny it a column it wins outright.
+    And the size clause still has to hedge the $1 lead it
     cannot size -- "leads by $1/yr" is a precision two rounded cells do not
     carry."""
     plans, best, rival, rest = _matrix_pair()
@@ -2338,17 +2342,19 @@ def case_a_dollar_of_stored_difference_ranks_and_a_stored_tie_does_not():
             f"S4_VERDICT_SHORT quotes a $1/yr lead off two cells that could be a cent "
             f"apart: {value}")
         # The tie renders the rest of section 4: joint-cheapest is cheapest,
-        # so the row keeps this household's cells -- and says "tie", because a
-        # plan that shares the minimum with a rival is not the sole winner.
+        # so the row keeps this household's cells -- and says "tie-win",
+        # because a plan that shares the minimum with a rival in one column is
+        # not the sole winner there, and one that stores the minimum alone in
+        # the other column is not merely tied for cheapest either.
         with _matrix_priced(plans, cells):
             for token in _MATRIX_PLAN_TOKENS:
                 assert rt.resolve_token(token).strip(), (
                     f"{token} refused a matrix in which {best} is cheapest without a "
                     f"battery and tied with one")
-            assert rt.resolve_token("S4_ROW_CLASS") == "tie", (
+            assert rt.resolve_token("S4_ROW_CLASS") == "tie-win", (
                 f"section 4's row reads {rt.resolve_token('S4_ROW_CLASS')!r} where {best} "
                 f"is strictly cheapest without a battery and TIES {rival} with one; a "
-                "shared minimum is not a sole win")
+                "shared minimum is not a sole win, and a column won outright is not a tie")
         words = _assert_within_density_cap("S4_VERDICT_SHORT", value, "a lead into a tie")
         for token, was in published.items():
             assert rt.resolve_token(token) == was, (
@@ -2719,16 +2725,29 @@ def _s4_row_markup(plans, cells):
         return rendered, rt.resolve_token("S4_ROW_CLASS")
 
 
+# The two families of row class, written out rather than pattern-matched off
+# the names. Section 4's row states BOTH columns' standings (report_tokens
+# ._S4_ROW_CLASSES), and the question the heading is read against is the
+# coarser one -- is this household's plan a cheapest plan in BOTH columns, or
+# is it beaten in at least one? A rename in the module leaves these stale, and
+# stale is loud here: the assertions below are iffs, so a class in neither
+# family fails them the first time a matrix reaches it.
+# case_section_4s_row_class_is_a_state_the_stylesheet_can_paint holds the two
+# to a partition of the whole vocabulary.
+_S4_CHEAPEST_IN_BOTH = ("tie", "tie-win", "win")
+_S4_BEATEN_IN_A_COLUMN = ("trails", "trails-tie", "trails-win")
+
+
 @case
 def case_the_heading_never_denies_a_winner_the_row_beneath_it_names():
     """ISSUE #141, REVIEW ROUND 3, FINDING 1. The heading and the markup
     directly under it are one statement, and they may not disagree.
 
     Section 4's h2 carries {{S4_VERDICT_SHORT}} and the table immediately
-    below it opens the household's row with {{S4_ROW_CLASS}} -- "win", "tie"
-    or "trails". So the two are read together, and a row painted as the sole
-    winner under a heading that declines to name one is a page that
-    contradicts itself in adjacent lines.
+    below it opens the household's row with {{S4_ROW_CLASS}}, which states
+    both columns' standings. So the two are read together, and a row painted
+    as the sole winner under a heading that declines to name one is a page
+    that contradicts itself in adjacent lines.
 
     The old branch produced exactly that. It answered "Too close to call"
     whenever EITHER column named more than one cheapest plan, on the premise
@@ -2748,23 +2767,32 @@ def case_the_heading_never_denies_a_winner_the_row_beneath_it_names():
 
     WHAT ISSUE #178 CHANGED HERE. The row used to be fixed `class="win"`
     markup whose only gate was the three cells refusing, so "does the row
-    render" was the whole of what it asserted. It now states one of three
-    things, off _bpm_cheapest -- the same helper the heading decides on -- so
-    the agreement this case drives is between two readings of one ranking,
+    render" was the whole of what it asserted. It now states both columns'
+    standings, off _bpm_cheapest -- the same helper the heading decides on --
+    so the agreement this case drives is between two readings of one ranking,
     which is why it is an invariant and not a pair of expected strings.
 
     Driven over five matrices, in every direction:
 
-      * class "win" or "tie" <-> the plan is cheapest-or-joint-cheapest at
-        BOTH battery states. Neither may be painted over a plan some column
-        prices above a rival, and "trails" may not be painted over one that
-        is never beaten;
+      * a class in _S4_CHEAPEST_IN_BOTH <-> the plan is
+        cheapest-or-joint-cheapest at BOTH battery states. None of them may be
+        painted over a plan some column prices above a rival, and no class in
+        _S4_BEATEN_IN_A_COLUMN may be painted over one that is never beaten;
       * class "win" -> the plan is the ONLY such plan -> the heading must
         answer "No";
       * "Too close to call" -> some OTHER plan is cheapest at both states
         too, so the row may not read "win";
       * "Yes" -> no plan is cheapest at both, so this household's is not
-        either, and the row must read "trails".
+        either, and the row must say it is beaten in a column.
+
+    The two mixed scenarios are the ones issue #178's review added. A plan
+    joint-cheapest in one column and alone cheapest in the other is "tie-win",
+    not "tie": the heading answers "No" for it, and a badge reading "ties for
+    cheapest" over a column it wins outright would be the same false claim
+    this case exists to stop, one state along. Likewise the changed winner is
+    "trails-win" and not "trails" -- it is beaten with a battery and alone
+    cheapest without one, so "not the cheapest" would be false about the
+    no-battery cell sitting two columns to its right.
     """
     template = rt.TEMPLATE.read_text()
     heading = [ln for ln in template.splitlines()
@@ -2779,16 +2807,16 @@ def case_the_heading_never_denies_a_winner_the_row_beneath_it_names():
     # (label, cells, the answer the cells settle, the class they settle)
     scenarios = (
         ("joint-cheapest without a battery, alone with one",
-         {best: (100, 100), near: (100, 200), far: (300, 300)}, "No", "tie"),
+         {best: (100, 100), near: (100, 200), far: (300, 300)}, "No", "tie-win"),
         ("alone without a battery, joint-cheapest with one",
-         {best: (100, 100), near: (200, 100), far: (300, 300)}, "No", "tie"),
+         {best: (100, 100), near: (200, 100), far: (300, 300)}, "No", "tie-win"),
         ("a different rival tying in each column",
          {best: (100, 100), near: (100, 200), far: (300, 100)}, "No", "tie"),
         ("two plans priced identically in both columns",
          {best: (100, 100), near: (100, 100), far: (300, 300)},
          "Too close to call", "tie"),
         ("a winner the battery really changes",
-         {best: (100, 300), near: (200, 100), far: (300, 200)}, "Yes", "trails"),
+         {best: (100, 300), near: (200, 100), far: (300, 200)}, "Yes", "trails-win"),
     )
     seen = {}
     with _stub_plan(best, provider):
@@ -2804,7 +2832,7 @@ def case_the_heading_never_denies_a_winner_the_row_beneath_it_names():
             # answer assertions below are an anchor on the scenarios
             # themselves -- they would catch a wording change too, which is
             # not what this case is for.
-            assert (row_class in ("win", "tie")) == (best in at_both), (
+            assert (row_class in _S4_CHEAPEST_IN_BOTH) == (best in at_both), (
                 f"{label}: section 4's row reads {row_class!r} while the matrix prices "
                 f"{sorted(at_both)} cheapest at both battery states -- a row calling this "
                 f"household's plan a cheapest plan when some column prices a rival below "
@@ -2821,7 +2849,7 @@ def case_the_heading_never_denies_a_winner_the_row_beneath_it_names():
                     f"prices exactly {sorted(at_both)} cheapest at both battery states, "
                     f"and section 4's row reads {row_class!r}: {value}")
             if value.startswith("Yes"):
-                assert not at_both and row_class == "trails", (
+                assert not at_both and row_class in _S4_BEATEN_IN_A_COLUMN, (
                     f"{label}: the heading reports a changed winner while "
                     f"{sorted(at_both)} is cheapest at both states and the row reads "
                     f"{row_class!r}: {value}")
@@ -2843,7 +2871,7 @@ def case_the_heading_never_denies_a_winner_the_row_beneath_it_names():
             f"beneath it never contradict each other -- a 'win' row is only ever painted "
             f"over a plan uniquely cheapest at both battery states and always answered "
             f"'No', 'Too close to call' never sits over one, and 'Yes' always sits over a "
-            f"'trails' row ({answers})")
+            f"row that names a column this plan is beaten in ({answers})")
 
 
 @case
@@ -2952,7 +2980,15 @@ def case_a_household_the_matrix_ranks_second_still_gets_a_whole_report():
     wrong one -- it puts a plan the artifact ranks SECOND into the winners'
     set, which under the old markup published the runner-up as the winner.
     Order survives the rounding exactly; what changed is that the row can now
-    say "trails", so nothing has to be widened and nothing has to be refused.
+    say where the plan stands, so nothing has to be widened and nothing has
+    to be refused.
+
+    THE ROW SAYS "trails-win", not "trails". The dollar moves ONE column, so
+    this household is beaten in that column and still alone cheapest in the
+    other, and "trails" would badge the row "not the cheapest in either
+    column" beside a cell that is the cheapest in its own. Naming the pair is
+    the fix; taking the weaker of the two was the same false-markup defect
+    with one column's claim missing.
 
     Both directions are driven, in both columns. A dollar the OTHER way is
     the same rounding and the same $1, and it must leave the row reading
@@ -3013,10 +3049,13 @@ def case_a_household_the_matrix_ranks_second_still_gets_a_whole_report():
                     "the token set is not the same for a household the matrix ranks "
                     f"second: {sorted(set(published) - set(rendered))}")
                 # 2. THE ROW STOPS CLAIMING THE WIN, in the markup a reader
-                #    is shown and not merely in a helper's return value.
-                assert row_class == "trails" and 'class="trails"' in markup, (
+                #    is shown and not merely in a helper's return value --
+                #    and stops at the truth: beaten in this column, still
+                #    alone cheapest in the other.
+                assert row_class == "trails-win" and 'class="trails-win"' in markup, (
                     f"section 4's row reads {row_class!r} while the matrix prices {rival} "
-                    f"below {cheapest} {phrase}: {markup}")
+                    f"below {cheapest} {phrase} and {cheapest} is still alone cheapest in "
+                    f"the other column: {markup}")
                 assert 'class="win"' not in markup, (
                     f"section 4 still paints {cheapest} as the winner {phrase} while the "
                     f"matrix prices {rival} below it: {markup}")
@@ -3036,7 +3075,8 @@ def case_a_household_the_matrix_ranks_second_still_gets_a_whole_report():
             "the substituted matrix cell leaked out of this case")
     return (f"a household the matrix ranks second keeps all {len(published)} tokens -- "
             f"{sorted(_MATRIX_PLAN_TOKENS)} included, which the old fixed class=\"win\" "
-            "row refused -- and its row says 'trails' instead, in both columns and in "
+            "row refused -- and its row says 'trails-win' instead, cheapest in the column "
+            "the dollar did not move and beaten in the one it did, in both columns and in "
             "both directions (" + ", ".join(f"{k}: {v}" for k, v in seen.items()) + ")")
 
 
@@ -3045,6 +3085,52 @@ def case_a_household_the_matrix_ranks_second_still_gets_a_whole_report():
 # Written as (rival cell, the state it makes) rather than as three named
 # matrices so the case below can take their PRODUCT over the two columns.
 _S4_COLUMN_STATES = ((200, "win"), (100, "tie"), (50, "trails"))
+
+
+# THE 9-WAY MAPPING, written out rather than derived. The module builds the
+# class by sorting the two standings worst-first and joining them; a test that
+# recomputed that rule would agree with whatever rule the module happened to
+# have, which is not a check. These are the nine combinations of
+# (no_battery standing, with_battery standing) and the class each one settles.
+_S4_PAIR_CLASSES = {
+    ("win", "win"): "win",
+    ("win", "tie"): "tie-win",
+    ("tie", "win"): "tie-win",
+    ("tie", "tie"): "tie",
+    ("win", "trails"): "trails-win",
+    ("trails", "win"): "trails-win",
+    ("tie", "trails"): "trails-tie",
+    ("trails", "tie"): "trails-tie",
+    ("trails", "trails"): "trails",
+}
+
+
+# What section 4's row is allowed to stamp on the plan-name cell, and the
+# arithmetic each stamp asserts:
+#
+#     state -> (badge text, how many of the matrix's two columns price this
+#               plan cheapest, how many of those it is the ONLY plan in)
+#
+# "win" carries no badge: the row is painted as the winner and there is
+# nothing to qualify.
+#
+# Written here as well as in report-template.html deliberately. The stylesheet
+# is where the WORDS are; this table is where their MEANING is, and the case
+# below checks both halves -- the text against the <style> block that ships,
+# and the two counts against the cheapest sets the artifact actually produces,
+# over all nine combinations above. So a badge cannot be reworded without
+# re-deriving what it claims, and cannot claim something the columns do not
+# support in any combination that reaches it. That is the whole of what went
+# wrong: "not the cheapest" was printed for a row cheapest in one column, and
+# "ties for cheapest" for a row that won one outright.
+_S4_ROW_BADGES = {
+    "win":        (None,                                   2, 2),
+    "tie-win":    ("cheapest in both columns, tied in one", 2, 1),
+    "tie":        ("tied for cheapest in both columns",     2, 0),
+    "trails-win": ("cheapest in one column only",           1, 1),
+    "trails-tie": ("tied for cheapest in one column only",  1, 0),
+    "trails":     ("not the cheapest in either column",     0, 0),
+}
 
 
 @case
@@ -3062,40 +3148,83 @@ def case_section_4s_row_class_is_a_state_the_stylesheet_can_paint():
     WHAT CAN GO WRONG WITH A CLASS NAME is not a malformed render. It is a
     class the stylesheet does not paint: the row then draws exactly like
     every other row, a runner-up loses the one mark that says it is this
-    household's, and nothing about the page looks broken. That is the silent
-    half of the defect the token was added to fix, so three things are held:
+    household's, and nothing about the page looks broken. The other thing
+    that can go wrong is a class the stylesheet paints with a FALSE badge,
+    which looks even less broken. So four things are held:
 
       1. THE VOCABULARY IS COMPLETE AND CLOSED. Every state the resolver can
          reach is a member of report_tokens._S4_ROW_CLASSES, driven over the
          PRODUCT of the three standings each column can be in -- nine
-         matrices, not the three the module happens to name.
-      2. THE WEAKEST COLUMN DECIDES. One row spans two battery states, so a
-         plan that leads without a battery and trails with one is a "trails"
-         row. This is the ordering _S4_ROW_CLASSES encodes, driven off the
-         cells rather than read off the tuple.
+         matrices, not the six the module happens to name.
+      2. THE CLASS CARRIES BOTH COLUMNS. One row spans two battery states,
+         and a class reporting only one of them badges the row with a claim
+         that is false about the other. Driven off _S4_PAIR_CLASSES, which is
+         the 9-way mapping written out rather than recomputed from the
+         module's own naming rule.
       3. EVERY MEMBER IS PAINTED, by a rule in report-template.html's own
-         <style> block, and the two states that are not a sole win SAY SO in
-         the row -- a ::after badge, because a colour alone does not tell a
-         reader that the row they are looking at is not the winner.
+         <style> block, and every state that is not a sole win in both
+         columns SAYS SO in the row -- a ::after badge, because a colour
+         alone does not tell a reader where they stand.
+      4. EVERY BADGE IS TRUE OF EVERY COMBINATION THAT REACHES IT. Each badge
+         asserts how many of the two columns price this plan cheapest and how
+         many of those it is alone in (_S4_ROW_BADGES); both counts are taken
+         from the cheapest sets the synthetic matrix actually produces, in all
+         nine combinations, and must match the badge the reader would be
+         shown.
 
-    And the three states must be DISTINGUISHABLE in the rendered markup,
-    which is the whole point of expressing a tie separately: two states that
-    compute differently and render identically have not been expressed."""
+    That fourth check is the one this case was missing. The row class used to
+    be the WEAKER of the two columns' standings, which is never an overclaim
+    and is still false half the time: a household alone cheapest without a
+    battery and beaten with one resolved "trails", and the stylesheet stamped
+    "not the cheapest" on the plan-name cell of a row whose no-battery cell is
+    the cheapest in its column. The mirror -- "ties for cheapest" over a
+    column won outright -- is the same defect pointing the other way. Both are
+    the defect this token exists to remove, one state along, and a check that
+    only asks "is the class painted" cannot see either.
+
+    And the states must be DISTINGUISHABLE in the rendered markup: two states
+    that compute differently and render identically have not been
+    expressed."""
     plans, best, near, far, rest = _matrix_trio()
     provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
     style = rt.TEMPLATE.read_text()
     style = style[style.index("<style>"):style.index("</style>")]
+
+    assert set(_S4_ROW_BADGES) == set(rt._S4_ROW_CLASSES), (
+        f"this case declares a badge for {sorted(_S4_ROW_BADGES)} while S4_ROW_CLASS can "
+        f"reach {list(rt._S4_ROW_CLASSES)}; a state with no declared claim is a state "
+        "whose badge nothing here reads")
+    assert set(_S4_PAIR_CLASSES.values()) == set(rt._S4_ROW_CLASSES), (
+        f"the 9-way mapping settles {sorted(set(_S4_PAIR_CLASSES.values()))}, which is not "
+        f"the vocabulary {list(rt._S4_ROW_CLASSES)}")
+    # The two families the heading case reads, held to a partition of the
+    # vocabulary and to the badges' own arithmetic.
+    families = (set(_S4_CHEAPEST_IN_BOTH), set(_S4_BEATEN_IN_A_COLUMN))
+    assert families[0] | families[1] == set(rt._S4_ROW_CLASSES) and not families[0] & families[1], (
+        f"_S4_CHEAPEST_IN_BOTH {sorted(families[0])} and _S4_BEATEN_IN_A_COLUMN "
+        f"{sorted(families[1])} are not a partition of {list(rt._S4_ROW_CLASSES)}, so the "
+        "heading case is reading a family that no longer covers every row a household can get")
+    for state, (_text, cheapest_in, _sole_in) in _S4_ROW_BADGES.items():
+        assert (state in _S4_CHEAPEST_IN_BOTH) == (cheapest_in == 2), (
+            f"tr.{state} is in the wrong family: its badge claims this plan is cheapest in "
+            f"{cheapest_in} of the two columns")
 
     for state in rt._S4_ROW_CLASSES:
         assert f"tr.{state} td" in style, (
             f"report-template.html's stylesheet has no rule for tr.{state}, a state "
             f"S4_ROW_CLASS can put on section 4's household row; an unpainted class is "
             f"not a broken render, it is a runner-up's row drawn like every other row")
-        if state == "win":
+        text = _S4_ROW_BADGES[state][0]
+        if text is None:
+            assert f"tr.{state} td:first-child::after" not in style, (
+                f"tr.{state} badges the row while this case records it as the state with "
+                "nothing to qualify -- a sole cheapest plan in both columns")
             continue
-        assert f"tr.{state} td:first-child::after{{content:" in style, (
-            f"tr.{state} carries no badge, so the row states in colour alone that this "
-            "household is not the sole cheapest plan")
+        assert f'tr.{state} td:first-child::after{{content:"{text}"}}' in style, (
+            f"report-template.html does not badge tr.{state} with {text!r}. A missing "
+            "badge states in colour alone that this household is not the sole cheapest "
+            "plan; a DIFFERENT badge is a claim whose truth was checked against the "
+            "wording this case carries, and has to be re-derived against the new one")
 
     seen, markups = {}, {}
     with _stub_plan(best, provider):
@@ -3108,13 +3237,34 @@ def case_section_4s_row_class_is_a_state_the_stylesheet_can_paint():
                     f"S4_ROW_CLASS resolved {row_class!r}, which is not one of "
                     f"{list(rt._S4_ROW_CLASSES)} and so is a class nothing in "
                     f"report-template.html paints: {markup}")
-                # The weakest of the two columns, computed here from the cells
-                # rather than from the module's own tuple order.
-                expected = min((no_state, with_state), key=rt._S4_ROW_CLASSES.index)
+                # THE FALSE SENTENCE FIRST, and tested as one: what the badge
+                # this row would print CLAIMS, against the cheapest sets the
+                # artifact produces -- not against the labels this case named
+                # the matrices with. The mapping assertion below is an anchor
+                # on the vocabulary; this one is the defect. A class that
+                # collapses the two columns back into the weaker of them
+                # passes every name check written in terms of itself and
+                # fails here, which is the order that failure has to be
+                # reported in.
+                with _matrix_priced(plans, cells):
+                    cheapest = [rt._bpm_cheapest("S4_ROW_CLASS", column)
+                                for column, _phrase in rt._BPM_COLUMNS]
+                text, cheapest_in, sole_in = _S4_ROW_BADGES[row_class]
+                claimed = (cheapest_in, sole_in)
+                actual = (sum(best in s for s in cheapest),
+                          sum(s == {best} for s in cheapest))
+                assert actual == claimed, (
+                    f"a row {no_state!r}/{with_state!r} took class {row_class!r} and is "
+                    f"badged {text!r}, which claims {best} is cheapest in {cheapest_in} of "
+                    f"the two columns and alone in {sole_in} of them -- the matrix prices "
+                    f"it cheapest in {actual[0]} and alone in {actual[1]} "
+                    f"({[sorted(s) for s in cheapest]}). The badge is published markup, so "
+                    f"this is a false sentence on the page: {markup}")
+                expected = _S4_PAIR_CLASSES[(no_state, with_state)]
                 assert row_class == expected, (
                     f"a row {no_state!r} without a battery and {with_state!r} with one "
-                    f"resolved {row_class!r}; one row spans both columns, so its class is "
-                    f"the weakest standing either of them supports ({expected!r})")
+                    f"resolved {row_class!r}; the class states BOTH columns' standings, so "
+                    f"these two settle {expected!r}")
                 assert f'class="{row_class}"' in markup, (
                     f"the row's class did not reach the markup a reader is shown: {markup}")
                 seen[(no_state, with_state)] = row_class
@@ -3128,9 +3278,65 @@ def case_section_4s_row_class_is_a_state_the_stylesheet_can_paint():
         f"not actually distinguishable on the page: {markups}")
     return ("section 4's row reaches exactly the "
             f"{len(rt._S4_ROW_CLASSES)} states report-template.html paints, over the 9 "
-            "combinations of the two columns' standings, always taking the weakest of the "
-            "two -- and the three render as three different rows ("
+            "combinations of the two columns' standings, and every badge it prints is true "
+            f"of every combination that reaches it -- {len(markups)} distinguishable rows ("
             + ", ".join(f"{a}/{b} -> {c}" for (a, b), c in sorted(seen.items())) + ")")
+
+
+@case
+def case_section_4s_row_class_refuses_a_column_count_it_cannot_name():
+    """The class is built from EXACTLY two standings, one per battery column,
+    and the guard on that count is not decorative.
+
+    A row class of "trails-tie" says the plan is joint-cheapest in one of the
+    two columns and beaten in the other. Take _BPM_COLUMNS down to one column
+    and the same code has one standing to work with; take it up to three and
+    it has three. Neither produces a malformed value -- one column yields
+    "win", three yield a two-part name off whichever two sorted first -- and
+    both are members of the vocabulary the stylesheet paints. So the failure
+    mode is a row badged with a claim about "both columns" over a table that
+    no longer has two, which is exactly the class of defect this token exists
+    to remove: markup asserting a standing the artifact does not carry.
+
+    Hence a refusal, and hence this case. Both directions are driven, the
+    columns are real ones (a duplicate rather than an invented key, so the
+    ranking underneath still reads live cells and the refusal can only be the
+    count), and the message has to name the token and the columns it was
+    handed."""
+    saved = rt._BPM_COLUMNS
+    published = rt.resolve_token("S4_ROW_CLASS")
+    probes = {
+        "one column": (("no_battery", "without a battery"),),
+        "three columns": saved + (("no_battery", "without a battery"),),
+    }
+    refusals = {}
+    try:
+        for label, columns in probes.items():
+            rt._BPM_COLUMNS = columns
+            try:
+                value = rt.resolve_token("S4_ROW_CLASS")
+            except SystemExit as e:
+                msg = str(e)
+                assert "S4_ROW_CLASS" in msg or "row" in msg, (
+                    f"the {label} refusal does not say which token could not name a "
+                    f"state: {msg}")
+                assert str(len(columns)) in msg and "_BPM_COLUMNS" in msg, (
+                    f"the {label} refusal does not name the column count it was handed "
+                    f"or where that count comes from: {msg}")
+                refusals[label] = msg.split(";")[0]
+            else:
+                raise AssertionError(
+                    f"S4_ROW_CLASS resolved {value!r} off {len(columns)} battery "
+                    f"column(s). Every state in {list(rt._S4_ROW_CLASSES)} is a claim "
+                    f"about the two columns section 4's table prints, so this is a badge "
+                    f"the artifact cannot support rather than a state of this household")
+    finally:
+        rt._BPM_COLUMNS = saved
+    assert rt.resolve_token("S4_ROW_CLASS") == published, (
+        "the substituted column list leaked out of this case (S4_ROW_CLASS)")
+    return ("S4_ROW_CLASS refuses rather than naming a state off a column count its "
+            "vocabulary cannot describe (" + "; ".join(f"{k}: {v}" for k, v in
+                                                        refusals.items()) + ")")
 
 
 @case
@@ -4324,8 +4530,8 @@ def case_the_two_battery_scenarios_are_never_cross_checked_against_each_other():
 _PLAN_CHROME = ("Best plan in every scenario", 'Why {{BEST_PLAN}} wins:')
 # The two families are rendered from different artifacts, and since issue #178
 # only ONE of them is gated at all: section 3's chrome still asserts the win in
-# fixed markup, section 4's row carries {{S4_ROW_CLASS}} and states whichever
-# of the three standings the matrix supports -- see
+# fixed markup, section 4's row carries {{S4_ROW_CLASS}} and states the
+# standing the matrix supports in each of its two columns -- see
 # case_section_4s_row_class_tracks_the_matrix_its_cells_come_from.
 _CSV_PLAN_TOKENS = ("BEST_PLAN", "BEST_PLAN_ANNUAL_CCA", "BEST_PLAN_ANNUAL_BUNDLED")
 _MATRIX_PLAN_TOKENS = ("BEST_PLAN_NOBATT_MODELED", "BEST_PLAN_BATT_MODELED",
@@ -4489,11 +4695,13 @@ def case_section_4s_row_class_tracks_the_matrix_its_cells_come_from():
         checked = []
         for column in ("no_battery", "with_battery"):
             # Undercut the household's plan in ONE matrix column at a time,
-            # leaving data/plan_results.csv untouched. ONE column is enough:
-            # the row is one row over two columns, so its class is the
-            # weakest standing either of them supports.
-            for state, moved in (("trails", best[column] - 500),
-                                 ("tie", best[column])):
+            # leaving data/plan_results.csv untouched. ONE column moving is
+            # enough to move the class, because the class names BOTH columns'
+            # standings: the untouched column stays a sole win, so the row
+            # goes from "win" to "trails-win" or "tie-win" and says which
+            # column it lost rather than writing off both.
+            for state, moved in (("trails-win", best[column] - 500),
+                                 ("tie-win", best[column])):
                 with _swapped(plans[rival], column, moved):
                     assert rt.resolve_token("S4_ROW_CLASS") == state, (
                         f"battery_plan_matrix.json prices {rival} at {moved} against "
