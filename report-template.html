@@ -562,7 +562,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <details class="sec" id="sec12" open>
 <summary><h2 id="s12">12 · Panel cleaning &amp; soiling — measured, not assumed</h2><span class="teaser">{{SEC12_TEASER}}<!-- TODO: one line — did the historical cleaning work, and does paying for future cleanings pencil? --></span></summary>
 <p>Two questions: did the {{CLEANING_YEAR}} cleaning actually work, and is paying for future cleanings still worth it?</p>
-<h3>The {{CLEANING_DATE}} cleaning ({{CLEANING_PRICE}}): {{CLEANING_EFFECT_PCT}} production gain, difference-in-differences vs the control years <span class="pill g">measured</span></h3>
+<h3>The {{CLEANING_DATE}} cleaning ({{CLEANING_PRICE}}): {{CLEANING_EFFECT_CLAIM}} <span class="pill {{CLEANING_EFFECT_PILL_CLASS}}">{{CLEANING_EFFECT_PILL_LABEL}}</span></h3>
 <p>Comparing the 30 days before vs after the cleaning, against the identical calendar windows in control years (which capture the normal seasonal decline). Each row below is one year's own raw post ÷ pre ratio; the heading's figure is the cleaned year's ratio measured against the control years':</p>
 <table>
 <thead><tr><th>Year</th><th>Pre-window median (kWh/day)</th><th>Post-window median</th><th>Post ÷ pre (raw)</th></tr></thead>
@@ -571,7 +571,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <!-- TODO: one <tr> per control year, plus any window-coverage footnotes. -->
 </tbody>
 </table>
-<p><!-- TODO: the difference-in-differences result, corroborating evidence (zero-production wash day, peak-power step), and the $ recovered vs the cleaning price. --></p>
+<p><!-- TODO: the difference-in-differences result ({{CLEANING_EFFECT_PCT}} — the same figure the h3 above states, against the raw per-year ratios in the table), corroborating evidence (zero-production wash day, peak-power step), and the $ recovered vs the cleaning price. --></p>
 <h3>How fast do the panels re-soil? <span class="pill r">estimated</span></h3>
 <p><!-- TODO: the independent soiling study vs the cleaning-implied rate; reconcile or bracket honestly ({{SOILING_RATE_RANGE}}); cite {{SOILING_SCRIPT}}. --></p>
 <h3>Best cadence and month — and a caution about today's rates <span class="pill y">modeled</span></h3>

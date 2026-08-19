@@ -12485,6 +12485,277 @@ def case_attribute_only_flags_match_where_the_template_puts_each_token():
             f"{len(positions)} live tokens outside its comments, <script> and <style>")
 
 
+# ---------------------------------------------------------------------------
+# THE SOILING ARTIFACT'S SECOND SHAPE (ISSUES #167, #170, #171, #137, #168).
+#
+# analysis/soiling_analysis.py writes sanity_check_2024_cleaning and
+# annual_economics.scenario_B_2024_cleaning_evidence in TWO shapes: the
+# numeric one this household gets, and a `status` string for any household
+# whose cleaning_history does not contain the dated event the gain was
+# measured on. The second shape is the ORDINARY outcome of the reproduction
+# path README documents, not a broken artifact -- so the whole token set has
+# to survive it, and the cases below sweep rather than spot-check, because a
+# case that resolves one token cannot tell you the report still generates.
+# ---------------------------------------------------------------------------
+_STATUS_SANITY_CHECK = (
+    "not determined — cleaning_history has no entry for 2024-08-12, the only event "
+    "with a measured diff-in-diff effect; other cleanings have no measured gain to "
+    "sanity-check against")
+_STATUS_SCENARIO_B = (
+    "not determined — requires the measured 2024-08-12 cleaning event (see "
+    "sanity_check_2024_cleaning)")
+
+
+def _status_shaped(doc):
+    """soiling_results.json as soiling_analysis.py writes it for a household
+    with no measured cleaning: a status string in place of BOTH numeric
+    blocks."""
+    doc["sanity_check_2024_cleaning"] = {"status": _STATUS_SANITY_CHECK}
+    doc["annual_economics"]["scenario_B_2024_cleaning_evidence"] = \
+        {"status": _STATUS_SCENARIO_B}
+
+
+def _resolution_failures():
+    """{token: what went wrong} for every non-gap token that will not render.
+
+    Catches BaseException, not SystemExit or AssertionError: the whole point
+    is that NOTHING escapes, and a token family that started raising KeyError
+    past resolve_token's own conversion would satisfy a narrower check while
+    still taking the report down -- which is exactly the defect #167 and #170
+    name."""
+    out = {}
+    for name, spec in rt.TOKENS.items():
+        if spec.get("kind") == "gap":
+            continue
+        try:
+            rt.resolve_token(name, spec)
+        except BaseException as e:                # noqa: BLE001 - that is the assertion
+            out[name] = f"{type(e).__name__}: {e}"
+    return out
+
+
+class _example_household:
+    """household.example.yaml standing in for private/household.yaml, with one
+    cleaning_history written into it -- so a case about the STUDY CSV needs no
+    private archive. Nothing is written to disk; report_tokens' view of the
+    household is restored on the way out, including when the body raises."""
+
+    def __init__(self, entries):
+        self.entries = entries
+
+    def __enter__(self):
+        import yaml
+        node = yaml.safe_load((rt.ROOT / "household.example.yaml").read_text())
+        node["cleaning_history"] = [dict(e) for e in self.entries]
+        self.old = (rt.hh._cache, rt.hh.PATH)
+        rt.hh._cache, rt.hh.PATH = node, rt.ROOT / "household.example.yaml"
+        return node
+
+    def __exit__(self, *exc):
+        rt.hh._cache, rt.hh.PATH = self.old
+        return False
+
+
+@case
+def case_a_status_shaped_soiling_artifact_leaves_every_token_resolving():
+    """ISSUES #167 AND #170, which are one defect at two exits.
+
+    With a status-shaped soiling_results.json, exactly two tokens used to hard-
+    fail: SEC12_TEASER subscripted known_cleaning_gain_pct and
+    SOILING_RATE_RANGE subscripted scenario B's rate_pct_per_month. Either one
+    alone takes resolve_all() down, so a household without the measured
+    cleaning got NO REPORT AT ALL -- which is the outcome issue #138's
+    state-aware CLEANING_EFFECT_PCT was written to prevent, defeated by the
+    two tokens beside it.
+
+    Swept, not spot-checked (issue #170's own lesson): the assertion is that
+    the set of tokens that fail is UNCHANGED by the artifact's shape, so a
+    third token growing the same assumption fails this case."""
+    _require_household()
+    baseline = _resolution_failures()
+    with _patched(rt, "_json", _stub_for("soiling_results.json", _status_shaped)):
+        variant = _resolution_failures()
+        teaser = _renders("SEC12_TEASER")
+        bracket = _renders("SOILING_RATE_RANGE")
+        claim = _renders("CLEANING_EFFECT_CLAIM")
+    assert set(variant) == set(baseline), (
+        "a status-shaped soiling_results.json changed which tokens resolve at all: "
+        + "; ".join(f"{t}: {variant.get(t, 'now resolves')}"
+                    for t in sorted(set(variant) ^ set(baseline))))
+    for name, text in (("SEC12_TEASER", teaser), ("SOILING_RATE_RANGE", bracket),
+                       ("CLEANING_EFFECT_CLAIM", claim)):
+        assert rt._NOT_DETERMINED_VERDICT in text.lower(), (
+            f"{name} rendered {text!r} against an artifact that states no measured "
+            "cleaning gain -- it must say so, not state a figure")
+        assert "11.8" not in text, (
+            f"{name} rendered {text!r}, carrying this household's measured gain into a "
+            "household the artifact says it was not measured for")
+    assert _STATUS_SANITY_CHECK.split("— ", 1)[1][:40] in teaser, (
+        f"SEC12_TEASER rendered {teaser!r} without soiling_analysis.py's own reason -- "
+        "the generator owns why it measured nothing")
+    assert "0.45" in bracket, (
+        f"SOILING_RATE_RANGE rendered {bracket!r}, dropping scenario A's rate, which the "
+        "same artifact still states")
+    return (f"a status-shaped soiling_results.json leaves all "
+            f"{len(rt.TOKENS) - len(variant)} resolvable tokens resolving; the teaser "
+            f"renders {teaser[:48]!r}... and the bracket {bracket[:48]!r}...")
+
+
+@case
+def case_the_cleaning_heading_pill_follows_the_determination_state():
+    """ISSUE #168: §12's h3 carried a fixed green `measured` pill, so a
+    household whose gain comes back "not determined" was handed a stamp saying
+    the absent value was measured -- CLAUDE.md §9's "precision must match
+    evidence density", broken by markup rather than by a number.
+
+    Renders the template's actual h3 line in BOTH states and checks the whole
+    line, not the tokens in isolation: the defect was in how the fixed wording
+    and the varying value fit together, which only the assembled heading
+    shows."""
+    _require_household()
+    line, = [ln for ln in (rt.TEMPLATE.read_text()).splitlines()
+             if "{{CLEANING_EFFECT_CLAIM}}" in ln]
+    names = sorted(set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", line)))
+
+    def heading():
+        return re.sub(r"\{\{([A-Z0-9_]+)\}\}",
+                      lambda m: rt.resolve_token(m.group(1)), line)
+
+    def pill(text):
+        cls, label = re.search(r'<span class="pill ([a-z]+)">([^<]*)</span>',
+                               text).groups()
+        return cls, label
+
+    determined = heading()
+    # BOTH ways the gain can be undetermined, since the pill has to follow the
+    # state and not one route to it: the artifact's own status shape, and a
+    # cleaning_history that simply records a different event.
+    headings = {}
+    with _patched(rt, "_json", _stub_for("soiling_results.json", _status_shaped)):
+        headings["the artifact's own not-determined status"] = heading()
+    with _example_household([{"date": "2023-01-01", "cost_usd": 150}]):
+        headings["a history without the measured cleaning"] = heading()
+
+    assert pill(determined) == ("g", "measured · single event"), (
+        f"the determined heading lost its measured pill: {determined}")
+    assert "difference-in-differences" in determined, (
+        f"the determined heading no longer names the method: {determined}")
+    for why, text in headings.items():
+        cls, label = pill(text)
+        assert (cls, label) == ("r", "not determined"), (
+            f"with {why}, an undetermined cleaning gain is labelled "
+            f"{label!r} in a {cls!r} pill: {text}")
+        assert "difference-in-differences" not in text, (
+            f"with {why}, the heading still describes the absent value as a "
+            f"difference-in-differences estimate: {text}")
+        assert "production gain not determined —" in text, (
+            f"with {why}, the heading does not read as a sentence: {text}")
+        assert "11.8" not in text, text
+
+    # Every class the pill can reach is one report-template.html's own <style>
+    # block paints -- the guard an attribute value needs, the same one
+    # S3_ROW_CLASS carries. An unstyled pill publishes as unmarked text.
+    style = rt.TEMPLATE.read_text()
+    for text in (determined, *headings.values()):
+        cls, _label = pill(text)
+        assert re.search(rf"\.pill\.{cls}\b", style), (
+            f"the pill class {cls!r} is not painted by report-template.html's <style>")
+    return (f"§12's h3 ({len(names)} tokens) renders 'measured · single event' with the "
+            f"gain and a red 'not determined' pill without it, across {len(headings)} "
+            "routes to the undetermined state, claiming no difference-in-differences "
+            "method in either")
+
+
+@case
+def case_a_degenerate_cleaning_window_is_a_named_refusal_not_a_bare_error():
+    """ISSUE #171: the named zero/nan refusal issue #131 added to the cleaning
+    windows went away with the quotient it guarded, and CLEANED_RATIO divided
+    unguarded -- a bare ZeroDivisionError instead of a refusal naming the
+    artifact and the window.
+
+    All THREE consumers of _cleaning_window_medians are checked, not just the
+    one that divides: the two that publish a median render it under a
+    `measured` pill, where a nan is a nonsense figure with an evidence stamp
+    on it. Needs no private archive -- household.example.yaml supplies the
+    cleaning date and the study CSV is synthetic."""
+    consumers = ("CLEANED_PRE_MEDIAN", "CLEANED_POST_MEDIAN", "CLEANED_RATIO")
+    clean = dt.date(2023, 1, 1)                      # household.example.yaml's own
+
+    def study(pre_kwh, post_kwh):
+        rows = []
+        for k in range(1, 31):
+            for day, kwh in ((clean - dt.timedelta(days=k), pre_kwh),
+                             (clean + dt.timedelta(days=k), post_kwh)):
+                rows.append({"date": day.strftime("%Y%m%d"), "generated_kwh": str(kwh)})
+        return lambda name: rows if name == "cleaning_study_daily.csv" else real(name)
+
+    real = rt._csv_rows
+    with _example_household([{"date": clean.isoformat(), "cost_usd": 150}]):
+        # A positive control first: the same synthetic window with a real
+        # production level resolves, so a refusal below is the DEGENERACY and
+        # not the fixture.
+        with _patched(rt, "_csv_rows", study(50.0, 55.0)):
+            healthy = {t: rt.resolve_token(t) for t in consumers}
+        refusals = {}
+        for label, (pre_kwh, post_kwh) in (("a zero pre-window median", (0.0, 55.0)),
+                                           ("a nan pre-window median", ("nan", 55.0)),
+                                           ("a nan post-window median", (50.0, "nan"))):
+            with _patched(rt, "_csv_rows", study(pre_kwh, post_kwh)):
+                for token in consumers:
+                    try:
+                        rendered = rt.resolve_token(token)
+                    except SystemExit as e:
+                        refusals[(label, token)] = str(e)
+                        continue
+                    raise AssertionError(
+                        f"{token} rendered {rendered!r} on {label} -- a production level "
+                        "a gain cannot be measured against must be refused by name")
+
+    assert healthy["CLEANED_RATIO"] == "1.10", healthy
+    for (label, token), message in refusals.items():
+        assert token in message, f"{label}: the refusal does not name {token}: {message}"
+        assert "cleaning_study_daily.csv" in message, (
+            f"{label}: the refusal does not name the artifact: {message}")
+        assert "30-day windows" in message and str(clean) in message, (
+            f"{label}: the refusal does not name the window: {message}")
+    return (f"{len(refusals)} named refusals across {len(consumers)} consumers of the "
+            "cleaning windows (zero and non-finite, either side), each naming the token, "
+            f"data/cleaning_study_daily.csv and the window; the healthy control renders "
+            f"{healthy['CLEANED_RATIO']}")
+
+
+@case
+def case_the_soiling_bracket_matches_the_published_report():
+    """ISSUE #137: SOILING_RATE_RANGE rendered "0.4–2.4%/month" while index.html
+    and TECHNICAL.md both state the same bracket as 0.45 -- one decimal
+    published a LOWER soiling rate than data/soiling_results.json's scenario-A
+    0.449%/month measures. Both ends are pinned here against the artifact and
+    against the published paragraph, so the two cannot drift apart again."""
+    _require_household()
+    econ = rt._json("soiling_results.json")["annual_economics"]
+    lo = econ["scenario_A_this_years_evidence"]["rate_pct_per_month"]
+    hi = econ["scenario_B_2024_cleaning_evidence"]["rate_pct_per_month"]
+    rendered = rt.resolve_token("SOILING_RATE_RANGE")
+    for value in (lo, hi):
+        assert float(f"{value:.2f}") == round(value, 2), value
+    expected = f"{rt._trimmed(min(lo, hi))}–{rt._trimmed(max(lo, hi))}%/month"
+    assert rendered == expected, (
+        f"SOILING_RATE_RANGE rendered {rendered!r} against the artifact's own "
+        f"{expected!r} (scenario A {lo}, scenario B {hi})")
+    published = (rt.ROOT / "index.html").read_text()
+    para = re.search(r"<p>An independent soiling study.*?</p>", published, re.S)
+    assert para, "§12's soiling-range paragraph not found in index.html"
+    para = para.group(0)
+    assert f"~{expected}" in para, (
+        f"§12 does not state the soiling bracket as ~{expected}; the token and the "
+        f"published report must agree (CLAUDE.md §9, artifact-prose diff): {para[-320:]}")
+    assert f"~{min(lo, hi):.1f}–" not in para, (
+        f"§12 still carries the one-decimal low end {min(lo, hi):.1f}, which understates "
+        f"the artifact's {min(lo, hi)}%/month")
+    return (f"SOILING_RATE_RANGE = {rendered}, matching soiling_results.json's scenario "
+            f"rates ({lo} / {hi}) and index.html's published bracket")
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

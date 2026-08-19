@@ -150,7 +150,165 @@ def case_soiling_regression_recovers_the_injected_rate():
             "regression recovers the injected rate to within 0.01 pct/day")
 
 
-CASES = [case_soiling_regression_recovers_the_injected_rate]
+# ---------------------------------------------------------------------------
+# THE CLEANING'S DIFFERENCE-IN-DIFFERENCES GAIN (ISSUE #164).
+#
+# The report's headline cleaning figure used to be `cleaning_gain_known = 11.8
+# # verified prior work` -- a literal no committed script derived, published
+# under a `measured` label, and carrying the load-bearing conclusion in §9
+# that a single validated soiling swing is larger than the entire naive
+# four-year change. cleaning_diff_in_diff() now computes it from
+# data/cleaning_study_daily.csv, and these two cases hold it from both sides:
+# a SYNTHETIC record with a gain injected into it (the derivation is correct)
+# and the COMMITTED record against the COMMITTED artifact (the published
+# figure is that derivation's output, not a constant restated beside it).
+#
+# Neither needs the private archive: the study CSV and soiling_results.json
+# are committed de-identified public data, and the household the probe reads
+# is synthetic.
+# ---------------------------------------------------------------------------
+_DID_PROBE = """
+import json, sys
+sys.path.insert(0, ".")
+import soiling_analysis as S
+from datetime import date
+did, why = S.cleaning_diff_in_diff(date.fromisoformat(sys.argv[1]),
+                                   S.load_cleaning_study())
+print(json.dumps({"did": did, "why": why}))
+"""
+
+
+def _did_probe(tmp, clean_date):
+    """cleaning_diff_in_diff() against tmp/data/cleaning_study_daily.csv, run
+    as a subprocess with cwd=tmp so household.py's repo-root walk resolves the
+    SYNTHETIC private/household.yaml rather than whatever is staged here."""
+    r = subprocess.run([sys.executable, "-c", _DID_PROBE, clean_date], cwd=tmp,
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, f"diff-in-diff probe failed: {r.stderr[-2000:]}"
+    return json.loads(r.stdout)
+
+
+def _did_sandbox(td):
+    """A tmp tree the probe can run in: analysis/ + data/ + a synthetic
+    private/household.yaml, with soiling_analysis.py and household.py in it."""
+    tmp = pathlib.Path(td)
+    (tmp / "analysis").mkdir()
+    (tmp / "data").mkdir()
+    (tmp / "private").mkdir()
+    for name in ("soiling_analysis.py", "household.py"):
+        shutil.copy(ANALYSIS / name, tmp / name)
+        shutil.copy(ANALYSIS / name, tmp / "analysis" / name)
+    (tmp / "private" / "household.yaml").write_text(SYNTH_HOUSEHOLD)
+    return tmp
+
+
+def case_the_cleaning_gain_is_the_diff_in_diff_of_an_injected_record():
+    """A record with a KNOWN gain built into it, recovered exactly.
+
+    Every day inside a window carries the same value, so each median is that
+    value and every ratio is exact: three control years decline by the same
+    seasonal factor, the treated year declines by that factor and then gains
+    GAIN on top. The answer is arithmetic, not a tolerance -- if the estimator
+    were the naive post/pre ratio, or averaged the wrong way, or counted the
+    treated year among its own controls, it could not land on it."""
+    seasonal, gain = 0.90, 0.125          # control post/pre, injected treated gain
+    clean = date(2024, 8, 12)
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _did_sandbox(td)
+        rows = []
+        for year in (2021, 2022, 2023, 2024):
+            anchor = clean.replace(year=year)
+            pre = 60.0 if year != 2024 else 50.0     # treated year's own level
+            post = pre * seasonal * ((1 + gain) if year == 2024 else 1.0)
+            for k in range(1, 31):
+                rows.append(((anchor - timedelta(days=k)), pre))
+                rows.append(((anchor + timedelta(days=k)), post))
+            # The wash day itself: zero production, present in the record, and
+            # excluded from both windows. If the estimator ever stopped
+            # excluding it, this row would drag the treated medians and the
+            # exact answer below would fail.
+            rows.append((anchor, 0.0))
+        (tmp / "data" / "cleaning_study_daily.csv").write_text(
+            "date,generated_kwh\n" + "\n".join(
+                f"{d.strftime('%Y%m%d')},{v:.6f}" for d, v in sorted(rows)) + "\n")
+        out = _did_probe(tmp, clean.isoformat())
+
+    assert out["why"] is None, out["why"]
+    did = out["did"]
+    assert did["control_years"] == [2021, 2022, 2023], did["control_years"]
+    assert did["treated_year"] == 2024, did
+    assert did["window_days"] == 30, did
+    assert abs(did["gain_pct_unrounded"] - gain * 100) < 0.01, (
+        f"an injected {gain * 100}% gain came back as {did['gain_pct_unrounded']}%")
+    assert abs(did["control_mean_post_over_pre"] - seasonal) < 1e-9, did
+    for year, w in did["year_windows"].items():
+        assert (w["n_pre_days"], w["n_post_days"]) == (30, 30), (year, w)
+
+    # Fails closed rather than inventing a counterfactual: with only the
+    # treated year in the record there is no seasonal decline to measure
+    # against, and no figure is produced at all.
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _did_sandbox(td)
+        (tmp / "data" / "cleaning_study_daily.csv").write_text(
+            "date,generated_kwh\n" + "\n".join(
+                f"{d.strftime('%Y%m%d')},{v:.6f}"
+                for d, v in sorted(rows) if d.year == 2024) + "\n")
+        alone = _did_probe(tmp, clean.isoformat())
+    assert alone["did"] is None and "no year other than 2024" in alone["why"], alone
+
+    # ... and with no record at all, rather than raising out of the generator.
+    with tempfile.TemporaryDirectory() as td:
+        none_at_all = _did_probe(_did_sandbox(td), clean.isoformat())
+    assert none_at_all["did"] is None and "missing or empty" in none_at_all["why"], \
+        none_at_all
+    return (f"an injected {gain * 100:.1f}% cleaning gain over a {seasonal} seasonal "
+            f"decline is recovered as {did['gain_pct_unrounded']}% from three control "
+            "years; a record with no control year, and no record at all, each produce "
+            "no figure and a reason instead")
+
+
+def case_the_published_cleaning_gain_is_that_derivation_on_the_committed_record():
+    """ISSUE #164's own acceptance criterion, from the other side: the figure
+    in data/soiling_results.json IS cleaning_diff_in_diff()'s output on
+    data/cleaning_study_daily.csv, recomputed here rather than restated.
+
+    A pin asserting `known_gain == 11.8` cannot tell a derived figure from a
+    constant; this one moves the moment either the record or the estimator
+    does, which is what "a script per headline number" asks for."""
+    root = ANALYSIS.parent
+    committed = json.loads((root / "data" / "soiling_results.json").read_text())
+    sc = committed["sanity_check_2024_cleaning"]
+    if "known_cleaning_gain_pct" not in sc:
+        raise SkipCase("the committed artifact carries the not-determined shape, so "
+                       "there is no published gain to pin")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _did_sandbox(td)
+        shutil.copy(root / "data" / "cleaning_study_daily.csv", tmp / "data")
+        out = _did_probe(tmp, sc["cleaning_date"])
+    assert out["why"] is None, out["why"]
+    did = out["did"]
+    assert did == sc["known_cleaning_gain_basis"], (
+        "data/soiling_results.json's known_cleaning_gain_basis is not what "
+        "cleaning_diff_in_diff() computes from data/cleaning_study_daily.csv today")
+    assert sc["known_cleaning_gain_pct"] == round(did["gain_pct_unrounded"], 1), (
+        f"the published gain {sc['known_cleaning_gain_pct']}% is not the derivation's "
+        f"{did['gain_pct_unrounded']}% rounded")
+    # The two figures the report derives FROM the published gain, re-derived.
+    implied = sc["known_cleaning_gain_pct"] / (100 + sc["known_cleaning_gain_pct"]) * 100
+    assert sc["known_implied_soiling_loss_pct"] == round(implied, 1), sc
+    assert sc["known_rate_equiv_pct_per_month"] == round(
+        implied / sc["dry_days_before_cleaning_ge5mm"] * 30.44, 2), sc
+    return (f"the published {sc['known_cleaning_gain_pct']}% gain is "
+            f"cleaning_diff_in_diff()'s {did['gain_pct_unrounded']}% on "
+            f"data/cleaning_study_daily.csv (treated {did['treated_year']}, controls "
+            f"{did['control_years']}, {did['window_days']}-day windows), and the "
+            f"{sc['known_implied_soiling_loss_pct']}% implied soiling loss and "
+            f"{sc['known_rate_equiv_pct_per_month']}%/month rate follow from it")
+
+
+CASES = [case_soiling_regression_recovers_the_injected_rate,
+         case_the_cleaning_gain_is_the_diff_in_diff_of_an_injected_record,
+         case_the_published_cleaning_gain_is_that_derivation_on_the_committed_record]
 
 
 def main():
