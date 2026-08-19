@@ -17,6 +17,7 @@ import datetime as dt
 import glob
 import json
 import pathlib
+import re
 import sys
 import tempfile
 
@@ -135,21 +136,69 @@ def case_clearsky_annual_totals_barely_vary_year_to_year():
 
 
 @case
-def case_degradation_naive_figures_reproduce_the_existing_reports_stated_range():
-    """AC6: this script's independently computed naive trend must land in the
-    same ballpark as index.html's already-published '~1.3-1.7%/yr naive fit'
-    claim -- validating that our artifact-backed recomputation is measuring
-    the same thing the hand-computed prose described."""
+def case_degradation_reconciliation_claims_only_what_is_not_circular():
+    """AC6, and issue #165's residual. This case used to check that the naive
+    figures "reproduce the existing report's stated ~1.3-1.7%/yr range",
+    against a literal the reconciliation block carried by hand. That framing
+    is retired because it became circular: report_tokens.
+    DEGRADATION_NAIVE_RANGE renders the report's published band as the SPAN
+    of these same three estimators, so the literal was a second copy of this
+    script's own answer -- and it went stale the way a copy does, still
+    reading 1.3-1.7 after the span had moved to 1.3-1.8.
+
+    Two assertions guard the two halves of that lesson:
+      1. NO key in the reconciliation may state the report's naive band at
+         all. Written as a shape check over every `existing_report_*` key
+         rather than a ban on the one retired name, so re-deriving the same
+         circular field under a fresh name fails too.
+      2. The one claim-about-the-report that survives -- the hand-reasoned
+         0.5-1.0%/yr best estimate, which no artifact derives -- must still
+         be TRUE of index.html. A claim about another file is precisely what
+         rots unwatched, so it is read off the committed page, not trusted.
+
+    The page read is its own positive control: an index.html that cannot be
+    read, or that no longer prints any best-estimate band, fails on the
+    existence and search assertions rather than quietly matching nothing."""
     deg = gi.degradation_block()
     assert -2.5 < deg["ols_pct_per_yr"] < -1.0, deg["ols_pct_per_yr"]
     assert -2.5 < deg["cagr_pct_per_yr"] < -0.5, deg["cagr_pct_per_yr"]
     rec = deg["reconciliation"]
-    for key in ("existing_report_naive_range_pct_per_yr", "existing_report_best_estimate_range_pct_per_yr",
-               "agreement_on_the_naive_range", "gap_on_the_best_estimate", "what_would_settle_it"):
+    for key in ("existing_report_best_estimate_range_pct_per_yr",
+                "existing_report_location", "this_scripts_naive_figures_pct_per_yr",
+                "agreement_among_the_three_naive_estimators",
+                "gap_on_the_best_estimate", "what_would_settle_it"):
         assert key in rec, f"reconciliation missing {key}"
-    return (f"OLS {deg['ols_pct_per_yr']}%/yr and CAGR {deg['cagr_pct_per_yr']}%/yr "
-            "reproduce the existing report's stated naive range, with an explicit written "
-            "reconciliation against its tighter best-estimate claim")
+
+    circular = sorted(k for k in rec if k.startswith("existing_report") and "naive" in k)
+    assert not circular, (
+        f"reconciliation restates the report's naive band in {circular} -- but the "
+        "published band IS the span of this artifact's own ols/cagr/theil_sen figures "
+        "(report_tokens.DEGRADATION_NAIVE_RANGE renders it), so any copy kept here is a "
+        "second copy of an answer this artifact already carries, and comparing the "
+        "estimators against it compares a number with itself. Publish the estimators and "
+        "let the renderer take the span.")
+
+    lo, hi = rec["existing_report_best_estimate_range_pct_per_yr"]
+    html_path = ROOT / "index.html"
+    assert html_path.is_file(), (
+        f"{html_path} is the committed report this reconciliation makes a claim about; "
+        "without it this case would be checking that claim against nothing")
+    html = html_path.read_text(encoding="utf-8")
+    band = re.compile(rf"{re.escape(str(lo))}\s*[-–—]\s*{re.escape(str(hi))}\s*%/yr")
+    assert band.search(html), (
+        f"the reconciliation says index.html publishes a {lo}-{hi}%/yr best estimate and "
+        f"builds gap_on_the_best_estimate on it, but no {band.pattern!r} appears in "
+        f"{html_path} -- the artifact's claim about the report is no longer true of the "
+        "report")
+    assert "best-estimate" in html or "best estimate" in html, (
+        f"{html_path} still prints a {lo}-{hi}%/yr figure but no longer calls it a best "
+        "estimate; the reconciliation names it as the report's hand-reasoned "
+        "best-estimate verdict")
+
+    return (f"the reconciliation states no naive band of its own (OLS {deg['ols_pct_per_yr']}"
+            f"%/yr, CAGR {deg['cagr_pct_per_yr']}%/yr are published for the renderer to span), "
+            f"and its one claim about the report -- the hand-reasoned {lo}-{hi}%/yr best "
+            "estimate it disagrees with -- is verified against index.html itself")
 
 
 @case

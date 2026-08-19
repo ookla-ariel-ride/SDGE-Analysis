@@ -161,21 +161,17 @@
   "single_event_soiling_swing_pct": 11.8,
   "single_event_soiling_basis": "data/soiling_results.json -> sanity_check_2024_cleaning: an 11.8% production gain measured after the 2024-08-12 cleaning, following ~134 dry days (~4.4 months) with no rain -- a VALIDATED (not modeled) single-event swing, reused read-only from analysis/soiling_analysis.py, never recomputed here.",
   "reconciliation": {
-   "existing_report_naive_range_pct_per_yr": [
-    1.3,
-    1.7
-   ],
    "existing_report_best_estimate_range_pct_per_yr": [
     0.5,
     1.0
    ],
-   "existing_report_location": "index.html, section 9, \"Array health: 6-year degradation trend\" (hand-computed prose, not previously artifact-backed)",
+   "existing_report_location": "index.html, section 9, \"Array health: 6-year degradation trend\" -- specifically its hand-reasoned \"best-estimate ~0.5-1.0%/yr\" verdict, which no committed artifact in this repo derives. The naive band printed in the same section is NOT an independent claim to reconcile against: report_tokens.DEGRADATION_NAIVE_RANGE renders it from this artifact's own three estimators.",
    "this_scripts_naive_figures_pct_per_yr": {
     "ols": -1.76,
     "cagr": -1.33,
     "theil_sen": -1.48
    },
-   "agreement_on_the_naive_range": "CONFIRMED: this script's independently computed OLS (-1.76%/yr) and CAGR (-1.33%/yr) reproduce the existing report's stated naive ~1.3-1.7%/yr range closely, from a committed, reproducible artifact rather than hand arithmetic.",
+   "agreement_among_the_three_naive_estimators": "all three fits agree the size-normalized output DECLINED across 2021-2025, and they land within 0.43 percentage points of one another despite being deliberately different instruments: OLS is pulled by every point including the 2023 outlier, first-to-last CAGR uses ONLY the two endpoints, and the Theil-Sen median-of-pairwise-slopes leans on neither. Three fits with different failure modes landing together is evidence that the naive trend is a property of the annual series rather than of one fit's sensitivity. It is NOT evidence about true panel degradation, which needs the weather normalization this repo cannot do before 2025-07-24 -- see gap_on_the_best_estimate. This is the only agreement claim available here: the report's published naive band is the span of these same three figures, so checking them against it would be checking a number against itself.",
    "gap_on_the_best_estimate": "NOT DETERMINED -- and not bounded either (Codex review pass 3, finding 2: an earlier draft claimed a 0%/yr-to-naive-rate 'bracket', reasoning that soiling/weather timing could only make the naive trend look WORSE than true degradation. That reasoning only covers one direction: soiling/weather could just as easily mask a TRUE degradation rate WORSE than the naive trend shows, if later years happened to be sunnier or cleaner -- a single VALIDATED dry-spell/soiling event (an 11.8% swing -- more than double the ENTIRE naive 4-year change, -5.2%) proves soiling/weather CAN swing the annual total by more than the naive trend itself, in either direction, not that it is bounded to only push one way). The existing report's tighter '0.5-1.0%/yr best estimate' is a qualitative downward adjustment (reasoning: the naive metric isn't weather-normalized, so true degradation is probably lower), not a value any committed artifact in this repo derives, and not something this script's evidence can confirm OR bound: with no daily weather or production record before 2025-07-24 to separate soiling/weather timing from true panel aging in the 2021-2025 span, and a single confounding event already shown to be large enough to explain the ENTIRE naive trend on its own, the honest statement is that true degradation is NOT DETERMINED from data in this repo -- not merely uncertain within a stated range.",
    "what_would_settle_it": "A multi-year (2020-2024) daily production + local rainfall + irradiance record, or repeated professional cleanings with a measured before/after gain each year, to build a real soiling-corrected annual trend the way soiling_analysis.py already does for the one year it has daily data."
   }
