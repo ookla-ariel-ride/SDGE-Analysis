@@ -1282,8 +1282,22 @@ _require_uncommittable "private/household.yaml"
 # venv is $SRC/.venv/bin/python, gas-bills/ is $SRC/private/1-raw-data/, and
 # has_gas comes from $SRC's own household.yaml read through $SRC's own
 # interpreter. None consults $DST, so none needed the copies to have happened.
-# (household.py resolves its repo root from the CWD before its own __file__ --
-# unchanged by the move, since the CWD is the same on both sides of it.)
+#
+# AND NONE CONSULTS THE CWD EITHER (issue #192), which is a separate property
+# and was the one this block got wrong. household.py resolves its repo root
+# from Path.cwd() BEFORE its own __file__, so `import household` inside the
+# child below answered with whichever checkout the OPERATOR happened to be
+# standing in. Reproduced both ways: a correct has_gas:false source run from
+# inside this has_gas:true checkout was refused for gas bills it is right not
+# to have, and a has_gas:true source whose gas-bills/ had not been pulled was
+# ACCEPTED and staged incomplete when the operator stood in a has_gas:false
+# checkout. The first is a guard failing on correct input -- the shape that
+# gets guards bypassed -- and the second is the guard not running at all.
+#
+# The remedy is local to this caller: household.py's CWD-first order is
+# deliberate (dry_run.py documents dropping the CWD probe on purpose, and the
+# private/verify sandbox depends on it), so it is not changed. Instead the
+# child is POINTED at the source root explicitly, below.
 #
 # The invariant this establishes is the whole-script one: EITHER THIS SCRIPT
 # WRITES NOTHING, OR IT COMPLETES. Not "the guard block writes nothing".
@@ -1316,8 +1330,29 @@ fi
 # already reported as fully staged; a stale gas-bills/ on a has_gas:false
 # household is equally a real inconsistency worth stopping for. Mirrors
 # parse_bills.py's own fail-closed has_gas invariant exactly.
-if ! HAS_GAS=$(PYTHONPATH="$SRC/analysis" "$SRC/.venv/bin/python" -c \
-  "import household as hh; print(hh.get('household.has_gas'))"); then
+#
+# WHICH household.yaml (issue #192). The module's own repo-root walk is not
+# asked -- it answers from the CWD first, which is the operator's checkout and
+# not the source. hh.PATH, the single global hh._load() reads the file from, is
+# reassigned to the source named on the command line before get() is called, so
+# the answer is a property of $SRC and of nothing else. hh.ROOT goes with it so
+# the module stays self-consistent for anything a later household.py derives
+# from it. Import-time resolution still runs and may land anywhere; it decides
+# nothing here, because the only thing read afterwards is the reassigned PATH.
+# A missing source household.yaml still raises household.py's own SystemExit --
+# a non-zero exit into the refusal below -- so the fail-closed path is the
+# module's, unchanged.
+#
+# $SRC reaches the child through the ENVIRONMENT rather than being interpolated
+# into the -c program: a source path containing a quote, a backslash or a
+# newline would otherwise be read as Python source instead of as data.
+if ! HAS_GAS=$(PYTHONPATH="$SRC/analysis" STAGE_SRC_ROOT="$SRC" \
+  "$SRC/.venv/bin/python" -c \
+  "import os, pathlib, household as hh
+_src = pathlib.Path(os.environ['STAGE_SRC_ROOT'])
+hh.ROOT = _src
+hh.PATH = _src / 'private' / 'household.yaml'
+print(hh.get('household.has_gas'))"); then
   _refuse "the source's household.yaml could not be read" \
     "source:      $SRC" \
     "path:        $SRC/private/household.yaml" \
@@ -1352,6 +1387,67 @@ case "$HAS_GAS" in
       "expected:    True or False -- see household.example.yaml"
     ;;
 esac
+
+# ---------------------------------------------------------------------------
+# SOURCE COMPLETENESS (issue #185) -- every input the copies READ, asked for
+# here, before the first byte.
+#
+# The whole-script invariant is "either this script writes nothing, or it
+# completes". The two source checks above hold up their end; the copies did
+# not. `set -e` aborts on the first `cp` that cannot find its source, so a
+# source missing gas.csv exited 1 having ALREADY written household.yaml and the
+# interval export -- a half-updated archive with nothing in the output saying
+# so, which is the same failure the hoist above was for, arriving one step
+# later. A missing input is the ordinary way a run fails part-way (an archive
+# still being assembled, a pull that stopped early), and it is decidable
+# up front, so it is decided up front.
+#
+# THE COUNT MATTERS for the interval export, not just the presence: the
+# private/verify/usage.csv copy takes exactly ONE file, so two matching exports
+# in the source make `cp` fail with "target is not a directory" -- after six
+# earlier copies have landed. A source holding last year's export beside this
+# year's is the shape that produces it, and this run cannot pick between them.
+#
+# NOT covered here, and deliberately: an I/O error, a full filesystem or a
+# revoked permission DURING a copy. Closing that needs a copy-aside-and-swap,
+# which needs the old directories removed; see DESTINATION STALENESS GUARD
+# below for why this script does not delete anything in the destination.
+# ---------------------------------------------------------------------------
+_missing_src=()
+for _need in "private/1-raw-data/gas.csv" \
+             "private/1-raw-data/electric_billing_history_2024-2026.csv" \
+             "private/1-raw-data/electric-bills" \
+             "private/1-raw-data/enphase_sam8760_2025.csv" \
+             "private/1-raw-data/enphase_sam8760_2026.csv"; do
+  if [ ! -e "$SRC/$_need" ]; then
+    _missing_src[${#_missing_src[@]}]="  $_need"
+  fi
+done
+_n_interval=0
+for _f in "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv; do
+  if [ -e "$_f" ]; then _n_interval=$((_n_interval + 1)); fi
+done
+if [ "$_n_interval" -eq 0 ]; then
+  _missing_src[${#_missing_src[@]}]="  private/1-raw-data/Electric_15_Minute_*.csv"
+fi
+if [ ${#_missing_src[@]} -ne 0 ]; then
+  _refuse "the source is missing inputs the copies read" \
+    "source:      $SRC" \
+    "missing:     ${#_missing_src[@]} path(s), relative to the source root:" \
+    "${_missing_src[@]}" \
+    "expected:    every input listed at the top of this file -- a copy that" \
+    "             cannot find its source aborts the run part-way, leaving the" \
+    "             destination half-updated and saying nothing about it"
+fi
+if [ "$_n_interval" -gt 1 ]; then
+  _refuse "the source holds more than one Green Button interval export" \
+    "source:      $SRC/private/1-raw-data" \
+    "found:       $_n_interval files matching Electric_15_Minute_*.csv" \
+    "expected:    exactly one -- private/verify/usage.csv is a copy of THE" \
+    "             interval export, and this script cannot choose between two." \
+    "Move the superseded export out of private/1-raw-data (the archive keeps" \
+    "them under superseded/) and re-run."
+fi
 
 # The CAISO day-cache is OPTIONAL, so its absence is not a refusal -- but the
 # decision is a source-side one and is taken here, once, so the path scan below
@@ -1657,6 +1753,135 @@ _reject_multilinked_under() {   # $1 = a directory `cp -R` may write anywhere be
     "Delete them and re-run; the copies below stage these files for you."
 }
 
+# ---------------------------------------------------------------------------
+# DESTINATION STALENESS GUARD (issue #185) -- the guards above decide whether
+# the destination may be written to. This one decides whether what is ALREADY
+# there is this source's.
+#
+# Every copy in this file OVERLAYS. `cp` replaces the names it is handed and
+# leaves every other name alone, and `cp -R dir dest/` merges into an existing
+# dir/ rather than replacing it. So a destination staged from one archive and
+# re-staged from another ends up holding the UNION of both, at exit 0, with the
+# closing message counting the union as staged. Reproduced: two synthetic
+# households, the second lacking four of the first's files, and afterwards the
+# destination held all of them -- the first household's interval export, its
+# two bill PDFs and its CAISO day-cache sitting beside the second's.
+#
+# WHY THAT IS NOT MERELY UNTIDY. Downstream reads by GLOB --
+# private/1-raw-data/Electric_15_Minute_*.csv, enphase_sam8760_*.csv,
+# electric-bills/*.pdf, the CAISO day-cache -- so a leftover is CONSUMED, not
+# ignored. The pipeline notices nothing, and the §9 regeneration gate
+# reproduces the resulting artifact byte-identically, because the inputs are
+# consistent with themselves. And this repo is meant to be forked: someone
+# staging their own archive over a directory that once held another
+# household's keeps whatever their own source lacks, while the success line
+# tells them everything is staged. That is the reverse of the exposure the
+# destination guards were written for -- not our data written into someone
+# else's tree, but our data left in a tree someone else is now using.
+#
+# WHAT COUNTS AS STALE, stated so the check is decidable rather than
+# atmospheric: a destination path this script's copies WOULD write into the
+# neighbourhood of, which THIS SOURCE does not supply. Three subtrees compared
+# entry by entry against the source's (electric-bills/, gas-bills/,
+# caiso_raw/), and the two globbed top-level names compared by basename. The
+# named single files -- household.yaml, gas.csv, the billing-history export,
+# usage.csv, samA.csv, samB.csv -- are overwritten by every run and so can
+# never be stale.
+#
+# ALL THREE SUBTREES ARE COMPARED, including the ones this run will not write.
+# That is the opposite scoping from the link scans above, and deliberately: a
+# gas-bills/ in a destination being re-staged from a has_gas:false source is
+# not a subtree this run touches, it is the PREVIOUS household's gas bills, and
+# it is the single clearest instance of what this guard is for. The link scans
+# skip an unwritten subtree because `cp` never opens it; this one reads it
+# because nothing will ever replace it.
+#
+# IT REFUSES; IT DOES NOT DELETE. The alternative shapes -- clear the managed
+# directories first, or copy aside and swap -- both put an rm -rf of a
+# destination directory in this file, and the destination this script accepts
+# is not always a scratch worktree: a main checkout is a registered worktree
+# too, and staging into one is a documented flow (README, "Refreshing this
+# analysis"). On that destination private/1-raw-data IS the irreplaceable raw
+# archive, and a bug in the enumeration below would delete bill PDFs that exist
+# nowhere else. A wrong refusal costs a re-run; a wrong deletion costs the
+# archive. So the destructive step stays OUT of this script and with the
+# operator, who gets the exact list of paths and can delete them, or stage into
+# a fresh clone instead. The trade this accepts, named so it is a decision: a
+# legitimate re-stage after the source's file names change costs one manual
+# step.
+#
+# The list is printed IN FULL rather than counted, because "delete these and
+# re-run" is only actionable if the operator can see what "these" are.
+# ---------------------------------------------------------------------------
+_stale_paths=()
+
+_note_stale() { _stale_paths[${#_stale_paths[@]}]="$1"; }
+
+_collect_stale_under() {   # $1 = a subtree name under private/1-raw-data/
+  local sub="$1" dstdir srcdir listing rel
+  dstdir="$DST_REAL/private/1-raw-data/$sub"
+  srcdir="$SRC/private/1-raw-data/$sub"
+  # A LINK here is stale whole. The written subtrees never reach this: a link
+  # at one of them is refused by _check_dir_slot above. An UNwritten one does,
+  # and `find` does not descend a symbolic link given on its command line, so
+  # without this the leftover would be invisible to the walk below.
+  if [ -L "$dstdir" ]; then
+    _note_stale "private/1-raw-data/$sub  (a symbolic link)"
+    return 0
+  fi
+  [ -d "$dstdir" ] || return 0
+  # A subtree the source does not have AT ALL is reported whole, rather than
+  # file by file: "delete private/1-raw-data/gas-bills" is a remedy the
+  # operator can carry out in one step, and it leaves no empty directory
+  # behind for the next run to wonder about. This is the previous household's
+  # gas bills, in a destination now being staged from a has_gas:false source.
+  if [ ! -d "$srcdir" ]; then
+    _note_stale "private/1-raw-data/$sub  (the whole directory -- this source has none)"
+    return 0
+  fi
+  if ! listing=$(find "$dstdir" -print); then
+    _refuse "the destination could not be scanned for stale files" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "path:        $dstdir" \
+      "expected:    a readable directory tree, so this run can tell what in it" \
+      "             came from this source and what did not"
+  fi
+  while IFS= read -r _p; do
+    [ -n "$_p" ] || continue
+    [ "$_p" != "$dstdir" ] || continue
+    # A name containing a newline arrives here as two records, neither of which
+    # names a path that exists. Refuse rather than guess: a fragment tested
+    # against the source would report a file as stale that is not, and skipping
+    # it would report a tree as clean that this walk could not read.
+    if [ ! -e "$_p" ] && [ ! -L "$_p" ]; then
+      _refuse "a destination path could not be read back from the scan" \
+        "destination: $DST  (resolved: $DST_REAL)" \
+        "path:        $dstdir" \
+        "found:       a listing entry naming nothing on disk, which is what a" \
+        "             file name containing a newline looks like from here" \
+        "expected:    file names this scan can compare against the source one" \
+        "             per line, so a stale file cannot hide in a split record"
+    fi
+    rel=${_p#"$dstdir/"}
+    if [ ! -e "$srcdir/$rel" ] && [ ! -L "$srcdir/$rel" ]; then
+      _note_stale "private/1-raw-data/$sub/$rel"
+    fi
+  done <<< "$listing"
+}
+
+_collect_stale_glob() {   # $1 = a glob the copies write into private/1-raw-data/
+  local pat="$1" base
+  for _g in "$DST_REAL/private/1-raw-data/"$pat; do
+    if [ -e "$_g" ] || [ -L "$_g" ]; then
+      base=$(basename -- "$_g")
+      if [ ! -e "$SRC/private/1-raw-data/$base" ] && \
+         [ ! -L "$SRC/private/1-raw-data/$base" ]; then
+        _note_stale "private/1-raw-data/$base"
+      fi
+    fi
+  done
+}
+
 # Every path is CHECKED first and only then created, in two passes rather than
 # one interleaved walk: a refusal on private/verify must not leave behind the
 # private/1-raw-data a single pass would already have made. "Nothing was
@@ -1735,6 +1960,38 @@ for _leaf in "${_dst_leaves[@]}"; do
   _reject_special "$_leaf"
   _reject_hardlink "$_leaf"
 done
+
+# The staleness comparison (issue #185), LAST of the destination checks and
+# still before the first write. Last because the three scans above describe
+# ways the archive escapes the tree, this one describes a tree holding the
+# wrong household's files, and when a destination is both the operator should
+# be told about the escape route first.
+for _sub in electric-bills gas-bills caiso_raw; do
+  _collect_stale_under "$_sub"
+done
+_collect_stale_glob "Electric_15_Minute_*.csv"
+_collect_stale_glob "enphase_sam8760_*.csv"
+if [ ${#_stale_paths[@]} -ne 0 ]; then
+  _stale_lines=()
+  for _s in "${_stale_paths[@]}"; do
+    _stale_lines[${#_stale_lines[@]}]="  $_s"
+  done
+  _refuse "the destination holds staged files this source does not supply" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "found:       ${#_stale_paths[@]} path(s) left by an earlier stage, relative" \
+    "             to the destination root:" \
+    "${_stale_lines[@]}" \
+    "expected:    a destination holding only what this source supplies. Every" \
+    "             copy below overlays -- it replaces the names it writes and" \
+    "             leaves the rest -- so these would survive this run and be" \
+    "             read by the pipeline's globs afterwards, beside the files" \
+    "             that replace them. If they came from another household, they" \
+    "             would also still be here after that household was gone." \
+    "This script does not delete anything in a destination: the destination may" \
+    "be a main checkout whose private/1-raw-data is the only copy of the raw" \
+    "archive, and a deletion there is not recoverable by re-running. Delete the" \
+    "paths listed above yourself and re-run, or stage into a fresh clone."
+fi
 
 _ensure_contained_dir "$DST_REAL/private"
 _ensure_contained_dir "$DST_REAL/private/1-raw-data"
