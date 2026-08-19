@@ -9,8 +9,10 @@ silently skipped without the private export would let a broken edge pass CI.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_tou_audit.py
 """
+import contextlib
 import csv
 import datetime as dt
+import os
 import pathlib
 import sys
 import tempfile
@@ -641,6 +643,159 @@ def case_holiday_set_matches_the_documented_tariff_list():
     return "the holiday set is the eight tariff holidays in research/rates-reference.md"
 
 
+# ---------------------------------------------------------------------------
+# The published columns are a schema, not a sample of row 0 (issue #215)
+# ---------------------------------------------------------------------------
+def _synthetic_corpus():
+    """(intervals, billed, periods) for one well-formed April 2026 statement."""
+    period = "4/1/26 - 4/30/26"
+    start, end = T.parse_period(period)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    rows = [x for d in days for x in _day(d)]
+    return rows, _billed_from(rows, period, start, end), [period]
+
+
+def _one_real_row():
+    """One bucket row exactly as audit() builds it, for the positive controls."""
+    rows, billed, periods = _synthetic_corpus()
+    built, audited, _, _, _, _, _ = T.audit(rows, billed, periods, HOL)
+    assert audited == periods and built, (audited, len(built))
+    return built[0]
+
+
+def case_main_refuses_an_empty_audit_before_it_writes():
+    """The refusal has to be WIRED, not merely defined.
+
+    main() is driven for real over a synthetic corpus, with only its inputs and
+    its writer stubbed. The negative run makes audit() return no buckets and
+    requires main() to exit before write_artifacts is reached; the positive
+    control is the same main() over the same corpus with the real audit(), which
+    must run through to the write.
+    """
+    real_audit = T.audit
+    real_writer = T.write_artifacts
+    intervals, billed, periods = _synthetic_corpus()
+    wrote = []
+    day = dt.date(2026, 4, 1)
+    saved = {n: getattr(T, n) for n in
+             ("load_intervals", "load_billed", "read_declared_range")}
+    try:
+        T.load_intervals = lambda p: intervals
+        T.load_billed = lambda a, b: (billed, periods)
+        T.read_declared_range = lambda p: None
+        T.write_artifacts = lambda *a, **k: wrote.append(a)
+        with tempfile.TemporaryDirectory() as td:
+            cwd = os.getcwd()
+            (pathlib.Path(td) / "usage.csv").write_text("")
+            os.chdir(td)
+            try:
+                T.audit = lambda *a, **k: ([], periods, [], [], day, day, [])
+                try:
+                    T.main()
+                except SystemExit as e:
+                    msg = str(e)
+                else:
+                    raise AssertionError("main() published an empty audit result")
+                assert "no TOU buckets were computed" in msg, msg
+                assert not wrote, "main() wrote artifacts despite an empty result"
+                # POSITIVE CONTROL: same main(), same corpus, the real audit().
+                T.audit = real_audit
+                with open(os.devnull, "w") as quiet:
+                    with contextlib.redirect_stdout(quiet):
+                        T.main()
+                assert len(wrote) == 1, wrote
+                assert wrote[0][0] and list(wrote[0][0][0]) == list(T.ROW_FIELDS), \
+                    "the positive control did not reach the write with real rows"
+            finally:
+                os.chdir(cwd)
+    finally:
+        T.audit = real_audit
+        T.write_artifacts = real_writer
+        for name, fn in saved.items():
+            setattr(T, name, fn)
+    return "main() refuses an empty result before writing, and writes a real one"
+
+
+def case_row_schema_is_the_committed_header():
+    """ROW_FIELDS is the artifact's header AND the keys audit() actually emits.
+
+    Both halves matter: naming the columns independently of the rows is only safe
+    while the two agree, so the schema is checked against the committed file and
+    against a row from a real audit run in the same case.
+    """
+    assert list(_one_real_row()) == list(T.ROW_FIELDS), list(_one_real_row())
+    committed = T.DATA / "tou_audit.csv"
+    if committed.exists():
+        with open(committed, newline="") as fh:
+            header = next(csv.reader(fh))
+        assert header == list(T.ROW_FIELDS), header
+    return "ROW_FIELDS matches both the committed header and a real audit row"
+
+
+def case_empty_result_refuses_before_opening_anything():
+    """rows[0]-as-schema raised IndexError with the handle already open (#215).
+
+    The refusal has to arrive BEFORE any write, and it has to say what the run
+    did. Proven by pointing the writer at a directory that already holds a
+    populated artifact and checking those bytes survive the refusal.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        dest = pathlib.Path(td)
+        prior = "period,season\nkept,bytes\n"
+        (dest / "tou_audit.csv").write_text(prior)
+        try:
+            T.check_publishable([], ["4/1/26 - 4/30/26"], [{"period": "x"}],
+                                dt.date(2026, 4, 1), dt.date(2026, 4, 30))
+        except SystemExit as e:
+            msg = str(e)
+        else:
+            raise AssertionError("an empty bucket result was accepted for publication")
+        assert "1 period(s) audited" in msg and "1 skipped" in msg, msg
+        assert "2026-04-01 .. 2026-04-30" in msg, msg
+        assert "left as they were" in msg, msg
+        assert (dest / "tou_audit.csv").read_text() == prior, "artifact was touched"
+        # POSITIVE CONTROL: the same instrument passes a well-formed result, so
+        # the refusal above is about the empty rows and not about the call itself.
+        T.check_publishable([_one_real_row()], ["4/1/26 - 4/30/26"], [],
+                            dt.date(2026, 4, 1), dt.date(2026, 4, 30))
+    return "an empty bucket result is a stated refusal, not an IndexError mid-write"
+
+
+def case_header_is_written_without_any_rows_to_read_it_off():
+    """The writer names its columns from ROW_FIELDS, so no row is needed for them."""
+    with tempfile.TemporaryDirectory() as td:
+        dest = pathlib.Path(td)
+        T.write_artifacts([], {"verdict": "none"}, dest=dest)
+        empty = (dest / "tou_audit.csv").read_text()
+        assert empty == ",".join(T.ROW_FIELDS) + "\n", empty
+        # POSITIVE CONTROL: same writer, a real row, header plus one data line.
+        row = _one_real_row()
+        T.write_artifacts([row], {"verdict": "none"}, dest=dest)
+        lines = (dest / "tou_audit.csv").read_text().splitlines()
+        assert lines[0] == ",".join(T.ROW_FIELDS), lines[0]
+        assert len(lines) == 2 and lines[1].startswith("4/1/26 - 4/30/26,"), lines
+    return "the CSV header comes from the schema, with or without a row to sample"
+
+
+def case_row_that_drifts_from_the_schema_stops_the_run():
+    """A renamed or extra key would otherwise be dropped or blanked silently."""
+    good = _one_real_row()
+    drifted = {("as_billed_kWh" if k == "as_billed_kwh" else k): v
+               for k, v in good.items()}
+    try:
+        T.check_publishable([good, drifted], ["4/1/26 - 4/30/26"], [],
+                            dt.date(2026, 4, 1), dt.date(2026, 4, 30))
+    except SystemExit as e:
+        assert "1 of 2 bucket row(s)" in str(e), e
+        assert "as_billed_kWh" in str(e), e
+    else:
+        raise AssertionError("a row that drifted from ROW_FIELDS was accepted")
+    # POSITIVE CONTROL: the undrifted row alone passes the same check.
+    T.check_publishable([good], ["4/1/26 - 4/30/26"], [],
+                        dt.date(2026, 4, 1), dt.date(2026, 4, 30))
+    return "a bucket row that drifts from the published schema stops the run"
+
+
 CASES = [
     # TOU assignment
     case_on_peak_window_edges,
@@ -687,6 +842,12 @@ CASES = [
     case_weekend_shift_scoring_reports_untested_dates,
     case_period_total_catches_accumulated_bias,
     case_period_total_tolerates_pure_rounding,
+    # published-column schema
+    case_row_schema_is_the_committed_header,
+    case_empty_result_refuses_before_opening_anything,
+    case_header_is_written_without_any_rows_to_read_it_off,
+    case_row_that_drifts_from_the_schema_stops_the_run,
+    case_main_refuses_an_empty_audit_before_it_writes,
 ]
 
 

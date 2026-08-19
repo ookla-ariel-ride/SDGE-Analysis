@@ -126,6 +126,23 @@ MIDDAY_SOP_AMBIGUITY = (dt.date(2026, 2, 28), dt.date(2026, 3, 2))
 
 TOU_NAME = {"on": "on_peak", "off": "off_peak", "sop": "super_off_peak"}
 SEASON_NAME = {"S": "summer", "W": "winter"}
+
+# The two rebuild rules every bucket is scored under, named once so the row
+# schema below and the code that fills it cannot name different sets.
+RULES = ("as_billed", "canonical")
+
+# THE CSV'S COLUMNS ARE A SCHEMA, NOT A SAMPLE OF ROW 0. audit() gives every row
+# exactly these keys in this order, so the header can be named whenever the file
+# can be written -- including when there is no row 0 to read one off. Taking the
+# names off rows[0] instead raises IndexError with the handle already open, which
+# leaves data/tou_audit.csv truncated rather than saying nothing was computed
+# (issue #215). It is the shape issue #160 fixed in bill_decomposition.py, and the
+# answer is the one parse_bills.py's reader settled on: take the columns from a
+# source that exists independently of the rows.
+ROW_FIELDS = tuple(["period", "season", "tou_period", "billed_kwh"]
+                   + [f"{rule}_{col}" for rule in RULES
+                      for col in ("kwh", "diff_kwh", "diff_pct", "pass")])
+
 ABS_TOL_KWH = 1.0        # whole-kWh statement rounding floor
 REL_TOL_CELL = 0.005     # 0.5% per bucket
 REL_TOL_TOTAL = 0.002    # 0.2% on period totals
@@ -493,7 +510,7 @@ def audit(intervals, billed, periods, hol, declared=None):
 
         audited.append(ptext)
         built = {r: rebuild(intervals, start, end, r, hol)
-                 for r in ("as_billed", "canonical")}
+                 for r in RULES}
         raw = {r: {"billed": 0.0, "rebuilt": 0.0} for r in built}
         for s_short, s_name in SEASON_NAME.items():
             for t_short, t_name in TOU_NAME.items():
@@ -503,7 +520,7 @@ def audit(intervals, billed, periods, hol, declared=None):
                 b = billed[key]
                 row = {"period": ptext, "season": s_name, "tou_period": t_name,
                        "billed_kwh": round(b, 1)}
-                for rule in ("as_billed", "canonical"):
+                for rule in RULES:
                     v = built[rule].get((s_short, t_short), 0.0)
                     row[f"{rule}_kwh"] = round(v, 2)
                     row[f"{rule}_diff_kwh"] = round(v - b, 2)
@@ -515,7 +532,7 @@ def audit(intervals, billed, periods, hol, declared=None):
                 rows.append(row)
 
         entry = {"period": ptext, "buckets": len(want)}
-        for rule in ("as_billed", "canonical"):
+        for rule in RULES:
             b, v = raw[rule]["billed"], raw[rule]["rebuilt"]
             tol = max(ROUNDING_PER_BUCKET * len(want), REL_TOL_TOTAL * abs(b))
             entry[f"{rule}_billed_total_kwh"] = round(b, 2)
@@ -736,6 +753,61 @@ def weekend_shift_evidence(intervals, billed, hol, audited):
     return out
 
 
+def check_publishable(rows, audited, skipped, cov_start, cov_end):
+    """Refuse, before anything is opened for writing, if there is nothing to publish.
+
+    Two separate failures, both of which used to surface as an exception thrown
+    with data/tou_audit.csv already truncated to zero bytes (issue #215):
+
+      no rows at all -- summarise() would raise ValueError off max() on an empty
+      sequence, and the CSV writer IndexError off rows[0]. Neither says what the
+      run actually did, and a reader left holding an empty artifact cannot tell
+      "audited nothing" from "audit found no disagreement". The refusal names the
+      periods audited, the periods skipped and the coverage window instead.
+
+      a row that does not carry ROW_FIELDS -- the header is written from the
+      schema, so a row that drifted from it would be silently written with its
+      new column dropped and a missing one blank. DictWriter's own extrasaction
+      default would raise mid-write for the same reason the old rows[0] did:
+      after the handle is open. Checking here keeps the artifact untouched.
+    """
+    if not rows:
+        raise SystemExit(
+            f"no TOU buckets were computed, so nothing is published: "
+            f"{len(audited)} period(s) audited, {len(skipped)} skipped, over "
+            f"{cov_start} .. {cov_end}. An audited period always prints at least "
+            f"one season x TOU bucket, so an empty result means the periods were "
+            f"read but no bucket was built from them -- data/tou_audit.csv and "
+            f"data/tou_audit_summary.json are left as they were.")
+    drifted = [r for r in rows if tuple(r) != ROW_FIELDS]
+    if drifted:
+        raise SystemExit(
+            f"{len(drifted)} of {len(rows)} bucket row(s) do not match the "
+            f"published column schema, so nothing is written: expected "
+            f"[{', '.join(ROW_FIELDS)}], first mismatch carries "
+            f"[{', '.join(str(k) for k in drifted[0])}]. Update ROW_FIELDS and the "
+            f"row builder together -- they are the same schema stated twice.")
+
+
+def write_artifacts(rows, out, dest=None):
+    """Write both artifacts atomically. Columns come from ROW_FIELDS, never rows[0]."""
+    dest = DATA if dest is None else dest
+    dest.mkdir(exist_ok=True)
+    for path, kind in ((dest / "tou_audit.csv", "csv"),
+                       (dest / "tou_audit_summary.json", "json")):
+        tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
+        with open(tmp, "w", newline="") as fh:
+            if kind == "csv":
+                w = csv.DictWriter(fh, fieldnames=list(ROW_FIELDS),
+                                   lineterminator="\n")
+                w.writeheader()
+                w.writerows(rows)
+            else:
+                json.dump(out, fh, indent=2)
+                fh.write("\n")
+        os.replace(tmp, path)
+
+
 def main():
     usage = pathlib.Path("usage.csv")
     if not usage.exists():
@@ -751,6 +823,7 @@ def main():
     declared = read_declared_range(usage)
     rows, audited, skipped, totals, cov_start, cov_end, undelivered = audit(
         intervals, billed, periods, hol, declared)
+    check_publishable(rows, audited, skipped, cov_start, cov_end)
     dst = sorted(d for d in covered
                  if sum(1 for x, _, _, _ in intervals if x == d) != 96)
 
@@ -773,7 +846,7 @@ def main():
         "weekend_holiday_shift_evidence": weekend_shift_evidence(
             intervals, billed, hol, audited),
         "period_totals": totals,
-        "rules": {r: summarise(rows, totals, r) for r in ("as_billed", "canonical")},
+        "rules": {r: summarise(rows, totals, r) for r in RULES},
     }
 
     # A period skipped for degraded data is NOT a period that reconciled. Only
@@ -819,24 +892,11 @@ def main():
                           f"{v['period_totals_failing']} period total(s) "
                           "do not reconcile")
 
-    DATA.mkdir(exist_ok=True)
-    for path, kind in ((DATA / "tou_audit.csv", "csv"),
-                       (DATA / "tou_audit_summary.json", "json")):
-        tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
-        with open(tmp, "w", newline="") as fh:
-            if kind == "csv":
-                w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()),
-                                   lineterminator="\n")
-                w.writeheader()
-                w.writerows(rows)
-            else:
-                json.dump(out, fh, indent=2)
-                fh.write("\n")
-        os.replace(tmp, path)
+    write_artifacts(rows, out)
 
     print(f"audited {len(audited)} periods / {len(rows)} buckets "
           f"({cov_start} .. {cov_end}); skipped {len(skipped)}")
-    for rule in ("as_billed", "canonical"):
+    for rule in RULES:
         s = out["rules"][rule]
         print(f"  {rule:<10} buckets failing {s['buckets_failing']:>2}/{s['buckets']}  "
               f"period totals failing {s['period_totals_failing']:>2}/{s['periods']}  "
