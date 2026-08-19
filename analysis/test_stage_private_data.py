@@ -2469,6 +2469,283 @@ def case_the_recursive_scans_cover_only_what_the_copies_write():
             f"documented never-staged ones")
 
 
+def _operators_checkout(td, household_yaml_text, name="operators-checkout"):
+    """A directory household.py's _repo_root() resolves to FROM THE CWD: both
+    an analysis/ and a data/ subdirectory, and a household.yaml of its own.
+
+    This is the operator standing somewhere. It is deliberately NOT this
+    checkout: the real ROOT has no private/household.yaml on CI, so a case
+    built on it would exercise a missing-file path there and the has_gas
+    mismatch here -- two different tests depending on the machine. A synthetic
+    one states its own has_gas, so both directions of issue #192 are the same
+    case everywhere."""
+    root = pathlib.Path(td) / name
+    (root / "analysis").mkdir(parents=True)
+    (root / "data").mkdir(parents=True)
+    (root / "private").mkdir(parents=True)
+    (root / "private" / "household.yaml").write_text(household_yaml_text)
+    return root
+
+
+def _assert_source_refused(result, dst, before, why, needle):
+    """A SOURCE-side refusal, which is a different claim from _assert_refused
+    above: the message names what is wrong with the SOURCE rather than the
+    destination, and the destination's whole contents are the assertion that
+    nothing was written -- an exit code cannot tell a refusal from a
+    half-finished stage."""
+    assert result.returncode != 0, (
+        f"{why}: expected a refusal, got exit 0\nstdout: {result.stdout}")
+    assert "REFUSED" in result.stderr, (
+        f"{why}: refusal was not announced: {result.stderr}")
+    assert needle in result.stderr, (
+        f"{why}: the message does not say what was wrong with the source: "
+        f"{result.stderr}")
+    assert "nothing was written" in result.stderr, (
+        f"{why}: the refusal does not make the claim it is entitled to make: "
+        f"{result.stderr}")
+    after = _snapshot(dst)
+    assert after == before, (
+        f"{why}: the run refused on a SOURCE check but had already written "
+        f"into the destination: {sorted(after ^ before)}")
+
+
+@case
+def case_has_gas_is_read_from_the_source_not_the_operators_checkout():
+    """issue #192. The source guard reads has_gas by importing the SOURCE's
+    household.py -- but household.py's _repo_root() resolves Path.cwd() BEFORE
+    its own __file__, so the file it read was whichever checkout the operator
+    happened to be standing in. Reproduced both ways before the fix:
+
+      * a CORRECT has_gas:false source, staged from inside a has_gas:true
+        checkout, was REFUSED for gas bills it is right not to have -- a guard
+        failing on correct input, which is the shape that gets guards bypassed;
+      * a has_gas:true source whose gas-bills/ had not been pulled was
+        ACCEPTED and staged incomplete, because the operator stood in a
+        has_gas:false checkout.
+
+    Each direction stands in a checkout whose has_gas is the OPPOSITE of the
+    source's, and the fixture proves it can still reproduce the defect: the
+    pre-fix invocation shape -- import the source's household.py with nothing
+    pointing it at the source -- is run first and asserted to answer with the
+    CWD's value. Without that premise a future household.py change could make
+    both directions pass while testing nothing."""
+    checked = []
+    for label, src_yaml, cwd_yaml, cwd_answer, expect in (
+            ("a has_gas:false source staged from inside a has_gas:true checkout",
+             "household:\n  has_gas: false\n",
+             "household:\n  has_gas: true\n", "True", "accept"),
+            ("a has_gas:true source missing its gas bills, staged from inside "
+             "a has_gas:false checkout",
+             "household:\n  has_gas: true\n",
+             "household:\n  has_gas: false\n", "False", "refuse")):
+        with tempfile.TemporaryDirectory() as td:
+            # Neither direction gives the source a gas-bills/: the first is
+            # correct without one, the second is the incomplete archive.
+            src = _synthetic_src(td, src_yaml, has_gas_bills_dir=False)
+            elsewhere = _operators_checkout(td, cwd_yaml)
+            probe = subprocess.run(
+                [sys.executable, "-c",
+                 "import household as hh; print(hh.get('household.has_gas'))"],
+                cwd=str(elsewhere), capture_output=True, text=True,
+                env={**os.environ, "PYTHONPATH": str(src / "analysis")})
+            assert probe.returncode == 0, (
+                f"{label}: the premise probe could not read a household.yaml "
+                f"at all: {probe.stderr}")
+            assert probe.stdout.strip() == cwd_answer, (
+                f"{label}: the fixture no longer reproduces the defect -- the "
+                f"pre-fix invocation shape answered {probe.stdout.strip()!r} "
+                f"rather than the CWD checkout's {cwd_answer!r}, so this case "
+                f"would pass whether or not the source is read")
+            with _linked_worktree(td) as dst:
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=elsewhere, timeout=120)
+                if expect == "accept":
+                    assert result.returncode == 0, (
+                        f"{label}: a source that is right about its own gas "
+                        f"service was refused: {result.stderr}")
+                    assert (dst / "private" / "household.yaml").read_text() == src_yaml, (
+                        f"{label}: the staged intake file is not the source's")
+                    assert not (dst / "private" / "1-raw-data" / "gas-bills").exists(), (
+                        f"{label}: gas bills appeared in the destination from a "
+                        f"source that has none")
+                else:
+                    _assert_source_refused(result, dst, before, label,
+                                           "gas bills are missing")
+            checked.append(label)
+    return (f"has_gas is read from the source named on the command line, not "
+            f"the CWD's checkout ({len(checked)} directions, each standing in "
+            f"a checkout whose has_gas is the opposite)")
+
+
+@case
+def case_a_source_path_with_quotes_reaches_the_reader_as_a_path():
+    """issue #192, the shape of the fix rather than its verdict. The source
+    root now has to reach the interpreter that reads has_gas, and the obvious
+    way -- interpolating it into the `python -c` program -- would make a source
+    directory named with a quote or a backslash into Python SOURCE. Then a
+    perfectly ordinary path fails with a SyntaxError reported as "household.yaml
+    could not be read", and a hostile one runs.
+
+    The source here is a has_gas:TRUE household with its gas bills present, so
+    the run has to read the flag correctly to stage them: a source whose
+    has_gas came back unreadable, or read as False, does not produce a
+    gas-bills/ in the destination."""
+    with tempfile.TemporaryDirectory() as td:
+        awkward = pathlib.Path(td) / "it's a \"source\" \\ with $quotes"
+        awkward.mkdir()
+        src = _synthetic_src(str(awkward), "household:\n  has_gas: true\n",
+                             has_gas_bills_dir=True)
+        (src / "private" / "1-raw-data" / "gas-bills" / "jan.pdf").write_text("gas\n")
+        elsewhere = _operators_checkout(td, "household:\n  has_gas: false\n")
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=elsewhere, timeout=120)
+            assert result.returncode == 0, (
+                f"a source path containing quotes and a backslash must be read "
+                f"as a path: {result.stderr}")
+            assert (dst / "private" / "1-raw-data" / "gas-bills" / "jan.pdf").is_file(), (
+                "the gas bills of a has_gas:true source were not staged, so "
+                "the flag was not read from that source at all")
+    return ("a source path containing quotes, a backslash and a $ is handed to "
+            "the has_gas reader as data, not as Python")
+
+
+@case
+def case_a_restage_from_a_second_household_is_refused_with_its_leftovers_named():
+    """issue #185. Every copy in the script OVERLAYS: `cp` replaces the names
+    it writes and leaves the rest, `cp -R dir dest/` merges into an existing
+    dir/. So a destination staged from one archive and re-staged from another
+    held the UNION of both, at exit 0, with the closing message counting the
+    union as staged. Reproduced on this fixture before the fix: the first
+    household's bill PDF, its gas bills, its CAISO day-cache and one of its
+    interval-export siblings were all still there afterwards -- and the
+    pipeline reads all four by GLOB, so they are consumed, not ignored.
+
+    One leftover per copy SHAPE, not just the one the issue names: a file
+    inside a merged `cp -R` subtree, a whole subtree this run will not write
+    at all, an optional subtree the second source does not have, and a
+    top-level file matching one of the two globbed `cp` patterns.
+
+    The guard must DISCRIMINATE, so the same instrument is shown accepting
+    first: the initial stage, and then a re-stage from the SAME source, both
+    exit 0. A check that refused every re-stage would pass the second half of
+    this case and be useless."""
+    with tempfile.TemporaryDirectory() as tda, tempfile.TemporaryDirectory() as tdb:
+        first = _synthetic_src(tda, "household:\n  has_gas: true\n",
+                               has_gas_bills_dir=True)
+        raw = first / "private" / "1-raw-data"
+        (raw / "electric-bills" / "first-jan.pdf").write_text("first household\n")
+        (raw / "gas-bills" / "first-gas-jan.pdf").write_text("first household\n")
+        (raw / "caiso_raw").mkdir()
+        (raw / "caiso_raw" / "caiso_co2_2025-01-01.csv").write_text("first\n")
+        (raw / "enphase_sam8760_2024.csv").write_text("first household\n")
+        # The second household: no gas service, no day-cache, no 2024 export,
+        # and a bill directory of its own. Built rather than pruned -- nothing
+        # in this suite deletes from a fixture it was handed.
+        second = _synthetic_src(tdb, "household:\n  has_gas: false\n",
+                                has_gas_bills_dir=False)
+        (second / "private" / "1-raw-data" / "electric-bills"
+         / "second-jan.pdf").write_text("second household\n")
+
+        with _linked_worktree(tda) as dst:
+            opened = _run_script(first, dst, cwd=first, timeout=120)
+            assert opened.returncode == 0, (
+                f"the first stage must succeed or this case proves nothing: "
+                f"{opened.stderr}")
+            again = _run_script(first, dst, cwd=first, timeout=120)
+            assert again.returncode == 0, (
+                f"a re-stage from the SAME source must still be accepted -- a "
+                f"guard that refuses every re-stage would pass the rest of "
+                f"this case and be useless: {again.stderr}")
+            before = _snapshot(dst)
+            assert "private/1-raw-data/gas-bills/first-gas-jan.pdf" in before
+
+            result = _run_script(second, dst, cwd=second, timeout=120)
+            _assert_refused(result, dst, before,
+                            "a re-stage from a different household")
+            for leftover in ("private/1-raw-data/electric-bills/first-jan.pdf",
+                             "private/1-raw-data/gas-bills",
+                             "private/1-raw-data/caiso_raw",
+                             "private/1-raw-data/enphase_sam8760_2024.csv"):
+                assert leftover in result.stderr, (
+                    f"the refusal does not name {leftover}, so the operator "
+                    f"cannot act on it: {result.stderr}")
+            # And the refusal is a refusal: none of the SECOND household's
+            # files reached the destination either.
+            assert not (dst / "private" / "1-raw-data" / "electric-bills"
+                        / "second-jan.pdf").exists(), (
+                "the run refused but had already written the second "
+                "household's bills")
+    return ("a re-stage from a source lacking the destination's files is "
+            "refused with all four leftover shapes named, while a re-stage "
+            "from the same source is accepted")
+
+
+@case
+def case_an_incomplete_source_is_refused_before_the_first_copy():
+    """issue #185, the failure-atomicity half. The copies used to run against
+    whatever the source happened to have: `set -e` aborts on the first `cp`
+    that cannot find its source, so a source missing gas.csv exited 1 having
+    ALREADY written household.yaml and the interval export -- a half-updated
+    archive, with nothing in the output saying so.
+
+    The injected failures are the real ones: an input that is not there, and
+    two interval exports where the private/verify/usage.csv copy takes exactly
+    one (`cp` then fails with "target is not a directory", after six earlier
+    copies have landed). Each must be refused with the destination untouched.
+
+    The same instrument is shown accepting the untouched source first."""
+    with tempfile.TemporaryDirectory() as td:
+        whole = _synthetic_src(td, "household:\n  has_gas: false\n",
+                               has_gas_bills_dir=False)
+        with _linked_worktree(td, name="control") as dst:
+            control = _run_script(whole, dst, cwd=whole, timeout=120)
+            assert control.returncode == 0, (
+                f"the unmodified source must stage, or every refusal below "
+                f"proves nothing: {control.stderr}")
+
+    checked = []
+    for label, omit, extra, needle in (
+            ("a source whose gas.csv has not been pulled",
+             "gas.csv", None, "gas.csv"),
+            ("a source with no billing-history export",
+             "electric_billing_history_2024-2026.csv", None,
+             "electric_billing_history_2024-2026.csv"),
+            ("a source missing the SAM year the verify sandbox copies",
+             "enphase_sam8760_2026.csv", None, "enphase_sam8760_2026.csv"),
+            ("a source holding last year's interval export beside this year's",
+             None, "Electric_15_Minute_older.csv", "more than one")):
+        with tempfile.TemporaryDirectory() as td:
+            # Built WITHOUT the omitted file rather than by deleting it: the
+            # helper's own signature does not offer that, so the tree is
+            # assembled here from the same parts.
+            src = pathlib.Path(td) / "src"
+            (src / "analysis").mkdir(parents=True)
+            (src / "data").mkdir(parents=True)
+            (src / ".venv" / "bin").mkdir(parents=True)
+            (src / ".venv" / "bin" / "python").symlink_to(sys.executable)
+            shutil.copy2(ANALYSIS / "household.py", src / "analysis" / "household.py")
+            (src / "private" / "1-raw-data").mkdir(parents=True)
+            (src / "private" / "household.yaml").write_text(
+                "household:\n  has_gas: false\n")
+            raw = src / "private" / "1-raw-data"
+            (raw / "electric-bills").mkdir()
+            for name in ("gas.csv", "electric_billing_history_2024-2026.csv",
+                         "Electric_15_Minute_test.csv", "enphase_sam8760_2025.csv",
+                         "enphase_sam8760_2026.csv"):
+                if name != omit:
+                    (raw / name).touch()
+            if extra is not None:
+                (raw / extra).touch()
+
+            with _linked_worktree(td) as dst:
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=120)
+                _assert_source_refused(result, dst, before, label, needle)
+            checked.append(label)
+    return (f"an incomplete source is refused before the first copy "
+            f"({len(checked)} injected failures), and a complete one stages")
+
+
 @case
 def case_has_gas_is_read_with_real_yaml_semantics_not_text_scanning():
     """Codex review, issue #33, pass 3: an earlier version grepped the
