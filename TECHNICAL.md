@@ -620,8 +620,20 @@ every query variant, so no satellite irradiance exists and normalization is dete
 `production_crosscheck`; `pvoutput` / `enphase` (each with `n_days_used`, `n_clear_days`,
 `monthly_median_clearday_perf_kwh_per_kwhm2`, `events[]` — id, wet window, event_mm,
 dry_days_before, n_clear_pre/post, `recovery_pct_raw`, `recovery_pct_seasonal_adj`,
-`implied_soiling_rate_pct_per_month` — and `regression`); `sanity_check_2024_cleaning`;
-`annual_economics` (both scenarios + caveat).
+`implied_soiling_rate_pct_per_month` — and `regression`); `sanity_check_2024_cleaning`
+(including `known_cleaning_gain_basis`, the per-year windows, medians and ratios the
++11.8% gain is computed from — see §3.11); `annual_economics` (both scenarios + caveat).
+
+Both blocks that rest on the measured cleaning — `sanity_check_2024_cleaning` and
+`annual_economics.scenario_B_2024_cleaning_evidence` — are written in **two shapes**: the
+numeric one above, and a `status` string for a household whose `private/household.yaml`
+`cleaning_history` records no cleaning on the date the gain was measured for, or whose
+`data/cleaning_study_daily.csv` cannot support the comparison. That second shape is the
+ordinary outcome of the reproduction path, not a broken artifact, so every consumer must
+read it: `report_tokens.py`'s `SEC12_TEASER`, `SOILING_RATE_RANGE`, `CLEANING_EFFECT_PCT`
+and `CLEANING_EFFECT_CLAIM` render "not determined" with the artifact's own reason rather
+than raising (issues #167, #170), and §12's evidence pill follows the same state so an
+undetermined gain is never labelled `measured` (issue #168).
 
 ### 3.10 `analysis/carbon_timing.py` — grid-carbon timing (real CAISO data)
 
@@ -682,6 +694,30 @@ pure seasonal decline (they fall 5–8%); the cleaned year *rose* 5%. Diff-in-di
 daily peak-power records in `data/cleaning_study_peaks_2024.csv`, columns `date,peak_w`).
 The array logged 0 kWh on the cleaning day itself (panels offline during the wash),
 corroborating the date.
+
+That +11.8% is computed by `analysis/soiling_analysis.py`'s `cleaning_diff_in_diff()`
+(issue #164 — the "script per headline number" gate, `CLAUDE.md` §9; it was previously a
+literal in that module). Both halves of the estimator are stated in the function rather
+than implied: the **window** is the 30 days strictly before and strictly after the cleaning
+date, with the cleaning day itself excluded in every year (the treated year's own record
+carries 0.0 kWh that day, and the control years' record omits the same calendar day);
+**control-year selection** is every calendar year in the record other than the treated one
+whose two windows both hold at least one day, so it follows what the CSV covers rather than
+a list written in the code. Each year contributes the median of each window and their
+post ÷ pre ratio; the gain is the treated year's ratio over the mean of the control years',
+minus one. On the committed record: treated 2024 at 1.051, controls 2021–2023 and 2025
+averaging 0.9398, giving **11.832% → +11.8%**. The 2025 control's pre-window covers 19 days
+rather than 30 (its daily record starts 2025-07-24); every year's day counts and medians
+are published in `data/soiling_results.json` under
+`sanity_check_2024_cleaning.known_cleaning_gain_basis`, so a short window is visible in the
+artifact rather than averaged in silently. Dropping 2025 and using only the three
+complete-window control years gives 11.851%, a 0.02-point difference — the estimate does not
+turn on that choice. Everything the report derives from the gain (`known_implied_soiling_
+loss_pct` 10.6%, `known_rate_equiv_pct_per_month` 2.4, scenario B's 1,106 kWh / $348 a year)
+is computed from the figure **as published**, so the artifact's own arithmetic closes.
+Guarded from both sides by `analysis/test_soiling_analysis.py`: a synthetic record with a
+known gain injected into it, and the committed record checked against the committed
+artifact.
 
 **Lifetime payback.** Install invoice: **$37,845 paid Dec 2019** (PTO 2019-12-27). Initially
 an in-session computation; now reproduced by the committed `analysis/lifetime_payback.py`

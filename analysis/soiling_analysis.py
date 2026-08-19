@@ -273,6 +273,148 @@ def days_since_rain(d, threshold=RAIN_CLEAN_MM, search_back=500):
 
 
 # ---------------------------------------------------------------------------
+# 5b. THE CLEANING'S DIFFERENCE-IN-DIFFERENCES GAIN (issue #164)
+#
+# This was a hardcoded literal -- `cleaning_gain_known = 11.8  # verified prior
+# work` -- and it is the report's headline cleaning figure: it flows into
+# data/soiling_results.json, from there into data/gross_import_decomposition
+# .json's single_event_soiling_swing_pct, and is published in index.html under
+# a `measured` label. CLAUDE.md section 9 asks for a committed script per
+# headline number and section 0 for a computation behind every figure; a
+# comment saying "verified prior work" is neither.
+#
+# THE METHOD, STATED RATHER THAN IMPLIED (issue #164's last acceptance
+# criterion). Difference-in-differences on daily production:
+#
+#   * WINDOW: the WINDOW_DAYS days STRICTLY BEFORE and STRICTLY AFTER the
+#     cleaning date. The cleaning day itself is excluded in every year -- the
+#     array was off during the wash (the treated year's record carries 0.0 kWh
+#     that day, which is not a production level), and the control years' record
+#     omits the same calendar day, so one rule covers both.
+#   * CONTROL YEARS: every calendar year in the record OTHER than the treated
+#     one, measured over the identical calendar windows around that year's
+#     anniversary of the cleaning date. Selection is by what the record covers,
+#     not by a list written here: a year is admitted when both its windows hold
+#     at least one day, and each year's own day counts are published beside its
+#     medians so a short window (the 2025 pre-window's daily record starts part
+#     way in) is visible rather than silently averaged in.
+#   * STATISTIC: each year's MEDIAN daily production in each window, and that
+#     year's post ÷ pre ratio. The median, not the mean, because a cloudy week
+#     inside a 30-day window moves a mean and the question is the level.
+#   * GAIN: the treated year's ratio measured against the mean of the control
+#     years' ratios, which is what removes the seasonal decline every year
+#     shows across this window.
+#
+# Fails closed, returning (None, reason): a record that cannot support the
+# comparison produces no figure, and main() then writes its "not determined"
+# block exactly as it does for a household with no measured cleaning.
+# ---------------------------------------------------------------------------
+CLEANING_STUDY_CSV = "cleaning_study_daily.csv"
+DID_WINDOW_DAYS = 30
+
+
+def _repo_root():
+    """The nearest ancestor of the CWD -- then of this file -- holding both
+    analysis/ and data/. Same walk as household.py and carbon_fullyear.py, so
+    the documented private/verify copy-and-run sandbox works unchanged."""
+    for start in (os.getcwd(), HERE):
+        p = start
+        while True:
+            if (os.path.isdir(os.path.join(p, "analysis"))
+                    and os.path.isdir(os.path.join(p, "data"))):
+                return p
+            parent = os.path.dirname(p)
+            if parent == p:
+                break
+            p = parent
+    raise SystemExit("soiling_analysis: repo root not found: no ancestor of the CWD "
+                     "or of this script contains both analysis/ and data/")
+
+
+def load_cleaning_study(path=None):
+    """{date: kWh} from data/cleaning_study_daily.csv (YYYYMMDD, generated_kwh).
+
+    An absent record returns {} rather than raising: cleaning_diff_in_diff()
+    then reports it as a reason and main() writes its "not determined" block,
+    which is the same fail-closed exit every other unmeasurable case takes."""
+    path = path or os.path.join(_repo_root(), "data", CLEANING_STUDY_CSV)
+    if not os.path.isfile(path):
+        return {}
+    out = {}
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
+            stamp = row["date"].strip()
+            out[date(int(stamp[:4]), int(stamp[4:6]), int(stamp[6:8]))] = \
+                float(row["generated_kwh"])
+    return out
+
+
+def cleaning_diff_in_diff(clean_date, daily, window_days=DID_WINDOW_DAYS):
+    """(result, None) or (None, reason). See this section's header for the
+    method; `result` carries every intermediate the gain is built from, so the
+    published figure can be re-derived from the artifact alone."""
+    if not daily:
+        return None, (f"data/{CLEANING_STUDY_CSV} is missing or empty, so the "
+                      "difference-in-differences the gain is measured by has no "
+                      "record to run on")
+    years, ratio = {}, {}
+    for year in sorted({d.year for d in daily}):
+        try:
+            anchor = date(year, clean_date.month, clean_date.day)
+        except ValueError:                      # a Feb-29 cleaning in a common year
+            continue
+        pre = [kwh for d, kwh in daily.items()
+               if anchor - timedelta(days=window_days) <= d < anchor]
+        post = [kwh for d, kwh in daily.items()
+                if anchor < d <= anchor + timedelta(days=window_days)]
+        if not pre or not post:
+            continue
+        pre_med, post_med = median(pre), median(post)
+        if not (pre_med > 0 and pre_med < math.inf
+                and -math.inf < post_med < math.inf):
+            return None, (f"{CLEANING_STUDY_CSV}'s {year} window around {anchor} has a "
+                          f"median of {pre_med} kWh/day before and {post_med} after, "
+                          "which is not a production level a ratio can be taken of")
+        # The ratios the gain is computed from are UNROUNDED; the rounded copy
+        # beside them is for publication. Averaging four 4-decimal roundings
+        # and dividing by them moves the published gain by a hundredth of a
+        # point, which is exactly the kind of drift a rounded intermediate
+        # introduces and nothing downstream would ever explain.
+        ratio[year] = post_med / pre_med
+        years[year] = {"n_pre_days": len(pre), "n_post_days": len(post),
+                       "pre_median_kwh_per_day": round(pre_med, 3),
+                       "post_median_kwh_per_day": round(post_med, 3),
+                       "post_over_pre": round(ratio[year], 4)}
+    treated = clean_date.year
+    if treated not in years:
+        return None, (f"{CLEANING_STUDY_CSV} does not cover a {window_days}-day window "
+                      f"on both sides of {clean_date}")
+    controls = {y: v for y, v in years.items() if y != treated}
+    if not controls:
+        return None, (f"{CLEANING_STUDY_CSV} covers no year other than {treated}, so "
+                      "the seasonal decline the treated year is measured against is "
+                      "not observed")
+    control_mean = sum(ratio[y] for y in controls) / len(controls)
+    gain = (ratio[treated] / control_mean - 1) * 100
+    return {
+        "method": ("difference-in-differences on daily production: each year's "
+                   f"median over the {window_days} days after the cleaning date "
+                   f"divided by its median over the {window_days} days before, then "
+                   "the treated year's ratio divided by the mean of the control "
+                   "years' ratios, minus one"),
+        "source": f"data/{CLEANING_STUDY_CSV}",
+        "window_days": window_days,
+        "cleaning_day_excluded_from_both_windows": True,
+        "treated_year": treated,
+        "control_years": sorted(controls),
+        "year_windows": {str(y): v for y, v in sorted(years.items())},
+        "control_mean_post_over_pre": round(control_mean, 4),
+        "treated_post_over_pre": years[treated]["post_over_pre"],
+        "gain_pct_unrounded": round(gain, 3),
+    }, None
+
+
+# ---------------------------------------------------------------------------
 # 6. Main analysis
 # ---------------------------------------------------------------------------
 def main():
@@ -464,8 +606,8 @@ def main():
             },
         }
 
-    # ---- sanity check vs the verified paid cleaning (+11.8% diff-in-diff)
-    # The +11.8% gain and the rain metadata below were measured for the
+    # ---- sanity check vs the verified paid cleaning (diff-in-diff)
+    # The gain and the rain metadata below belong to the
     # 2024-08-12 cleaning specifically (30-day diff-in-diff vs control years,
     # data/cleaning_study_daily.csv) — they must never be attributed to any
     # other event, so this block pins to that exact record in cleaning_history
@@ -477,15 +619,23 @@ def main():
     _cleanings = hh.get("cleaning_history") or []
     _measured = [e for e in _cleanings
                  if isinstance(e, dict) and str(e.get("date")) == MEASURED_CLEANING]
-    if _measured:
+    did, did_why = (cleaning_diff_in_diff(date.fromisoformat(MEASURED_CLEANING),
+                                          load_cleaning_study())
+                    if _measured else (None, None))
+    if _measured and did is not None:
         clean_date = date.fromisoformat(MEASURED_CLEANING)
         dsr_2024 = days_since_rain(clean_date)  # from fetched 2024 gauge record
         predicted = rate / 30.44 * dsr_2024 if dsr_2024 else None
-        cleaning_gain_known = 11.8  # % gain after cleaning (verified prior work)
+        # The PUBLISHED gain, rounded once, here. Everything downstream of it
+        # (the implied soiling loss, scenario B's rate and cap, and the report)
+        # is derived from the figure as published, so a reader can redo that
+        # arithmetic from the artifact and land on the same numbers.
+        cleaning_gain_known = round(did["gain_pct_unrounded"], 1)
         soiling_known = cleaning_gain_known / (100 + cleaning_gain_known) * 100
         results["sanity_check_2024_cleaning"] = {
             "cleaning_date": str(clean_date),
             "known_cleaning_gain_pct": cleaning_gain_known,
+            "known_cleaning_gain_basis": did,
             "known_implied_soiling_loss_pct": round(soiling_known, 1),
             "dry_days_before_cleaning_ge5mm": dsr_2024,
             "last_ge5mm_rain_before": "2024-03-31 (8.6 mm)",
@@ -493,6 +643,12 @@ def main():
                 None if predicted is None else round(predicted, 1),
             "known_rate_equiv_pct_per_month":
                 round(soiling_known / dsr_2024 * 30.44, 2) if dsr_2024 else None,
+        }
+    elif _measured:
+        # The history names the event but the study record cannot measure it.
+        _measured = []
+        results["sanity_check_2024_cleaning"] = {
+            "status": f"not determined — {did_why}",
         }
     else:
         results["sanity_check_2024_cleaning"] = {

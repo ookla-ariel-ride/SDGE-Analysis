@@ -1987,6 +1987,44 @@ def case_soiling_annual_economics_matches_the_artifact():
     return "the §12 soiling-range paragraph's $/yr loss bracket matches soiling_results.json"
 
 
+# The rate bracket the same paragraph closes on -- the figure SOILING_RATE_RANGE
+# renders. Captured WITHOUT the leading "~", which is prose, not token output.
+_SOILING_BRACKET_RE = re.compile(
+    r"defensible range is the full bracket: <b>~([\d.]+–[\d.]+%/month)</b>")
+
+
+def case_soiling_rate_bracket_matches_the_token_that_renders_it():
+    """issue #137 AC3: §12 states the soiling rate bracket as a hand-written
+    figure, and report_tokens.SOILING_RATE_RANGE derives the same bracket from
+    data/soiling_results.json's two scenarios. They drifted: the token rendered
+    both ends at one decimal, so scenario A's 0.449 %/month printed as "0.4"
+    while index.html published 0.45 -- a lower soiling rate in the token than
+    on the page, with nothing failing.
+
+    This pins one against the other, so neither end can move alone. Rewriting
+    the paragraph's bracket without regenerating the token fails here, and so
+    does changing the token's precision or its scenario inputs without
+    rewriting the page."""
+    rt = _report_tokens()
+    m = re.search(r"<p>An independent soiling study.*?</p>", HTML, re.S)
+    assert m, "§12 soiling-range paragraph not found in index.html"
+    para = m.group(0)
+    b = _SOILING_BRACKET_RE.search(para)
+    assert b, ("§12's 'defensible range is the full bracket: <b>~...%/month</b>' figure was "
+               "not found in the soiling paragraph -- that bracket is what this case pins "
+               "SOILING_RATE_RANGE to, so it cannot be checked at all if the page stops "
+               "publishing it")
+    published = b.group(1)
+    rendered = rt.resolve_token("SOILING_RATE_RANGE")
+    assert rendered == published, (
+        f"§12 publishes a soiling rate bracket of ~{published}, but "
+        f"SOILING_RATE_RANGE renders {rendered!r} from data/soiling_results.json's own "
+        "scenario rates -- the page and the token that is supposed to fill it state "
+        "different rates of soiling")
+    return (f"§12's soiling rate bracket (~{published}) is the value SOILING_RATE_RANGE "
+            "renders from soiling_results.json's two scenario rates")
+
+
 # The §12 cleaning heading, and the two figures it can be filled from.
 _CLEANING_HEADING_RE = re.compile(
     r"<h3>The [^<]*?cleaning \([^)]*\): ([-+]?[\d.]+%) production gain")
@@ -2299,16 +2337,28 @@ def case_cleaning_gain_follows_the_artifacts_own_not_determined_status():
     This is the shape every household that has never had a measured cleaning
     gets, so it is the one that decides whether they can publish a report at
     all -- and the reason belongs to the generator that made the call, not to a
-    paraphrase written on this side."""
+    paraphrase written on this side.
+
+    Issue #170 AC3: and CLEANING_EFFECT_PCT is not the only token that reads
+    that block. Seven others in §12 reach into sanity_check_2024_cleaning for a
+    figure the status block does not carry, and checking one token would let
+    any of them start raising unnoticed -- the whole report, not one heading,
+    is what a household in this shape loses. So this sweeps the FULL token set
+    the way its no-match sibling does: the set of tokens that fail with the
+    status block in place is compared against the same set with the real
+    artifact, and the run with the real artifact is the positive control that
+    the instrument reports a gain when there is one to report."""
     rt = _report_tokens()
-    measured, _gain = _measured_cleaning_date()
+    measured, gain = _measured_cleaning_date()
     status = ("not determined — cleaning_history has no entry for 2024-08-12, the only "
               "event with a measured diff-in-diff effect")
     real = rt._json("soiling_results.json")
     stubbed = dict(real, sanity_check_2024_cleaning={"status": status})
-    rt._json_cache["soiling_results.json"] = stubbed
     try:
         with _cleaning_history(rt, [{"date": measured, "cost_usd": 250}]):
+            baseline = _resolution_failures(rt)
+            measured_gain = rt.resolve_token("CLEANING_EFFECT_PCT")
+            rt._json_cache["soiling_results.json"] = stubbed
             try:
                 rendered = rt.resolve_token("CLEANING_EFFECT_PCT")
             except BaseException as e:            # noqa: BLE001 - that is the assertion
@@ -2317,13 +2367,24 @@ def case_cleaning_gain_follows_the_artifacts_own_not_determined_status():
                     f"status made CLEANING_EFFECT_PCT raise {type(e).__name__}: {e} -- "
                     "that block is the ordinary outcome for a household with no measured "
                     "cleaning, not a broken artifact")
+            variant = _resolution_failures(rt)
     finally:
         rt._json_cache["soiling_results.json"] = real
+    assert measured_gain == f"{gain:+.1f}%", (
+        f"the control run (the real artifact, with its measured gain) rendered "
+        f"{measured_gain!r}, so this case is not comparing what it claims to")
     assert rendered == status, (
         f"CLEANING_EFFECT_PCT rendered {rendered!r} instead of the artifact's own "
         f"{status!r} -- soiling_analysis.py owns the reason it measured nothing")
+    differing = sorted(set(variant) ^ set(baseline)) or sorted(
+        t for t in variant if variant[t] != baseline.get(t))
+    assert variant == baseline, (
+        "swapping soiling_results.json for one carrying soiling_analysis.py's own "
+        "not-determined status changed which tokens resolve at all: "
+        + "; ".join(f"{t}: {variant.get(t, 'now resolves')}" for t in differing))
     return ("an artifact carrying soiling_analysis.py's not-determined status renders "
-            "that status through CLEANING_EFFECT_PCT, unparaphrased")
+            "that status through CLEANING_EFFECT_PCT, unparaphrased, and leaves the other "
+            f"{len(rt.TOKENS) - len(variant)} resolvable tokens untouched")
 
 
 def case_cleaning_gain_is_not_determined_when_two_entries_share_the_date():
@@ -4964,6 +5025,7 @@ CASES = [
     case_nem3_grandfathering_section_matches_the_artifact,
     case_reprice_by_vintage_note_matches_the_artifact,
     case_soiling_annual_economics_matches_the_artifact,
+    case_soiling_rate_bracket_matches_the_token_that_renders_it,
     case_cleaning_effect_heading_matches_the_sections_own_conclusion,
     case_cleaning_heading_and_gain_describe_the_same_event,
     case_cleaning_gain_is_not_determined_when_no_entry_matches,

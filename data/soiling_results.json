@@ -184,6 +184,59 @@
  "sanity_check_2024_cleaning": {
   "cleaning_date": "2024-08-12",
   "known_cleaning_gain_pct": 11.8,
+  "known_cleaning_gain_basis": {
+   "method": "difference-in-differences on daily production: each year's median over the 30 days after the cleaning date divided by its median over the 30 days before, then the treated year's ratio divided by the mean of the control years' ratios, minus one",
+   "source": "data/cleaning_study_daily.csv",
+   "window_days": 30,
+   "cleaning_day_excluded_from_both_windows": true,
+   "treated_year": 2024,
+   "control_years": [
+    2021,
+    2022,
+    2023,
+    2025
+   ],
+   "year_windows": {
+    "2021": {
+     "n_pre_days": 30,
+     "n_post_days": 30,
+     "pre_median_kwh_per_day": 60.981,
+     "post_median_kwh_per_day": 56.197,
+     "post_over_pre": 0.9215
+    },
+    "2022": {
+     "n_pre_days": 30,
+     "n_post_days": 30,
+     "pre_median_kwh_per_day": 59.636,
+     "post_median_kwh_per_day": 56.709,
+     "post_over_pre": 0.9509
+    },
+    "2023": {
+     "n_pre_days": 30,
+     "n_post_days": 30,
+     "pre_median_kwh_per_day": 59.978,
+     "post_median_kwh_per_day": 56.773,
+     "post_over_pre": 0.9466
+    },
+    "2024": {
+     "n_pre_days": 30,
+     "n_post_days": 30,
+     "pre_median_kwh_per_day": 57.774,
+     "post_median_kwh_per_day": 60.722,
+     "post_over_pre": 1.051
+    },
+    "2025": {
+     "n_pre_days": 19,
+     "n_post_days": 30,
+     "pre_median_kwh_per_day": 59.78,
+     "post_median_kwh_per_day": 56.212,
+     "post_over_pre": 0.9403
+    }
+   },
+   "control_mean_post_over_pre": 0.9398,
+   "treated_post_over_pre": 1.051,
+   "gain_pct_unrounded": 11.832
+  },
   "known_implied_soiling_loss_pct": 10.6,
   "dry_days_before_cleaning_ge5mm": 134,
   "last_ge5mm_rain_before": "2024-03-31 (8.6 mm)",

@@ -1506,14 +1506,37 @@ _tok("SEC9_TEASER", kind="derived", get=_sec9_teaser,
 
 
 def _sec12_teaser(ctx):
-    sc = _json("soiling_results.json")["sanity_check_2024_cleaning"]
+    """Section 12's own one-line conclusion: what the measured cleaning
+    recovered -- or, for a household that never had one, that it is not
+    determined and why.
+
+    ISSUE #167. This used to subscript the sanity-check block for
+    known_cleaning_gain_pct. soiling_analysis.py writes that block in TWO
+    shapes, and the other one -- the ordinary outcome for any household whose
+    cleaning_history does not contain the dated event the gain was measured on
+    -- carries a `status` string and no gain at all. The subscript raised
+    KeyError, resolve_all() failed, and the household lost the WHOLE report
+    over one <summary> line.
+
+    So it reads through _measured_cleaning(), the same binding CLEANING_EFFECT_
+    PCT uses, and for the same reason: the teaser states a figure and names the
+    event beside it, so both halves come off one record. When that binding
+    cannot be made the answer is rendered, not raised -- _claim(...,
+    NOT_DETERMINED, ...) is a SystemExit and would reproduce the total failure
+    this fix removes."""
+    entry, why = _measured_cleaning()
+    if entry is None:
+        return (f"what a cleaning recovers on this array is "
+                f"{_NOT_DETERMINED_VERDICT} — {why}")
+    sc = _cleaning_sanity_check()
     gain, = _figures("SEC12_TEASER", "how much production the cleaning recovered",
                      known_cleaning_gain_pct=sc["known_cleaning_gain_pct"])
     return f"the {sc['cleaning_date']} cleaning measured a {gain}% production gain"
 
 
 _tok("SEC12_TEASER", kind="derived", get=_sec12_teaser,
-     sources=["data/soiling_results.json:sanity_check_2024_cleaning"])
+     sources=["data/soiling_results.json:sanity_check_2024_cleaning",
+              "private/household.yaml:cleaning_history"])
 
 
 def _sec13_teaser(ctx):
@@ -3445,6 +3468,42 @@ _tok("SOLAR_ANNUAL_VALUE", kind="derived", get=_solar_annual_value,
 _MEASURED_CLEANING_BLOCK = "sanity_check_2024_cleaning"
 
 
+def _strip_not_determined(status):
+    """A generator's own `status` string with its "not determined" prefix
+    taken off, ready to be used as the REASON half of a refusal this module
+    writes the prefix for.
+
+    One copy, because two are how they drift: soiling_analysis.py writes
+    "not determined — <reason>" into two different blocks (the cleaning
+    sanity check and scenario B), and three tokens here render a refusal
+    around whichever one they read. A caller that keeps the prefix publishes
+    "not determined — not determined — ...".
+
+    Returns "" for a missing/blank status, so a caller can fall back to a
+    reason of its own naming the artifact and the field."""
+    text = str(status or "").strip()
+    if text.lower().startswith(_NOT_DETERMINED_VERDICT):
+        text = text[len(_NOT_DETERMINED_VERDICT):].lstrip(" -–—:").strip()
+    return text
+
+
+def _trimmed(value, places=2):
+    """A figure at `places` decimals with trailing zeros trimmed off.
+
+    ISSUE #137. SOILING_RATE_RANGE rendered both bracket ends at ONE decimal,
+    and the low end is data/soiling_results.json's scenario-A rate of 0.449
+    %/month, which one decimal states as "0.4" -- a lower soiling rate than
+    the artifact measured, published against a report and a TECHNICAL.md that
+    both state the bracket as 0.45. Fixed precision cannot serve both ends of
+    a bracket that spans an order of magnitude: two decimals states the low
+    end honestly, and trimming keeps the high end from acquiring a
+    significant figure it does not have ("2.40")."""
+    text = f"{value:.{places}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def _cleaning_entries():
     # cleaning_history resolves (via privacy_tiers.resolve, no trailing "[]" in
     # its contract path) to [the whole list] -- one found node holding the
@@ -3507,9 +3566,7 @@ def _measured_cleaning():
         # off, exactly as _spread_trend takes it off tou_spread's verdicts,
         # because the caller writes that prefix and a status carrying one too
         # renders it twice.
-        status = str(sc.get("status") or "").strip()
-        if status.lower().startswith(_NOT_DETERMINED_VERDICT):
-            status = status[len(_NOT_DETERMINED_VERDICT):].lstrip(" -–—:").strip()
+        status = _strip_not_determined(sc.get("status"))
         return None, (status or
                       f"data/soiling_results.json:{_MEASURED_CLEANING_BLOCK} states no "
                       "measured cleaning gain")
@@ -3568,7 +3625,25 @@ _tok("CLEANING_DATE_SHORT", kind="derived",
               "data/soiling_results.json:sanity_check_2024_cleaning"])
 
 
-def _cleaning_window_medians(ctx):
+def _cleaning_window_medians(ctx, token):
+    """The 30-day pre- and post-cleaning median daily production, in kWh/day.
+
+    THE NAMED REFUSAL BELOW IS THE ONE ISSUE #131's ROUND 5 ADDED AND #138
+    CARRIED AWAY WITH THE QUOTIENT IT GUARDED (ISSUE #171). Three tokens read
+    these two medians -- CLEANED_PRE_MEDIAN and CLEANED_POST_MEDIAN publish
+    them directly, CLEANED_RATIO divides one by the other -- and every one of
+    them is labelled `measured` in section 12's windows table. A zero pre-
+    window median makes the ratio a bare ZeroDivisionError and a non-finite
+    median in EITHER window publishes "nan" under that label, so the check
+    belongs here, once, where all three consumers pass through it, rather than
+    on the one that happens to divide.
+
+    It is a refusal and not a fallback on purpose: a 30-day window of daily
+    production whose median is zero or not a number is a broken study CSV, not
+    a household that merely differs -- unlike the cleaning-history mismatches
+    one function up, which are ordinary and are rendered. `token` names which
+    of the three asked, so the message says which figure could not be
+    produced."""
     d0 = _as_date(_cleaning_entry()["date"])
     clean_date = dt.datetime(d0.year, d0.month, d0.day)
     rows = _csv_rows("cleaning_study_daily.csv")
@@ -3586,21 +3661,31 @@ def _cleaning_window_medians(ctx):
         n = len(xs)
         return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
 
-    return median(pre), median(post)
+    pre_median, post_median = median(pre), median(post)
+    _claim(token, "what the cleaning's production windows were",
+           SUPPORTED if _finite(pre_median, post_median) and pre_median > 0
+           else NOT_DETERMINED,
+           f"data/cleaning_study_daily.csv's 30-day windows around {d0} have medians "
+           f"of {pre_median!r} kWh/day before and {post_median!r} kWh/day after; a "
+           "pre-cleaning median of zero, and a median in either window that is not a "
+           "finite production level, are not levels a gain, a ratio or a published "
+           "median can be measured against")
+    return pre_median, post_median
 
 
 _tok("CLEANED_PRE_MEDIAN", kind="derived",
-     get=lambda ctx: _cleaning_window_medians(ctx)[0],
+     get=lambda ctx: _cleaning_window_medians(ctx, "CLEANED_PRE_MEDIAN")[0],
      sources=["data/cleaning_study_daily.csv", "private/household.yaml:cleaning_history",
               "data/soiling_results.json:sanity_check_2024_cleaning"],
      fmt="num1")
 _tok("CLEANED_POST_MEDIAN", kind="derived",
-     get=lambda ctx: _cleaning_window_medians(ctx)[1],
+     get=lambda ctx: _cleaning_window_medians(ctx, "CLEANED_POST_MEDIAN")[1],
      sources=["data/cleaning_study_daily.csv", "private/household.yaml:cleaning_history",
               "data/soiling_results.json:sanity_check_2024_cleaning"],
      fmt="num1")
 _tok("CLEANED_RATIO", kind="derived",
-     get=lambda ctx: (lambda pre, post: round(post / pre, 3))(*_cleaning_window_medians(ctx)),
+     get=lambda ctx: (lambda pre, post: round(post / pre, 3))(
+         *_cleaning_window_medians(ctx, "CLEANED_RATIO")),
      sources=["data/cleaning_study_daily.csv", "private/household.yaml:cleaning_history",
               "data/soiling_results.json:sanity_check_2024_cleaning"], fmt="num2")
 def _cleaning_effect_pct(ctx):
@@ -3642,12 +3727,15 @@ def _cleaning_effect_pct(ctx):
     undetermined answer the same way, but they are NOT a precedent for this
     slot and should not be read as one: each of those sits inside a TODO block,
     where a writer phrases the sentence around whatever the value turns out to
-    be. This one is static fill, so the reason lands mid-sentence between the
-    template's own words and the heading keeps an evidence pill that the value
-    no longer earns. The reason text is therefore kept short and names no file
-    path, since it is published prose here rather than a note to a writer.
-    Making the wording and the pill follow the state needs conditional regions
-    the template does not have; that is issue #168, not this token's to fix."""
+    be. This one is static fill. The reason text is therefore kept short and
+    names no file path, since it is published prose here rather than a note to
+    a writer.
+
+    THE HEADING AROUND IT no longer belongs to this token. Section 12's h3 is
+    filled by CLEANING_EFFECT_CLAIM and the CLEANING_EFFECT pill pair below,
+    which move the noun phrase and the evidence label with the state (issue
+    #168); this token stays the bare figure, and the section's own windows
+    table and body still cite it."""
     sc = _cleaning_sanity_check()
     entry, why = _measured_cleaning()
     state = SUPPORTED if entry is not None else NOT_DETERMINED
@@ -3668,14 +3756,174 @@ _tok("CLEANING_EFFECT_PCT", kind="derived", get=_cleaning_effect_pct,
      sources=["data/soiling_results.json:sanity_check_2024_cleaning"
               ".known_cleaning_gain_pct",
               "private/household.yaml:cleaning_history"])
-_tok("SOILING_RATE_RANGE", kind="derived",
-     get=lambda ctx: (lambda a, b: f"{min(a, b):.1f}–{max(a, b):.1f}%/month")(
-         *_figures("SOILING_RATE_RANGE", "how fast the array soils",
-                   **{f"scenario_{s}_rate_pct_per_month":
-                      _json("soiling_results.json")["annual_economics"][k]
-                      ["rate_pct_per_month"]
-                      for s, k in (("A", "scenario_A_this_years_evidence"),
-                                   ("B", "scenario_B_2024_cleaning_evidence"))})),
+
+
+# ---------------------------------------------------------------------------
+# AN EVIDENCE PILL THAT FOLLOWS THE DETERMINATION STATE (ISSUE #168).
+#
+# report-template.html labels each claim with a pill -- <span class="pill g">
+# measured</span> and its modeled/estimated siblings. Section 12's h3 carried
+# a FIXED green `measured` pill beside a figure that is allowed to come back
+# "not determined", so the household that gets the refusal also got a green
+# stamp asserting the absent value was measured. That is CLAUDE.md section 9's
+# "precision must match evidence density" broken by the markup rather than by
+# the number, and section 0's "not determined" papered over.
+#
+# WHY IT IS A PAIR OF TOKENS AND NOT MARKUP IN A TOKEN VALUE.
+# generate_report.render() HTML-escapes every substituted value with
+# quote=True, so a token cannot emit <span class="pill g">measured</span> --
+# it would publish as visible entity soup. So the SPAN stays fixed in the
+# template and the two things that vary become tokens:
+#
+#     <span class="pill {{X_PILL_CLASS}}">{{X_PILL_LABEL}}</span>
+#
+# The template already had the label half of this shape (§13's
+# `modeled · {{CARBON_SAMPLE_DESCRIPTION}}`); what is new is the class moving
+# with it, so the COLOUR cannot disagree with the word.
+#
+# GENERAL, NOT A SECTION-12 SPECIAL CASE. _evidence_pill_tokens declares the
+# pair for any claim that can come back undetermined, from one predicate --
+# the same predicate the claim's own token branches on, passed in rather than
+# re-derived, so the pill and the sentence cannot disagree about the state.
+# SPREAD_TREND_SUMMER, SPREAD_TREND_WINTER and BATTERY_ON_MEASURED_SPREAD are
+# the other three tokens in this module that can render "not determined"; they
+# sit inside <!-- TODO --> blocks today, where a writer phrases the label along
+# with the sentence, and they adopt this by calling it once each if any of them
+# is ever moved into static markup.
+#
+# The class is looked up from the LABEL rather than passed separately, so a
+# label and a colour cannot be set to disagree at the call site either, and an
+# unknown label fails closed instead of publishing an unstyled pill.
+# ---------------------------------------------------------------------------
+def _pill_class(label):
+    """The CSS class report-template.html's legend gives an evidence label.
+
+    Matched on the label's FIRST segment so the qualified forms the template
+    already uses ("measured · single event", "modeled · 364 days") style as
+    what they are. Returns None for anything the legend does not define."""
+    legend = {"measured": "g", "modeled": "y", "estimated": "r",
+              _NOT_DETERMINED_VERDICT: "r"}
+    return legend.get(label.split("·", 1)[0].strip().lower())
+
+
+def _evidence_pill_tokens(prefix, *, determined, on, sources, off=None):
+    """Declare {prefix}_PILL_CLASS and {prefix}_PILL_LABEL for one claim.
+
+    `determined` is a zero-argument predicate -- True when the claim beside
+    the pill states a figure, False when it states a refusal. `on` is the
+    evidence label the determined claim earns; `off` defaults to the words
+    "not determined", which is what the claim itself renders."""
+    def label(ctx):
+        return on if determined() else (off or _NOT_DETERMINED_VERDICT)
+
+    def css(ctx):
+        text = label(ctx)
+        cls = _pill_class(text)
+        if cls is None:
+            raise SystemExit(
+                f"report_tokens: {prefix}_PILL_CLASS has no class for the evidence "
+                f"label {text!r} -- report-template.html's §14 legend defines "
+                "measured / modeled / estimated")
+        return cls
+
+    # fmt="raw", attribute_only=True on the CLASS half: that value is markup,
+    # not language -- the same declaration S3_ROW_CLASS and S4_ROW_CLASS carry,
+    # for the same reason (see is_attribute_only()). The LABEL half is the
+    # opposite: it is the word a reader reads, so it stays citable prose.
+    _tok(f"{prefix}_PILL_CLASS", kind="derived", get=css, fmt="raw",
+         attribute_only=True, sources=sources)
+    _tok(f"{prefix}_PILL_LABEL", kind="derived", get=label, sources=sources)
+
+
+def _cleaning_effect_claim(ctx):
+    """Section 12's h3 claim, whole: the figure AND the noun phrase and method
+    clause around it, so both follow the determination state (ISSUE #168).
+
+    The template used to read "{{CLEANING_EFFECT_PCT}} production gain,
+    difference-in-differences vs the control years", which is fixed wording
+    wrapped around a value that can be a refusal. A household without the
+    measured event published:
+
+        ... ($150): not determined — <reason> production gain,
+        difference-in-differences vs the control years  [measured]
+
+    -- the reason mid-sentence, the sentence still asserting a
+    difference-in-differences estimate, and a green pill on top. So the claim
+    is one token: determined, it leads with the figure and names the method;
+    undetermined, it leads with the quantity, says it is not determined, and
+    claims no method for a value that was never computed."""
+    entry, why = _measured_cleaning()
+    if entry is None:
+        return f"production gain {_NOT_DETERMINED_VERDICT} — {why}"
+    return (f"{_cleaning_effect_pct(ctx)} production gain, "
+            "difference-in-differences vs the control years")
+
+
+_tok("CLEANING_EFFECT_CLAIM", kind="derived", get=_cleaning_effect_claim,
+     sources=["data/soiling_results.json:sanity_check_2024_cleaning"
+              ".known_cleaning_gain_pct",
+              "private/household.yaml:cleaning_history"])
+_evidence_pill_tokens(
+    "CLEANING_EFFECT",
+    determined=lambda: _measured_cleaning()[0] is not None,
+    on="measured · single event",
+    sources=["data/soiling_results.json:sanity_check_2024_cleaning"
+             ".known_cleaning_gain_pct",
+             "private/household.yaml:cleaning_history"])
+_SOILING_SCENARIOS = (
+    ("A", "scenario_A_this_years_evidence", "the rain-recovery end"),
+    ("B", "scenario_B_2024_cleaning_evidence", "the cleaning-implied end"),
+)
+
+
+def _soiling_rate_range(ctx):
+    """The bracket §12 reconciles: how fast the array soils, per dry month.
+
+    TWO SCENARIOS, AND EITHER CAN BE ABSENT. soiling_analysis.py writes
+    scenario B from the measured cleaning, and for a household whose
+    cleaning_history does not contain that event it writes a `status` string
+    in place of every field -- the same second shape SEC12_TEASER reads
+    (issue #167). This token subscripted rate_pct_per_month unconditionally
+    and raised KeyError on it, so resolve_all() failed and no report was
+    generated at all (ISSUE #170). It is the second half of that pair: with
+    both fixed, a status-shaped artifact leaves every token resolving.
+
+    The refusal is RENDERED, not raised, for the reason CLEANING_EFFECT_PCT's
+    docstring gives at length: _claim(..., NOT_DETERMINED, ...) is a
+    SystemExit, and a household whose cleanings simply differ from this one's
+    must still get its report. Each scenario carries its own reason, so a
+    bracket with one live end still states that end rather than collapsing
+    to a bare refusal -- what IS measured is published, and only what is not
+    is refused (CLAUDE.md section 0).
+
+    Precision: see _trimmed (ISSUE #137)."""
+    econ = _json("soiling_results.json")["annual_economics"]
+    rates, missing = {}, []
+    for label, key, subject in _SOILING_SCENARIOS:
+        block = econ.get(key) or {}
+        rate = block.get("rate_pct_per_month")
+        if rate is None:
+            missing.append((subject, _strip_not_determined(block.get("status")) or
+                            f"data/soiling_results.json:annual_economics.{key} states "
+                            "no rate"))
+        else:
+            rates[label] = rate
+    if rates:
+        _figures("SOILING_RATE_RANGE", "how fast the array soils",
+                 **{f"scenario_{label}_rate_pct_per_month": rate
+                    for label, rate in rates.items()})
+    if len(rates) == len(_SOILING_SCENARIOS):
+        lo, hi = min(rates.values()), max(rates.values())
+        return f"{_trimmed(lo)}–{_trimmed(hi)}%/month"
+    reasons = "; ".join(f"{subject}: {why}" for subject, why in missing)
+    if not rates:
+        return f"{_NOT_DETERMINED_VERDICT} — {reasons}"
+    only = _trimmed(next(iter(rates.values())))
+    return (f"{only}%/month on the one scenario the artifacts settle; the rest of "
+            f"the bracket is {_NOT_DETERMINED_VERDICT} — {reasons}")
+
+
+_tok("SOILING_RATE_RANGE", kind="derived", get=_soiling_rate_range,
      sources=["data/soiling_results.json:annual_economics"])
 
 

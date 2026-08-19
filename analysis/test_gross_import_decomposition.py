@@ -13,6 +13,7 @@ exercise the real path, not just import-cleanliness.
 Run from the repo root:
   ./.venv/bin/python analysis/test_gross_import_decomposition.py
 """
+import datetime as dt
 import glob
 import json
 import pathlib
@@ -33,8 +34,10 @@ _hh.PATH.write_text(
 _hh._cache = None
 
 import gross_import_decomposition as gi  # noqa: E402
+import soiling_analysis as soil  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+CLEANING_STUDY_CSV = ROOT / "data" / soil.CLEANING_STUDY_CSV
 USAGE_GLOB = str(ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")
 SAM_A_GLOB = str(ROOT / "private" / "1-raw-data" / "enphase_sam8760_2026.csv")
 SAM_B_GLOB = str(ROOT / "private" / "1-raw-data" / "enphase_sam8760_2025.csv")
@@ -153,22 +156,51 @@ def case_degradation_naive_figures_reproduce_the_existing_reports_stated_range()
 def case_degradation_reproduces_the_soiling_modules_own_validation_target():
     """AC2, the load-bearing soiling-validation test: the single-event swing
     this script cites must be pinned to soiling_analysis.py's OWN committed
-    sanity_check_2024_cleaning.known_cleaning_gain_pct (11.8%), not a
-    recomputed or re-guessed figure -- so a future regeneration of
-    soiling_results.json cannot silently drift out of sync with this script's
-    documented reconciliation."""
+    sanity_check_2024_cleaning.known_cleaning_gain_pct, not a re-guessed
+    figure -- so a future regeneration of soiling_results.json cannot silently
+    drift out of sync with this script's documented reconciliation.
+
+    Issue #164 AC5: and that published gain is itself checked against its
+    DERIVATION rather than against a constant restated here. The literal
+    `== 11.8` this assertion used to carry was a second copy of the answer,
+    and a copy is only ever as good as the day it was typed: soiling_analysis
+    .py now computes the figure, so the check recomputes it too, from
+    data/cleaning_study_daily.csv through that module's own
+    cleaning_diff_in_diff() at its own default window. Reading the same
+    artifact field twice would be circular -- the recomputation is the point,
+    and it is the positive control for the equality below, since a run that
+    could not measure a gain at all fails on `derived is not None` instead of
+    quietly comparing nothing."""
     committed_soiling = json.loads((ROOT / "data" / "soiling_results.json").read_text())
-    known_gain = committed_soiling["sanity_check_2024_cleaning"]["known_cleaning_gain_pct"]
+    sanity = committed_soiling["sanity_check_2024_cleaning"]
+    known_gain = sanity["known_cleaning_gain_pct"]
+
+    derived, why = soil.cleaning_diff_in_diff(
+        dt.date.fromisoformat(str(sanity["cleaning_date"])),
+        soil.load_cleaning_study(str(CLEANING_STUDY_CSV)))
+    assert derived is not None, (
+        f"the {sanity['cleaning_date']} cleaning's gain could not be recomputed from "
+        f"{CLEANING_STUDY_CSV}: {why} -- with no derivation in hand this case would be "
+        "comparing the published figure against nothing")
+    recomputed = round(derived["gain_pct_unrounded"], 1)
+    assert known_gain == recomputed, (
+        f"soiling_results.json publishes a {known_gain}% gain for the "
+        f"{sanity['cleaning_date']} cleaning, but recomputing it from "
+        f"data/{soil.CLEANING_STUDY_CSV} through soiling_analysis.cleaning_diff_in_diff() "
+        f"gives {recomputed}% ({derived['gain_pct_unrounded']}% unrounded, treated year "
+        f"{derived['treated_year']} against controls {derived['control_years']}) -- the "
+        "published validation target is no longer what its own derivation produces")
+
     deg = gi.degradation_block()
     assert deg["single_event_soiling_swing_pct"] == known_gain, (
         deg["single_event_soiling_swing_pct"], known_gain)
-    assert known_gain == 11.8, "the known 2024-08-12 cleaning validation target has moved"
     # the whole point of citing it: the single validated event dwarfs the naive multi-year trend
     assert known_gain > abs(deg["total_change_pct_2021_2025"]), (
         "the single-event soiling swing should exceed the entire naive 4-year "
         "change for the reconciliation's argument to hold")
     return (f"the single-event soiling swing ({known_gain}%) is pinned to soiling_results.json's "
-            f"own validated cleaning event and exceeds the naive 4-year trend "
+            f"own validated cleaning event, which recomputes to {recomputed}% from "
+            f"data/{soil.CLEANING_STUDY_CSV}, and exceeds the naive 4-year trend "
             f"({deg['total_change_pct_2021_2025']}%), as the reconciliation argues")
 
 

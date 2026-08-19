@@ -86,7 +86,7 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 **Self-consumption vs export** — Solar energy used inside the house the moment it's made (full retail value) versus surplus sent to the grid (credited at lower export rates). This home exports 60% of its production — the central timing mismatch the report addresses.
 
-**Soiling** — Dirt, dust, and grime on panels that blocks sunlight and cuts output until rain or a cleaning washes it off. This report measures soiling here at roughly 0.5–2.4% lost per dry month. [Wikipedia: soiling (solar energy)](https://en.wikipedia.org/wiki/Soiling_(solar_energy))
+**Soiling** — Dirt, dust, and grime on panels that blocks sunlight and cuts output until rain or a cleaning washes it off. This report measures soiling here at roughly 0.45–2.4% lost per dry month. [Wikipedia: soiling (solar energy)](https://en.wikipedia.org/wiki/Soiling_(solar_energy))
 
 **Specific yield** — Annual production per kW of installed panels (kWh/kW/yr), which lets you compare systems of different sizes. This array's 1,642 kWh/kW/yr is solid for a coastal roof.
 
