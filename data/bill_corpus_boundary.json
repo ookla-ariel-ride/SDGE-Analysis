@@ -59,8 +59,8 @@
    "applied": true,
    "statements_listed": 12,
    "statements_listed_and_present": 12,
-   "statements_published_outside_that_window": 13,
-   "what_it_means": "_validate()'s check 1 ran on this corpus: all 12 gas statement date(s) SUMMARY_STATEMENTS_GAS documents are present, so the published gas corpus is complete over that list's window \u2014 one missing from it would have failed the run closed rather than publishing a shorter corpus. The check speaks for that window only: the 13 published gas statement(s) outside it are covered by no completeness check, because the list is also what pins the summary window and it deliberately stops at the analysis year"
+   "statements_published_the_list_does_not_name": 13,
+   "what_it_means": "_validate()'s check 1 ran on this corpus: all 12 gas statement date(s) SUMMARY_STATEMENTS_GAS documents are present, so the published gas corpus is complete over the statements that list names \u2014 one missing from it would have failed the run closed rather than publishing a shorter corpus. The check speaks for those statements and no others: the 13 published gas statement(s) the list does not name are covered by no completeness check, whether they fall past its last date (the list is also what pins the summary window, and that deliberately stops at the analysis year) or sit inside its span and are simply absent from it"
   },
   "statements_published": 25,
   "published_period_span": [

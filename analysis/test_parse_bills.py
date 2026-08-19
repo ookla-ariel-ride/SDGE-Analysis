@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -46,6 +47,50 @@ def _require(path):
     if not path.exists():
         raise SkipCase(f"{path.name} is not in this corpus")
     return path
+
+
+class _Record(dict):
+    """A parsed JSON object that names itself when a case reads a key it does not have.
+
+    Every case below reads the artifact it is asserting about. A key the generator
+    stopped writing is a REAL failure of that case, but as a bare KeyError it is the
+    wrong kind: `KeyError: 'gas_corpus'` names neither the artifact nor the case, and
+    before the runner learned to catch it, it escaped main() and took every case after
+    it down with it — a traceback instead of one FAIL line, with the ~37 corpus cases
+    that follow never running at all.
+
+    So the sweep is done once, here, instead of by an `assert k in d` at every
+    subscript: any missing key at any depth of any artifact loaded through _json()
+    reports as an AssertionError naming the file, the key and the keys that ARE there.
+    A case added tomorrow inherits it without a line of new wiring.
+
+    `.get()` and `in` are deliberately untouched — __missing__ fires only on `[]` — so
+    a case that tests for a genuinely optional key (`boundary_not_derived`,
+    `window_coverage`) still gets None or False rather than a failure."""
+
+    _where = "a JSON artifact"
+
+    def __missing__(self, key):
+        raise AssertionError(
+            f"{self._where} carries no {key!r}; the record has {sorted(self)}. Either "
+            f"the generator stopped writing that key or this case is reading the "
+            f"wrong record — both are failures of this case, not of the harness.")
+
+
+def _named(pairs, path):
+    """A _Record that knows which file it was read out of."""
+    d = _Record(pairs)
+    d._where = str(path)
+    return d
+
+
+def _json(path):
+    """json.loads(path.read_text()) with every missing key reported as an AssertionError
+    naming the file (see _Record). Use this, never json.loads, for artifacts a case
+    asserts about."""
+    path = pathlib.Path(path)
+    return json.loads(path.read_text(),
+                      object_pairs_hook=lambda pairs: _named(pairs, path))
 
 
 def _set_flag(tmp, has_gas):
@@ -108,9 +153,14 @@ def _statement_date(path):
 
 
 def _rows(path):
-    """Read a committed artifact CSV as a list of dicts (they are CRLF or LF)."""
+    """Read a committed artifact CSV as a list of dicts (they are CRLF or LF).
+
+    Rows come back as _Record, for the same reason _json() does: a column a generator
+    stopped writing is a failure of the case that reads it, and `KeyError: 'period'`
+    names neither the CSV nor the case. Same shape, same treatment — 21 call sites
+    swept at one."""
     with open(path, newline="") as fh:
-        return list(csv.DictReader(fh))
+        return [_named(dict(r), path) for r in csv.DictReader(fh)]
 
 
 def _patch_summary_lists(tmp, elec_dates, gas_dates):
@@ -707,7 +757,57 @@ def case_fork_corpus_skips_presence_check():
     assert "FORK" in out and "SUMMARY_STATEMENTS_ELEC" in out, \
         f"fork skip ran silently or without the replace-me instruction:\n{out}"
     assert "SUMMARY_STATEMENTS_GAS" in out, f"gas list skip not noticed:\n{out}"
-    return "fork corpus (zero overlap) -> check 1 skipped with loud notice"
+
+    # ...and each fuel's notice must send the reader somewhere that answers it. The
+    # notice is printed inside the per-fuel loop, so a pointer written for gas is
+    # printed to electric readers too — and the boundary record has no electric
+    # equivalent of summary_statements_presence_check, on purpose (electric's
+    # completeness rests on the billing-history export). A pointer that resolves to
+    # nothing is worse than none: the operator opens the file and leaves with less
+    # than they arrived with.
+    elec_notice, gas_notice = (
+        [n for n in out.split("NOTICE:") if f"check 1 for {f}" in n][0]
+        for f in ("electric", "gas"))
+    assert "summary_statements_presence_check" in gas_notice, (
+        f"the gas notice does not name the field that records the skip:\n{gas_notice}")
+    assert "summary_statements_presence_check" not in elec_notice, (
+        f"the electric notice sends an electric reader to the gas-only presence-check "
+        f"record, which has no electric equivalent — a dead end:\n{elec_notice}")
+    assert "billing-history" in elec_notice and "excluded_statements" in elec_notice, (
+        f"the electric notice names no evidence an electric reader can actually "
+        f"open:\n{elec_notice}")
+    return ("fork corpus (zero overlap) -> check 1 skipped with loud notice, each "
+            "fuel pointed at evidence that exists for it")
+
+
+def case_boundary_record_requires_the_runs_own_gas_state():
+    """_boundary_record() must not be callable without the run's gas state.
+
+    _gas_corpus_scope() fails closed on (gas set, presence unset) because the record
+    has to state what THIS run's check did. Defaults of None on `gas` and `presence`
+    left a way under that guard: a caller that just omitted them fell into the no-gas
+    branch and published "no gas corpus is published in this set (household.has_gas is
+    false ...)" — a positive false claim about a run that parsed gas, which is the very
+    thing the SystemExit next to it exists to prevent. Only a caller that PASSES
+    gas=None is evidence of a no-gas household; an omission is evidence of nothing."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    try:
+        pb._boundary_record(None, None, [])
+    except TypeError as e:
+        assert "gas" in str(e) and "presence" in str(e), (
+            f"the call was refused, but not for the missing run state: {e}")
+    except Exception as e:                                   # noqa: BLE001
+        raise AssertionError(
+            f"_boundary_record() accepted a call with no gas state and got as far as "
+            f"{type(e).__name__}: {e} — a caller that forgets the argument can still "
+            f"publish a record claiming this run parsed no gas corpus")
+    else:
+        raise AssertionError(
+            "_boundary_record() accepted a call with no gas state and returned a "
+            "record; an omitted argument must never read as a no-gas household")
+    return ("_boundary_record() without the run's gas state -> TypeError, so the "
+            "no-gas claim can only come from a caller that meant it")
 
 
 def case_partial_overlap_still_fails():
@@ -1102,7 +1202,7 @@ def case_export_missing_a_statement_excludes_and_records_it(tmp):
     assert victim not in {t["statement_date"] for t in tou}, \
         f"{victim} left TOU rows behind in bill_tou_detail.csv"
 
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], b
     rec = b["excluded_statements"][0]
     assert b["statements_parsed"] == len(dates), b
@@ -1140,7 +1240,7 @@ def case_export_covering_every_statement_publishes_every_statement(tmp):
     periods = _rows(tmp / "data" / "bill_periods_electric.csv")
     assert {p["statement_date"] for p in periods} == set(dates), \
         "an export covering every statement still narrowed the corpus"
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert b["excluded_statements"] == [], b
     assert b["statements_published"] == b["statements_parsed"] == len(dates), b
     # The underivable-boundary block belongs ONLY to runs with no export: a run that
@@ -1166,7 +1266,7 @@ def case_export_day_coverage_shortfall_is_a_number(tmp):
     _stage_export(tmp, dates[:-1])
     r = _run(tmp)                       # first pass: learn the excluded period's span
     assert r.returncode == 0, r.stderr
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], (
         f"the export covers {len(dates) - 1} of {len(dates)} statements but the "
         f"boundary record excludes {[e['statement_date'] for e in b['excluded_statements']]}")
@@ -1181,7 +1281,7 @@ def case_export_day_coverage_shortfall_is_a_number(tmp):
     _stage_window(tmp, w_start.isoformat(), w_end.isoformat())
     r = _run(tmp)
     assert r.returncode == 0, r.stderr
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     cov = b["window_coverage"]
 
     published = _rows(tmp / "data" / "bill_periods_electric.csv")
@@ -1268,7 +1368,7 @@ def case_export_leading_hole_records_a_remedy_that_is_true_of_it(tmp):
     # lands at the FRONT of the window and cannot be confused with a trailing one.
     r = _run(tmp)
     assert r.returncode == 0, f"a leading exclusion failed the run:\n{r.stderr}"
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], b
     v_start, v_end = (dt.date.fromisoformat(x)
                       for x in b["excluded_statements"][0]["period_span"])
@@ -1280,7 +1380,7 @@ def case_export_leading_hole_records_a_remedy_that_is_true_of_it(tmp):
     published = {p["statement_date"]
                  for p in _rows(tmp / "data" / "bill_periods_electric.csv")}
     assert victim not in published and published == set(dates[1:]), sorted(published)
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     rec = b["excluded_statements"][0]
     assert rec["statement_date"] == victim, b
 
@@ -1370,7 +1470,7 @@ def case_artifact_level_guidance_never_prescribes_a_repull_for_a_leading_exclusi
     victim, dates = _stage_leading_hole(tmp)
     r = _run(tmp)
     assert r.returncode == 0, f"a leading exclusion failed the run:\n{r.stderr}"
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], b
 
     # The per-statement record is the one place the remedy lives, and on this run it
@@ -1416,7 +1516,7 @@ def case_gas_days_inside_an_excluded_electric_period_are_recorded(tmp):
     victim, _dates = _stage_leading_hole(tmp)
     r = _run(tmp)
     assert r.returncode == 0, f"the run failed:\n{r.stderr}"
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert "gas_corpus" in b, (
         "the boundary record says nothing about the gas corpus, so a gas artifact "
         "wider than the electric one is left for a reader to discover by diffing "
@@ -1497,7 +1597,11 @@ def case_gas_corpus_records_the_presence_check_that_actually_ran(tmp):
     if not (have & listed):
         raise SkipCase("this corpus shares no date with SUMMARY_STATEMENTS_GAS")
 
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
+    assert "gas_corpus" in b, (
+        "the boundary record says nothing about the gas corpus at all, so nothing in "
+        "it states whether the presence check — the gas corpus's only completeness "
+        f"guard — ran on this run: {sorted(b)}")
     chk = b["gas_corpus"].get("summary_statements_presence_check")
     assert chk is not None, (
         "the gas corpus's only completeness guard is the SUMMARY_STATEMENTS_GAS "
@@ -1513,16 +1617,28 @@ def case_gas_corpus_records_the_presence_check_that_actually_ran(tmp):
         f"statements are present; the published artifact and the list share "
         f"{len(have & listed)}: {chk}")
     assert "ran on this corpus" in chk["what_it_means"], chk
-    # The check covers the LIST's window, not the whole published corpus — a corpus
-    # longer than the analysis year carries statements it never looked at, and the
-    # record must count them rather than let "complete" read as complete overall.
-    assert chk["statements_published_outside_that_window"] == len(have - listed), (
-        f"the record says {chk['statements_published_outside_that_window']} published "
-        f"gas statement(s) sit outside the checked window; the published artifact "
+    # The check covers the statements the LIST NAMES, not the whole published corpus,
+    # and the count is the set difference — a published statement the list does not
+    # name is unchecked whether it falls past the list's end or sits inside its span.
+    # The field is named for that difference, not for a date window: the two coincide
+    # on this corpus and come apart on a fork's, where the old name would have been a
+    # false explanation of a correct number.
+    assert "statements_published_outside_that_window" not in chk, (
+        f"the record still counts unchecked gas statements under a name that says "
+        f"'outside that window' while computing a set difference against the list; on "
+        f"a corpus with a statement inside the list's span but absent from it the "
+        f"name and the number disagree: {chk}")
+    assert chk["statements_published_the_list_does_not_name"] == len(have - listed), (
+        f"the record says {chk['statements_published_the_list_does_not_name']} "
+        f"published gas statement(s) go unnamed by the list; the published artifact "
         f"and the list put {len(have - listed)} there: {chk}")
-    assert "window only" in chk["what_it_means"], (
-        f"the record does not scope the check to the list's window, so 'complete' "
-        f"reads as complete over the whole published gas corpus: {chk}")
+    assert "and no others" in chk["what_it_means"], (
+        f"the record does not scope the check to the statements the list names, so "
+        f"'complete' reads as complete over the whole published gas corpus: {chk}")
+    assert "inside its span" in chk["what_it_means"], (
+        f"the record explains the unchecked statements as falling past the list's "
+        f"end only, which is one of the two ways a published statement goes unnamed "
+        f"and is false of the other: {chk}")
     # ...and the prose that names the check as governing gas must say the same thing,
     # so the two cannot disagree.
     governs = b["gas_corpus"]["what_governs_it_instead"]
@@ -1570,7 +1686,11 @@ def case_fork_gas_corpus_completeness_is_recorded_as_unverified(tmp):
     assert dropped not in published, "the deleted gas statement was published anyway"
     assert published, "the fork published no gas statements at all"
 
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
+    assert "gas_corpus" in b, (
+        f"the boundary record says nothing about the gas corpus at all, so a fork "
+        f"cannot tell this {len(published)}-statement gas corpus from a complete "
+        f"one: {sorted(b)}")
     gasc = b["gas_corpus"]
     chk = gasc.get("summary_statements_presence_check")
     assert chk is not None, (
@@ -1628,7 +1748,7 @@ def case_no_export_publishes_the_whole_corpus(tmp):
     assert {p["statement_date"] for p in periods} == set(dates), \
         "statements were dropped with no export to justify it"
     assert "not derivable" in r.stdout, f"no notice about the missing export:\n{r.stdout}"
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert b["export"] is None and b["excluded_statements"] == [], b
     assert b["statements_published"] == b["statements_parsed"] == len(dates), b
     return "no export staged -> whole corpus published, boundary recorded as underived"
@@ -1647,7 +1767,7 @@ def case_no_export_records_the_underivable_boundary_in_the_artifact(tmp):
     r = _run(tmp)
     assert r.returncode == 0, f"a corpus with no export failed:\n{r.stderr}"
 
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert b["export"] is None, b
     nd = b.get("boundary_not_derived")
     assert nd is not None, (
@@ -1746,14 +1866,25 @@ def _assert_boundary_window_current(data_dir):
     bill_periods_electric.csv's published periods, and the excluded statements'
     own spans — so this runs in CI, where parse_bills.py itself cannot (it needs
     the gitignored bill PDFs). AssertionError, with the diagnosis, on a mismatch."""
-    b = json.loads((data_dir / "bill_corpus_boundary.json").read_text())
-    cov = b["window_coverage"]
-    w = json.loads((data_dir / "behavior_rebuild.json").read_text())["window"]
-    w_start = dt.date.fromisoformat(str(w["start"])[:10])
-    w_end = dt.date.fromisoformat(str(w["end"])[:10])
+    b = _json(data_dir / "bill_corpus_boundary.json")
     stale = (f"Re-run analysis/parse_bills.py (it needs the private bill corpus) and "
              f"commit its seven artifacts: data/bill_corpus_boundary.json publishes "
              f"day-coverage figures computed against a window that no longer exists.")
+    # Named, not subscripted. This is the LAST standalone case and standalone runs
+    # first, so a bare KeyError here aborted main() before a single corpus case ran —
+    # CI printing a traceback in place of the staleness diagnosis two lines below.
+    assert "window_coverage" in b, (
+        f"data/bill_corpus_boundary.json records no window coverage at all, so the "
+        f"day figures the report quotes have no committed source: {sorted(b)}. {stale}")
+    cov = b["window_coverage"]
+    w = _json(data_dir / "behavior_rebuild.json")["window"]
+    w_start = dt.date.fromisoformat(str(w["start"])[:10])
+    w_end = dt.date.fromisoformat(str(w["end"])[:10])
+    assert "window" in cov, (
+        f"window_coverage names no window, so there is nothing to compare "
+        f"data/behavior_rebuild.json's [{w_start.isoformat()}, {w_end.isoformat()}] "
+        f"against and the coverage figures below stand on nothing: {sorted(cov)}. "
+        f"{stale}")
     assert cov["window"] == [w_start.isoformat(), w_end.isoformat()], (
         f"data/bill_corpus_boundary.json reports coverage against the window "
         f"{cov['window']}, but data/behavior_rebuild.json's window is now "
@@ -1802,7 +1933,7 @@ def case_committed_boundary_is_current_with_the_committed_window():
     for n in names:
         if not (data / n).exists():
             raise SkipCase(f"data/{n} is not committed in this checkout")
-    b = json.loads((data / "bill_corpus_boundary.json").read_text())
+    b = _json(data / "bill_corpus_boundary.json")
     if b.get("window_coverage") is None:
         raise SkipCase("the committed boundary records no window coverage")
     if not _rows(data / "bill_periods_electric.csv"):
@@ -1815,7 +1946,7 @@ def case_committed_boundary_is_current_with_the_committed_window():
         moved.mkdir()
         for n in names:
             shutil.copy2(data / n, moved / n)
-        j = json.loads((moved / "behavior_rebuild.json").read_text())
+        j = _json(moved / "behavior_rebuild.json")
         for end in ("start", "end"):
             v = str(j["window"][end])
             j["window"][end] = (dt.date.fromisoformat(v[:10])
@@ -1885,10 +2016,39 @@ STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
                     case_overlapping_electric_periods,
                     case_overlapping_gas_periods,
                     case_fork_corpus_skips_presence_check,
+                    case_boundary_record_requires_the_runs_own_gas_state,
                     case_partial_overlap_still_fails,
                     case_neither_fixed_charge_label_present_fails,
                     case_both_fixed_charge_labels_present_prefers_bsc,
                     case_committed_boundary_is_current_with_the_committed_window]
+
+
+def _report_failure(case, exc):
+    """One FAIL line for a case that did not pass, whatever it raised.
+
+    THE HOLE THIS CLOSES. These loops used to catch SkipCase and AssertionError and
+    nothing else, so any other exception escaped main() and ended the RUN: no FAIL
+    line, no case name, just a traceback — and every case after it never executed. It
+    cost the most where it hurt most: the last standalone case reads the committed
+    boundary artifact, standalone runs first, and one KeyError there aborted the suite
+    before a single corpus case started, with CI reporting a traceback instead of the
+    staleness diagnosis the case was written to print. (Same hole, different exception
+    and different file, as the one closed in test_report_tokens.main().)
+
+    SystemExit needs its own clause because it inherits from BaseException, not
+    Exception: parse_bills fails closed with SystemExit for every refusal, and a case
+    that provokes one outside its own try would otherwise walk straight past
+    `except Exception`. Nothing here re-raises, so the runner's own exit — main()
+    RETURNS 1 and sys.exit() below turns that into the process's status — is never
+    routed through this function and never re-reported as a case failure."""
+    kind = "" if isinstance(exc, AssertionError) else f"{type(exc).__name__}: "
+    print(f"FAIL  {case.__name__}: {kind}{exc}")
+    if not isinstance(exc, AssertionError):
+        # An assertion carries its own diagnosis; anything else does not, and this
+        # runner keeps going, so without the traceback the frame is lost for good.
+        # On stdout, not stderr, so it lands under its own FAIL line instead of
+        # being interleaved somewhere else in the log by two separate buffers.
+        traceback.print_exc(file=sys.stdout)
 
 
 def main():
@@ -1904,8 +2064,8 @@ def main():
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
             skipped += 1
-        except AssertionError as e:
-            print(f"FAIL  {case.__name__}: {e}")
+        except (AssertionError, SystemExit, Exception) as e:  # noqa: BLE001
+            _report_failure(case, e)
             failures += 1
 
     for case in CORPUS_CASES:
@@ -1921,8 +2081,8 @@ def main():
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
             skipped += 1
-        except AssertionError as e:
-            print(f"FAIL  {case.__name__}: {e}")
+        except (AssertionError, SystemExit, Exception) as e:  # noqa: BLE001
+            _report_failure(case, e)
             failures += 1
 
     total = len(STANDALONE_CASES) + len(CORPUS_CASES)

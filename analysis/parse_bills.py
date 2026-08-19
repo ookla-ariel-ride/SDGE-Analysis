@@ -1256,29 +1256,43 @@ def _gas_corpus_scope(gas, excluded, presence):
                 "no gas statements to test and neither ran nor was skipped"),
         }
     elif presence["applied"]:
-        # What the check covers is the LIST's window, which is narrower than the
-        # published corpus whenever the corpus runs longer than the analysis year —
-        # it does here. Saying "the gas corpus is complete" would be the same
-        # over-claim in miniature, so the statements beyond that window are counted
-        # (CLAUDE.md §1) and named as what the check does not speak for.
-        beyond = sorted(set(gas.statement_date) - set(SUMMARY_STATEMENTS_GAS)) \
+        # WHAT THE CHECK COVERS IS THE STATEMENTS THE LIST NAMES — not a date window.
+        # Check 1 requires every LISTED date to be present; it never requires a
+        # present date to be listed, so a published statement the list does not name
+        # is one the check did not look at. Saying "the gas corpus is complete" would
+        # be an over-claim in miniature, so those statements are counted (CLAUDE.md
+        # §1) and named as what the check does not speak for.
+        #
+        # THE COUNT IS A SET DIFFERENCE, AND THE FIELD IS NAMED FOR THAT. It used to
+        # be called ..._outside_that_window and explained as statements falling past
+        # the list's end, which is true of THIS corpus (all of them do) and false of
+        # the fork audience this file is written for: a gas statement sitting INSIDE
+        # the list's span and simply absent from the list is equally unchecked and
+        # lands in this same count. Computing it against the list's min/max span
+        # instead would have made the old name true at the cost of dropping those
+        # statements from the count — publishing a narrower "unchecked" figure than
+        # the check actually leaves, i.e. the over-claim this field exists to
+        # prevent. So the count stays the honest one and the name follows it.
+        unnamed = sorted(set(gas.statement_date) - set(SUMMARY_STATEMENTS_GAS)) \
             if gas is not None and not gas.empty else []
         checked = {
             "list": presence["list"],
             "applied": True,
             "statements_listed": presence["statements_listed"],
             "statements_listed_and_present": presence["statements_listed_and_present"],
-            "statements_published_outside_that_window": len(beyond),
+            "statements_published_the_list_does_not_name": len(unnamed),
             "what_it_means": (
                 f"_validate()'s check 1 ran on this corpus: all "
                 f"{presence['statements_listed']} gas statement date(s) "
                 f"{presence['list']} documents are present, so the published gas "
-                f"corpus is complete over that list's window — one missing from it "
-                f"would have failed the run closed rather than publishing a shorter "
-                f"corpus. The check speaks for that window only: the "
-                f"{len(beyond)} published gas statement(s) outside it are covered by "
-                f"no completeness check, because the list is also what pins the "
-                f"summary window and it deliberately stops at the analysis year"),
+                f"corpus is complete over the statements that list names — one "
+                f"missing from it would have failed the run closed rather than "
+                f"publishing a shorter corpus. The check speaks for those statements "
+                f"and no others: the {len(unnamed)} published gas statement(s) the "
+                f"list does not name are covered by no completeness check, whether "
+                f"they fall past its last date (the list is also what pins the "
+                f"summary window, and that deliberately stops at the analysis year) "
+                f"or sit inside its span and are simply absent from it"),
         }
     else:
         checked = {
@@ -1376,8 +1390,19 @@ def _gas_corpus_scope(gas, excluded, presence):
     }
 
 
-def _boundary_record(elec, export_info, excluded, gas=None, presence=None):
+def _boundary_record(elec, export_info, excluded, gas, presence):
     """The committed statement of where the corpus stops and why.
+
+    `gas` and `presence` CARRY NO DEFAULTS, and that is the guard, not an oversight.
+    _gas_corpus_scope() below fails closed on (gas set, presence unset) because a
+    record must state the run's own check state and never a default — but a default
+    of None on `gas` opened the hole underneath that guard: a caller that simply
+    forgot the argument reached the no-gas branch, and the published artifact then
+    asserted "no gas corpus is published in this set (household.has_gas is false)" —
+    a positive, false claim about a run that parsed a gas corpus, which is exactly
+    the failure the SystemExit beside it exists to prevent. An omitted argument is
+    not evidence of a no-gas household; only a caller that passed gas=None is. So
+    both are required and the distinction is one the caller has to make.
 
     Written on EVERY run, including the runs that exclude nothing: it is the corpus
     boundary, not an exception log. An empty excluded_statements list is the positive
@@ -1564,14 +1589,32 @@ def _validate(elec, gas, tou, gas_detail=None):
             # _validate() does not hold: electric also has the billing-history export
             # behind it, gas has nothing. That fuel-specific verdict belongs to the
             # boundary record, which knows about the export, and is written there.
+            # WHERE TO LOOK IS FUEL-SPECIFIC, and this notice is printed for BOTH
+            # fuels. Gas has a field for exactly this question — the boundary
+            # record's summary_statements_presence_check — precisely because a
+            # skipped check leaves the gas corpus with nothing else behind it.
+            # Electric has no such field and deliberately needs none (see
+            # _gas_corpus_scope's docstring): its completeness rests on the
+            # billing-history export instead. So an electric reader sent to that
+            # block would open the file, find no electric equivalent, and be left
+            # worse off than before — a dead end, not an omission. Each fuel is sent
+            # to the evidence that actually answers it.
+            where = ("data/bill_corpus_boundary.json's gas_corpus."
+                     "summary_statements_presence_check records, for this run, that "
+                     "the check did not apply and what that leaves unverified"
+                     if label == "gas" else
+                     "the electric corpus is corroborated by the billing-history "
+                     "export instead: data/bill_corpus_boundary.json's export and "
+                     "excluded_statements say which statements it covers, and its "
+                     "boundary_not_derived block appears when no export was staged")
             print(f"NOTICE: none of the {len(want)} statement dates in {list_name} are "
                   f"present in the {label} corpus on disk — treating the list as "
                   f"not-applicable (a FORK running on its own statements) and skipping "
                   f"reproduction-gate check 1 for {label}. Nothing else in this "
                   f"validation compares the {label} statements on disk against a "
                   f"documented list: the remaining checks all pass on a corpus missing "
-                  f"statements off either end, because what is left still tiles (see "
-                  f"data/bill_corpus_boundary.json for what that leaves unverified). "
+                  f"statements off either end, because what is left still tiles "
+                  f"({where}). "
                   f"Once your corpus is stable, "
                   f"replace the SUMMARY_STATEMENTS_* lists at the top of parse_bills.py "
                   f"with your own statement dates so the gate protects your corpus.")
