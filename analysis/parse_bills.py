@@ -88,9 +88,11 @@ OUTPUTS (committed, de-identified)
                                     empty list is never read as an all-clear. It also
                                     carries a gas_corpus block, because the boundary
                                     governs ELECTRIC only: it names what governs the
-                                    gas artifacts instead, and counts the published gas
-                                    days that fall inside an excluded electric period.
-                                    See THE CORPUS BOUNDARY.
+                                    gas artifacts instead, records whether the
+                                    SUMMARY_STATEMENTS_GAS presence check actually ran
+                                    on this corpus (it does not on a fork's), and
+                                    counts the published gas days that fall inside an
+                                    excluded electric period. See THE CORPUS BOUNDARY.
     When household.has_gas is false the three gas artifacts (bill_periods_gas.csv,
     bill_gas_detail.csv, gas_bill_summary.csv) are still published — as HEADER-ONLY
     CSVs (same headers, zero rows), in the same atomic set as the electric ones, so a
@@ -160,11 +162,25 @@ THE CORPUS BOUNDARY — which statements get published, and why it is derived
     them, deleting most of a corpus the export could never corroborate either way.
     The gas artifacts are
     therefore published unrestricted by this boundary — governed by _validate()'s
-    duplicate/continuity/cross-foot checks and the SUMMARY_STATEMENTS_GAS presence
-    check — and the record's gas_corpus block states that, names what governs gas
-    instead, and counts (in DAYS, per CLAUDE.md §1) the published gas days that
-    fall inside an excluded electric period. A gas corpus wider than the electric
-    one is then visible in the artifact rather than silent (issue #159).
+    duplicate/continuity/cross-foot checks, and by the SUMMARY_STATEMENTS_GAS
+    presence check ONLY on a corpus that list documents — and the record's
+    gas_corpus block states that, names what governs gas instead, and counts (in
+    DAYS, per CLAUDE.md §1) the published gas days that fall inside an excluded
+    electric period. A gas corpus wider than the electric one is then visible in
+    the artifact rather than silent (issue #159).
+
+    A FORK'S GAS CORPUS IS UNVERIFIED, AND SAID SO. That presence check is the one
+    check here that can decline to run: a corpus sharing none of the pinned dates
+    is a fork, and check 1 is skipped (see the comment on the lists). Gas has no
+    export to corroborate it, so nothing then establishes that the gas corpus is
+    COMPLETE — the remaining checks all pass on a corpus truncated off either end,
+    because the periods that remain still tile. That run publishes, with the
+    reason: refusing would refuse every fork on its first run, before it could
+    possibly pin its own list. What it does not do is claim a guard that did not
+    run. gas_corpus.summary_statements_presence_check records, from _validate()'s
+    own report of the run, whether the check applied; when it did not, it says the
+    gas corpus's completeness is unverified, why, and what makes the check apply.
+    See _gas_corpus_scope() for the full reasoning on why this does not fail closed.
 
     NO EXPORT STAGED. The boundary is then underivable, so nothing is excluded:
     every parsed statement is published, the run says so, and
@@ -339,7 +355,12 @@ WINDOW_ARTIFACT = DATA / "behavior_rebuild.json"
 #                                your own statements); check 1 is skipped with a loud
 #                                notice, and the summaries are built from every
 #                                statement the fork parsed rather than filtered to
-#                                nothing. Once your corpus is stable, replace these
+#                                nothing. Nothing then checks that your corpus is
+#                                COMPLETE — the other checks all pass on a corpus
+#                                missing statements off either end — so the run says
+#                                so and bill_corpus_boundary.json records it for gas
+#                                (gas_corpus.summary_statements_presence_check).
+#                                Once your corpus is stable, replace these
 #                                dates with your own statement dates so the gate starts
 #                                protecting YOUR corpus and your summary window is
 #                                pinned the same way.
@@ -1166,7 +1187,7 @@ def _window_coverage(elec, excluded):
     }
 
 
-def _gas_corpus_scope(gas, excluded):
+def _gas_corpus_scope(gas, excluded, presence):
     """What governs the GAS artifacts, and by how many days they can disagree with
     the electric corpus (issue #159).
 
@@ -1181,7 +1202,127 @@ def _gas_corpus_scope(gas, excluded):
     instead, and counts the overlap in DAYS (CLAUDE.md §1 — a coverage claim is a
     number or it is not a claim). Zero on a corpus whose gas periods end before the
     first excluded electric period, which is the only reason this repository has
-    never seen it."""
+    never seen it.
+
+    `presence` is _validate()'s own report of what its check 1 did for gas on THIS
+    run (None when no gas corpus was validated), and the reason it is threaded in
+    rather than restated here is the defect this argument fixes. This block used to
+    say, unconditionally, that the gas artifacts are governed by "the
+    SUMMARY_STATEMENTS_GAS presence check". That is true of this repository, whose
+    statement dates ARE the pinned list, and false of the audience this file is
+    written for: a fork's corpus shares none of those dates, so _validate() prints
+    its fork notice and skips check 1 entirely. The fork's artifact then claimed a
+    completeness guard that never ran — and nothing else in _validate() can catch a
+    gas corpus truncated at either END, since the periods that remain still tile.
+
+    WHY THIS DOES NOT FAIL CLOSED. The skipped state is, by construction, every
+    fork's first run: the pinned list can only be written from the statement dates a
+    successful run reports, so refusing to publish until the list matches would
+    refuse the correct caller before it could possibly satisfy the demand. A guard
+    that refuses correct callers is one that gets switched off. Nor is a skip
+    evidence of a defect — it is evidence of an UNKNOWN, and this file already has a
+    settled way of handling exactly that: `boundary_not_derived` records "the export
+    was never staged, so nothing was checked" instead of refusing to run. Same shape,
+    same treatment. What the skip owes is not a refusal but a record: the operator
+    gets the NOTICE _validate() prints (with what the skip costs), and the committed
+    artifact gets summary_statements_presence_check below, so "not verified" can
+    never be read as "verified, nothing wrong". The remedy is real and stated in
+    both: replace SUMMARY_STATEMENTS_GAS with your own statement dates.
+
+    ELECTRIC needs no equivalent field, and the asymmetry is not an oversight. The
+    electric corpus's completeness is established POSITIVELY and independently of
+    check 1: every published statement has a billing-history export row, and an
+    export row with no PDF fails the run closed — and on the one run where that
+    cannot happen, no export staged, `boundary_not_derived` already records it.
+    Electric's completeness state is therefore already in the record in both states.
+    Gas has no export to corroborate it, so in the skipped state it has nothing at
+    all — which is precisely why this is where the field is owed."""
+    if gas is not None and presence is None:
+        # Fail closed rather than fall through to the "no gas corpus was parsed"
+        # wording, which would be false — and false in exactly the direction this
+        # whole block exists to prevent: a record describing a check state that is
+        # not the run's. The only legitimate None is a no-gas household.
+        raise SystemExit(
+            "_gas_corpus_scope: a gas corpus was parsed but nothing was passed for "
+            "what _validate()'s check 1 did with it. Pass _validate()'s return "
+            "value — the record must state the run's own check state, never a "
+            "default.")
+    if presence is None:
+        checked = {
+            "list": "SUMMARY_STATEMENTS_GAS",
+            "applied": None,
+            "what_it_means": (
+                "no gas corpus was parsed on this run, so _validate()'s check 1 had "
+                "no gas statements to test and neither ran nor was skipped"),
+        }
+    elif presence["applied"]:
+        # What the check covers is the LIST's window, which is narrower than the
+        # published corpus whenever the corpus runs longer than the analysis year —
+        # it does here. Saying "the gas corpus is complete" would be the same
+        # over-claim in miniature, so the statements beyond that window are counted
+        # (CLAUDE.md §1) and named as what the check does not speak for.
+        beyond = sorted(set(gas.statement_date) - set(SUMMARY_STATEMENTS_GAS)) \
+            if gas is not None and not gas.empty else []
+        checked = {
+            "list": presence["list"],
+            "applied": True,
+            "statements_listed": presence["statements_listed"],
+            "statements_listed_and_present": presence["statements_listed_and_present"],
+            "statements_published_outside_that_window": len(beyond),
+            "what_it_means": (
+                f"_validate()'s check 1 ran on this corpus: all "
+                f"{presence['statements_listed']} gas statement date(s) "
+                f"{presence['list']} documents are present, so the published gas "
+                f"corpus is complete over that list's window — one missing from it "
+                f"would have failed the run closed rather than publishing a shorter "
+                f"corpus. The check speaks for that window only: the "
+                f"{len(beyond)} published gas statement(s) outside it are covered by "
+                f"no completeness check, because the list is also what pins the "
+                f"summary window and it deliberately stops at the analysis year"),
+        }
+    else:
+        checked = {
+            "list": presence["list"],
+            "applied": False,
+            "statements_listed": presence["statements_listed"],
+            "statements_listed_and_present": presence["statements_listed_and_present"],
+            "what_it_means": (
+                f"SKIPPED on this run. The gas corpus on disk shares none of the "
+                f"{presence['statements_listed']} statement date(s) {presence['list']} "
+                f"documents, so _validate() treated the list as another household's "
+                f"and skipped reproduction-gate check 1 for gas (the run prints a "
+                f"NOTICE saying so). Nothing on this run compared the gas statements "
+                f"on disk against any documented list, so the COMPLETENESS of the "
+                f"published gas corpus is UNVERIFIED: the checks that did run — no "
+                f"duplicate periods, periods tiling with no gap or overlap, charge "
+                f"cross-foot — all pass on a corpus missing statements off either "
+                f"END, because the periods that remain still tile. The gas figures in "
+                f"these artifacts are therefore the totals of the statements that "
+                f"were staged, which may be fewer than the statements that exist"),
+            "check_is_applied_when": (
+                f"{presence['list']} at the top of parse_bills.py is replaced with "
+                f"this household's own gas statement dates and the parser is re-run. "
+                f"Check 1 then protects this corpus and this block records it as "
+                f"applied — nothing else has to be edited or remembered"),
+        }
+    # ONE prose site, with the only clause that varies computed from what the run
+    # did. Writing the applied and skipped sentences out separately would put the
+    # same paragraph in two places that can drift apart — the reason `rule` above
+    # carries only what is true in both directions.
+    if checked["applied"]:
+        tail = (
+            "governed by parse_bills.py's _validate() checks (no duplicate periods, "
+            "periods tiling with no gap or overlap, charge cross-foot) and by the "
+            "SUMMARY_STATEMENTS_GAS presence check, which ran on this corpus, not by "
+            "this boundary")
+    else:
+        tail = (
+            "governed on this run by parse_bills.py's _validate() checks (no "
+            "duplicate periods, periods tiling with no gap or overlap, charge "
+            "cross-foot) ALONE — not by this boundary, and not by the "
+            "SUMMARY_STATEMENTS_GAS presence check, which did not run on this "
+            "corpus. See summary_statements_presence_check below for what that "
+            "leaves unverified")
     governs = (
         f"nothing in this record. {HISTORY_CSV.name} is the ELECTRIC billing-history "
         f"export: its rows are electric statements, and gas is billed on its own "
@@ -1190,10 +1331,7 @@ def _gas_corpus_scope(gas, excluded):
         f"corroboration of the gas bill. The rule above therefore cannot be applied "
         f"to the gas corpus without excluding gas statements on evidence that was "
         f"never about them. The gas artifacts publish "
-        f"every gas statement parsed, governed by parse_bills.py's _validate() "
-        f"checks (no duplicate periods, periods tiling with no gap or overlap, "
-        f"charge cross-foot) and by the SUMMARY_STATEMENTS_GAS presence check, not "
-        f"by this boundary")
+        f"every gas statement parsed, {tail}")
     if gas is None or gas.empty:
         return {
             "restricted_by_this_boundary": False,
@@ -1202,6 +1340,7 @@ def _gas_corpus_scope(gas, excluded):
                 "so the three gas artifacts are header-only), so there is no gas "
                 "coverage for this boundary to disagree with"
                 if gas is None else governs),
+            "summary_statements_presence_check": checked,
             "statements_published": 0,
             "published_period_span": None,
             "days_published_inside_an_excluded_electric_period": 0,
@@ -1227,6 +1366,7 @@ def _gas_corpus_scope(gas, excluded):
     return {
         "restricted_by_this_boundary": False,
         "what_governs_it_instead": governs,
+        "summary_statements_presence_check": checked,
         "statements_published": int(gas.statement_date.nunique()),
         "published_period_span": [
             min(s for s, _ in bounds.values()).isoformat(),
@@ -1236,7 +1376,7 @@ def _gas_corpus_scope(gas, excluded):
     }
 
 
-def _boundary_record(elec, export_info, excluded, gas=None):
+def _boundary_record(elec, export_info, excluded, gas=None, presence=None):
     """The committed statement of where the corpus stops and why.
 
     Written on EVERY run, including the runs that exclude nothing: it is the corpus
@@ -1292,7 +1432,10 @@ def _boundary_record(elec, export_info, excluded, gas=None):
         "window_coverage": _window_coverage(elec, excluded),
         # The boundary is electric-only, so it says so and says what governs gas —
         # see _gas_corpus_scope() and THE CORPUS BOUNDARY, "ELECTRIC ONLY".
-        "gas_corpus": _gas_corpus_scope(gas, excluded),
+        # `presence` is _validate()'s report of what its check 1 actually did for
+        # gas on this run; the block records that rather than asserting it.
+        "gas_corpus": _gas_corpus_scope(gas, excluded,
+                                        (presence or {}).get("gas")),
     }
     if export_info is None:
         record["boundary_not_derived"] = {
@@ -1380,7 +1523,16 @@ def _validate(elec, gas, tou, gas_detail=None):
 
     `gas` and `gas_detail` may both be None: a no-gas household (household.has_gas
     false — see the applicability envelope in the module docstring). All gas checks are
-    then skipped."""
+    then skipped.
+
+    RETURNS what check 1 actually did, per fuel — {label: {"list", "applied",
+    "statements_listed", "statements_listed_and_present"}}. Check 1 is the only check
+    here that can decline to run (the fork skip below), so it is the only one whose
+    outcome is not implied by "this function returned". _boundary_record() writes that
+    outcome into data/bill_corpus_boundary.json rather than restating it as a constant,
+    because the record has to say what happened on THIS run: the alternative is a
+    committed artifact claiming a guard that never ran, which is the failure this
+    return value exists to prevent."""
     fuels = [("electric", elec, SUMMARY_STATEMENTS_ELEC,
               "SUMMARY_STATEMENTS_ELEC", "%m/%d/%y")]
     if gas is not None:
@@ -1394,13 +1546,33 @@ def _validate(elec, gas, tou, gas_detail=None):
     #    corpus — skip this check with a notice instead of demanding statements the
     #    fork can never have. Any PARTIAL overlap still fails closed: that is this
     #    corpus with statements missing, i.e. real corpus loss.
+    presence = {}
     for label, df, want_list, list_name, _fmt in fuels:
         have, want = set(df.statement_date), set(want_list)
+        presence[label] = {
+            "list": list_name,
+            "applied": bool(have & want),
+            "statements_listed": len(want),
+            "statements_listed_and_present": len(have & want),
+        }
         if not have & want:
+            # The skip's COST is stated with the skip. "Check 1 was skipped" tells an
+            # operator nothing actionable on its own; what it costs is that no check
+            # left in this function can see a corpus truncated at either END, because
+            # what remains still tiles. Stated about THIS validation only — whether
+            # that leaves the fuel's completeness unverified depends on evidence
+            # _validate() does not hold: electric also has the billing-history export
+            # behind it, gas has nothing. That fuel-specific verdict belongs to the
+            # boundary record, which knows about the export, and is written there.
             print(f"NOTICE: none of the {len(want)} statement dates in {list_name} are "
                   f"present in the {label} corpus on disk — treating the list as "
                   f"not-applicable (a FORK running on its own statements) and skipping "
-                  f"reproduction-gate check 1 for {label}. Once your corpus is stable, "
+                  f"reproduction-gate check 1 for {label}. Nothing else in this "
+                  f"validation compares the {label} statements on disk against a "
+                  f"documented list: the remaining checks all pass on a corpus missing "
+                  f"statements off either end, because what is left still tiles (see "
+                  f"data/bill_corpus_boundary.json for what that leaves unverified). "
+                  f"Once your corpus is stable, "
                   f"replace the SUMMARY_STATEMENTS_* lists at the top of parse_bills.py "
                   f"with your own statement dates so the gate protects your corpus.")
             continue
@@ -1537,6 +1709,8 @@ def _validate(elec, gas, tou, gas_detail=None):
                 raise SystemExit(
                     f"[{period}]: no {sorted(missing_types)} segments parsed into "
                     f"bill_gas_detail.csv.")
+
+    return presence
 
 
 def _summary_frame(df, want_list, list_name, label):
@@ -1783,9 +1957,12 @@ def main():
     # happens to tile. See THE CORPUS BOUNDARY in the module docstring.
     elec, tou, export_info, excluded = _restrict_to_reconcilable_corpus(elec, tou)
 
-    _validate(elec, gas, tou, gas_detail)
+    # _validate() reports what its check 1 did per fuel — it is the one check that
+    # can decline to run (the fork skip) — so the boundary record can state what
+    # happened on this run instead of what usually happens.
+    presence = _validate(elec, gas, tou, gas_detail)
 
-    boundary = _boundary_record(elec, export_info, excluded, gas)
+    boundary = _boundary_record(elec, export_info, excluded, gas, presence)
 
     es = _summary_frame(elec, SUMMARY_STATEMENTS_ELEC,
                         "SUMMARY_STATEMENTS_ELEC", "electric")

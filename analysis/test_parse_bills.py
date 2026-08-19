@@ -1461,6 +1461,148 @@ def case_gas_days_inside_an_excluded_electric_period_are_recorded(tmp):
             f"electric statement {victim}, recorded and announced instead of silent")
 
 
+# A sentence in the record that names the SUMMARY_STATEMENTS_GAS presence check is a
+# claim about a check that CAN decline to run. On a corpus where it did not run, such
+# a sentence is false unless it carries one of these disqualifiers.
+_PRESENCE_NAMED = re.compile(r"SUMMARY_STATEMENTS_GAS presence check", re.I)
+_PRESENCE_QUALIFIED = re.compile(
+    r"did not run|never ran|was not applied|only on a corpus|\bALONE\b|unverified|"
+    r"\bSKIPPED\b")
+
+
+def _gas_statement_dates(tmp):
+    return sorted({r["statement_date"]
+                   for r in _rows(tmp / "data" / "bill_periods_gas.csv")})
+
+
+def case_gas_corpus_records_the_presence_check_that_actually_ran(tmp):
+    """On a corpus the pinned list documents, the record must say the presence check
+    RAN — and say it with the run's own numbers, not as a standing claim.
+
+    The gas artifacts have no export to corroborate them, so the SUMMARY_STATEMENTS_GAS
+    presence check is the only thing that can establish the gas corpus is COMPLETE
+    rather than merely self-consistent. A reader of the artifact therefore has to be
+    able to tell whether it ran. Here it did, so the block must record applied=true
+    with the listed/present counts that the published gas artifact and the list
+    actually produce."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    r = _run(tmp)
+    assert r.returncode == 0, f"the control corpus failed:\n{r.stderr}"
+    # Read AFTER the run: before it, data/ holds this harness's sentinels.
+    have = set(_gas_statement_dates(tmp))
+    if not have:
+        raise SkipCase("this corpus publishes no gas statements")
+    listed = set(pb.SUMMARY_STATEMENTS_GAS)
+    if not (have & listed):
+        raise SkipCase("this corpus shares no date with SUMMARY_STATEMENTS_GAS")
+
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    chk = b["gas_corpus"].get("summary_statements_presence_check")
+    assert chk is not None, (
+        "the gas corpus's only completeness guard is the SUMMARY_STATEMENTS_GAS "
+        "presence check, and the record does not say whether it ran: "
+        f"{sorted(b['gas_corpus'])}")
+    assert chk["applied"] is True, chk
+    assert chk["list"] == "SUMMARY_STATEMENTS_GAS", chk
+    # Recomputed from the published gas artifact and the list itself, not read back
+    # from the code that wrote the block.
+    assert chk["statements_listed"] == len(listed), chk
+    assert chk["statements_listed_and_present"] == len(have & listed), (
+        f"the record says {chk['statements_listed_and_present']} of the listed gas "
+        f"statements are present; the published artifact and the list share "
+        f"{len(have & listed)}: {chk}")
+    assert "ran on this corpus" in chk["what_it_means"], chk
+    # The check covers the LIST's window, not the whole published corpus — a corpus
+    # longer than the analysis year carries statements it never looked at, and the
+    # record must count them rather than let "complete" read as complete overall.
+    assert chk["statements_published_outside_that_window"] == len(have - listed), (
+        f"the record says {chk['statements_published_outside_that_window']} published "
+        f"gas statement(s) sit outside the checked window; the published artifact "
+        f"and the list put {len(have - listed)} there: {chk}")
+    assert "window only" in chk["what_it_means"], (
+        f"the record does not scope the check to the list's window, so 'complete' "
+        f"reads as complete over the whole published gas corpus: {chk}")
+    # ...and the prose that names the check as governing gas must say the same thing,
+    # so the two cannot disagree.
+    governs = b["gas_corpus"]["what_governs_it_instead"]
+    assert _PRESENCE_NAMED.search(governs) and "ran on this corpus" in governs, governs
+    return (f"presence check applied on this corpus -> recorded as applied with "
+            f"{chk['statements_listed_and_present']}/{chk['statements_listed']} "
+            f"listed gas statements present")
+
+
+def case_fork_gas_corpus_completeness_is_recorded_as_unverified(tmp):
+    """A fork's gas corpus is NOT covered by the presence check, and the record must
+    say so instead of claiming it.
+
+    A fork's statement dates share nothing with SUMMARY_STATEMENTS_GAS, so _validate()
+    treats the list as another household's and skips reproduction-gate check 1. Gas has
+    no billing-history export behind it either, so on that run NOTHING establishes the
+    gas corpus is complete — every remaining check (duplicates, tiling, cross-foot)
+    passes on a corpus with statements missing off either END, because what is left
+    still tiles. This case builds exactly that: a fork corpus with its OLDEST gas
+    statement deleted. It publishes, which is the deliberate choice (refusing would
+    refuse every fork on its first run, before it could pin its own list), so what the
+    record owes is the truth about the run: completeness unverified, why, and what
+    makes the check apply.
+
+    The failure this guards is a record that says the check governs the gas corpus on
+    a run where it never executed — a completeness guarantee for a corpus that is
+    demonstrably short by one statement."""
+    gas_dir = tmp / "private" / "1-raw-data" / "gas-bills"
+    if not gas_dir.is_dir():
+        raise SkipCase("this corpus has no gas statements")
+    pdfs = sorted(gas_dir.glob("sdge_gas_*.pdf"), key=lambda p: _statement_date(p))
+    if len(pdfs) < 3:
+        raise SkipCase("needs at least three gas statements to truncate one off the end")
+    dropped = _statement_date(pdfs[0])
+    pdfs[0].unlink()                                    # truncate off the FRONT
+    _patch_summary_lists(tmp, ["1900-01-01", "1900-02-01"], ["1900-01-15"])
+
+    r = _run(tmp)
+    assert r.returncode == 0, (
+        f"a fork's gas corpus failed to publish — the fork path must stay open:\n"
+        f"{r.stderr}")
+    assert "skipping reproduction-gate check 1 for gas" in r.stdout, \
+        f"the gas presence check was not skipped, so this is not the fork state:\n{r.stdout}"
+    published = _gas_statement_dates(tmp)
+    assert dropped not in published, "the deleted gas statement was published anyway"
+    assert published, "the fork published no gas statements at all"
+
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    gasc = b["gas_corpus"]
+    chk = gasc.get("summary_statements_presence_check")
+    assert chk is not None, (
+        f"the presence check did not run and the record does not say so — a reader "
+        f"cannot tell this {len(published)}-statement gas corpus from a complete "
+        f"one: {sorted(gasc)}")
+    assert chk["applied"] is False, chk
+    assert chk["statements_listed_and_present"] == 0, chk
+    assert "UNVERIFIED" in chk["what_it_means"], (
+        f"the record does not say the gas corpus's completeness is unverified: {chk}")
+    assert "SUMMARY_STATEMENTS_GAS" in chk.get("check_is_applied_when", ""), (
+        f"the record states no remedy, so the fork has nothing to act on: {chk}")
+
+    # The sweep: no string anywhere in the record may name the presence check without
+    # disqualifying it on this run. This is the claim that was there before — "governed
+    # by ... the SUMMARY_STATEMENTS_GAS presence check" — stated unconditionally.
+    offenders = []
+    for where, text in _artifact_level_strings(b):
+        for sentence in _sentences(text):
+            if (_PRESENCE_NAMED.search(sentence)
+                    and not _PRESENCE_QUALIFIED.search(sentence)):
+                offenders.append(f"{where}: {sentence.strip()}")
+    assert not offenders, (
+        f"{len(offenders)} string(s) in the record name the SUMMARY_STATEMENTS_GAS "
+        f"presence check without saying it did not run on this corpus, while the run "
+        f"itself skipped it and published a gas corpus short by {dropped}: "
+        + " | ".join(offenders))
+    return (f"fork gas corpus truncated to {len(published)} statement(s) publishes, "
+            f"and the record states its completeness UNVERIFIED with the remedy, "
+            f"instead of claiming a check that never ran")
+
+
 def case_export_sharing_no_statement_fails_closed(tmp):
     """An export documenting a different account would exclude the entire corpus.
     Publishing nothing at all is never the honest reading of "restrict deliberately",
@@ -1722,6 +1864,8 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_export_leading_hole_records_a_remedy_that_is_true_of_it,
                 case_artifact_level_guidance_never_prescribes_a_repull_for_a_leading_exclusion,
                 case_gas_days_inside_an_excluded_electric_period_are_recorded,
+                case_gas_corpus_records_the_presence_check_that_actually_ran,
+                case_fork_gas_corpus_completeness_is_recorded_as_unverified,
                 case_export_sharing_no_statement_fails_closed,
                 case_no_export_publishes_the_whole_corpus,
                 case_no_export_records_the_underivable_boundary_in_the_artifact,
