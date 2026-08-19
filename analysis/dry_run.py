@@ -219,6 +219,43 @@ def tracked_files(root):
     return out
 
 
+def untracked_data_files(root):
+    """Untracked, non-ignored paths under data/, as posix strings.
+
+    `--baseline worktree` means "data/ as it stands on disk", but the sandbox is
+    seeded from `git ls-files`, which sees tracked files only -- so without these an
+    untracked artifact is in neither the sandbox nor the baseline copy taken from
+    it, and a generator that reproduces it BYTE FOR BYTE is reported as an addition
+    (issue #152). Seeding them puts the file on BOTH sides, which is what makes an
+    exact reproduction a non-change while a real rewrite stays a modification.
+
+    Seeding, rather than copying the real data/ over the baseline: a baseline filled
+    from the working tree would hold files the sandbox never got, and every one of
+    them would come out as a spurious `removed` -- the same bug with the sign
+    flipped.
+
+    `--exclude-standard` keeps ignored scratch (data/.parse_bills.lock) out of the
+    baseline, matching gitignored()'s filter on the other side, so an ignored file
+    stays out of both. Everything seeded here is backdated with the rest of the
+    sandbox in build(), so it cannot be mistaken for a write by _written_since().
+    """
+    raw = _git(root, "ls-files", "--others", "--exclude-standard", "-z",
+               "--", "data").split("\0")
+    out = []
+    for rel in raw:
+        if not rel:
+            continue
+        parts = pathlib.PurePosixPath(rel).parts
+        if rel.startswith("../") or ".." in parts \
+                or pathlib.PurePosixPath(rel).is_absolute():
+            raise DryRunError(
+                f"refusing to seed an escaping path from git ls-files: {rel!r}")
+        if not parts or parts[0] != "data":
+            continue          # `-- data` should make this unreachable; do not trust it
+        out.append(rel)
+    return out
+
+
 def _backdate(root, when):
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         dirnames[:] = [d for d in dirnames
@@ -655,7 +692,16 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
 
     sb = Sandbox(root)
     try:
-        sb.build(extra_files=[rel])
+        # The generator itself may be untracked (a brand-new script), and under the
+        # worktree baseline so may artifacts under data/. `head` is deliberately
+        # excluded: it is defined against HEAD, where an untracked working-tree file
+        # legitimately has no counterpart, and seeding one there would put it in the
+        # sandbox but not in the HEAD baseline -- inventing an addition the generator
+        # never made (issue #152).
+        extra = [rel]
+        if baseline != "head":
+            extra += untracked_data_files(root)
+        sb.build(extra_files=extra)
         rep.sandbox_path = sb.path
         rep.notes = list(sb.notes)
 
@@ -803,14 +849,14 @@ def render(rep, generator, verbose=False):
         for ln in rep.dirty_baseline[:10]:
             add(f"              {ln}")
         if any(ln.startswith("??") for ln in rep.dirty_baseline):
-            # The baseline is a copy of the sandbox's data/, and the sandbox is
-            # seeded from `git ls-files`. A MODIFIED tracked file is therefore in
-            # the baseline with its working-tree content, but an UNTRACKED one is
-            # not in it at all -- so a generator that reproduces such a file shows
-            # up as an addition. Say which, rather than claiming the diff covers
-            # both. (github.com/ookla-ariel-ride/SDGE-Analysis/issues/152)
-            add("              (?? paths are untracked and are NOT in the baseline: "
-                "a generator that writes one is reported as an addition)")
+            # Both kinds are in the baseline with their working-tree content: a
+            # MODIFIED tracked file because Sandbox.build() seeds from the working
+            # tree rather than from HEAD, an UNTRACKED one because
+            # untracked_data_files() seeds it too (issue #152). Say so -- a reader
+            # who is told the baseline is "the working tree" needs to know that
+            # covers the ?? lines printed right above, since it once did not.
+            add("              (?? paths are untracked; they are seeded into the "
+                "sandbox too, so this diff covers them like any tracked file)")
     if rep.result is not None:
         add(f"  exit code : {rep.result.returncode}   ({rep.result.seconds:.1f}s, "
             f"wrote {len(rep.result.wrote)} file(s) in the sandbox)")

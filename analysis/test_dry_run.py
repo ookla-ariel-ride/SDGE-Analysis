@@ -884,6 +884,158 @@ def case_an_untracked_generator_is_seeded_and_flagged():
             "it is ever committed")
 
 
+# ---------------------------------------------------------------------------
+# AC: --baseline worktree means data/ AS IT STANDS ON DISK -- untracked files
+# included. (issue #152)
+# ---------------------------------------------------------------------------
+# A generator that reproduces `loose.csv` byte for byte, and rewrites the tracked
+# artifact too so the run always leaves a write trace. Uses the walk-up root idiom,
+# so a sandbox escape would show up as a real-data hash failure rather than here.
+GEN_TOUCHES_BOTH = """\
+import pathlib
+def _repo_root():
+    for start in (pathlib.Path.cwd(), pathlib.Path(__file__).resolve().parent):
+        p = start
+        while True:
+            if (p / "analysis").is_dir() and (p / "data").is_dir():
+                return p
+            if p.parent == p:
+                break
+            p = p.parent
+    raise SystemExit("repo root not found")
+ROOT = _repo_root()
+(ROOT / "data" / "out.json").write_text('{"a": 1}\\n')
+(ROOT / "data" / "loose.csv").write_text(%(loose)r)
+"""
+
+LOOSE = "d,v\n2026-01-01,1\n"
+
+
+def _repo_with_an_untracked_data_file(td, gen_body, extra_data=()):
+    """A synthetic checkout whose data/ holds one TRACKED artifact and one
+    untracked, non-ignored file -- the shape the real checkout is in whenever a
+    stray artifact has not been committed yet."""
+    repo = _synth_repo(td, {"g.py": gen_body}, {"out.json": '{"a": 1}\n'})
+    (repo / "data" / "loose.csv").write_text(LOOSE)      # never committed
+    for name, body in dict(extra_data).items():
+        (repo / "data" / name).write_text(body)
+    porcelain = subprocess.run(["git", "-C", str(repo), "status", "--porcelain",
+                                "--", "data"], capture_output=True, text=True).stdout
+    assert "?? data/loose.csv" in porcelain, porcelain   # the fixture is real
+    return repo
+
+
+@case
+def case_an_untracked_data_file_is_part_of_the_worktree_baseline():
+    """`--baseline worktree` promises "data/ as it is on disk". The sandbox is
+    seeded from `git ls-files`, which sees tracked files only, so an untracked
+    artifact used to be absent from the baseline entirely -- and a generator that
+    reproduced it BYTE FOR BYTE was reported as an addition, with --check exiting 1
+    over a run that would change nothing.
+
+    Three claims, because the obvious fix breaks the other two: an exact
+    reproduction is no change, a genuine rewrite is still a modification, and a
+    generator that never touches the file produces no spurious `removed`."""
+    reproduce = GEN_TOUCHES_BOTH % {"loose": LOOSE}
+    with tempfile.TemporaryDirectory() as td:
+        repo = _repo_with_an_untracked_data_file(td, reproduce)
+        rep = DR.dry_run(repo / "analysis" / "g.py")
+        assert rep.failure is None, rep.failure
+        assert [c.path for c in rep.changes] == [], [
+            (c.kind, c.path) for c in rep.changes]
+        code, out = _cli(repo / "analysis" / "g.py", "--check")
+        assert code == 0, (code, out)
+        assert "nothing would change" in out.lower(), out
+
+    # Positive control on the same instrument: change one byte of what the
+    # generator writes and the very same file must be reported as MODIFIED. Without
+    # this, a baseline that simply hid untracked files would pass the assertions above.
+    with tempfile.TemporaryDirectory() as td:
+        repo = _repo_with_an_untracked_data_file(
+            td, GEN_TOUCHES_BOTH % {"loose": "d,v\n2026-01-01,999\n"})
+        rep = DR.dry_run(repo / "analysis" / "g.py")
+        assert rep.failure is None, rep.failure
+        assert [(c.kind, c.path) for c in rep.changes] == [
+            ("modified", "data/loose.csv")], [(c.kind, c.path) for c in rep.changes]
+        code, _ = _cli(repo / "analysis" / "g.py", "--check")
+        assert code == 1, code
+
+    # And a generator that never opens the untracked file must not report it as
+    # removed -- the sign-flipped version of the same bug, which is what happens if
+    # the baseline is filled from the real data/ instead of from the sandbox.
+    with tempfile.TemporaryDirectory() as td:
+        repo = _repo_with_an_untracked_data_file(
+            td, GEN_PARENT % {"out": "out.json", "payload": '{"a": 9}'})
+        rep = DR.dry_run(repo / "analysis" / "g.py")
+        assert rep.failure is None, rep.failure
+        assert [(c.kind, c.path) for c in rep.changes] == [
+            ("modified", "data/out.json")], [(c.kind, c.path) for c in rep.changes]
+    return ("an untracked, non-ignored file under data/ is seeded into the sandbox "
+            "and so into the worktree baseline: reproducing it is no change "
+            "(--check exits 0), rewriting it is still a modification, and leaving "
+            "it alone produces no spurious removal")
+
+
+@case
+def case_seeding_an_untracked_data_file_is_not_itself_a_write():
+    """The empty-write guard reads MTIMES, not content, so anything seeded into the
+    sandbox has to be backdated with everything else. If an untracked file were
+    copied in after the backdate stamp, every run in a checkout carrying one would
+    look like it had written something -- and "exited 0 and did nothing" would stop
+    being a failure, which is the guarantee this whole tool rests on."""
+    body = "import sys\nsys.exit(0)\n"          # exits 0, writes nothing, deletes nothing
+    with tempfile.TemporaryDirectory() as td:
+        repo = _repo_with_an_untracked_data_file(td, body)
+        rep = DR.dry_run(repo / "analysis" / "g.py")
+        assert rep.failure is not None, "a do-nothing run was not reported as a failure"
+        assert "wrote nothing and deleted nothing" in rep.failure, rep.failure
+        assert rep.result.wrote == [], rep.result.wrote
+        code, out = _cli(repo / "analysis" / "g.py")
+        assert code == 2, (code, out)
+    return ("a run that writes and deletes nothing is still a FAILURE in a checkout "
+            "carrying an untracked data/ file: the seeded copy is backdated, so it "
+            "is not mistaken for a write")
+
+
+@case
+def case_ignored_data_files_stay_out_of_both_sides():
+    """.gitignore'd scratch under data/ (data/.parse_bills.lock is the real one) is
+    not a repo change and must not become one from either direction: it is not
+    seeded into the baseline, and a generator that writes it is reported as ignored
+    scratch rather than as an artifact appearing."""
+    body = (GEN_PARENT % {"out": "out.json", "payload": '{"a": 9}'}
+            + '(ROOT / "data" / "scratch.tmp").write_text("written by the run\\n")\n')
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": body},
+                           {"out.json": '{\n "a": 1\n}\n', ".gitignore": "*.tmp\n"})
+        (repo / "data" / "scratch.tmp").write_text("on disk, ignored\n")
+        rep = DR.dry_run(repo / "analysis" / "g.py")
+        assert rep.failure is None, rep.failure
+        assert [c.path for c in rep.changes] == ["data/out.json"], [
+            (c.kind, c.path) for c in rep.changes]
+        assert rep.ignored == ["data/scratch.tmp"], rep.ignored
+    return ("an ignored file under data/ is kept out of the baseline and, when the "
+            "run writes one, reported as ignored scratch -- never as a data/ change")
+
+
+@case
+def case_the_head_baseline_still_answers_against_head_alone():
+    """`--baseline head` is defined against HEAD, where an untracked working-tree
+    file legitimately has no counterpart. Seeding untracked files for the worktree
+    baseline must not leak into it: a generator that never touches such a file must
+    report only what it did change."""
+    with tempfile.TemporaryDirectory() as td:
+        repo = _repo_with_an_untracked_data_file(
+            td, GEN_PARENT % {"out": "out.json", "payload": '{"a": 9}'})
+        rep = DR.dry_run(repo / "analysis" / "g.py", baseline="head")
+        assert rep.failure is None, rep.failure
+        assert [(c.kind, c.path) for c in rep.changes] == [
+            ("modified", "data/out.json")], [(c.kind, c.path) for c in rep.changes]
+        assert rep.dirty_baseline == [], rep.dirty_baseline
+    return ("--baseline head still compares against HEAD alone: an untracked "
+            "working-tree file under data/ appears on neither side of it")
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

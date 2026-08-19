@@ -127,6 +127,14 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import bill_decomposition as B
+# parse_bills.py holds the twin of export_statement_dates(). It is imported here so
+# the two can be run side by side on the same bytes rather than read side by side by
+# a human: "same file, same rule, same split" is a claim two modules make about each
+# other, and only a case that executes both can hold them to it (issue #160). The
+# import costs nothing this suite did not already require -- bill_decomposition
+# imports pdfplumber itself, and household.py loads the intake yaml lazily, so this
+# stays importable in a clean checkout with no private/ archive.
+import parse_bills as P
 
 
 class SkipCase(Exception):
@@ -1419,6 +1427,101 @@ def case_no_export_staged_is_still_the_documented_unchecked_case():
             "statement dates")
 
 
+def _printed_columns(msg):
+    """The column list a corpus-boundary refusal printed, exactly as written."""
+    m = re.search(r"columns \[(.*?)\]", msg)
+    assert m is not None, f"no 'columns [...]' segment in {msg!r}"
+    return m.group(1)
+
+
+def _refusal(reader, text):
+    """`reader` run against a throwaway export carrying `text`; its message."""
+    return _raises(lambda: reader(text), "carries no statement_date value")
+
+
+def _decomposition_reader(text):
+    return _with_history_csv(text, B.export_statement_dates)
+
+
+def _parse_bills_reader(text):
+    """parse_bills.export_statement_dates() on the same bytes. It takes the path as
+    an argument, so nothing is monkeypatched and the real archive is never read."""
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / B.HISTORY_CSV.name
+        p.write_text(text)
+        return P.export_statement_dates(p)
+
+
+def case_the_header_only_export_diagnostic_names_the_columns_it_read():
+    """The refusal has to say what the file DOES carry, above all when it carries
+    no rows.
+
+    A header-only download and a renamed statement_date column are the two shapes an
+    operator cannot diagnose without the column names: the message "carries no
+    statement_date value" is identical in both, and only the printed columns
+    distinguish "SDG&E now calls it bill_date" from "the download truncated". Reading
+    the names off rows[0] loses them in exactly the header-only case, because there
+    is no row 0 -- so the columns come from the header (DictReader.fieldnames), which
+    exists whenever the file does (issue #160)."""
+    shapes = {
+        "a download that stopped after the header":
+            "statement_date,billing_days,current_charges,amount_due,status\n",
+        "the statement_date column renamed":
+            "bill_date,billing_days,current_charges,amount_due,status\n"
+            "2024-06-27,30,0.00,0.00,Paid\n",
+    }
+    for label, text in shapes.items():
+        printed = _printed_columns(_refusal(_decomposition_reader, text))
+        for col in text.splitlines()[0].split(","):
+            assert col in printed, (label, col, printed)
+        assert "none" not in printed, (label, printed)
+    # Positive control: the same reader, the same helper, the same run -- a
+    # well-formed export is READ rather than refused. Without this the case above
+    # could pass on an instrument that refuses everything it is handed.
+    good = ("statement_date,billing_days,current_charges,amount_due,status\n"
+            "2024-06-27,30,0.00,0.00,Paid\n")
+    assert _decomposition_reader(good) == {"2024-06-27"}, _decomposition_reader(good)
+    return ("a header-only or renamed-column export is refused with its actual "
+            "columns named, and the same reader still reads a well-formed export")
+
+
+def case_both_corpus_boundary_readers_report_the_same_columns():
+    """"Same file, same rule, same split" -- checked by running both, not by reading
+    both.
+
+    bill_decomposition.py and parse_bills.py derive the corpus boundary from one
+    file, and each module's docstring says so about the other. The two refusals had
+    already drifted: one named the columns from the header, the other from rows[0],
+    so a header-only export produced a diagnostic naming five columns in one module
+    and none in the other. Nothing failed when they diverged, which is why they did.
+    This case runs both implementations over the same bytes and compares what they
+    print, so the next divergence fails here (issue #160)."""
+    assert B.HISTORY_CSV == P.HISTORY_CSV, (B.HISTORY_CSV, P.HISTORY_CSV)
+    shapes = {
+        "a download that stopped after the header": "statement_date,billing_days\n",
+        "the statement_date column renamed": "bill_date,billing_days\n2024-06-27,30\n",
+        "every statement_date value blank": "statement_date,billing_days\n,30\n",
+        "an empty file, not even a header": "",
+    }
+    for label, text in shapes.items():
+        mine = _refusal(_decomposition_reader, text)
+        theirs = _refusal(_parse_bills_reader, text)
+        assert _printed_columns(mine) == _printed_columns(theirs), (
+            label, _printed_columns(mine), _printed_columns(theirs))
+        assert re.search(r"(\d+) data row\(s\)", mine).group(1) \
+            == re.search(r"(\d+) data row\(s\)", theirs).group(1), (label, mine, theirs)
+    # Positive control: both readers agree on a readable export too, which is what
+    # makes the agreement above evidence about the diagnostic rather than evidence
+    # that both modules refuse everything.
+    good = "statement_date,billing_days\n2024-06-27,30\n2024-07-29,32\n"
+    assert _decomposition_reader(good) == _parse_bills_reader(good) \
+        == {"2024-06-27", "2024-07-29"}, (_decomposition_reader(good),
+                                          _parse_bills_reader(good))
+    return (f"both corpus-boundary readers refuse the same {len(shapes)} unreadable "
+            f"shapes with the same columns and the same row count, and read the same "
+            f"dates off a well-formed export")
+
+
 def case_the_generator_reproduces_the_committed_artifact():
     if not B.ELEC_DIR.exists() or not B.HISTORY_CSV.exists():
         raise SkipCase("regeneration needs the private archive (the bill PDF corpus and "
@@ -1472,6 +1575,8 @@ CASES = [
     case_the_artifact_labels_its_confidence_and_its_limits,
     case_an_export_that_exists_but_yields_no_statement_date_fails_closed,
     case_no_export_staged_is_still_the_documented_unchecked_case,
+    case_the_header_only_export_diagnostic_names_the_columns_it_read,
+    case_both_corpus_boundary_readers_report_the_same_columns,
     case_the_generator_reproduces_the_committed_artifact,
 ]
 

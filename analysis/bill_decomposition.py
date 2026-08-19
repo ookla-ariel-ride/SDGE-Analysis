@@ -407,7 +407,12 @@ def export_statement_dates():
     the boundary check on exactly the corpus that could not be corroborated."""
     if not HISTORY_CSV.exists():
         return None
-    rows = _read_csv(HISTORY_CSV)
+    # The columns come from the HEADER, not from rows[0]: the refusal below has to
+    # name what the file does carry, and the header-only download is precisely the
+    # shape with no row 0 to read them off (issue #160). parse_bills.py's twin reads
+    # rdr.fieldnames for the same reason, and test_bill_decomposition.py runs both
+    # over the same bytes so the two cannot drift apart again.
+    rows, columns = _read_csv_columns(HISTORY_CSV)
     # Strip and drop the blanks exactly as parse_bills.py does. Without it a
     # whitespace-only column yields a truthy {" "}, which walks straight past the
     # check below and then makes `outside` swallow every PDF -- disabling the
@@ -416,10 +421,9 @@ def export_statement_dates():
     seen = {(r.get("statement_date") or "").strip() for r in rows}
     seen.discard("")
     if not seen:
-        columns = list(rows[0].keys()) if rows else []
         raise SystemExit(
             f"{HISTORY_CSV.name} is staged but carries no statement_date value: "
-            f"{len(rows)} data row(s), columns [{', '.join(columns) or 'none read'}]. "
+            f"{len(rows)} data row(s), columns [{', '.join(columns) or 'none'}]. "
             f"An export that exists but cannot be read is not the same as no export "
             f"at all: treating it as 'nothing to check against' would drop the corpus "
             f"boundary check silently and report this scan as a complete "
@@ -532,11 +536,24 @@ def _check_recorded_boundary(seen):
 # ---------------------------------------------------------------------------
 # The committed bill artifacts — the cost series and the printed SDG&E TOU lines
 # ---------------------------------------------------------------------------
-def _read_csv(path):
+def _read_csv_columns(path):
+    """(rows, header column names) for a staged CSV.
+
+    The columns are DictReader.fieldnames -- the header line -- because a caller
+    that needs them needs them most when there are no rows to infer them from. A
+    header-only file has a header and no row 0, so rows[0].keys() reports nothing
+    exactly where naming the columns is the whole diagnostic (issue #160).
+    """
     if not path.exists():
         raise SystemExit(f"required artifact missing: {path}")
     with open(path, newline="") as fh:
-        return list(csv.DictReader(fh))
+        rdr = csv.DictReader(fh)
+        rows = list(rdr)
+        return rows, list(rdr.fieldnames or [])
+
+
+def _read_csv(path):
+    return _read_csv_columns(path)[0]
 
 
 def periods():
