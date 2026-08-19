@@ -1179,6 +1179,47 @@ def _worktree_tracking_a_staged_path(td, wt):
     return wt, None
 
 
+def _make_case_folding(wt):
+    """Make `wt` a worktree whose CASE measurement answers yes, on any
+    filesystem -- and say whether anything had to be done to it.
+
+    _fs_folds_case()/`_dest_folds_case` ask whether `<root>/.git` and
+    `<root>/.GIT` are one file. On a case-insensitive filesystem they already
+    are and this does nothing, so the fixture below is the REAL defect,
+    unforced. On a case-sensitive one a symlink `.GIT -> .git` makes stat()
+    and `-ef` answer the same way, which is what lets one table row exercise
+    the alias probe on both kinds of machine instead of skipping on CI.
+
+    The symlink is at the worktree ROOT and on no path either implementation
+    walks (the component walk runs root -> private -> the leaf, and the
+    recursive scan runs under private/1-raw-data), so it changes nothing but
+    the measurement it is there to move.
+    """
+    try:
+        (wt / ".GIT").symlink_to(".git")
+        return "forced with a .GIT -> .git symlink"
+    except FileExistsError:
+        return "already case-insensitive"
+
+
+def _worktree_tracking_a_case_aliased_staged_path(td, wt):
+    """The index holds private/HOUSEHOLD.yaml; the copies write
+    private/household.yaml (issue #204).
+
+    Nothing is tracked under the name either implementation asks about, and on
+    a case-folding filesystem the two names are ONE FILE -- reproduced on macOS
+    before the fix: `git status` reported the tracked path MODIFIED after a
+    write to the other spelling, while `git ls-files -- ./private/household.yaml`
+    listed nothing and `git check-ignore` said "ignored". Both questions
+    answered in the admitting direction over a committed file.
+    """
+    _make_case_folding(wt)
+    (wt / "private" / "HOUSEHOLD.yaml").write_text("household: {}\n")
+    subprocess.run(["git", "-C", str(wt), "add", "-f", "private/HOUSEHOLD.yaml"],
+                   capture_output=True, check=True)
+    return wt, None
+
+
 def _symlink_at_raw_data(td, wt):
     outside = pathlib.Path(td) / "outside"
     outside.mkdir()
@@ -1312,6 +1353,14 @@ TABLE = [
     DestCase("a worktree that already tracks a staged path",
              _worktree_tracking_a_staged_path, "tracked_path",
              "a tracked file stays in the index whatever .gitignore says",
+             probe=("private/household.yaml", "file"), single="tracked_path"),
+    DestCase("a worktree tracking a CASE-ALIASED staged path",
+             _worktree_tracking_a_case_aliased_staged_path, "tracked_path",
+             "issue #204: nothing is tracked under the name either implementation "
+             "asks about, and on a case-folding filesystem the write lands on a "
+             "committed file anyway. The literal pathspec cannot see it at any "
+             "value of core.ignoreCase -- all three were measured identical -- so "
+             "both sides ask a second time with git's own ':(icase)' fold",
              probe=("private/household.yaml", "file"), single="tracked_path"),
     DestCase("a symlink at private/1-raw-data", _symlink_at_raw_data,
              "symlink_component", "",
@@ -2449,7 +2498,8 @@ NEW_GIT_CONFIG_VARS = tuple(name for name, _ in PE.GIT_CONFIG_ISOLATION
                             if name != "GIT_CONFIG_NOSYSTEM")
 
 
-def _version_shim(td, name, *, hide_vars=(), hide_dash_c=False):
+def _version_shim(td, name, *, hide_vars=(), hide_dash_c=False,
+                  hide_dash_c_pair=None):
     """A directory holding a `git` that hides things from the real git.
 
     `hide_vars` are unset before the exec, which is what a git that has never
@@ -2457,6 +2507,11 @@ def _version_shim(td, name, *, hide_vars=(), hide_dash_c=False):
     the argument vector, which is what a git predating the option does (it would
     actually fail to parse them; stripping is the SAFER model, because it lets
     the run continue and therefore lets the guard be caught accepting something).
+    `hide_dash_c_pair` is the same idea aimed at ONE pair: everything else
+    applies, so a readback that passed only because some other -c happened to
+    supply the same value is caught. Walked argument by argument rather than by
+    re-splitting a string, so a value containing a space survives it.
+
     Everything else passes through untouched, so every other answer -- identity,
     register, tracked -- is the real git's.
     """
@@ -2470,6 +2525,19 @@ def _version_shim(td, name, *, hide_vars=(), hide_dash_c=False):
         body.append("unset " + " ".join(hide_vars))
     if hide_dash_c:
         body.append('while [ "$1" = "-c" ]; do shift; shift; done')
+    if hide_dash_c_pair is not None:
+        body += [
+            "n=$#; i=0",
+            "while [ $i -lt $n ]; do",
+            "  a=$1; shift; i=$((i+1))",
+            '  if [ "$a" = "-c" ] && [ $i -lt $n ]; then',
+            "    b=$1; shift; i=$((i+1))",
+            f'    if [ "$b" = {shlex.quote(hide_dash_c_pair)} ]; then continue; fi',
+            '    set -- "$@" "$a" "$b"; continue',
+            "  fi",
+            '  set -- "$@" "$a"',
+            "done",
+        ]
     body.append(f'exec {shlex.quote(real)} "$@"')
     (d / "git").write_text("\n".join(body) + "\n")
     (d / "git").chmod(0o755)
@@ -3219,6 +3287,319 @@ def case_a_git_that_cannot_apply_the_isolation_is_refused_rather_than_believed()
     return ("a git the configuration isolation cannot be applied to is refused by "
             "both implementations, before any write, with the git version and the "
             "value that leaked back in named")
+
+
+# ===========================================================================
+# ISSUE #204 -- the alias probe: the tracked question asked a second time under
+# the filesystem's own idea of which spellings are one file.
+# ===========================================================================
+def _alias_scratch_repo(td, name, entry):
+    """A standalone repository -- NOT a worktree of this checkout -- that
+    gitignores private/ and holds `entry` in its index.
+
+    Standalone, and that is the point rather than a convenience: the two
+    destination-derived keys are read from --worktree/--local, and every
+    worktree of this checkout SHARES this checkout's --local config, which
+    states core.precomposeUnicode=true. A destination that already forces the
+    unicode fold on the literal probe cannot show what the alias probe adds, and
+    the alternative -- setting the key in a worktree -- would write into this
+    repository's own configuration.
+    """
+    repo = pathlib.Path(td) / name
+    (repo / "private").mkdir(parents=True)
+    for args in (["init", "-q", "."],
+                 ["config", "core.precomposeUnicode", "false"],
+                 ["config", "core.ignoreCase", "false"]):
+        subprocess.run(["git", "-C", str(repo)] + args, capture_output=True, check=True)
+    (repo / ".gitignore").write_text("private/\n")
+    (repo / entry).parent.mkdir(parents=True, exist_ok=True)
+    (repo / entry).write_text("committed\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-f", "--", entry],
+                   capture_output=True, check=True)
+    return repo
+
+
+@case
+def case_the_filesystem_case_measurement_is_taken_from_the_filesystem():
+    """_fs_folds_case() must report what the filesystem does, measured against
+    an instrument that shares none of its machinery.
+
+    The measurement is `.git` and `.GIT` resolving to one inode. The instrument
+    here is a different pair of names, written and read back through open()
+    rather than stat(): if `CASE-PROBE` yields what was written to `case-probe`,
+    the filesystem folds case. Two ways of asking, and they must agree, or the
+    guard's pathspec is being decided by something other than the filesystem.
+
+    THE NEGATIVE CONTROL IS THE SAME INSTRUMENT: the second half plants a
+    `.GIT -> .git` symlink and requires the answer to flip to folding on a
+    filesystem where it was not folding already. A measurement that answered
+    "folds" for everything would pass the first half and fail nothing.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        d = pathlib.Path(td) / "probe"
+        d.mkdir()
+        (d / "case-probe").write_text("written under the lowercase name\n")
+        try:
+            observed = (d / "CASE-PROBE").read_text() == "written under the lowercase name\n"
+        except OSError:
+            observed = False
+        (d / ".git").write_text("gitdir: /nowhere\n")
+        measured = PE._fs_folds_case(d)
+        assert measured == observed, (
+            f"_fs_folds_case said {measured} where open()ing the other spelling "
+            f"said {observed} -- the alias probe's pathspec is not being decided "
+            "by the filesystem the destination is on")
+
+        # An unmeasurable root folds, because folding is the additive answer.
+        bare = pathlib.Path(td) / "no-git-here"
+        bare.mkdir()
+        assert PE._fs_folds_case(bare) is True, (
+            "a root whose .git cannot be stat'd answered 'case is significant', "
+            "which is the ACCEPTING direction for an unanswered question")
+
+        # AND IT REALLY ASKS, which is the half the comparison above cannot see
+        # on a filesystem that folds: `return True` agrees with every folding
+        # filesystem while measuring nothing. Both names must be stat'd, under
+        # the root it was handed.
+        seen, real_stat = [], PE.os.stat
+
+        def spy(path, *a, **kw):
+            seen.append(str(path))
+            return real_stat(path, *a, **kw)
+
+        PE.os.stat = spy
+        try:
+            PE._fs_folds_case(d)
+        finally:
+            PE.os.stat = real_stat
+        for name in (PE.CASE_PROBE_NAME, PE.CASE_PROBE_ALIAS):
+            assert str(d / name) in seen, (
+                f"_fs_folds_case did not stat {d / name} -- it is not measuring "
+                f"the filesystem, it is answering from something else: {seen}")
+
+        # And the fixture the table uses really moves the answer where it has to.
+        forced = pathlib.Path(td) / "forced"
+        forced.mkdir()
+        (forced / ".git").write_text("gitdir: /nowhere\n")
+        how = _make_case_folding(forced)
+        assert PE._fs_folds_case(forced) is True, (
+            f"_make_case_folding ({how}) did not make the measurement answer "
+            "'folds', so the agreement table's alias row would prove nothing on "
+            "a case-sensitive filesystem")
+    return (f"_fs_folds_case agrees with open()ing the other spelling "
+            f"(this filesystem folds case: {observed}), folds when it cannot "
+            f"measure, and follows a planted .GIT")
+
+
+@case
+def case_a_case_aliased_tracked_path_is_refused_by_the_tracked_question():
+    """ISSUE #204's headline, on the tracked question alone.
+
+    The agreement table carries the end-to-end version through both public APIs
+    and the real script; this one holds the literal question and the alias
+    question side by side on ONE fixture, so what the second adds is visible
+    rather than inferred -- and it carries the positive control the same run
+    needs, an ordinary path in the same repository that is still accepted.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        repo = _alias_scratch_repo(td, "cased", "private/HOUSEHOLD.yaml")
+        _make_case_folding(repo)
+
+        # The literal question, asked exactly as it was before the fix: the
+        # pathspec matches index entries by the bytes and this one does not.
+        overrides = PE._destination_overrides(str(repo))
+        literal = PE._git(["ls-files", "--", PE._pathspec("private/household.yaml")],
+                          str(repo), None, overrides)
+        assert literal.returncode == 0 and not literal.stdout.strip(), (
+            "the literal pathspec found the aliased entry, so this fixture no "
+            f"longer reproduces the defect: {literal.stdout!r}")
+
+        try:
+            PE._require_uncommittable(str(repo), "private/household.yaml")
+        except PE.DestinationRefused as e:
+            assert e.reason == "tracked_path", e.reason
+            assert "HOUSEHOLD" in e.detail, (
+                "the refusal does not name the committed spelling the write would "
+                f"land on, so the operator cannot find it: {e.detail}")
+        else:
+            raise AssertionError(
+                "private/household.yaml was accepted in a repository whose index "
+                "holds private/HOUSEHOLD.yaml and whose filesystem resolves the "
+                "two to one file -- the write lands on a committed file")
+
+        # POSITIVE CONTROL, same repository, same run: a path with no aliased
+        # entry must still be accepted, or the refusal above says nothing about
+        # aliases and everything about the instrument.
+        PE._require_uncommittable(str(repo), "private/verify")
+    return ("a tracked path reachable only by case folding is refused as "
+            "tracked_path, on a fixture where the literal pathspec finds "
+            "nothing, and an ordinary path in the same repository is still "
+            "accepted")
+
+
+@case
+def case_a_unicode_aliased_tracked_path_is_refused_where_git_precomposes():
+    """The NFC/NFD half of issue #204.
+
+    The fixture's index holds the PRECOMPOSED spelling and the guard is asked
+    about the DECOMPOSED one. Where git was built to precompose -- which is the
+    platform whose filesystem produces NFD names in the first place -- the two
+    are one file and the guard must refuse; where it was not, they are two files
+    and refusing would be wrong.
+
+    So git's own capability is MEASURED first, in the same repository, and the
+    verdict is required to match it. That is not a skip: both branches assert,
+    and a git that precomposes while the guard accepts is a failure.
+    """
+    nfc = unicodedata.normalize("NFC", "private/houséhold.yaml")
+    nfd = unicodedata.normalize("NFD", nfc)
+    assert nfc != nfd, "this fixture's name has no decomposed form"
+    with tempfile.TemporaryDirectory() as td:
+        repo = _alias_scratch_repo(td, "unicoded", nfc)
+        # What git itself does with the decomposed pathspec under the value the
+        # alias probe forces. This is the instrument, and it is read before the
+        # guard is asked so the branch below is not chosen by the guard's answer.
+        probe = PE._git(["ls-files", "--", PE._pathspec(nfd)], str(repo), None,
+                        PE._alias_overrides(PE._destination_overrides(str(repo))))
+        precomposes = bool(probe.stdout.strip())
+
+        verdict = None
+        try:
+            PE._require_uncommittable(str(repo), nfd)
+        except PE.DestinationRefused as e:
+            verdict = e.reason
+        if precomposes:
+            assert verdict == "tracked_path", (
+                f"this git resolves the decomposed pathspec to the committed "
+                f"entry ({probe.stdout.strip()!r}) and the guard said "
+                f"{verdict!r} -- the write lands on a committed file")
+        else:
+            assert verdict is None, (
+                f"this git does not precompose, so the two spellings are two "
+                f"files here, and the guard refused anyway ({verdict!r}): a "
+                "correct destination is being refused")
+        # POSITIVE CONTROL either way: the literal question still finds the
+        # entry under its own name, so the fixture really is committed.
+        literal = PE._git(["ls-files", "--", PE._pathspec(nfc)], str(repo), None,
+                          PE._destination_overrides(str(repo)))
+        assert literal.stdout.strip(), (
+            "the precomposed spelling is not in this fixture's index at all, so "
+            "neither branch above proves anything")
+    return ("the decomposed spelling of a committed path is refused as "
+            f"tracked_path where this git precomposes (it does: {precomposes}) "
+            "and accepted where it does not")
+
+
+@case
+def case_the_alias_probe_value_is_read_back_before_the_probe_is_believed():
+    """isolation_unproven covers the ONE value this module forces against the
+    destination's own statement of it.
+
+    core.precomposeUnicode=true is put on the alias probe's command line only.
+    Its readback therefore cannot ride on the proof of the adopted list -- that
+    proof asks for the DESTINATION's value, and a git that dropped the alias -c
+    would pass it while the alias question ran with the wrong matching. Modelled
+    with a git that strips exactly that pair and passes everything else through.
+
+    The destination states `false`, so the two values really differ; a
+    destination already stating true could not tell the two proofs apart.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        repo = _alias_scratch_repo(td, "readback", "private/committed.yaml")
+        pair = "=".join(PE.ALIAS_CONFIG_OVERRIDE[0])
+        shim = _version_shim(td, "no-alias-c", hide_dash_c_pair=pair)
+
+        # POSITIVE CONTROL FIRST: with the real git the proof passes, so the
+        # refusal below is attributable to the dropped -c and not to the fixture.
+        PE._require_isolation_proven(str(repo))
+        with _environ(PATH=f"{shim}{os.pathsep}{os.environ['PATH']}"):
+            try:
+                PE._require_isolation_proven(str(repo))
+            except PE.DestinationRefused as e:
+                assert e.reason == "isolation_unproven", e.reason
+                assert PE.ALIAS_CONFIG_OVERRIDE[0][0] in e.detail, (
+                    f"the refusal does not name the key that did not apply: {e.detail}")
+                assert "upgrade git" not in PE._alias_isolation_remedy(
+                    PE.ALIAS_CONFIG_OVERRIDE[0][0]).split("--")[0].lower(), (
+                    "the alias remedy leads with 'upgrade git' before saying what "
+                    "the key is for")
+                assert "destination" in PE._alias_isolation_remedy(
+                    PE.ALIAS_CONFIG_OVERRIDE[0][0]), (
+                    "the alias remedy does not say this value is forced AGAINST "
+                    "the destination's own, so it reads like the adopted keys' "
+                    "remedy, which sends the operator to the wrong file")
+            else:
+                raise AssertionError(
+                    f"a git that drops '-c {pair}' proved the isolation anyway, so "
+                    "the alias probe could run with the destination's matching and "
+                    "nothing would notice")
+    return (f"a git that silently drops '-c {pair}' is refused as "
+            "isolation_unproven, and the same repository proves the isolation "
+            "with the real git")
+
+
+@case
+def case_both_implementations_fold_the_alias_question_the_same_way():
+    """The mechanism, compared against the SHELL SCRIPT'S OWN TEXT.
+
+    The agreement table proves the two reach the same verdict on the fixtures it
+    carries. That is a claim about those fixtures; this is a claim about the
+    mechanism, and it is the one that keeps holding for a fixture nobody wrote.
+    Three things have to match: the value forced for the unicode fold, the
+    pathspec magic used for the case fold, and the pair of names the case
+    measurement is taken on.
+    """
+    text = SCRIPT.read_text()
+    m = re.search(r"^_GIT_ALIAS_OVERRIDE=\((.*?)\)$", text, re.M)
+    assert m, ("stage-private-data.sh no longer declares _GIT_ALIAS_OVERRIDE, so "
+               "its tracked question is asked with the destination's own unicode "
+               "matching and an NFD/NFC alias goes unseen")
+    pairs = []
+    for tok in m.group(1).split():
+        if tok == "-c":
+            continue
+        name, sep, value = tok.partition("=")
+        assert sep, f"not a NAME=VALUE pair in _GIT_ALIAS_OVERRIDE: {tok!r}"
+        pairs.append((name, value))
+    assert tuple(pairs) == PE.ALIAS_CONFIG_OVERRIDE, (
+        f"the two implementations force different configuration on the alias "
+        f"probe --\n  shell:  {pairs}\n  python: {list(PE.ALIAS_CONFIG_OVERRIDE)}")
+    assert all(k in dict(PE.DESTINATION_CONFIG_KEYS) for k, _ in pairs), (
+        "the alias probe forces a key the destination-derived list does not "
+        "name, so it is switched on against nothing and proved against nothing")
+
+    # The wrapper must really put it on the command line, and the proof must
+    # really read it back under it -- both parsed, not assumed.
+    body = _shell_wrapper_body(text)
+    assert '${_GIT_ALIAS_CONFIG[@]' in body, (
+        "the _git wrapper does not expand _GIT_ALIAS_CONFIG, so the alias probe "
+        "runs with the destination's own matching")
+    proof = re.search(r"^_require_isolation_proven\(\) \{\n(.*?)\n\}$", text,
+                      re.M | re.S)
+    assert proof and "_GIT_ALIAS_OVERRIDE" in proof.group(1), (
+        "_require_isolation_proven does not read back _GIT_ALIAS_OVERRIDE, so "
+        "the one value forced against the destination is verified by nothing")
+
+    # The case fold: git's own ':(icase)', and only where the filesystem folds.
+    assert PE._alias_pathspec("private/x", True) == ":(icase)" + PE._pathspec("private/x")
+    assert PE._alias_pathspec("private/x", False) == PE._pathspec("private/x")
+    ask = re.search(r"if _dest_folds_case; then\n(.*?)\n  fi\n", text, re.S)
+    assert ask and ":(icase)$rel" in ask.group(1), (
+        "stage-private-data.sh no longer gates ':(icase)' on _dest_folds_case, so "
+        "either it folds case where the filesystem does not or it never folds")
+    folds = re.search(r"^_dest_folds_case\(\) \{\n(.*?)\n\}$", text, re.M | re.S)
+    assert folds, "stage-private-data.sh no longer measures the filesystem at all"
+    for name in (PE.CASE_PROBE_NAME, PE.CASE_PROBE_ALIAS):
+        assert f'/{name}"' in folds.group(1), (
+            f"the shell's case measurement does not ask about {name}, so the two "
+            "implementations measure different things")
+    assert "-ef" in folds.group(1), (
+        "the shell's case measurement no longer compares device and inode, so it "
+        "is not measuring the filesystem")
+    return ("both implementations force the same alias configuration "
+            f"({dict(PE.ALIAS_CONFIG_OVERRIDE)}), fold case with git's own "
+            f"':(icase)' only where {PE.CASE_PROBE_NAME}/{PE.CASE_PROBE_ALIAS} "
+            "are one inode, and read the forced value back")
 
 
 # What each pathspec variable really does to the two probes this module runs.
