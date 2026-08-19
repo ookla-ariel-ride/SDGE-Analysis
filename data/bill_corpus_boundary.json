@@ -1,6 +1,6 @@
 {
  "generated_by": "analysis/parse_bills.py",
- "rule": "A statement is inside the reconcilable electric bill corpus if and only if SDG&E's billing-history export also carries a row for it. Statements with a PDF but no export row are listed under excluded_statements and appear in no artifact. The boundary is derived from the export on every run \u2014 no cutoff date is stored \u2014 so re-pulling the export publishes the statement again with nothing here to edit. An export row with no PDF is the opposite case and fails the run closed instead.",
+ "rule": "A statement is inside the reconcilable electric bill corpus if and only if SDG&E's billing-history export also carries a row for it. Statements with a PDF but no export row are listed under excluded_statements and appear in no artifact. The boundary is derived from the export on every run \u2014 no cutoff date is stored \u2014 so nothing here is ever edited to end an exclusion: stage an export that covers the statement and the next run publishes it. WHICH export that is depends on which end of the export's range the statement falls outside, and is stated per statement in excluded_statements[].exclusion_ends_when. An export row with no PDF is the opposite case and fails the run closed instead.",
  "export": {
   "path": "private/1-raw-data/electric_billing_history_2024-2026.csv",
   "statements": 25,
@@ -50,5 +50,24 @@
    ]
   ],
   "days_the_excluded_statements_would_supply": 27
+ },
+ "gas_corpus": {
+  "restricted_by_this_boundary": false,
+  "what_governs_it_instead": "nothing in this record. electric_billing_history_2024-2026.csv is the ELECTRIC billing-history export: its rows are electric statements, and gas is billed on its own cycle under its own statement dates, so a gas date that coincides with a row is a consolidated statement billing both fuels that day, not export corroboration of the gas bill. The rule above therefore cannot be applied to the gas corpus without excluding gas statements on evidence that was never about them. The gas artifacts publish every gas statement parsed, governed by parse_bills.py's _validate() checks (no duplicate periods, periods tiling with no gap or overlap, charge cross-foot) and by the SUMMARY_STATEMENTS_GAS presence check, which ran on this corpus, not by this boundary",
+  "summary_statements_presence_check": {
+   "list": "SUMMARY_STATEMENTS_GAS",
+   "applied": true,
+   "statements_listed": 12,
+   "statements_listed_and_present": 12,
+   "statements_published_the_list_does_not_name": 13,
+   "what_it_means": "_validate()'s check 1 ran on this corpus: all 12 gas statement date(s) SUMMARY_STATEMENTS_GAS documents are present, so the published gas corpus is complete over the statements that list names \u2014 one missing from it would have failed the run closed rather than publishing a shorter corpus. The check speaks for those statements and no others: the 13 published gas statement(s) the list does not name are covered by no completeness check, whether they fall past its last date (the list is also what pins the summary window, and that deliberately stops at the analysis year) or sit inside its span and are simply absent from it"
+  },
+  "statements_published": 25,
+  "published_period_span": [
+   "2024-05-25",
+   "2026-06-26"
+  ],
+  "days_published_inside_an_excluded_electric_period": 0,
+  "periods_inside_an_excluded_electric_period": []
  }
 }

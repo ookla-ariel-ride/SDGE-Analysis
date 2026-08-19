@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -46,6 +47,50 @@ def _require(path):
     if not path.exists():
         raise SkipCase(f"{path.name} is not in this corpus")
     return path
+
+
+class _Record(dict):
+    """A parsed JSON object that names itself when a case reads a key it does not have.
+
+    Every case below reads the artifact it is asserting about. A key the generator
+    stopped writing is a REAL failure of that case, but as a bare KeyError it is the
+    wrong kind: `KeyError: 'gas_corpus'` names neither the artifact nor the case, and
+    before the runner learned to catch it, it escaped main() and took every case after
+    it down with it — a traceback instead of one FAIL line, with the ~37 corpus cases
+    that follow never running at all.
+
+    So the sweep is done once, here, instead of by an `assert k in d` at every
+    subscript: any missing key at any depth of any artifact loaded through _json()
+    reports as an AssertionError naming the file, the key and the keys that ARE there.
+    A case added tomorrow inherits it without a line of new wiring.
+
+    `.get()` and `in` are deliberately untouched — __missing__ fires only on `[]` — so
+    a case that tests for a genuinely optional key (`boundary_not_derived`,
+    `window_coverage`) still gets None or False rather than a failure."""
+
+    _where = "a JSON artifact"
+
+    def __missing__(self, key):
+        raise AssertionError(
+            f"{self._where} carries no {key!r}; the record has {sorted(self)}. Either "
+            f"the generator stopped writing that key or this case is reading the "
+            f"wrong record — both are failures of this case, not of the harness.")
+
+
+def _named(pairs, path):
+    """A _Record that knows which file it was read out of."""
+    d = _Record(pairs)
+    d._where = str(path)
+    return d
+
+
+def _json(path):
+    """json.loads(path.read_text()) with every missing key reported as an AssertionError
+    naming the file (see _Record). Use this, never json.loads, for artifacts a case
+    asserts about."""
+    path = pathlib.Path(path)
+    return json.loads(path.read_text(),
+                      object_pairs_hook=lambda pairs: _named(pairs, path))
 
 
 def _set_flag(tmp, has_gas):
@@ -108,9 +153,14 @@ def _statement_date(path):
 
 
 def _rows(path):
-    """Read a committed artifact CSV as a list of dicts (they are CRLF or LF)."""
+    """Read a committed artifact CSV as a list of dicts (they are CRLF or LF).
+
+    Rows come back as _Record, for the same reason _json() does: a column a generator
+    stopped writing is a failure of the case that reads it, and `KeyError: 'period'`
+    names neither the CSV nor the case. Same shape, same treatment — 21 call sites
+    swept at one."""
     with open(path, newline="") as fh:
-        return list(csv.DictReader(fh))
+        return [_named(dict(r), path) for r in csv.DictReader(fh)]
 
 
 def _patch_summary_lists(tmp, elec_dates, gas_dates):
@@ -707,7 +757,57 @@ def case_fork_corpus_skips_presence_check():
     assert "FORK" in out and "SUMMARY_STATEMENTS_ELEC" in out, \
         f"fork skip ran silently or without the replace-me instruction:\n{out}"
     assert "SUMMARY_STATEMENTS_GAS" in out, f"gas list skip not noticed:\n{out}"
-    return "fork corpus (zero overlap) -> check 1 skipped with loud notice"
+
+    # ...and each fuel's notice must send the reader somewhere that answers it. The
+    # notice is printed inside the per-fuel loop, so a pointer written for gas is
+    # printed to electric readers too — and the boundary record has no electric
+    # equivalent of summary_statements_presence_check, on purpose (electric's
+    # completeness rests on the billing-history export). A pointer that resolves to
+    # nothing is worse than none: the operator opens the file and leaves with less
+    # than they arrived with.
+    elec_notice, gas_notice = (
+        [n for n in out.split("NOTICE:") if f"check 1 for {f}" in n][0]
+        for f in ("electric", "gas"))
+    assert "summary_statements_presence_check" in gas_notice, (
+        f"the gas notice does not name the field that records the skip:\n{gas_notice}")
+    assert "summary_statements_presence_check" not in elec_notice, (
+        f"the electric notice sends an electric reader to the gas-only presence-check "
+        f"record, which has no electric equivalent — a dead end:\n{elec_notice}")
+    assert "billing-history" in elec_notice and "excluded_statements" in elec_notice, (
+        f"the electric notice names no evidence an electric reader can actually "
+        f"open:\n{elec_notice}")
+    return ("fork corpus (zero overlap) -> check 1 skipped with loud notice, each "
+            "fuel pointed at evidence that exists for it")
+
+
+def case_boundary_record_requires_the_runs_own_gas_state():
+    """_boundary_record() must not be callable without the run's gas state.
+
+    _gas_corpus_scope() fails closed on (gas set, presence unset) because the record
+    has to state what THIS run's check did. Defaults of None on `gas` and `presence`
+    left a way under that guard: a caller that just omitted them fell into the no-gas
+    branch and published "no gas corpus is published in this set (household.has_gas is
+    false ...)" — a positive false claim about a run that parsed gas, which is the very
+    thing the SystemExit next to it exists to prevent. Only a caller that PASSES
+    gas=None is evidence of a no-gas household; an omission is evidence of nothing."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    try:
+        pb._boundary_record(None, None, [])
+    except TypeError as e:
+        assert "gas" in str(e) and "presence" in str(e), (
+            f"the call was refused, but not for the missing run state: {e}")
+    except Exception as e:                                   # noqa: BLE001
+        raise AssertionError(
+            f"_boundary_record() accepted a call with no gas state and got as far as "
+            f"{type(e).__name__}: {e} — a caller that forgets the argument can still "
+            f"publish a record claiming this run parsed no gas corpus")
+    else:
+        raise AssertionError(
+            "_boundary_record() accepted a call with no gas state and returned a "
+            "record; an omitted argument must never read as a no-gas household")
+    return ("_boundary_record() without the run's gas state -> TypeError, so the "
+            "no-gas claim can only come from a caller that meant it")
 
 
 def case_partial_overlap_still_fails():
@@ -1102,7 +1202,7 @@ def case_export_missing_a_statement_excludes_and_records_it(tmp):
     assert victim not in {t["statement_date"] for t in tou}, \
         f"{victim} left TOU rows behind in bill_tou_detail.csv"
 
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], b
     rec = b["excluded_statements"][0]
     assert b["statements_parsed"] == len(dates), b
@@ -1124,8 +1224,12 @@ def case_export_missing_a_statement_excludes_and_records_it(tmp):
 def case_export_covering_every_statement_publishes_every_statement(tmp):
     """The other half of the proof, and the reason the rule is derived rather than a
     date: the SAME corpus and the SAME statement as the case above, with an export
-    that covers it, must publish it and record ZERO exclusions. Re-pulling the export
-    is the whole remedy — nothing in the parser has to be edited."""
+    that covers it, must publish it and record ZERO exclusions. For a TRAILING
+    exclusion like this one, re-pulling the export is the whole remedy — nothing in
+    the parser has to be edited. (A LEADING exclusion needs an export whose range
+    reaches back instead; case_export_leading_hole_records_a_remedy_that_is_true_of_it
+    and case_artifact_level_guidance_never_prescribes_a_repull_for_a_leading_exclusion
+    cover that direction.)"""
     dates = _corpus_dates(tmp)
     victim = dates[-1]
     if len(dates) < 3:
@@ -1136,7 +1240,7 @@ def case_export_covering_every_statement_publishes_every_statement(tmp):
     periods = _rows(tmp / "data" / "bill_periods_electric.csv")
     assert {p["statement_date"] for p in periods} == set(dates), \
         "an export covering every statement still narrowed the corpus"
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert b["excluded_statements"] == [], b
     assert b["statements_published"] == b["statements_parsed"] == len(dates), b
     # The underivable-boundary block belongs ONLY to runs with no export: a run that
@@ -1162,7 +1266,7 @@ def case_export_day_coverage_shortfall_is_a_number(tmp):
     _stage_export(tmp, dates[:-1])
     r = _run(tmp)                       # first pass: learn the excluded period's span
     assert r.returncode == 0, r.stderr
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], (
         f"the export covers {len(dates) - 1} of {len(dates)} statements but the "
         f"boundary record excludes {[e['statement_date'] for e in b['excluded_statements']]}")
@@ -1177,7 +1281,7 @@ def case_export_day_coverage_shortfall_is_a_number(tmp):
     _stage_window(tmp, w_start.isoformat(), w_end.isoformat())
     r = _run(tmp)
     assert r.returncode == 0, r.stderr
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     cov = b["window_coverage"]
 
     published = _rows(tmp / "data" / "bill_periods_electric.csv")
@@ -1236,6 +1340,389 @@ def case_export_hole_in_the_middle_fails_closed(tmp):
     return f"export hole at {victim} (interior) -> exits, artifacts untouched"
 
 
+def _stage_leading_hole(tmp):
+    """Stage an export whose earliest row is the corpus's SECOND statement — the shape
+    a rolling-window re-pull produces when it has aged past the oldest statement on
+    disk. Returns (victim, dates). SkipCase on a corpus that cannot express it."""
+    dates = _corpus_dates(tmp)
+    victim = dates[0]
+    if len(dates) < 3 or _summary_pinned(tmp, victim):
+        raise SkipCase("needs an oldest statement outside the SUMMARY_STATEMENTS lists")
+    _stage_export(tmp, dates[1:])
+    return victim, dates
+
+
+def case_export_leading_hole_records_a_remedy_that_is_true_of_it(tmp):
+    """A statement OLDER than the export's earliest row is absorbed like a trailing
+    one — but its remedy is the opposite, and the record has to say the true one
+    (issue #154).
+
+    SDG&E's billing-history export is a rolling window. When it rolls forward past
+    the oldest statement on disk, "re-pull the export" — the remedy that ends a
+    TRAILING exclusion — is precisely the action that cannot work: a fresh pull
+    starts no earlier, and can drop more statements off the front. The days come off
+    the FRONT of the analysis window, which is the CLAUDE.md §1 shape (coverage quietly
+    short), so the day loss must be a number too."""
+    victim, dates = _stage_leading_hole(tmp)
+    # A window opening on the excluded statement's own period start, so its day loss
+    # lands at the FRONT of the window and cannot be confused with a trailing one.
+    r = _run(tmp)
+    assert r.returncode == 0, f"a leading exclusion failed the run:\n{r.stderr}"
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
+    assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], b
+    v_start, v_end = (dt.date.fromisoformat(x)
+                      for x in b["excluded_statements"][0]["period_span"])
+    _stage_window(tmp, v_start.isoformat(),
+                  (v_start + dt.timedelta(days=364)).isoformat())
+    r = _run(tmp)
+    assert r.returncode == 0, f"a leading exclusion failed the run:\n{r.stderr}"
+
+    published = {p["statement_date"]
+                 for p in _rows(tmp / "data" / "bill_periods_electric.csv")}
+    assert victim not in published and published == set(dates[1:]), sorted(published)
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
+    rec = b["excluded_statements"][0]
+    assert rec["statement_date"] == victim, b
+
+    # The remedy must be the one that works in THIS direction, and must not be the
+    # one that does not: a re-pull starts no earlier than the export already staged.
+    ends = rec["exclusion_ends_when"]
+    assert "reaches BACK" in ends and "rolling window" in ends, (
+        f"a leading exclusion carries a remedy written for a trailing one: {ends}")
+    assert "re-pulled so that it covers this statement" not in ends, (
+        f"the leading exclusion still tells the operator to re-pull the export, "
+        f"which is the one action that cannot recover it: {ends}")
+    assert dates[1] in ends, (
+        f"the remedy does not say where the export actually starts: {ends}")
+    assert "older than the export's earliest row" in rec["reason"], rec["reason"]
+
+    # ...and the day loss off the front is a number, in the artifact and on stdout.
+    cov = b["window_coverage"]
+    assert cov["missing_ranges"][0][0] == v_start.isoformat(), (
+        f"the days lost off the FRONT of the window are not in missing_ranges: {cov}")
+    assert cov["days_the_excluded_statements_would_supply"] == cov["days_missing"] > 0, cov
+    assert "reaches BACK" in r.stdout, \
+        f"the leading exclusion's remedy is not announced:\n{r.stdout}"
+    return (f"a statement older than the export's earliest row ({victim}) is excluded "
+            f"with the remedy that is true of it (widen the export, not re-pull it) "
+            f"and {cov['days_missing']} day(s) lost off the front of the window")
+
+
+# A re-pull mentioned as the thing that BRINGS THE STATEMENT BACK. The pair is what
+# makes the claim: "a re-pull starts no earlier" names a re-pull and prescribes
+# nothing, and "the next run publishes it" prescribes something without naming a
+# re-pull. Neither is a violation; the two in one sentence, unqualified, is.
+_REPULL_NAMED = re.compile(r"re-?pull", re.I)
+_REPULL_RESTORES = re.compile(
+    r"publish|restore|comes? back|covers this statement|back in(?:to)? the corpus",
+    re.I)
+# ...unless the sentence scopes or negates the claim, which is how a correct
+# TRAILING-only or explicitly two-branched wording reads. Keeping this escape hatch
+# is deliberate: the guarded property is "no UNCONDITIONAL re-pull remedy at
+# artifact level", not "the word never appears".
+_REPULL_QUALIFIED = re.compile(
+    r"trailing|newer than|not the remedy|does not|do not|cannot|can't|never|"
+    r"no earlier|is not", re.I)
+
+
+def _artifact_level_strings(node, path="$"):
+    """Every string in the boundary record OUTSIDE excluded_statements, tagged with
+    the JSON path it came from.
+
+    Those per-statement records are the ONE place the direction-dependent remedy
+    belongs, because only there is the direction known. Every other string in the
+    file is a general statement about the boundary and is read as applying to both
+    directions — which is exactly why an unconditional remedy at that level is a
+    defect even on a corpus whose only exclusion is trailing."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "excluded_statements":
+                continue
+            yield from _artifact_level_strings(v, f"{path}.{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            yield from _artifact_level_strings(v, f"{path}[{i}]")
+    elif isinstance(node, str):
+        yield path, node
+
+
+def _sentences(text):
+    return [s for s in re.split(r"(?<=[.;])\s+", text) if s.strip()]
+
+
+def case_artifact_level_guidance_never_prescribes_a_repull_for_a_leading_exclusion(tmp):
+    """The per-statement remedy being direction-aware is not enough: the record's
+    general prose must not contradict it.
+
+    data/bill_corpus_boundary.json states its rule once, at the top, and that is what
+    a consumer reads first. When it says a re-pull publishes the excluded statement
+    again, and the leading exclusion recorded below it says a re-pull is precisely the
+    action that cannot work, the file carries two mutually exclusive remedies and the
+    authoritative-looking one is the false one — an operator following it re-pulls a
+    rolling window repeatedly, losing more statements off the front each time and
+    leaving the corpus truncated.
+
+    So: with a LEADING exclusion recorded, no string in the record outside
+    excluded_statements may name a re-pull as the thing that restores the statement,
+    unless the sentence scopes or negates the claim. The rule must also either state
+    the leading branch itself or point at the field that does, so the first thing read
+    is never a dead end."""
+    victim, dates = _stage_leading_hole(tmp)
+    r = _run(tmp)
+    assert r.returncode == 0, f"a leading exclusion failed the run:\n{r.stderr}"
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
+    assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], b
+
+    # The per-statement record is the one place the remedy lives, and on this run it
+    # says a re-pull is NOT it. Everything below is about what the REST of the file
+    # says while that record is sitting in it.
+    ends = b["excluded_statements"][0]["exclusion_ends_when"]
+    assert "reaches BACK" in ends and "NOT the remedy" in ends, ends
+
+    offenders = []
+    for where, text in _artifact_level_strings(b):
+        for sentence in _sentences(text):
+            if (_REPULL_NAMED.search(sentence)
+                    and _REPULL_RESTORES.search(sentence)
+                    and not _REPULL_QUALIFIED.search(sentence)):
+                offenders.append(f"{where}: {sentence.strip()}")
+    assert not offenders, (
+        f"{len(offenders)} artifact-level string(s) prescribe a re-pull as the remedy "
+        f"while the record's only exclusion ({victim}) is a LEADING one, which a "
+        f"re-pull cannot recover — the file contradicts its own per-statement remedy "
+        f"and the general claim is the one a consumer reads first: "
+        + " | ".join(offenders))
+
+    rule = b["rule"]
+    assert "exclusion_ends_when" in rule or "reaches back" in rule.lower(), (
+        f"the top-level rule neither states the leading branch nor names the "
+        f"per-statement field that does, so a consumer who reads it first is left "
+        f"with no remedy at all for the exclusion recorded below it: {rule}")
+    return (f"with a leading exclusion ({victim}) recorded, no artifact-level string "
+            f"prescribes a re-pull as its remedy "
+            f"({len(list(_artifact_level_strings(b)))} strings checked) and the rule "
+            f"points at the per-statement field that carries the true one")
+
+
+def case_gas_days_inside_an_excluded_electric_period_are_recorded(tmp):
+    """The boundary restricts ELECTRIC only, so the gas artifacts can publish billed
+    days the electric ones exclude. That asymmetry must be in the record, counted in
+    days, never left for a reader to discover by diffing the two artifacts (#159).
+
+    The export is an electric billing-history export and the gas statements carry
+    their own dates, so restricting gas by it would delete a corpus it was never able
+    to corroborate. What the record owes instead: that it does not govern gas, what
+    does, and how many published gas days fall inside an excluded electric period."""
+    victim, _dates = _stage_leading_hole(tmp)
+    r = _run(tmp)
+    assert r.returncode == 0, f"the run failed:\n{r.stderr}"
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
+    assert "gas_corpus" in b, (
+        "the boundary record says nothing about the gas corpus, so a gas artifact "
+        "wider than the electric one is left for a reader to discover by diffing "
+        f"the two: {sorted(b)}")
+    gasc = b["gas_corpus"]
+    assert gasc["restricted_by_this_boundary"] is False, gasc
+    assert "ELECTRIC billing-history export" in gasc["what_governs_it_instead"], gasc
+    assert "SUMMARY_STATEMENTS_GAS" in gasc["what_governs_it_instead"], gasc
+
+    gas_rows = _rows(tmp / "data" / "bill_periods_gas.csv")
+    if not gas_rows:
+        raise SkipCase("this corpus publishes no gas statements")
+    # Recomputed here from the published gas artifact and the excluded electric
+    # period, not read back from the helper that wrote the block.
+    ex = [(dt.date.fromisoformat(e["period_span"][0]),
+           dt.date.fromisoformat(e["period_span"][1])) for e in b["excluded_statements"]]
+    days, twins = set(), set()
+    for row in gas_rows:
+        s, e = (dt.datetime.strptime(x.strip(), "%b %d, %Y").date()
+                for x in row["period"].split(" - "))
+        for a, z in ex:
+            lo, hi = max(a, s), min(z, e)
+            if lo <= hi:
+                days |= {lo + dt.timedelta(days=i) for i in range((hi - lo).days + 1)}
+                twins.add(row["statement_date"])
+    if not days:
+        raise SkipCase("this corpus's gas periods do not reach the excluded electric one")
+
+    assert gasc["days_published_inside_an_excluded_electric_period"] == len(days), (
+        f"the gas corpus publishes {len(days)} billed day(s) inside the excluded "
+        f"electric period but the record says "
+        f"{gasc['days_published_inside_an_excluded_electric_period']}: {gasc}")
+    assert {o["gas_statement_date"]
+            for o in gasc["periods_inside_an_excluded_electric_period"]} == twins, gasc
+    assert {o["excluded_electric_statement_date"]
+            for o in gasc["periods_inside_an_excluded_electric_period"]} == {victim}, gasc
+    assert gasc["statements_published"] == len({g["statement_date"] for g in gas_rows}), gasc
+    # ...and it is announced, so the run is not silent about it either.
+    assert "GAS IS WIDER" in r.stdout and str(len(days)) in r.stdout, \
+        f"the gas/electric asymmetry is not announced:\n{r.stdout}"
+    return (f"the gas artifacts publish {len(days)} billed day(s) inside excluded "
+            f"electric statement {victim}, recorded and announced instead of silent")
+
+
+# A sentence in the record that names the SUMMARY_STATEMENTS_GAS presence check is a
+# claim about a check that CAN decline to run. On a corpus where it did not run, such
+# a sentence is false unless it carries one of these disqualifiers.
+_PRESENCE_NAMED = re.compile(r"SUMMARY_STATEMENTS_GAS presence check", re.I)
+_PRESENCE_QUALIFIED = re.compile(
+    r"did not run|never ran|was not applied|only on a corpus|\bALONE\b|unverified|"
+    r"\bSKIPPED\b")
+
+
+def _gas_statement_dates(tmp):
+    return sorted({r["statement_date"]
+                   for r in _rows(tmp / "data" / "bill_periods_gas.csv")})
+
+
+def case_gas_corpus_records_the_presence_check_that_actually_ran(tmp):
+    """On a corpus the pinned list documents, the record must say the presence check
+    RAN — and say it with the run's own numbers, not as a standing claim.
+
+    The gas artifacts have no export to corroborate them, so the SUMMARY_STATEMENTS_GAS
+    presence check is the only thing that can establish the gas corpus is COMPLETE
+    rather than merely self-consistent. A reader of the artifact therefore has to be
+    able to tell whether it ran. Here it did, so the block must record applied=true
+    with the listed/present counts that the published gas artifact and the list
+    actually produce."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    r = _run(tmp)
+    assert r.returncode == 0, f"the control corpus failed:\n{r.stderr}"
+    # Read AFTER the run: before it, data/ holds this harness's sentinels.
+    have = set(_gas_statement_dates(tmp))
+    if not have:
+        raise SkipCase("this corpus publishes no gas statements")
+    listed = set(pb.SUMMARY_STATEMENTS_GAS)
+    if not (have & listed):
+        raise SkipCase("this corpus shares no date with SUMMARY_STATEMENTS_GAS")
+
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
+    assert "gas_corpus" in b, (
+        "the boundary record says nothing about the gas corpus at all, so nothing in "
+        "it states whether the presence check — the gas corpus's only completeness "
+        f"guard — ran on this run: {sorted(b)}")
+    chk = b["gas_corpus"].get("summary_statements_presence_check")
+    assert chk is not None, (
+        "the gas corpus's only completeness guard is the SUMMARY_STATEMENTS_GAS "
+        "presence check, and the record does not say whether it ran: "
+        f"{sorted(b['gas_corpus'])}")
+    assert chk["applied"] is True, chk
+    assert chk["list"] == "SUMMARY_STATEMENTS_GAS", chk
+    # Recomputed from the published gas artifact and the list itself, not read back
+    # from the code that wrote the block.
+    assert chk["statements_listed"] == len(listed), chk
+    assert chk["statements_listed_and_present"] == len(have & listed), (
+        f"the record says {chk['statements_listed_and_present']} of the listed gas "
+        f"statements are present; the published artifact and the list share "
+        f"{len(have & listed)}: {chk}")
+    assert "ran on this corpus" in chk["what_it_means"], chk
+    # The check covers the statements the LIST NAMES, not the whole published corpus,
+    # and the count is the set difference — a published statement the list does not
+    # name is unchecked whether it falls past the list's end or sits inside its span.
+    # The field is named for that difference, not for a date window: the two coincide
+    # on this corpus and come apart on a fork's, where the old name would have been a
+    # false explanation of a correct number.
+    assert "statements_published_outside_that_window" not in chk, (
+        f"the record still counts unchecked gas statements under a name that says "
+        f"'outside that window' while computing a set difference against the list; on "
+        f"a corpus with a statement inside the list's span but absent from it the "
+        f"name and the number disagree: {chk}")
+    assert chk["statements_published_the_list_does_not_name"] == len(have - listed), (
+        f"the record says {chk['statements_published_the_list_does_not_name']} "
+        f"published gas statement(s) go unnamed by the list; the published artifact "
+        f"and the list put {len(have - listed)} there: {chk}")
+    assert "and no others" in chk["what_it_means"], (
+        f"the record does not scope the check to the statements the list names, so "
+        f"'complete' reads as complete over the whole published gas corpus: {chk}")
+    assert "inside its span" in chk["what_it_means"], (
+        f"the record explains the unchecked statements as falling past the list's "
+        f"end only, which is one of the two ways a published statement goes unnamed "
+        f"and is false of the other: {chk}")
+    # ...and the prose that names the check as governing gas must say the same thing,
+    # so the two cannot disagree.
+    governs = b["gas_corpus"]["what_governs_it_instead"]
+    assert _PRESENCE_NAMED.search(governs) and "ran on this corpus" in governs, governs
+    return (f"presence check applied on this corpus -> recorded as applied with "
+            f"{chk['statements_listed_and_present']}/{chk['statements_listed']} "
+            f"listed gas statements present")
+
+
+def case_fork_gas_corpus_completeness_is_recorded_as_unverified(tmp):
+    """A fork's gas corpus is NOT covered by the presence check, and the record must
+    say so instead of claiming it.
+
+    A fork's statement dates share nothing with SUMMARY_STATEMENTS_GAS, so _validate()
+    treats the list as another household's and skips reproduction-gate check 1. Gas has
+    no billing-history export behind it either, so on that run NOTHING establishes the
+    gas corpus is complete — every remaining check (duplicates, tiling, cross-foot)
+    passes on a corpus with statements missing off either END, because what is left
+    still tiles. This case builds exactly that: a fork corpus with its OLDEST gas
+    statement deleted. It publishes, which is the deliberate choice (refusing would
+    refuse every fork on its first run, before it could pin its own list), so what the
+    record owes is the truth about the run: completeness unverified, why, and what
+    makes the check apply.
+
+    The failure this guards is a record that says the check governs the gas corpus on
+    a run where it never executed — a completeness guarantee for a corpus that is
+    demonstrably short by one statement."""
+    gas_dir = tmp / "private" / "1-raw-data" / "gas-bills"
+    if not gas_dir.is_dir():
+        raise SkipCase("this corpus has no gas statements")
+    pdfs = sorted(gas_dir.glob("sdge_gas_*.pdf"), key=lambda p: _statement_date(p))
+    if len(pdfs) < 3:
+        raise SkipCase("needs at least three gas statements to truncate one off the end")
+    dropped = _statement_date(pdfs[0])
+    pdfs[0].unlink()                                    # truncate off the FRONT
+    _patch_summary_lists(tmp, ["1900-01-01", "1900-02-01"], ["1900-01-15"])
+
+    r = _run(tmp)
+    assert r.returncode == 0, (
+        f"a fork's gas corpus failed to publish — the fork path must stay open:\n"
+        f"{r.stderr}")
+    assert "skipping reproduction-gate check 1 for gas" in r.stdout, \
+        f"the gas presence check was not skipped, so this is not the fork state:\n{r.stdout}"
+    published = _gas_statement_dates(tmp)
+    assert dropped not in published, "the deleted gas statement was published anyway"
+    assert published, "the fork published no gas statements at all"
+
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
+    assert "gas_corpus" in b, (
+        f"the boundary record says nothing about the gas corpus at all, so a fork "
+        f"cannot tell this {len(published)}-statement gas corpus from a complete "
+        f"one: {sorted(b)}")
+    gasc = b["gas_corpus"]
+    chk = gasc.get("summary_statements_presence_check")
+    assert chk is not None, (
+        f"the presence check did not run and the record does not say so — a reader "
+        f"cannot tell this {len(published)}-statement gas corpus from a complete "
+        f"one: {sorted(gasc)}")
+    assert chk["applied"] is False, chk
+    assert chk["statements_listed_and_present"] == 0, chk
+    assert "UNVERIFIED" in chk["what_it_means"], (
+        f"the record does not say the gas corpus's completeness is unverified: {chk}")
+    assert "SUMMARY_STATEMENTS_GAS" in chk.get("check_is_applied_when", ""), (
+        f"the record states no remedy, so the fork has nothing to act on: {chk}")
+
+    # The sweep: no string anywhere in the record may name the presence check without
+    # disqualifying it on this run. This is the claim that was there before — "governed
+    # by ... the SUMMARY_STATEMENTS_GAS presence check" — stated unconditionally.
+    offenders = []
+    for where, text in _artifact_level_strings(b):
+        for sentence in _sentences(text):
+            if (_PRESENCE_NAMED.search(sentence)
+                    and not _PRESENCE_QUALIFIED.search(sentence)):
+                offenders.append(f"{where}: {sentence.strip()}")
+    assert not offenders, (
+        f"{len(offenders)} string(s) in the record name the SUMMARY_STATEMENTS_GAS "
+        f"presence check without saying it did not run on this corpus, while the run "
+        f"itself skipped it and published a gas corpus short by {dropped}: "
+        + " | ".join(offenders))
+    return (f"fork gas corpus truncated to {len(published)} statement(s) publishes, "
+            f"and the record states its completeness UNVERIFIED with the remedy, "
+            f"instead of claiming a check that never ran")
+
+
 def case_export_sharing_no_statement_fails_closed(tmp):
     """An export documenting a different account would exclude the entire corpus.
     Publishing nothing at all is never the honest reading of "restrict deliberately",
@@ -1261,7 +1748,7 @@ def case_no_export_publishes_the_whole_corpus(tmp):
     assert {p["statement_date"] for p in periods} == set(dates), \
         "statements were dropped with no export to justify it"
     assert "not derivable" in r.stdout, f"no notice about the missing export:\n{r.stdout}"
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert b["export"] is None and b["excluded_statements"] == [], b
     assert b["statements_published"] == b["statements_parsed"] == len(dates), b
     return "no export staged -> whole corpus published, boundary recorded as underived"
@@ -1280,7 +1767,7 @@ def case_no_export_records_the_underivable_boundary_in_the_artifact(tmp):
     r = _run(tmp)
     assert r.returncode == 0, f"a corpus with no export failed:\n{r.stderr}"
 
-    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    b = _json(tmp / "data" / "bill_corpus_boundary.json")
     assert b["export"] is None, b
     nd = b.get("boundary_not_derived")
     assert nd is not None, (
@@ -1360,6 +1847,126 @@ def case_export_with_only_blank_statement_dates_fails_closed(tmp):
     return "export with every statement_date blank -> exits, artifacts untouched"
 
 
+def _ranges(days):
+    """[date, ...] -> [[first, last], ...] over each contiguous run (ISO strings)."""
+    out = []
+    for d in sorted(days):
+        if out and d - dt.date.fromisoformat(out[-1][1]) == dt.timedelta(days=1):
+            out[-1][1] = d.isoformat()
+        else:
+            out.append([d.isoformat(), d.isoformat()])
+    return out
+
+
+def _assert_boundary_window_current(data_dir):
+    """Recompute bill_corpus_boundary.json's window_coverage block from the OTHER
+    committed artifacts and assert the committed block matches.
+
+    Every input is committed and de-identified — behavior_rebuild.json's window,
+    bill_periods_electric.csv's published periods, and the excluded statements'
+    own spans — so this runs in CI, where parse_bills.py itself cannot (it needs
+    the gitignored bill PDFs). AssertionError, with the diagnosis, on a mismatch."""
+    b = _json(data_dir / "bill_corpus_boundary.json")
+    stale = (f"Re-run analysis/parse_bills.py (it needs the private bill corpus) and "
+             f"commit its seven artifacts: data/bill_corpus_boundary.json publishes "
+             f"day-coverage figures computed against a window that no longer exists.")
+    # Named, not subscripted. This is the LAST standalone case and standalone runs
+    # first, so a bare KeyError here aborted main() before a single corpus case ran —
+    # CI printing a traceback in place of the staleness diagnosis two lines below.
+    assert "window_coverage" in b, (
+        f"data/bill_corpus_boundary.json records no window coverage at all, so the "
+        f"day figures the report quotes have no committed source: {sorted(b)}. {stale}")
+    cov = b["window_coverage"]
+    w = _json(data_dir / "behavior_rebuild.json")["window"]
+    w_start = dt.date.fromisoformat(str(w["start"])[:10])
+    w_end = dt.date.fromisoformat(str(w["end"])[:10])
+    assert "window" in cov, (
+        f"window_coverage names no window, so there is nothing to compare "
+        f"data/behavior_rebuild.json's [{w_start.isoformat()}, {w_end.isoformat()}] "
+        f"against and the coverage figures below stand on nothing: {sorted(cov)}. "
+        f"{stale}")
+    assert cov["window"] == [w_start.isoformat(), w_end.isoformat()], (
+        f"data/bill_corpus_boundary.json reports coverage against the window "
+        f"{cov['window']}, but data/behavior_rebuild.json's window is now "
+        f"[{w_start.isoformat()}, {w_end.isoformat()}]. {stale}")
+
+    bounds = [_period_bounds(r["period"])
+              for r in _rows(data_dir / "bill_periods_electric.csv")]
+    c_start, c_end = min(s for s, _ in bounds), max(e for _, e in bounds)
+    assert b["published_period_span"] == [c_start.isoformat(), c_end.isoformat()], (
+        f"the boundary record says the published corpus spans "
+        f"{b['published_period_span']}, but data/bill_periods_electric.csv spans "
+        f"[{c_start.isoformat()}, {c_end.isoformat()}]. {stale}")
+    window = [w_start + dt.timedelta(days=i) for i in range((w_end - w_start).days + 1)]
+    covered = [d for d in window if c_start <= d <= c_end]
+    missing = [d for d in window if not (c_start <= d <= c_end)]
+    supplied = set()
+    for rec in b["excluded_statements"]:
+        a, z = (dt.date.fromisoformat(x) for x in rec["period_span"])
+        supplied |= {d for d in missing if a <= d <= z}
+    for key, want in (("window_days", len(window)),
+                      ("days_covered", len(covered)),
+                      ("days_missing", len(missing)),
+                      ("missing_ranges", _ranges(missing)),
+                      ("days_the_excluded_statements_would_supply", len(supplied))):
+        assert cov[key] == want, (
+            f"window_coverage.{key} is {cov[key]!r}, recomputed from the committed "
+            f"artifacts it is {want!r}. {stale}")
+
+
+def case_committed_boundary_is_current_with_the_committed_window():
+    """The committed boundary artifact must still be true of the committed window.
+
+    parse_bills.py reads the analysis window from data/behavior_rebuild.json, which
+    another generator owns. Regenerate that against a fresh Green Button export and
+    its window moves; nothing re-derives the boundary, so data/bill_corpus_boundary
+    .json goes on publishing day-coverage figures (the 338-of-365 the report quotes)
+    against a window that no longer exists. Every check that could catch it needs the
+    private bill corpus and skips in CI, which is exactly why this one is computed
+    from committed, de-identified artifacts only and runs anywhere (issue #155).
+
+    It then proves itself on a tampered copy: a check that cannot fail on the drift
+    it names is not a gate."""
+    data = ROOT / "data"
+    names = ("bill_corpus_boundary.json", "behavior_rebuild.json",
+             "bill_periods_electric.csv")
+    for n in names:
+        if not (data / n).exists():
+            raise SkipCase(f"data/{n} is not committed in this checkout")
+    b = _json(data / "bill_corpus_boundary.json")
+    if b.get("window_coverage") is None:
+        raise SkipCase("the committed boundary records no window coverage")
+    if not _rows(data / "bill_periods_electric.csv"):
+        raise SkipCase("no published electric periods to recompute coverage from")
+
+    _assert_boundary_window_current(data)
+
+    with tempfile.TemporaryDirectory() as td:
+        moved = pathlib.Path(td) / "data"
+        moved.mkdir()
+        for n in names:
+            shutil.copy2(data / n, moved / n)
+        j = _json(moved / "behavior_rebuild.json")
+        for end in ("start", "end"):
+            v = str(j["window"][end])
+            j["window"][end] = (dt.date.fromisoformat(v[:10])
+                                + dt.timedelta(days=30)).isoformat() + v[10:]
+        (moved / "behavior_rebuild.json").write_text(json.dumps(j))
+        try:
+            _assert_boundary_window_current(moved)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(
+                "behavior_rebuild.json's window moved 30 days and the committed "
+                "boundary's day figures still passed — the check cannot detect the "
+                "staleness it exists for")
+    cov = b["window_coverage"]
+    return (f"the committed boundary's {cov['days_covered']}/{cov['window_days']}-day "
+            f"coverage recomputes from the committed window and periods, and the "
+            f"check fails when that window moves")
+
+
 # Cases needing the gitignored bill PDFs. Only these can be skipped.
 CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_mid_corpus_gap, case_mid_corpus_gas_gap,
@@ -1385,6 +1992,11 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_export_day_coverage_shortfall_is_a_number,
                 case_export_row_with_no_pdf_fails_closed,
                 case_export_hole_in_the_middle_fails_closed,
+                case_export_leading_hole_records_a_remedy_that_is_true_of_it,
+                case_artifact_level_guidance_never_prescribes_a_repull_for_a_leading_exclusion,
+                case_gas_days_inside_an_excluded_electric_period_are_recorded,
+                case_gas_corpus_records_the_presence_check_that_actually_ran,
+                case_fork_gas_corpus_completeness_is_recorded_as_unverified,
                 case_export_sharing_no_statement_fails_closed,
                 case_no_export_publishes_the_whole_corpus,
                 case_no_export_records_the_underivable_boundary_in_the_artifact,
@@ -1404,9 +2016,39 @@ STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
                     case_overlapping_electric_periods,
                     case_overlapping_gas_periods,
                     case_fork_corpus_skips_presence_check,
+                    case_boundary_record_requires_the_runs_own_gas_state,
                     case_partial_overlap_still_fails,
                     case_neither_fixed_charge_label_present_fails,
-                    case_both_fixed_charge_labels_present_prefers_bsc]
+                    case_both_fixed_charge_labels_present_prefers_bsc,
+                    case_committed_boundary_is_current_with_the_committed_window]
+
+
+def _report_failure(case, exc):
+    """One FAIL line for a case that did not pass, whatever it raised.
+
+    THE HOLE THIS CLOSES. These loops used to catch SkipCase and AssertionError and
+    nothing else, so any other exception escaped main() and ended the RUN: no FAIL
+    line, no case name, just a traceback — and every case after it never executed. It
+    cost the most where it hurt most: the last standalone case reads the committed
+    boundary artifact, standalone runs first, and one KeyError there aborted the suite
+    before a single corpus case started, with CI reporting a traceback instead of the
+    staleness diagnosis the case was written to print. (Same hole, different exception
+    and different file, as the one closed in test_report_tokens.main().)
+
+    SystemExit needs its own clause because it inherits from BaseException, not
+    Exception: parse_bills fails closed with SystemExit for every refusal, and a case
+    that provokes one outside its own try would otherwise walk straight past
+    `except Exception`. Nothing here re-raises, so the runner's own exit — main()
+    RETURNS 1 and sys.exit() below turns that into the process's status — is never
+    routed through this function and never re-reported as a case failure."""
+    kind = "" if isinstance(exc, AssertionError) else f"{type(exc).__name__}: "
+    print(f"FAIL  {case.__name__}: {kind}{exc}")
+    if not isinstance(exc, AssertionError):
+        # An assertion carries its own diagnosis; anything else does not, and this
+        # runner keeps going, so without the traceback the frame is lost for good.
+        # On stdout, not stderr, so it lands under its own FAIL line instead of
+        # being interleaved somewhere else in the log by two separate buffers.
+        traceback.print_exc(file=sys.stdout)
 
 
 def main():
@@ -1422,8 +2064,8 @@ def main():
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
             skipped += 1
-        except AssertionError as e:
-            print(f"FAIL  {case.__name__}: {e}")
+        except (AssertionError, SystemExit, Exception) as e:  # noqa: BLE001
+            _report_failure(case, e)
             failures += 1
 
     for case in CORPUS_CASES:
@@ -1439,8 +2081,8 @@ def main():
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
             skipped += 1
-        except AssertionError as e:
-            print(f"FAIL  {case.__name__}: {e}")
+        except (AssertionError, SystemExit, Exception) as e:  # noqa: BLE001
+            _report_failure(case, e)
             failures += 1
 
     total = len(STANDALONE_CASES) + len(CORPUS_CASES)

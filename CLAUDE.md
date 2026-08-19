@@ -81,8 +81,13 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 # above actually contain. The published corpus is DERIVED, not declared: a statement PDF
 # with no row in the billing-history export is outside it and appears in no artifact,
 # with the exclusion printed by the run and recorded (reason, remedy, day-coverage
-# shortfall) in that file. Re-pull the export and re-run and it comes back on its own —
-# there is no date to delete. See parse_bills.py's "THE CORPUS BOUNDARY" and TECHNICAL.md.
+# shortfall) in that file. Stage an export that covers the statement and the next run
+# publishes it on its own — there is no date to delete. WHICH export depends on which end
+# of the export's range the statement falls outside: a re-pull recovers a statement newer
+# than the export, but not one older than it, because the export is a rolling window and a
+# fresh pull starts no earlier. The artifact states the direction per statement in
+# excluded_statements[].exclusion_ends_when. See parse_bills.py's "THE CORPUS BOUNDARY"
+# and TECHNICAL.md.
 # Its fail-closed behaviour has negative tests (missing statement, corpus gaps, TOU
 # layout drift, mid-write failure, and every shape of export/corpus mismatch). Run them
 # after touching the parser:
