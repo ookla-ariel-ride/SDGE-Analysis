@@ -7025,12 +7025,16 @@ def _night_floor_annual_cost(ctx):
     over the very disagreement the generator documents.
 
     EVERY SECTION THAT PRICES THIS LOAD NOW RESOLVES THROUGH HERE (issue
-    #140). Two older figures for the same load exist in the archive --
+    #140). Two other figures for this same physical load exist --
     extra_results.json:phantom, which has no generator at all, and
     deep_results.json:phantom, which states that load's energy but no longer
     prices it at all (issue #172 deleted a hardcoded flat $0.20/kWh field
-    rather than reprice it, since this artifact already prices the load) --
-    and neither backs a published number any
+    rather than reprice it: what this artifact prices is its OWN estimate of
+    that load, read off an independently designed per-NIGHT rule rather than
+    deep_results' per-INTERVAL one -- two closely matching but separate
+    measurements of one physical load, the same phenomenon, not one load
+    priced twice -- so a reprice there would put a third number on one load)
+    -- and neither backs a published number any
     more; SEC9_TEASER's own comment states the evidence for that. They are
     labelled as superseded workpapers in TECHNICAL.md sections 3.5 and 3.11,
     which is where CLAUDE.md puts method lineage, so a reader who finds one in

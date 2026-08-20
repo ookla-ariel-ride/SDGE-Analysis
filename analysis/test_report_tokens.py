@@ -501,7 +501,9 @@ def case_phantom_method_discrepancy_reconciles_the_two_live_pricings():
     dp = rt._json("deep_results.json")["phantom"]
     assert not [k for k in dp if re.search(r"cost|usd|price|blend", k, re.I)], (
         f"deep_results.json:phantom publishes a dollar figure again ({sorted(dp)}) -- "
-        "this load is priced in quiet_night_floor.json, through rates.py, two ways")
+        "quiet_night_floor.json prices this physical load through rates.py off its OWN "
+        "separately measured estimate of it, so a dollar figure here puts a third number "
+        "on one load")
     assert "does not settle" not in rendered, (
         "the reconciliation still says the report does not settle which pricing is right, "
         f"which was true of the retired cross-section comparison, not of this one: {rendered}")
@@ -785,8 +787,11 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     # Its cost figure cannot be checked absent by value any more, because issue
     # #172 removed it: deep_results.json:phantom priced the energy at a flat
     # 0.20 $/kWh against a $0.375/kWh hour-weighted all-in import rate, and the
-    # field was deleted rather than repriced (quiet_night_floor.json already
-    # prices this load twice through rates.py). The guard is that it stays gone.
+    # field was deleted rather than repriced: quiet_night_floor.json prices its
+    # OWN separately measured estimate of this physical load -- an independently
+    # designed per-NIGHT rule, not deep_results' per-INTERVAL one -- so a reprice
+    # here would put a third number on one load, not restate a priced one. The
+    # guard is that it stays gone.
     assert not [k for k in dr["phantom"] if re.search(r"cost|usd|price|blend", k, re.I)], (
         "deep_results.json:phantom publishes a dollar figure again "
         f"({sorted(dr['phantom'])}), so this teaser has a superseded price to drift back to")
