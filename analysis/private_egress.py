@@ -618,13 +618,21 @@ DESTINATION_CONFIG_SCOPES = ("--worktree", "--local")
 #     `git check-ignore` takes no pathspec magic at all (`:(icase)…` exits 128),
 #     so this block's remedy could not be carried over to it.
 #
-# Both are closed by _ondisk_relpath(), which resolves the candidate to the
-# spelling the filesystem actually holds before any of the three questions is
-# asked. That is filesystem truth rather than a model of folding, so it needs no
-# Unicode rules in either implementation and works for check-ignore, which
-# refuses magic. The ':(icase)' probe here is kept alongside it, not replaced:
-# see _require_uncommittable() for the measured reason -- an index entry with no
-# file in the working tree has no on-disk spelling for the walk to find.
+# Both are closed FOR A PATH THAT EXISTS ON DISK by _ondisk_relpath(), which
+# resolves the candidate to the spelling the filesystem actually holds before any
+# of the three questions is asked. That is filesystem truth rather than a model of
+# folding, so it needs no Unicode rules in either implementation and works for
+# check-ignore, which refuses magic. The ':(icase)' probe here is kept alongside
+# it, not replaced: see _require_uncommittable() for the measured reason -- an
+# index entry with no file in the working tree has no on-disk spelling for the
+# walk to find.
+#
+# WHERE THE TWO STILL MISS TOGETHER, said here rather than left to be inferred
+# from "neither subsumes the other": a tracked index entry that has NO
+# working-tree file and differs from the path only in NON-ASCII case is seen by
+# neither probe -- ':(icase)' folds ASCII only, and the walk has nothing to
+# resolve for a leaf that does not exist. Issue #230, open, and a boundary of what
+# the tracked question covers rather than a gap something else catches.
 ALIAS_CONFIG_OVERRIDE = (("core.precomposeUnicode", "true"),)
 # The name the ROOT's half of the case measurement is taken on. `.git` is the one
 # entry every worktree root is guaranteed to have -- a directory in the main
@@ -945,17 +953,27 @@ def _fs_folds_case(worktree, relpath=None, evidence=None):
     costs no directory listing -- and where that says "folds" the answer is
     already the additive one and the walk is skipped. Where it says "case is
     significant", every EXISTING directory the path descends into is measured in
-    turn with _dir_folds_case(), and the FIRST one that folds decides. That is an
-    OR across the filesystems the path crosses, which is the right shape: an
-    alias can live at any component, and the directory that folds `1-raw-data` is
-    `private/`, not the root.
+    turn with _dir_folds_case(), and the FIRST one that folds decides.
+
+    THAT IS AN OR ALONG THE PATH, not the answer of the directory the write lands
+    in, and the difference is issue #231. The caller applies ':(icase)' to the
+    whole pathspec, so a folding ANCESTOR makes every component below it fold as
+    far as this answer is concerned. The OR is correct wherever case behaviour only
+    ever becomes MORE permissive deeper in -- the ordinary shape, and the one this
+    walk exists for, since the directory that folds `1-raw-data` is `private/` and
+    not the root. It is over-broad for the inverse: a case-SENSITIVE volume mounted
+    under a folding directory, where a destination this measurement used to accept
+    is now refused if the index holds the other case spelling. That IS a new
+    refusal, and the reason it ships anyway is its direction -- the alias probe can
+    only match more index entries, so the error is fail-closed rather than a hole.
 
     AN UNMEASURABLE DIRECTORY COUNTS AS FOLDING, by the same argument the root
     probe already used for an unstattable `.git`: the alias probe is additive, so
     folding can only make the guard refuse more, and refusing more is what an
     unanswered question deserves. It costs a refusal only for a destination that
-    ALSO holds a case-aliased entry in its index, which is the thing being
-    guarded against.
+    ALSO holds a case-aliased entry in its index -- which is the thing being
+    guarded against wherever the two spellings really are one file, and a false
+    alarm where they are not (issue #231 again).
 
     NOT a device-change test, though that was the other candidate. Comparing
     st_dev at each component would say WHERE to measure and still not say what
@@ -1063,12 +1081,14 @@ def _ondisk_relpath(worktree, relpath):
     So neither implementation models the fold. This walks the path instead, one
     component at a time, and asks the filesystem which entry each component
     names -- ASCII, non-ASCII, normalization and anything a future volume folds,
-    without a line of Unicode in either language.
+    without a line of Unicode in either language, FOR THE COMPONENTS THAT EXIST.
 
     THE PATH USUALLY DOES NOT EXIST YET, which is the point of the module: the
     walk resolves as far as the path really goes and takes the REST exactly as
     asked. `private/1-raw-data` in a tree that holds only `Private/` resolves to
-    `Private/1-raw-data`.
+    `Private/1-raw-data`. An absent LEAF is therefore asked about as typed, which
+    is what leaves the non-ASCII half of issue #230 open -- see
+    _require_uncommittable() for the combination the two alias probes both miss.
 
     HOW A COMPONENT'S REAL SPELLING IS FOUND, and what it costs. The parent is
     listed and the component is looked for BY NAME first; only when it is not
@@ -1818,18 +1838,29 @@ def _pathspec(relpath):
 
 
 def _alias_pathspec(relpath, fold_case):
-    """The same path, as the pathspec that asks git about every index entry the
-    FILESYSTEM would treat as this one (issue #204).
+    """The same path, as the pathspec that asks git about the index entries
+    differing from it in ASCII CASE, or in unicode COMPOSITION (issue #204).
+
+    That is the coverage, stated as narrowly as it really is, and it is NOT "every
+    index entry the filesystem would treat as this one": ':(icase)' folds ASCII
+    case pairs and no others, and core.precomposeUnicode -- forced alongside it in
+    _alias_overrides() -- folds composition. A non-ASCII case alias is reached by
+    the OTHER probe, the on-disk walk, and only where that walk has something on
+    disk to resolve. The last paragraph names the one combination neither reaches.
 
     `fold_case` comes from _fs_folds_case(), which measures the worktree root AND
-    every existing directory the path descends into, so the ':(icase)' magic is
-    added where the filesystem THE WRITE LANDS ON really does fold case -- a
-    case-insensitive volume mounted below a case-sensitive root included -- and
-    nowhere else. Adding it
-    unconditionally would be safe in the sense that the probe is additive, and
-    wrong in the sense that on a case-sensitive filesystem `Private/x` and
-    `private/x` are two files: refusing a correct destination because the
-    repository tracks the other one is how guards get switched off.
+    every existing directory the path descends into, so the ':(icase)' magic
+    follows the path onto a case-insensitive volume mounted below a case-sensitive
+    root rather than being decided at the root alone. It is an OR ALONG THE PATH,
+    and ':(icase)' then applies path-wide, so a folding ANCESTOR turns the magic on
+    for components below it that do not fold themselves (issue #231). Erring that
+    way is fail-closed -- the magic can only make ls-files match MORE index entries
+    -- which is why it ships, but it is a weaker statement than "exactly where the
+    write lands", and on a case-SENSITIVE mount nested under a folding one it can
+    refuse a destination that was correct. Adding it unconditionally would be safe
+    in that same sense and wrong in a larger one: on a case-sensitive filesystem
+    `Private/x` and `private/x` are two files, and refusing a correct destination
+    because the repository tracks the other one is how guards get switched off.
 
     Off that path this is _pathspec() exactly, so the alias probe still asks
     about the same path with the same magic neutralized -- the unicode half of
@@ -1840,8 +1871,13 @@ def _alias_pathspec(relpath, fold_case):
     comparison: `:(icase)./private/househöld.yaml` does not match a tracked
     `private/HOUSEHÖLD.yaml`. This is not the whole of the tracked question for
     that reason -- _require_uncommittable() hands the same call a second
-    pathspec, the one _ondisk_relpath() resolved, which is what folds everything
-    the filesystem folds.
+    pathspec, the one _ondisk_relpath() resolved, which folds whatever the
+    filesystem folds FOR A PATH THAT EXISTS ON DISK. Where the path does not exist
+    there is nothing to resolve, so the two blind spots OVERLAP in exactly one
+    combination: an index entry that is tracked, has no working-tree file, and
+    differs from the path only in NON-ASCII case is seen by neither probe. Filed
+    as issue #230 and left open deliberately; it is a boundary of this guard, not
+    something covered elsewhere.
     """
     return (":(icase)" if fold_case else "") + _pathspec(relpath)
 
@@ -1990,10 +2026,12 @@ def _require_uncommittable(worktree, relpath, env=None):
     its index.
 
     THREE QUESTIONS, not two (issue #204): the tracked one is asked twice, once
-    by the bytes and once under the equivalence the destination's own filesystem
-    uses -- because on a case-insensitive or normalizing filesystem a write to
-    `private/household.yaml` lands on a tracked `Private/household.yaml` while
-    the literal question reports it untracked. See ALIAS_CONFIG_OVERRIDE.
+    by the bytes and once about the aliases the destination's own filesystem
+    resolves to the same file -- as far as the two alias probes below reach, which
+    is not the whole of that equivalence -- because on a case-insensitive or
+    normalizing filesystem a write to `private/household.yaml` lands on a tracked
+    `Private/household.yaml` while the literal question reports it untracked. See
+    ALIAS_CONFIG_OVERRIDE.
 
     AND EVERY ONE OF THEM IS ASKED ABOUT THE PATH ON DISK (issues #223, #224).
     `relpath` is what the caller typed; _ondisk_relpath() says what the
@@ -2002,8 +2040,9 @@ def _require_uncommittable(worktree, relpath, env=None):
     both at once and each question refuses for its own reason:
 
       * TRACKED -- the on-disk spelling joins the alias pathspec. This is what
-        catches the NON-ASCII fold that `:(icase)` cannot see (#224): the byte
-        fold misses `HOUSEHÖLD.yaml` while the filesystem resolves it.
+        catches the NON-ASCII fold that `:(icase)` cannot see (#224), FOR A PATH
+        THAT EXISTS ON DISK: the byte fold misses `HOUSEHÖLD.yaml` while the
+        filesystem resolves it.
       * IGNORED -- asked of the on-disk spelling FIRST, because that is the path
         the bytes go to. `aliased_not_ignored` when only it is unignored (#223);
         plain `not_ignored` when the spellings are the same, or when the typed
@@ -2016,6 +2055,14 @@ def _require_uncommittable(worktree, relpath, env=None):
     non-ASCII cased name is invisible to the pathspec fold and only the walk
     finds it. Neither subsumes the other; asserted in
     test_private_egress.case_the_two_alias_probes_each_catch_what_the_other_misses.
+
+    AND THEIR BLIND SPOTS OVERLAP, which "neither subsumes the other" does not
+    say: an index entry that is BOTH absent from the working tree AND differs from
+    the path only in NON-ASCII case is seen by neither -- `:(icase)` folds ASCII
+    only, and the walk has nothing on disk to resolve for a leaf that does not
+    exist. That combination is issue #230, filed and deliberately not fixed here.
+    It is the stated boundary of the tracked question, not a case some other check
+    picks up.
 
     This is the ONLY place in this module where a caller-supplied path becomes a
     git PATHSPEC (everything else hands git a -C directory), so it is the one

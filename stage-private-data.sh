@@ -530,10 +530,17 @@ _GIT_DEST_CONFIG=()
 #     `git check-ignore` takes no pathspec magic at all, so this remedy could not
 #     be carried over to it.
 #
-# Both are closed by _ondisk_spelling below, which resolves the path against the
-# filesystem before any question is asked about it. The ':(icase)' probe is kept
-# ALONGSIDE it, not replaced: an index entry with no file in the working tree has
-# no on-disk spelling for that walk to find, so only the pathspec fold sees it.
+# Both are closed FOR A PATH THAT EXISTS ON DISK by _ondisk_spelling below, which
+# resolves the path against the filesystem before any question is asked about it.
+# The ':(icase)' probe is kept ALONGSIDE it, not replaced: an index entry with no
+# file in the working tree has no on-disk spelling for that walk to find, so only
+# the pathspec fold sees it.
+#
+# AND THE TWO MISS TOGETHER in one combination, stated rather than left to be
+# inferred: a tracked index entry with NO working-tree file that differs from the
+# path only in NON-ASCII case is seen by neither -- ':(icase)' folds ASCII only,
+# and the walk has nothing to resolve for a leaf that does not exist. Issue #230,
+# open, and a boundary of the tracked question rather than a gap covered later.
 _GIT_ALIAS_OVERRIDE=(-c core.precomposeUnicode=true)
 
 # EMPTY except while an alias question is being asked. _git splices it after
@@ -1330,9 +1337,19 @@ _require_isolation_proven() {
 # case-sensitive filesystem has no .GIT and answers no; one that really holds a
 # separate .GIT answers no for the right reason. Where the root already folds the
 # answer is the additive one and no directory is listed at all. Where it does
-# not, the first directory below it that folds decides -- an OR across the
-# filesystems the path crosses, which is the right shape, because the directory
-# that folds `1-raw-data` is `private/` and not the root.
+# not, the first directory below it that folds decides.
+#
+# THAT IS AN OR ALONG THE PATH, not the answer of the directory the write lands
+# in, and the difference is issue #231. ':(icase)' is applied to the whole
+# pathspec, so a folding ANCESTOR makes every component below it fold as far as
+# this answer goes. The OR is correct wherever case behaviour only ever becomes
+# MORE permissive deeper in -- the ordinary shape, and what this walk exists for,
+# since the directory that folds `1-raw-data` is `private/` and not the root. It
+# is over-broad for the inverse, a case-SENSITIVE volume mounted under a folding
+# directory, where a destination this measurement used to accept is now REFUSED if
+# the index holds the other case spelling. That is a new refusal, not none; it
+# ships because its direction is fail-closed -- the alias probe can only match
+# more index entries.
 #
 # NOTHING IS WRITTEN, which is what settles the ordering this measurement would
 # otherwise pose. The reliable way to detect case behaviour is usually to create
@@ -1358,7 +1375,8 @@ _require_isolation_proven() {
 # flipped all leave the question unanswered, and folding is the conservative
 # answer because the alias probe is additive -- it can only make this script
 # refuse more, and only for a destination that also holds a case-aliased entry in
-# its index, which is the thing being guarded against.
+# its index: the thing being guarded against wherever the two spellings really are
+# one file, and a false alarm where they are not (issue #231 again).
 #
 # Sets _FOLDS_WHERE, in the same words private_egress._fs_folds_case() records,
 # so the refusal below names the directory the answer was taken from.
@@ -1477,15 +1495,18 @@ _dest_folds_case() {   # $1 = a path this script writes, relative to $DST_REAL
 # 1 on a filesystem that resolves the two to one directory -- git's fold is ASCII
 # too.
 #
-# SO THE FILESYSTEM IS ASKED INSTEAD, one component at a time. That folds
-# exactly what the filesystem folds -- ASCII, non-ASCII, normalization, and
-# whatever some later volume folds -- with no Unicode rules in this script or in
-# private_egress.py, and it works for check-ignore, which takes no magic.
+# SO THE FILESYSTEM IS ASKED INSTEAD, one component at a time. For the components
+# that EXIST that folds exactly what the filesystem folds -- ASCII, non-ASCII,
+# normalization, and whatever some later volume folds -- with no Unicode rules in
+# this script or in private_egress.py, and it works for check-ignore, which takes
+# no magic.
 #
 # THE PATH USUALLY DOES NOT EXIST YET, which is the point: the walk resolves as
 # far as the path really goes and takes the REST exactly as asked, so
 # `private/1-raw-data` in a tree holding only `Private/` resolves to
-# `Private/1-raw-data`.
+# `Private/1-raw-data`. An absent LEAF is asked about as typed, which is what
+# leaves the non-ASCII half of issue #230 open -- see the alias block above for
+# the combination both alias probes miss.
 #
 # A COMPONENT'S REAL SPELLING is looked for BY NAME first and only then by
 # `-ef` -- same device and inode, the shell's own stat comparison. By name first
@@ -1620,7 +1641,10 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
     "             straight into the next commit's diff."
   # AND AGAIN UNDER THE FILESYSTEM'S OWN EQUIVALENCE (issue #204). The question
   # above is answered BY THE BYTES; this one asks which index entries the
-  # filesystem holding the destination resolves to this same file. ':(icase)'
+  # filesystem holding the destination resolves to this same file -- as far as the
+  # two pathspecs below reach, which is ASCII case, unicode composition, and any
+  # fold the on-disk walk could resolve, but not a non-ASCII case alias with no
+  # file on disk (issue #230). ':(icase)'
   # only where case really folds there -- see _dest_folds_case, and see
   # _GIT_ALIAS_OVERRIDE for the measurement and for what forcing core.ignoreCase
   # was measured to change, which is nothing. ADDITIVE, and asked second, so a

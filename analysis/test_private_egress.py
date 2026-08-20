@@ -1423,7 +1423,8 @@ TABLE = [
              "value of core.ignoreCase -- all three were measured identical -- so "
              "both sides ask a second time with git's own ':(icase)' fold. That "
              "fold is ASCII-only (issue #224); the non-ASCII half is carried by "
-             "the on-disk spelling walk, whose fixtures are in "
+             "the on-disk spelling walk wherever the path exists on disk, and "
+             "not at all where it does not (issue #230). Its fixtures are in "
              "case_the_two_implementations_resolve_the_same_on_disk_spelling",
              probe=("private/household.yaml", "file"), single="tracked_path"),
     DestCase("a worktree holding an ON-DISK case alias", _worktree_holding_an_on_disk_case_alias,
@@ -3496,7 +3497,9 @@ def _scratch_repo_tracking_an_absent_alias(td, name):
     there under either spelling. That is the state in which the two alias probes
     stop covering for each other: the walk cannot see an index entry with no
     file, so only the ':(icase)' pathspec can, and that one is switched on by the
-    case measurement alone.
+    case measurement alone. The alias here is ASCII on purpose -- in this same
+    state a NON-ASCII cased alias is seen by neither probe, which is issue #230
+    and is not what this fixture asserts.
 
     Standalone rather than a worktree of this checkout, for the reason
     _alias_scratch_repo() gives: every worktree here shares a --local config
@@ -3585,6 +3588,14 @@ def case_the_case_measurement_follows_the_path_below_the_worktree_root():
       * an ORDINARY destination on ONE filesystem, with the measurement NOT
         forced, must get exactly the answer the root probe gives on its own --
         the walk must not turn a single-filesystem destination into a refusal.
+
+    THOSE CONTROLS ARE SCOPED TO ONE FILESYSTEM, and the scope is the honest
+    limit of what this case proves. Walking the path DOES introduce a new refusal
+    in the inverse nesting -- a case-SENSITIVE volume mounted under a folding
+    directory, where the OR along the path turns ':(icase)' on for a component
+    that does not fold, so an index entry differing only in case is reported as an
+    alias when the two are really two files. Issue #231; the direction is
+    fail-closed, and no fixture here can mount anything to assert it either way.
     """
     real_root_probe = PE._root_folds_case
     with tempfile.TemporaryDirectory() as td:
@@ -4291,6 +4302,15 @@ def case_the_two_alias_probes_each_catch_what_the_other_misses():
 
     Neither subsumes the other, and dropping either one re-opens a hole this
     branch just closed.
+
+    NEITHER SUBSUMING THE OTHER IS NOT THE SAME AS COVERING EVERYTHING BETWEEN
+    THEM, and this case does not claim that it is. The two blind spots overlap
+    where BOTH conditions hold at once -- a tracked entry with no working-tree
+    file whose name differs from the path by NON-ASCII case -- and that
+    combination is issue #230, open on purpose. The fixtures below are each
+    one-sided deliberately (an ASCII alias for the absent-entry half, a present
+    file for the non-ASCII half); a fixture combining them would be a failing
+    test of unfixed behaviour, not a guard.
     """
     with tempfile.TemporaryDirectory() as td:
         repo = _alias_scratch_repo(td, "absent-entry", "private/HOUSEHOLD.yaml")
