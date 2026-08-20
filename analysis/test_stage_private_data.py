@@ -1876,6 +1876,123 @@ def case_refuses_a_destination_that_does_not_ignore_the_paths_it_writes():
 
 
 @case
+def case_refuses_a_destination_whose_ignore_rule_names_the_other_case_spelling():
+    """ISSUE #223, end to end, in the shape the 2026-08-13 incident had.
+
+    The destination's `.gitignore` says `private/`, an UNTRACKED `Private/` sits
+    on disk, and its own configuration states no core.ignoreCase -- which is
+    ordinary for a repository git created where it did not detect a folding
+    filesystem, and which is the value "CONFIGURATION ISOLATION" adopts. Before
+    the fix:
+
+        git ls-files      -- private/1-raw-data   ->  nothing   (correct)
+        git check-ignore  -- private/1-raw-data   ->  0         IGNORED
+        git check-ignore  -- Private/1-raw-data   ->  1         NOT ignored
+
+    so the guard accepted, the copies ran into `Private/1-raw-data`, and
+    `git status` reported `?? Private/` -- the whole archive one `git add -A`
+    from a commit.
+
+    A throwaway repository of its own rather than a worktree of this checkout,
+    and that is the point rather than convenience: every worktree of this
+    checkout shares its --local config, which states core.ignoreCase=true, so
+    this destination shape cannot be built inside it at all. (Which is also why
+    the shell/python agreement table cannot carry this row and carries the
+    ACCEPTING control instead.)
+
+    The premises are measured on the fixture first, so the branch below is
+    chosen by the filesystem and not by the answer under test, and BOTH branches
+    assert: on a case-sensitive filesystem the two directories are two
+    directories, the copies create the ignored one, and refusing would be wrong.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst, script = _throwaway_checkout(td, "private/\n")
+        subprocess.run(["git", "-C", str(dst), "config", "--unset", "core.ignoreCase"],
+                       capture_output=True)
+        (dst / "Private").mkdir()
+        assert not (dst / "private" / "1-raw-data").exists()
+
+        folds = (dst / "Private").stat().st_ino == os.stat(str(dst / "private")).st_ino \
+            if os.path.exists(str(dst / "private")) else False
+        asked, reached = (_check_ignore_rc(dst, "private/1-raw-data"),
+                          _check_ignore_rc(dst, "Private/1-raw-data"))
+        before = _snapshot(dst)
+        result = _run_script(src, dst, cwd=src, script=script)
+
+        if not folds:
+            assert result.returncode == 0, (
+                "this filesystem keeps the two spellings apart, so the copies land "
+                "in the ignored private/ and the destination is correct -- refusing "
+                f"it means a correct destination is being refused: {result.stderr}")
+            assert (dst / "private" / "1-raw-data" / "gas.csv").is_file()
+            return ("this filesystem does not fold case, so Private/ and private/ "
+                    "are two directories and the destination is accepted -- "
+                    "correctly")
+
+        assert asked == 0 and reached == 1, (
+            f"the fixture no longer reproduces: check-ignore private/1-raw-data "
+            f"exited {asked} and Private/1-raw-data exited {reached}")
+        _assert_refused(result, dst, before,
+                        "a destination whose rule names the other case spelling")
+        assert "actually reaches" in result.stderr, result.stderr
+        assert "Private/1-raw-data" in result.stderr, (
+            "the refusal does not name the spelling the copies would land on, so "
+            "the operator cannot find it: " + result.stderr)
+        status = subprocess.run(["git", "-C", str(dst), "status", "--porcelain",
+                                 "--untracked-files=all"], capture_output=True, text=True)
+        assert "rivate/1-raw-data" not in status.stdout, (
+            f"the archive reached a path this destination does not ignore: "
+            f"{status.stdout}")
+    return ("a destination that ignores private/ and holds an untracked Private/ "
+            "on a folding filesystem is refused, with the spelling the copies "
+            "would have reached named in the message and nothing written")
+
+
+@case
+def case_refuses_a_component_it_cannot_read_before_any_write():
+    """The failure mode the on-disk walk creates (issue #223), in the shell.
+
+    With `private/` unreadable the script cannot say which spelling a write to
+    `private/1-raw-data` reaches, so it must not ask git about any spelling. It
+    fails closed under its own headline -- not "does not gitignore", whose
+    remedy is a .gitignore edit that would fix nothing here.
+
+    The positive control is the same destination with its permissions back, in
+    the same run: it stages in full.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst, script = _throwaway_checkout(td, "private/\n")
+        blocked = dst / "private"
+        blocked.mkdir()
+        try:
+            blocked.chmod(0o000)
+            before = _snapshot(dst)
+            result = _run_script(src, dst, cwd=src, script=script)
+            assert result.returncode != 0, (
+                "an unreadable directory on the way to every staged path was "
+                "accepted: " + result.stdout[-400:])
+            assert "on-disk spelling" in result.stderr, result.stderr
+            assert "does not gitignore" not in result.stderr, (
+                "an unanswerable question was reported as a wrong answer, which "
+                "sends the operator to edit a .gitignore that is correct: "
+                + result.stderr)
+        finally:
+            blocked.chmod(0o755)
+        assert _snapshot(dst) == before, "the refused run wrote something"
+        ok = _run_script(src, dst, cwd=src, script=script)
+        assert ok.returncode == 0, (
+            "the same destination is refused with its permissions restored, so the "
+            f"refusal above is not attributable to the unreadable directory: "
+            f"{ok.stderr}")
+        assert (dst / "private" / "1-raw-data" / "gas.csv").is_file()
+    return ("a directory the script cannot read on the way to its destinations is "
+            "refused under its own headline with nothing written, and the same "
+            "destination stages in full once it can be read")
+
+
+@case
 def case_refuses_a_destination_that_tracks_a_path_it_writes():
     """The other half of "cannot become committable". A path can be covered by
     .gitignore and still be TRACKED -- `git add -f` is one command away, and a

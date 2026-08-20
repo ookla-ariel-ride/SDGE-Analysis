@@ -994,6 +994,10 @@ SHELL_HEADLINES = {
     "destination is not a REGISTERED worktree of this checkout": "not_registered",
     "the destination TRACKS a path this script writes": "tracked_path",
     "the destination does not gitignore a path this script writes": "not_ignored",
+    "the destination does not gitignore the path a write to it actually reaches":
+        "aliased_not_ignored",
+    "the destination's on-disk spelling of a path this script writes could not be "
+    "resolved": "spelling_unresolved",
     "the destination could not say whether it ignores a path this script writes":
         "ignore_unanswerable",
     "the destination could not be asked which paths it tracks": "tracked_unanswerable",
@@ -1092,7 +1096,7 @@ class DestCase:
     """
 
     def __init__(self, name, build, expect, why, probe=None, single=None,
-                 asymmetry=None, single_na=None):
+                 asymmetry=None, single_na=None, teardown=None):
         self.name = name
         self.build = build          # (td, worktree_or_None) -> (dest, env|None)
         self.expect = expect        # None to accept, else a reason code
@@ -1101,6 +1105,13 @@ class DestCase:
         self.single = single        # check_destination's verdict on that probe
         self.asymmetry = asymmetry  # required when single != expect
         self.single_na = single_na  # required when probe is None
+        # Undo whatever the builder did that would otherwise outlive the case.
+        # Exactly one row needs it: a fixture that makes a directory unreadable
+        # leaves a tree that neither `git worktree remove` nor TemporaryDirectory
+        # can clear, so the run's own cleanup would fail for a reason unrelated
+        # to what it was testing. Called in a `finally`, so a case that raises
+        # mid-way still hands the tree back.
+        self.teardown = teardown    # (dest) -> None, or None
         # Every builder takes (td, worktree_or_None); the ones that need a real
         # worktree name that second parameter `wt` and the ones that do not name
         # it `_wt`. Exact equality, not a substring test: a rename that silently
@@ -1218,6 +1229,52 @@ def _worktree_tracking_a_case_aliased_staged_path(td, wt):
     subprocess.run(["git", "-C", str(wt), "add", "-f", "private/HOUSEHOLD.yaml"],
                    capture_output=True, check=True)
     return wt, None
+
+
+def _worktree_holding_an_on_disk_case_alias(td, wt):
+    """The ACCEPTING half of issues #223/#224, and the control the refusing
+    fixtures need: the destination already holds `private/1-RAW-DATA` on disk,
+    so on a case-folding filesystem the copies land there rather than in the
+    `private/1-raw-data` both implementations were asked about.
+
+    It must still be ACCEPTED, because this destination really is safe: the
+    tree's own git states core.ignoreCase=true (git wrote it when it detected
+    the folding), so its `private/` rule covers the other spelling too, and
+    `git status` reports nothing. On a case-SENSITIVE filesystem the two are two
+    directories, the copies create the lowercase one, and it is ignored for the
+    ordinary reason. Same verdict on both kinds of machine, for two different
+    correct reasons -- which is what makes it a control the on-disk walk cannot
+    pass by refusing everything it cannot spell.
+    """
+    (wt / "private" / "1-RAW-DATA").mkdir(parents=True, exist_ok=True)
+    return wt, None
+
+
+def _worktree_whose_private_directory_cannot_be_read(td, wt):
+    """A directory ON THE WAY to every path the copies write, with no read and
+    no search permission (issue #223).
+
+    The new failure mode the on-disk walk creates, and the reason it gets a code
+    of its own. Neither implementation can say WHICH path a write to
+    `private/1-raw-data` lands on -- the folded spelling is decided by an entry
+    of `private/`, and `private/` cannot be listed -- and "somewhere under
+    there" is not a property to write a private archive on. It is not
+    `not_ignored`: that says the tree would commit the path, and here the
+    question of which path it is has not been answered yet.
+
+    Platform-independent, unlike the case-fold fixtures around it: a directory
+    with no permissions is unreadable on every filesystem this runs on, so this
+    is the row that exercises the code on CI as well.
+    """
+    (wt / "private").chmod(0o000)
+    return wt, None
+
+
+def _restore_private_directory(dest):
+    """Give the mode back, or neither `git worktree remove` nor the case's own
+    TemporaryDirectory can clear the tree."""
+    with contextlib.suppress(OSError):
+        (pathlib.Path(dest) / "private").chmod(0o755)
 
 
 def _symlink_at_raw_data(td, wt):
@@ -1360,8 +1417,29 @@ TABLE = [
              "asks about, and on a case-folding filesystem the write lands on a "
              "committed file anyway. The literal pathspec cannot see it at any "
              "value of core.ignoreCase -- all three were measured identical -- so "
-             "both sides ask a second time with git's own ':(icase)' fold",
+             "both sides ask a second time with git's own ':(icase)' fold. That "
+             "fold is ASCII-only (issue #224); the non-ASCII half is carried by "
+             "the on-disk spelling walk, whose fixtures are in "
+             "case_the_two_implementations_resolve_the_same_on_disk_spelling",
              probe=("private/household.yaml", "file"), single="tracked_path"),
+    DestCase("a worktree holding an ON-DISK case alias", _worktree_holding_an_on_disk_case_alias,
+             None,
+             "issues #223/#224's accepting control: the copies land in "
+             "private/1-RAW-DATA where the filesystem folds, and that is fine "
+             "here because this tree's own git folds the same way. The on-disk "
+             "walk must not turn a correct destination into a refusal -- a "
+             "guard that refuses correct input is the shape that gets guards "
+             "switched off",
+             probe=("private/1-raw-data", "dir"), single=None),
+    DestCase("a worktree whose private/ cannot be read",
+             _worktree_whose_private_directory_cannot_be_read, "spelling_unresolved",
+             "issue #223's new failure mode: with private/ unlistable neither "
+             "implementation can say which spelling a write to "
+             "private/1-raw-data reaches, so neither may ask git about it. Fails "
+             "closed under its own code, because 'I cannot name the path' is not "
+             "'that path is committable'",
+             probe=("private/1-raw-data", "dir"), single="spelling_unresolved",
+             teardown=_restore_private_directory),
     DestCase("a symlink at private/1-raw-data", _symlink_at_raw_data,
              "symlink_component", "",
              probe=("private/1-raw-data/gas.csv", "file"), single="symlink_component"),
@@ -1500,6 +1578,17 @@ API_REACH = {
     "not_ignored":          (ALL_KINDS - {"root"},
                              "as tracked_path: the ignore question is asked of a "
                              "path INSIDE a worktree, never of the worktree"),
+    "aliased_not_ignored":  (ALL_KINDS - {"root"},
+                             "as not_ignored, which it is a sharpening of: the "
+                             "ignore question is asked of a path inside a worktree, "
+                             "and this is the answer when the path the write "
+                             "REACHES is not the path it was asked about"),
+    "spelling_unresolved":  (ALL_KINDS - {"root"},
+                             "raised while resolving a RELATIVE path to the spelling "
+                             "its filesystem holds, which is the first thing "
+                             "_require_uncommittable does -- so it reaches exactly "
+                             "the kinds that ask the committability question. A "
+                             "kind='root' destination has no relative path to walk"),
     "ignore_unanswerable":  (ALL_KINDS - {"root"},
                              "as tracked_path; check_write_set() also reaches it for "
                              "the declared set, which is how a link at private/ is "
@@ -3538,6 +3627,422 @@ def case_the_alias_probe_value_is_read_back_before_the_probe_is_believed():
             "with the real git")
 
 
+# ===========================================================================
+# ISSUES #223 / #224 -- the on-disk spelling walk: every question asked about
+# the path the write REACHES rather than the path the caller typed.
+# ===========================================================================
+_ONDISK_FN = re.compile(r"^_ondisk_spelling\(\) \{[^\n]*\n(.*?)\n\}$", re.M | re.S)
+
+# A harness that runs the SHELL SCRIPT'S OWN _ondisk_spelling and nothing else:
+# the function is lifted out of the file verbatim, given the two globals it
+# reads and a _refuse that reports rather than writes. Lifting it -- rather than
+# reimplementing what it "does" -- is the point: a test that paraphrased the
+# walk would agree with a paraphrase of the python one and prove nothing about
+# either file.
+_ONDISK_HARNESS = """set -euo pipefail
+DST=$1
+DST_REAL=$1
+_refuse() { printf 'REFUSED\\n' >&2; exit 3; }
+_ondisk_spelling() {
+%s
+}
+_ondisk_spelling "$2"
+printf '%%s\\n' "$_ONDISK_REL"
+"""
+
+
+def _shell_ondisk(root, relpath):
+    """('OK', resolved) or ('REFUSED', '') from the shell's own walk."""
+    body = _ONDISK_FN.search(SCRIPT.read_text())
+    assert body, ("stage-private-data.sh no longer defines _ondisk_spelling, so "
+                  "its three questions are asked about the path that was typed "
+                  "rather than the path a write reaches (issues #223, #224)")
+    r = subprocess.run(["/bin/bash", "-c", _ONDISK_HARNESS % body.group(1),
+                        "bash", str(root), relpath],
+                       capture_output=True, text=True)
+    if r.returncode == 3:
+        return ("REFUSED", "")
+    assert r.returncode == 0, (
+        f"the shell walk exited {r.returncode} on {relpath!r}: {r.stderr[-400:]!r}")
+    return ("OK", r.stdout.rstrip("\n"))
+
+
+def _python_ondisk(root, relpath):
+    try:
+        return ("OK", PE._ondisk_relpath(str(root), relpath))
+    except PE.DestinationRefused as e:
+        assert e.reason == "spelling_unresolved", e.reason
+        return ("REFUSED", "")
+
+
+@case
+def case_the_two_implementations_resolve_the_same_on_disk_spelling():
+    """THE AGREEMENT TABLE FOR THIS CHANGE, and the one that carries the
+    non-ASCII fixture.
+
+    The destination table above compares the two implementations end to end, and
+    it CANNOT carry #224's case: stage-private-data.sh declares three paths and
+    all three are pure ASCII, so no non-ASCII alias of them exists to build. That
+    is exactly how the shared bug survived an 18-row green table -- agreement on
+    fixtures neither side can reach proves nothing. So the two walks are compared
+    directly, on fixtures chosen for what the FILESYSTEM does rather than for
+    what the script happens to name, with the shell's own function lifted out of
+    the file rather than described.
+
+    Every row is measured on both sides in the same run, and the expectation for
+    the alias rows is taken from the filesystem itself: where it folds, the walk
+    must return the OTHER spelling; where it does not, it must return the one it
+    was given. Both branches assert -- a walk that renamed a component on a
+    case-sensitive filesystem would be refusing correct destinations.
+
+    THE INSTRUMENT HAS ITS OWN POSITIVE CONTROL: the unreadable-directory row
+    must come back REFUSED from both sides on every filesystem, so a harness
+    that silently ran nothing could not pass this case.
+    """
+    rows, bad = [], []
+    with tempfile.TemporaryDirectory() as td:
+        base = pathlib.Path(td)
+
+        def fixture(name):
+            d = base / name
+            (d / "private").mkdir(parents=True)
+            return d
+
+        plain = fixture("plain")
+        (plain / "private" / "1-raw-data").mkdir()
+        ascii_alias = fixture("ascii-alias")
+        (ascii_alias / "private" / "1-RAW-DATA").mkdir()
+        wide_alias = fixture("nonascii-alias")
+        (wide_alias / "private" / "VÉRIFY").mkdir()
+        nfd = fixture("composition")
+        (nfd / "private" / unicodedata.normalize("NFC", "houséhold.yaml")).write_text("x\n")
+        nondir = fixture("non-directory")
+        (nondir / "private" / "1-raw-data").write_text("not a directory\n")
+        dangling = fixture("dangling")
+        (dangling / "private" / "1-RAW-DATA").symlink_to("/no-such-target-anywhere")
+        unreadable = fixture("unreadable")
+        (unreadable / "private" / "1-raw-data").mkdir()
+        (unreadable / "private").chmod(0o000)
+        # Readable and NOT searchable, which is the mode the two implementations
+        # would part company on: os.listdir SUCCEEDS at 0444 while the shell's
+        # `[ -x ]` fails, so python needs its own os.access() to refuse where the
+        # shell does. Measured, not assumed -- this row is the measurement.
+        unsearchable = fixture("unsearchable")
+        (unsearchable / "private" / "1-RAW-DATA").mkdir()
+        (unsearchable / "private").chmod(0o444)
+
+        folds = PE._same_file(str(ascii_alias / "private" / "1-RAW-DATA"),
+                              str(ascii_alias / "private" / "1-raw-data"))
+        wide_folds = PE._same_file(str(wide_alias / "private" / "VÉRIFY"),
+                                   str(wide_alias / "private" / "vérify"))
+
+        # (label, root, relpath, expected) -- expected is ('OK', spelling) or
+        # ('REFUSED', ''), and the alias rows take theirs from the measurement.
+        table = [
+            ("both components present", plain, "private/1-raw-data",
+             ("OK", "private/1-raw-data")),
+            ("nothing there yet", plain, "private/verify",
+             ("OK", "private/verify")),
+            ("nothing there yet, two levels", plain, "private/verify/usage.csv",
+             ("OK", "private/verify/usage.csv")),
+            ("ASCII case alias on disk", ascii_alias, "private/1-raw-data",
+             ("OK", "private/1-RAW-DATA" if folds else "private/1-raw-data")),
+            ("ASCII case alias, path below it", ascii_alias,
+             "private/1-raw-data/gas.csv",
+             ("OK", ("private/1-RAW-DATA/gas.csv" if folds
+                     else "private/1-raw-data/gas.csv"))),
+            ("NON-ASCII case alias on disk", wide_alias, "private/vérify",
+             ("OK", "private/VÉRIFY" if wide_folds else "private/vérify")),
+            ("composed on disk, decomposed asked", nfd,
+             "private/" + unicodedata.normalize("NFD", "houséhold.yaml"),
+             ("OK", "private/" + unicodedata.normalize(
+                 "NFC" if PE._same_file(
+                     str(nfd / "private" / unicodedata.normalize("NFC", "houséhold.yaml")),
+                     str(nfd / "private" / unicodedata.normalize("NFD", "houséhold.yaml")))
+                 else "NFD", "houséhold.yaml"))),
+            ("a regular file mid-path", nondir, "private/1-raw-data/gas.csv",
+             ("OK", "private/1-raw-data/gas.csv")),
+            ("case-aliased DANGLING symlink", dangling, "private/1-raw-data",
+             ("REFUSED", "") if folds else ("OK", "private/1-raw-data")),
+            ("UNREADABLE directory mid-path", unreadable, "private/1-raw-data",
+             ("REFUSED", "")),
+            ("readable but UNSEARCHABLE mid-path", unsearchable,
+             "private/1-raw-data", ("REFUSED", "")),
+        ]
+        try:
+            for label, root, rel, expected in table:
+                sh, py = _shell_ondisk(root, rel), _python_ondisk(root, rel)
+                agree = sh == py
+                rows.append(f"  {label:<38} {rel:<34} shell={sh[0]}:{sh[1]:<28} "
+                            f"python={py[0]}:{py[1]}")
+                if not agree:
+                    bad.append(f"{label}: shell={sh!r} python={py!r}")
+                elif sh != expected:
+                    bad.append(f"{label}: both said {sh!r}, this filesystem makes "
+                               f"{expected!r} the right answer")
+        finally:
+            (unreadable / "private").chmod(0o755)
+            (unsearchable / "private").chmod(0o755)
+
+    # The instrument really ran: an unreadable component came back refused on
+    # both sides (asserted in the loop, on every filesystem), and -- where this
+    # one folds -- at least one row really was renamed.
+    assert not bad, "; ".join(bad)
+    renamed = [t for t in table if t[3][0] == "OK" and t[3][1] != t[2]]
+    if folds:
+        assert renamed, ("this filesystem folds case and not one fixture resolved "
+                         "to a different spelling -- the table is vacuous here")
+    print(f"  {'fixture':<38} {'asked':<34} the two walks")
+    print("\n".join(rows))
+    closed = [t for t in table if t[3][0] == "REFUSED"]
+    return (f"the shell's own _ondisk_spelling and _ondisk_relpath() agree on all "
+            f"{len(table)} fixtures (this filesystem folds ASCII case: {folds}, "
+            f"non-ASCII case: {wide_folds}), including {len(renamed)} the "
+            f"filesystem renames and {len(closed)} that fail closed")
+
+
+@case
+def case_a_non_ascii_case_aliased_tracked_path_is_refused():
+    """ISSUE #224's headline: `:(icase)` is BYTE-oriented, so #204's fold caught
+    the ASCII half of the tracked question and nothing else.
+
+    Reproduced first, in this case's own fixture and printed by its message: the
+    ASCII pathspec fold finds the aliased entry and the non-ASCII one does not,
+    in ONE repository, so the contrast cannot be an artifact of two fixtures.
+    The guard must refuse both, and must still accept an ordinary path in the
+    same repository.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        repo = _alias_scratch_repo(td, "wide-cased", "private/HOUSEHÖLD.yaml")
+        (repo / "private" / "HOUSEHOLD.yaml").write_text("the ASCII control\n")
+        subprocess.run(["git", "-C", str(repo), "add", "-f", "--",
+                        "private/HOUSEHOLD.yaml"], capture_output=True, check=True)
+        _make_case_folding(repo)
+        overrides = PE._destination_overrides(str(repo))
+        alias = PE._alias_overrides(overrides)
+
+        # THE REPRODUCTION, taken before anything is asked of the guard.
+        found = {}
+        for rel in ("private/household.yaml", "private/househöld.yaml"):
+            r = PE._git(["ls-files", "--", PE._alias_pathspec(rel, True)],
+                        str(repo), None, alias)
+            found[rel] = r.stdout.strip()
+        assert found["private/household.yaml"], (
+            "the ASCII control is not found by ':(icase)' either, so this fixture "
+            "does not show what the byte fold can and cannot reach")
+        if not PE._same_file(str(repo / "private" / "HOUSEHÖLD.yaml"),
+                             str(repo / "private" / "househöld.yaml")):
+            # A case-sensitive filesystem: the two ARE two files, and refusing
+            # would be wrong. Assert that instead of skipping.
+            try:
+                PE._require_uncommittable(str(repo), "private/househöld.yaml")
+            except PE.DestinationRefused as e:      # pragma: no cover - platform
+                raise AssertionError(
+                    "this filesystem keeps the two spellings apart and the guard "
+                    f"refused anyway ({e.reason}): a correct destination is being "
+                    "refused")
+            return ("this filesystem does not fold non-ASCII case, so the two "
+                    "spellings are two files and the guard accepts -- correctly")
+
+        assert not found["private/househöld.yaml"], (
+            "':(icase)' found the non-ASCII alias, so issue #224's premise no "
+            f"longer holds on this git: {found['private/househöld.yaml']!r}")
+
+        try:
+            PE._require_uncommittable(str(repo), "private/househöld.yaml")
+        except PE.DestinationRefused as e:
+            assert e.reason == "tracked_path", (
+                f"the write lands on a COMMITTED file and the guard called it "
+                f"{e.reason!r}. Drop the on-disk spelling from the tracked "
+                "pathspecs and this is what comes back instead: the ignore "
+                "question then answers about a tracked path, which is fail-closed "
+                "but names the wrong remedy -- a .gitignore edit for a file that "
+                f"is in the index. {e.detail[:200]}")
+            assert "HOUSEH" in e.detail, (
+                f"the refusal does not name the committed spelling: {e.detail}")
+        else:
+            raise AssertionError(
+                "private/househöld.yaml was accepted in a repository whose index "
+                "holds private/HOUSEHÖLD.yaml and whose filesystem resolves the "
+                "two to one file -- the write lands on a committed file")
+
+        # THE ASCII CASE FROM #204 STILL REFUSES, and an ordinary path in the
+        # same repository is still accepted. Same run, or the refusal above says
+        # more about the instrument than about the alias.
+        try:
+            PE._require_uncommittable(str(repo), "private/household.yaml")
+        except PE.DestinationRefused as e:
+            assert e.reason == "tracked_path", e.reason
+        else:
+            raise AssertionError("#204's ASCII case stopped being refused")
+        PE._require_uncommittable(str(repo), "private/verify")
+    return ("a tracked path reachable only by NON-ASCII case folding is refused "
+            "as tracked_path in a repository where ':(icase)' finds the ASCII "
+            "alias and misses this one, #204's ASCII case still refuses, and an "
+            "ordinary path in the same repository is still accepted")
+
+
+@case
+def case_an_ignore_rule_that_names_only_the_other_spelling_is_refused():
+    """ISSUE #223: the destination ignores the path AS SPELLED and does not
+    ignore the path the write reaches.
+
+    The fixture is the incident shape: `.gitignore` says `private/`, an
+    UNTRACKED `Private/` sits on disk, and core.ignoreCase is what #193 forces
+    when the repository states none -- false. `ls-files` correctly finds nothing
+    (nothing is tracked), `check-ignore` on the typed spelling says "ignored",
+    and the archive lands in a directory `git status` reports as `?? Private/`.
+
+    Measured here before the guard is asked, so the branch below is chosen by
+    the filesystem rather than by the answer under test, and both branches
+    assert. The positive control is in the same repository and the same run.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        # Built here rather than with _alias_scratch_repo: that helper creates a
+        # LOWERCASE private/ for the entry it commits, and on a folding
+        # filesystem a later mkdir of `Private` is then a no-op -- the fixture
+        # would hold the spelling the rule names and reproduce nothing. Only the
+        # capitalised directory exists here, and nothing is tracked under it.
+        repo = pathlib.Path(td) / "ignore-aliased"
+        repo.mkdir()
+        for args in (["init", "-q", "."],
+                     ["config", "core.precomposeUnicode", "false"],
+                     ["config", "core.ignoreCase", "false"]):
+            subprocess.run(["git", "-C", str(repo)] + args,
+                           capture_output=True, check=True)
+        # `elsewhere/` is the positive control's rule: an ignored path with no
+        # on-disk alias, in the same repository, asked in the same run.
+        (repo / ".gitignore").write_text("private/\nelsewhere/\n")
+        subprocess.run(["git", "-C", str(repo), "add", "--", ".gitignore"],
+                       capture_output=True, check=True)
+        (repo / "Private").mkdir()
+        assert sorted(p.name for p in repo.iterdir() if p.name != ".git") == \
+            [".gitignore", "Private"], "the fixture holds the spelling the rule names"
+        overrides = PE._destination_overrides(str(repo))
+        asked = PE._git(["check-ignore", "-q", "--", PE._pathspec("private/1-raw-data")],
+                        str(repo), None, overrides).returncode
+        reached = PE._git(["check-ignore", "-q", "--", PE._pathspec("Private/1-raw-data")],
+                          str(repo), None, overrides).returncode
+        folds = PE._same_file(str(repo / "Private"), str(repo / "private"))
+
+        verdict = None
+        try:
+            PE._require_uncommittable(str(repo), "private/1-raw-data")
+        except PE.DestinationRefused as e:
+            verdict = e.reason
+        if folds and asked == 0 and reached == 1:
+            assert verdict == "aliased_not_ignored", (
+                f"check-ignore says private/1-raw-data is ignored (rc {asked}) and "
+                f"Private/1-raw-data is not (rc {reached}), the filesystem resolves "
+                f"the two to one directory, and the guard said {verdict!r} -- the "
+                "archive lands in a path one 'git add -A' from a commit")
+        else:
+            assert verdict is None, (
+                f"this fixture holds no alias here (folds={folds}, asked rc "
+                f"{asked}, reached rc {reached}) and the guard refused anyway "
+                f"({verdict!r}): a correct destination is being refused")
+
+        # POSITIVE CONTROL, same repository, same run: an ordinary ignored path
+        # with no on-disk alias is still accepted.
+        PE._require_uncommittable(str(repo), "elsewhere/cache")
+    return (f"an ignore rule covering only the typed spelling is refused as "
+            f"aliased_not_ignored where the filesystem folds (it does: {folds}); "
+            "an ordinary path in the same repository is still accepted")
+
+
+@case
+def case_the_two_alias_probes_each_catch_what_the_other_misses():
+    """WHY BOTH PROBES STAY -- the ':(icase)' pathspec AND the on-disk walk.
+
+    The obvious simplification after #223/#224 is to drop the pathspec fold now
+    that the walk asks about the real spelling. Measured here, and it is wrong in
+    both directions:
+
+      * an index entry whose working-tree file is ABSENT (tracked, deleted in the
+        tree, not committed) has no on-disk spelling for the walk to resolve, so
+        only ':(icase)' finds it;
+      * a file present under a NON-ASCII cased name is invisible to ':(icase)',
+        so only the walk finds it.
+
+    Neither subsumes the other, and dropping either one re-opens a hole this
+    branch just closed.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        repo = _alias_scratch_repo(td, "absent-entry", "private/HOUSEHOLD.yaml")
+        _make_case_folding(repo)
+        # Tracked, and gone from the working tree -- git keeps the index entry.
+        os.unlink(repo / "private" / "HOUSEHOLD.yaml")
+        assert not os.path.lexists(str(repo / "private" / "HOUSEHOLD.yaml"))
+        walked = PE._ondisk_relpath(str(repo), "private/household.yaml")
+        assert walked == "private/household.yaml", (
+            f"the walk resolved an absent entry to {walked!r}; if it can do that, "
+            "the claim below needs re-measuring")
+        try:
+            PE._require_uncommittable(str(repo), "private/household.yaml")
+        except PE.DestinationRefused as e:
+            assert e.reason == "tracked_path", e.reason
+        else:
+            raise AssertionError(
+                "a tracked entry with no file in the working tree was accepted: "
+                "the ':(icase)' probe is the only thing that sees it, and "
+                "dropping it would re-open issue #204's case")
+
+        # The other direction, on the fixture the pathspec fold cannot reach.
+        wide = _alias_scratch_repo(td, "wide-only", "private/BÍLLS.csv")
+        _make_case_folding(wide)
+        byte_fold = PE._git(
+            ["ls-files", "--", PE._alias_pathspec("private/bílls.csv", True)],
+            str(wide), None, PE._alias_overrides(PE._destination_overrides(str(wide))))
+        if PE._same_file(str(wide / "private" / "BÍLLS.csv"),
+                         str(wide / "private" / "bílls.csv")):
+            assert not byte_fold.stdout.strip(), (
+                "':(icase)' now folds non-ASCII case on this git, so this half of "
+                "the claim needs re-measuring")
+            assert PE._ondisk_relpath(str(wide), "private/bílls.csv") == \
+                "private/BÍLLS.csv", "the walk did not find what the byte fold missed"
+    return ("the pathspec fold is the only probe that sees a tracked entry with "
+            "no working-tree file, and the on-disk walk is the only one that "
+            "sees a non-ASCII cased name: neither probe subsumes the other")
+
+
+@case
+def case_a_component_that_cannot_be_read_fails_closed_through_both_apis():
+    """The failure mode the walk creates, through the PUBLIC doors.
+
+    A directory on the way to the destination with neither read nor search
+    permission means neither implementation can say which path a write lands on.
+    That is refused under its own code -- not `not_ignored`, which claims the
+    tree would commit the path, and not `scan_unreadable`, which is about
+    clearing a subtree of links -- because its remedy is its own: fix the
+    permissions, or name a destination this run can read.
+
+    The positive control is the same tree with its permissions back.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        with _register_entries_confined_to(td), _worktree(td) as wt:
+            blocked = wt / "private"
+            try:
+                blocked.chmod(0o000)
+                single = _single_verdict(wt / "private" / "1-raw-data", "dir")
+                whole = None
+                try:
+                    PE.check_write_set(wt, dirs=("private/1-raw-data",))
+                except PE.DestinationRefused as e:
+                    whole = e.reason
+            finally:
+                blocked.chmod(0o755)
+            assert single == "spelling_unresolved", single
+            assert whole == "spelling_unresolved", whole
+            assert PE.REASONS["spelling_unresolved"] != PE.REASONS["not_ignored"]
+            # POSITIVE CONTROL: permissions back, same tree, same run.
+            assert _single_verdict(wt / "private" / "1-raw-data", "dir") is None, (
+                "the same destination is refused with its permissions restored, so "
+                "the refusal above is not attributable to the unreadable directory")
+    return ("an unreadable directory on the way to the destination is refused as "
+            "spelling_unresolved through both public APIs, and the same "
+            "destination is accepted once it can be read")
+
+
 @case
 def case_both_implementations_fold_the_alias_question_the_same_way():
     """The mechanism, compared against the SHELL SCRIPT'S OWN TEXT.
@@ -3596,6 +4101,28 @@ def case_both_implementations_fold_the_alias_question_the_same_way():
     assert "-ef" in folds.group(1), (
         "the shell's case measurement no longer compares device and inode, so it "
         "is not measuring the filesystem")
+
+    # AND THE ON-DISK WALK (issues #223, #224). Its behaviour is compared row by
+    # row in case_the_two_implementations_resolve_the_same_on_disk_spelling; what
+    # is checked here is that the shell really USES it, for all three questions,
+    # which a behavioural comparison of the function alone cannot see.
+    body = re.search(r"^_require_uncommittable\(\) \{[^\n]*\n(.*?)\n\}$", text,
+                     re.M | re.S)
+    assert body, "stage-private-data.sh no longer defines _require_uncommittable"
+    asks = body.group(1)
+    assert "_ondisk_spelling \"$rel\"" in asks and "ondisk=$_ONDISK_REL" in asks, (
+        "stage-private-data.sh no longer resolves the path to its on-disk "
+        "spelling before asking about it, so an untracked directory under "
+        "another case spelling takes the archive again (issue #223)")
+    assert 'check-ignore -q -- "$ondisk"' in asks, (
+        "the shell asks check-ignore about the path that was TYPED rather than "
+        "the path a write reaches -- issue #223's defect exactly")
+    assert '"$aliasspec" "$ondiskspec"' in asks, (
+        "the shell's alias question no longer carries the on-disk spelling as a "
+        "second pathspec, so a tracked entry whose name differs by non-ASCII "
+        "case goes unseen (issue #224)")
+    assert asks.index("_ondisk_spelling") < asks.index("ls-files"), (
+        "the walk runs after the first question it is supposed to inform")
     return ("both implementations force the same alias configuration "
             f"({dict(PE.ALIAS_CONFIG_OVERRIDE)}), fold case with git's own "
             f"':(icase)' only where {PE.CASE_PROBE_NAME}/{PE.CASE_PROBE_ALIAS} "
@@ -3874,36 +4401,12 @@ def case_the_shell_and_the_python_predicate_agree_on_every_destination():
             ctx = _worktree(td) if tc.needs_worktree else contextlib.nullcontext(None)
             with ctx as wt:
                 dest, env = tc.build(pathlib.Path(td), wt)
-                shell = _shell_verdict(_run_shell(src, dest, cwd=td, env=env))
-                saved = dict(os.environ)
                 try:
-                    if env is not None:
-                        # The python side must sanitize the SAME environment,
-                        # so it is really set in this process rather than
-                        # handed over as a parameter it could ignore.
-                        os.environ.update({k: v for k, v in env.items()
-                                           if k not in saved or saved[k] != v})
-                    py = _python_verdict(dest, src)
-                    single = kind = None
-                    if tc.probe is not None:
-                        rel, kind = tc.probe
-                        probe = pathlib.Path(dest) / rel if rel else pathlib.Path(dest)
-                        single = _single_verdict(probe, kind)
+                    shell, py, single, kind = _run_one_table_case(
+                        tc, td, src, dest, env, bad)
                 finally:
-                    os.environ.clear()
-                    os.environ.update(saved)
-                # ... and the same forged environment handed over as a
-                # PARAMETER -- through the private door that carries it, since
-                # no public one does -- must reach the same verdict as really
-                # having it in the process. The two are the same sanitizer or
-                # every env fixture in this table proves nothing about the
-                # parameter, which is the form an in-process caller uses.
-                if env is not None:
-                    by_param = _python_verdict(dest, src, env=env)
-                    if by_param != py:
-                        bad.append(f"{tc.name}: the forged environment gives "
-                                   f"{py!r} when set in the process and "
-                                   f"{by_param!r} when passed as env=")
+                    if tc.teardown is not None:
+                        tc.teardown(dest)
         shown = (f"{kind}:{single or 'ACCEPT'}" if tc.probe is not None
                  else f"n/a -- {tc.single_na[:40]}")
         # The marker reports what the TABLE declares, not what this run
@@ -3925,6 +4428,44 @@ def case_the_shell_and_the_python_predicate_agree_on_every_destination():
     assert not bad, "the implementations disagree: " + "; ".join(bad)
     return (f"the shell and check_write_set() agree on all {len(TABLE)} cases, and "
             f"check_destination() returns the declared verdict on every one")
+
+
+def _run_one_table_case(tc, td, src, dest, env, bad):
+    """One row, asked of all three runners: (shell, check_write_set,
+    check_destination, probe kind).
+
+    Split out of the loop above only so the row's teardown can sit in a
+    `finally` around it without the whole body moving an indent level.
+    """
+    shell = _shell_verdict(_run_shell(src, dest, cwd=td, env=env))
+    saved = dict(os.environ)
+    try:
+        if env is not None:
+            # The python side must sanitize the SAME environment, so it is
+            # really set in this process rather than handed over as a parameter
+            # it could ignore.
+            os.environ.update({k: v for k, v in env.items()
+                               if k not in saved or saved[k] != v})
+        py = _python_verdict(dest, src)
+        single = kind = None
+        if tc.probe is not None:
+            rel, kind = tc.probe
+            probe = pathlib.Path(dest) / rel if rel else pathlib.Path(dest)
+            single = _single_verdict(probe, kind)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+    # ... and the same forged environment handed over as a PARAMETER -- through
+    # the private door that carries it, since no public one does -- must reach
+    # the same verdict as really having it in the process. The two are the same
+    # sanitizer or every env fixture in this table proves nothing about the
+    # parameter, which is the form an in-process caller uses.
+    if env is not None:
+        by_param = _python_verdict(dest, src, env=env)
+        if by_param != py:
+            bad.append(f"{tc.name}: the forged environment gives {py!r} when set "
+                       f"in the process and {by_param!r} when passed as env=")
+    return shell, py, single, kind
 
 
 # ===========================================================================
