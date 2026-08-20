@@ -420,7 +420,9 @@ land in `deep_results.json`.
 2. **Phantom/baseload — SUPERSEDED WORKPAPER (issue #140). Not published anywhere in the
    report; do not cite it.** Take 3–5 am intervals with `Consumption ≤ 0.5` kWh (excludes EV
    charging); baseload kW = 25th percentile × 4 → 1.02 kW → 8,935 kWh/yr. **Energy only: this
-   block states no dollar figure** (issue #172). The price of this load is §3.28's, from
+   block states no dollar figure** (issue #172). The always-on load this block estimates is
+   priced in §3.28 — but from that section's own **separate** measurement of it, by a
+   different extraction rule, not from the 1.02 kW figure above:
    `analysis/quiet_night_floor.py` → `data/quiet_night_floor.json`.
 
    It used to state one. `annual_cost_at_blend` was the annual kWh times a hardcoded flat
@@ -431,8 +433,15 @@ land in `deep_results.json`.
    by how many fall in each season × period), so the same 8,935 kWh is about **$3,353** on a
    flat blend — the literal priced the energy **47% low**, an understatement rather than the
    upper bound this document once called it. The field was **deleted rather than repriced**,
-   for two reasons. `quiet_night_floor.py` already prices this identical load two ways through
-   `rates.py` and those two agree to 1.2% (§3.28), so a reprice here would put a third number
+   for two reasons. `quiet_night_floor.py` already prices the always-on load two ways through
+   `rates.py` and those two agree to 1.2% (§3.28), and those are the report's figures. What it
+   prices is its **own** estimate of that load, not this block's: it applies an independently
+   designed per-**night** rule (the 1–5 am median import power; a night is dropped whole once
+   any interval in the window reaches `HIGH_DEMAND_GATE_KW` = 2 kW; 43 of 365 nights survive)
+   and reads **1.03 kW**, against the **1.02 kW** this per-**interval** rule reads (3–5 am,
+   `Consumption ≤ 0.5` kWh per interval, 25th percentile). They are two closely matching but
+   **separate** measurements of one physical load — the same phenomenon, not one load priced
+   twice — so a reprice here would put a third number
    on one load — the split §3.28 and issue #140 closed. And a flat all-import blend is the
    wrong shape for a solar house in any case: part of a constant floor displaces **exports**,
    worth `rates.credit` (no NBC), rather than avoiding imports at `rates.allin`, which is the

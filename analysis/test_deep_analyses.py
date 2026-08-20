@@ -202,10 +202,29 @@ def case_deep_analyses_end_to_end_matches_hand_and_oracle_computations():
     exp_annual_kwh = round(PHANTOM_KWH * 4 * 8760)
     assert abs(ph["annual_kwh"] - exp_annual_kwh) <= 1, ph
     # The block states ENERGY and nothing else (issue #172). It used to publish
-    # annual_cost_at_blend = annual_kwh x a hardcoded 0.20 $/kWh; this load is
-    # priced in data/quiet_night_floor.json, through rates.py, two ways.
+    # annual_cost_at_blend = annual_kwh x a hardcoded 0.20 $/kWh. The report's
+    # price for the always-on load comes from data/quiet_night_floor.json,
+    # through rates.py, two ways -- but that artifact prices its OWN per-NIGHT
+    # estimate of the load (1-5am median, whole night dropped at a 2 kW gate,
+    # 1.03 kW), not this per-INTERVAL block's baseload_kw.
     assert not [k for k in ph if _MONEY_KEY.search(k)], (
         f"the phantom block published a dollar figure again: {ph}")
+
+    # ...and the note that explains the missing dollars has to be TRUE
+    # (CLAUDE.md section 0). An earlier note said quiet_night_floor.py prices
+    # "this identical load", implying this block's own kWh is what got priced.
+    # It is not: the two scripts run different extraction rules and land on
+    # different figures. These fail if that wording comes back.
+    note = ph["note"]
+    assert "quiet_night_floor.json" in note, (
+        f"the phantom note must name where the load IS priced: {note}")
+    assert "identical" not in note.lower(), (
+        "the phantom note calls the two floor estimates identical again -- "
+        "quiet_night_floor.py measures the same physical load by its own "
+        f"per-night rule, not this block's figure: {note}")
+    assert "separate" in note.lower(), (
+        "the phantom note must say quiet_night_floor.json prices a SEPARATE "
+        f"estimate of this load rather than this block's own figure: {note}")
 
     # ---- EV sessions: 365 identical nightly blocks, hand-computed exactly --
     ev = got["ev_sessions"]
@@ -334,8 +353,10 @@ def case_no_published_dollar_figure_survives_a_change_to_its_rate_table():
             "field (issue #172 AC6) before it can be published.")
     assert set(base) == set(FIELD_KINDS), sorted(set(base) ^ set(FIELD_KINDS))
 
-    # The phantom load states energy and no dollars at all: its price lives in
-    # data/quiet_night_floor.json, which takes every rate from rates.py.
+    # The phantom load states energy and no dollars at all. The always-on load
+    # is priced in data/quiet_night_floor.json, which takes every rate from
+    # rates.py -- applied to that script's own separate, closely matching
+    # estimate of the load, not to this block's figure.
     assert not [k for k in FIELD_KINDS["phantom"] if _MONEY_KEY.search(k)], (
         "the phantom block declares a dollar field again (issue #172): "
         f"{sorted(FIELD_KINDS['phantom'])}")

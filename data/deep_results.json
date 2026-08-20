@@ -7,7 +7,7 @@
  "phantom": {
   "baseload_kw": 1.02,
   "annual_kwh": 8935,
-  "note": "25th-pct 3-5am non-EV draw, ENERGY ONLY; this load is priced in data/quiet_night_floor.json (rates.py, two methods)"
+  "note": "25th-pct 3-5am non-EV draw (per-INTERVAL rule: Consumption <= 0.5 kWh per interval), ENERGY ONLY. The report prices the always-on load from data/quiet_night_floor.json (rates.py, two methods) -- a SEPARATE, closely matching estimate of the same physical load under its own per-NIGHT rule (1-5am median, whole night dropped at a 2 kW gate, 43 of 365 nights kept, 1.03 kW), not this block's baseload_kw priced"
  },
  "ev_sessions": {
   "count": 580,

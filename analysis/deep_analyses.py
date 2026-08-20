@@ -156,11 +156,18 @@ out["wildcard"]={"TOU-DR-P + PW3 (15 events dodged)":round(drp_batt),
 # Over this same year rates.py's own period weights give an hour-weighted
 # all-in import rate of $0.375/kWh, so that literal priced the energy 47% low.
 # The field is DELETED rather than repriced, for two reasons:
-#   * analysis/quiet_night_floor.py already prices this identical load twice
+#   * analysis/quiet_night_floor.py already prices the always-on load twice
 #     through rates.py -- a per-interval price map and a full monthly NEM
 #     re-bill -- and those two agree to 1.2%. They are what the report
-#     publishes. Repricing here would mint a third, competing number for one
-#     load, which is the split CLAUDE.md section 3 and issue #140 closed.
+#     publishes. What that script prices is its OWN estimate of the load, not
+#     this block's: it applies an independently designed per-NIGHT rule (the
+#     1-5am median import power, a night dropped whole once any interval
+#     reaches its 2 kW gate, 43 of 365 nights kept) and reads 1.03 kW, against
+#     the 1.02 kW this per-INTERVAL rule reads (3-5am, Consumption <= 0.5 kWh
+#     per interval, 25th percentile). Two closely matching but SEPARATE
+#     measurements of one physical load -- not one load priced twice.
+#     Repricing here would mint a third, competing number for that load,
+#     which is the split CLAUDE.md section 3 and issue #140 closed.
 #   * a flat all-import blend is the wrong SHAPE for a solar house anyway:
 #     part of a constant floor displaces EXPORTS, valued at rates.credit (no
 #     NBC), rather than avoiding imports at rates.allin. quiet_night_floor.py
@@ -171,8 +178,12 @@ clean=night[night.Consumption<=0.5]  # exclude EV-charging intervals
 base_kw=clean.Consumption.quantile(0.25)*4
 out["phantom"]={"baseload_kw":round(float(base_kw),2),
   "annual_kwh":round(float(base_kw*8760)),
-  "note":"25th-pct 3-5am non-EV draw, ENERGY ONLY; this load is priced in "
-         "data/quiet_night_floor.json (rates.py, two methods)"}
+  "note":"25th-pct 3-5am non-EV draw (per-INTERVAL rule: Consumption <= 0.5 kWh "
+         "per interval), ENERGY ONLY. The report prices the always-on load from "
+         "data/quiet_night_floor.json (rates.py, two methods) -- a SEPARATE, "
+         "closely matching estimate of the same physical load under its own "
+         "per-NIGHT rule (1-5am median, whole night dropped at a 2 kW gate, 43 of "
+         "365 nights kept, 1.03 kW), not this block's baseload_kw priced"}
 
 # ---------- 3. EV sessions ----------
 r5=rates(UDC5,CEA5)
