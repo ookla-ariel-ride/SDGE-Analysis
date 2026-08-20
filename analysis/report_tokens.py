@@ -6830,10 +6830,32 @@ def _night_floor_coverage():
     the row count says whether the record is also gapless.
 
     Complete therefore means all three: the span is one calendar year, the
-    count matches the span (no holes), and the count is itself a year. Where
-    daily_series is absent or carries no parseable dates there is no window to
-    read, and the count alone is constrained to a single 365/366-day year --
-    the fallback stated rather than assumed."""
+    count matches the span (no holes), and the count is itself a year.
+
+    AND WHERE THERE ARE NO DATES, THE ANSWER IS NO (issue #174). The first
+    version fell back to the bare count when daily_series was absent, empty,
+    null, or carried nothing parseable, accepting 365 as a year on its own --
+    which is the inference the paragraph above says is unavailable, made in
+    the one situation where nothing else is left to check it against. A
+    fallback to a count is the span check not running, not a weaker span
+    check. So a corpus with no dated record fails closed: it is reported at
+    the size it really is, and it does not get to call that size a year.
+
+    NOT A REFUSAL, per the design constraint issue #140 recorded. All six
+    callers were written with a window branch, so each has an honest sentence
+    for a corpus that is not a year, and the `why` returned here is written to
+    read inside it: "... across the 365 nights measured, with no dated record
+    of which nights they were". The report still ships; only the annual unit
+    goes.
+
+    AND IT COSTS NO ORDINARY HOUSEHOLD ITS YEAR, checked against the generator
+    rather than assumed. quiet_night_floor.night_floor_series() builds
+    daily_series by grouping the export on calendar date and writes every
+    group as a row carrying an ISO `date`, then sets nights_total to len() of
+    that same list -- so the count and the dated record are the SAME LIST
+    counted two ways, unique by construction, and a household whose meter
+    really did run a contiguous year always clears this. Losing the dates
+    while keeping the count takes an artifact this generator did not write."""
     nf = _night_floor()
     nights, = _quantities("NIGHT_FLOOR_COVERAGE", "how many nights the corpus holds",
                           nights_total=nf["nights_total"])
@@ -6846,10 +6868,7 @@ def _night_floor_coverage():
         except (KeyError, TypeError, ValueError):
             continue
     if not dates:
-        if lo <= nights <= hi:
-            return True, nights, ""
-        return False, nights, ("more than a full year" if nights > hi
-                               else "less than a full year")
+        return False, nights, "with no dated record of which nights they were"
     span = (max(dates) - min(dates)).days + 1
     if not lo <= span <= hi:
         return False, nights, ("spanning more than a full year" if span > hi

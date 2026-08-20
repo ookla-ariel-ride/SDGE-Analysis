@@ -8600,6 +8600,157 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
             f"an undeclared ungated '/yr' is refused by the loader-observed guard")
 
 
+# EVERY WAY daily_series CAN ARRIVE CARRYING NO DATE, as edits to the real
+# committed series so that nothing else about the artifact moves. nights_total
+# is deliberately left at its committed 365 in all of them: that is the whole
+# defect -- a count that still says "a year" beside a record that no longer
+# says which nights.
+#
+# Six rather than the three the issue names, because "wholly malformed" is a
+# CLASS and this suite's own lesson is to sweep the shape, not the instance.
+# absent / empty / null are the container going missing three ways; the last
+# three are the container surviving with 365 rows whose dates do not parse --
+# a bad string, a missing key, a non-string value -- which is the half of the
+# class a check for "is the list there" would pass.
+_UNDATED_SERIES = ("absent", "empty", "null", "unparsable date string",
+                   "row with no date key", "non-string date")
+
+
+def _undated(kind):
+    """An edit that strips every readable date from the committed series."""
+    def edit(doc):
+        nf = doc["night_floor"]
+        rows = list(nf.get("daily_series") or [])
+        assert rows, "the committed artifact has no daily_series to strip"
+        if kind == "absent":
+            nf.pop("daily_series", None)
+        elif kind == "empty":
+            nf["daily_series"] = []
+        elif kind == "null":
+            nf["daily_series"] = None
+        elif kind == "unparsable date string":
+            nf["daily_series"] = [dict(r, date="2026-13-45") for r in rows]
+        elif kind == "row with no date key":
+            nf["daily_series"] = [{k: v for k, v in r.items() if k != "date"}
+                                  for r in rows]
+        elif kind == "non-string date":
+            nf["daily_series"] = [dict(r, date=None) for r in rows]
+        else:
+            raise AssertionError(f"unknown undated shape: {kind}")
+    return edit
+
+
+@case
+def case_a_corpus_with_no_dated_record_cannot_claim_a_year_off_its_count_alone():
+    """ISSUE #174. The case above proves a WRONG window is caught. This one
+    proves a MISSING window is, which was the hole underneath it.
+
+    _night_floor_coverage read its window from night_floor.daily_series and
+    fell back to nights_total alone when that series held no readable date --
+    so an artifact that was half-regenerated, written by an older generator,
+    or simply missing the key published "9,023 kWh/yr" off a bare count of
+    365. That is the exact inference the function's own docstring says a count
+    cannot support: 365 dates scattered across three years also count 365, and
+    with no dates present there is nothing left that can tell the two apart.
+    The fallback was not a weaker version of the span check; it was the span
+    check not running.
+
+    IT MATTERS MORE SINCE #140 because the branch is now structural. Six
+    published figures -- the floor's energy, its two pricings, section 9's
+    teaser, the sensitivity rate and the pricing-basis sentence -- take their
+    annual unit from this one return value, and _forbid_unearned_annual_unit
+    routes every future reader through it too. One permissive branch decided
+    all of them.
+
+    WHAT REPLACES IT IS NOT A REFUSAL, per #140's recorded design constraint:
+    each of the six was written with a window branch, so each has an honest
+    sentence to fall back on and must print it. The corpus is still reported
+    at its real size; what it stops doing is calling that size a year.
+
+    The population is DISCOVERED, exactly as the case above discovers it, so
+    a seventh token that starts reading this artifact is swept here without
+    editing this file -- and the six are asserted present so the sweep cannot
+    quietly collapse to nothing."""
+    readers = _night_floor_readers()
+    complete = {n: rt.resolve_token(n) for n in readers}
+    annual = sorted(n for n in readers if rt._ANNUAL_CLAIM.search(complete[n]))
+    missing = _ANNUAL_NIGHT_FLOOR_FLOOR_SET - set(annual)
+    assert not missing, (
+        f"the enumeration no longer covers {sorted(missing)}; it found {annual}")
+
+    # THE POSITIVE CONTROL, in this run and before any stub. The committed
+    # artifact really does carry a contiguous dated year, so it must still
+    # clear the gate and every discovered token must still claim its year --
+    # otherwise a "not covered" below would only prove the instrument broke.
+    covers, nights, why = rt._night_floor_coverage()
+    assert (covers, why) == (True, ""), (covers, nights, why)
+    assert nights in rt._FULL_YEAR_NIGHTS, nights
+    assert complete["NIGHT_FLOOR_ANNUAL_KWH"].endswith("kWh/yr"), complete
+    series = rt._night_floor()["daily_series"]
+    dated = sorted(dt.date.fromisoformat(str(r["date"])) for r in series)
+    assert len(set(dated)) == nights == (dated[-1] - dated[0]).days + 1, (
+        f"the committed artifact stopped being a contiguous dated year: {len(dated)} "
+        f"rows, {len(set(dated))} unique, {dated[0]}..{dated[-1]}")
+
+    # EVERY SHAPE ANSWERED BEFORE ANY IS ASSERTED ON, so a reverted fix names
+    # the whole class in one failure line instead of stopping at whichever
+    # shape happens to be first in the tuple. This suite has paid twice for a
+    # guard that reported one instance of a defect it was covering six of.
+    coverage = {}
+    for kind in _UNDATED_SERIES:
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", _undated(kind))):
+            coverage[kind] = rt._night_floor_coverage()
+    accepted = sorted(k for k, (c, _n, _w) in coverage.items() if c)
+    assert not accepted, (
+        f"{len(accepted)} daily_series shape(s) carrying no dated record were accepted "
+        f"as a full year on nights_total alone -- a count cannot tell one year from "
+        f"three: {accepted}")
+    unexplained = sorted(k for k, (_c, _n, w) in coverage.items() if not w)
+    assert not unexplained, f"rejected without saying why: {unexplained}"
+
+    checked = {}
+    for kind in _UNDATED_SERIES:
+        _covers, nights, why = coverage[kind]
+        assert nights == 365, (kind, nights)
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", _undated(kind))):
+            for token in annual:
+                text = _renders(token)
+                checked[f"{token}@{kind}"] = text
+                assert not rt._ANNUAL_CLAIM.search(text), (
+                    f"{token} published an annual claim off a {kind} daily_series: {text}")
+                # The window branch, not a refusal and not silence: the real
+                # size of the corpus, and the reason it is not a year.
+                assert f"{nights:,.0f} nights measured" in text, (
+                    f"{token} dropped its annual claim without stating the window it "
+                    f"does have ({kind}): {text}")
+                assert why in text, (
+                    f"{token} stated a window without the reason it is not a year "
+                    f"({kind}): {text}")
+                for pat_label, pattern in _MALFORMED_RENDER:
+                    assert not pattern.search(text), f"{token} rendered {pat_label}: {text}"
+
+    # A LEAP COUNT IS NOT A WINDOW EITHER. 366 was the other half of the
+    # accepted range, so it needs its own stub or the fix could be a change to
+    # one boundary rather than to the inference.
+    def leap_but_undated(doc):
+        _undated("absent")(doc)
+        doc["night_floor"]["nights_total"] = 366
+
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", leap_but_undated)):
+        covers, nights, why = rt._night_floor_coverage()
+        assert (covers, nights) == (False, 366), (covers, nights, why)
+        assert why, why
+
+    after = {n: rt.resolve_token(n) for n in complete}
+    assert after == complete, f"the stubs leaked: {after} != {complete}"
+    return (f"{len(checked)} renders across {len(_UNDATED_SERIES)} undated-series shapes "
+            f"({', '.join(_UNDATED_SERIES)}) plus an undated leap count, over the "
+            f"{len(annual)} discovered token(s) that claim a year off this artifact: none "
+            f"claims one without a dated record, each states the window it does have, and "
+            f"the committed artifact still reads "
+            f"{complete['NIGHT_FLOOR_ANNUAL_KWH']!r}")
+
+
 @case
 def case_a_degradation_sentence_never_contradicts_its_own_numbers():
     """ISSUE #132, CODEX PASS 1, FINDINGS 2 AND 3. Two sentences whose
