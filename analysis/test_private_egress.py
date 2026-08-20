@@ -1194,12 +1194,16 @@ def _make_case_folding(wt):
     """Make `wt` a worktree whose CASE measurement answers yes, on any
     filesystem -- and say whether anything had to be done to it.
 
-    _fs_folds_case()/`_dest_folds_case` ask whether `<root>/.git` and
-    `<root>/.GIT` are one file. On a case-insensitive filesystem they already
-    are and this does nothing, so the fixture below is the REAL defect,
-    unforced. On a case-sensitive one a symlink `.GIT -> .git` makes stat()
-    and `-ef` answer the same way, which is what lets one table row exercise
-    the alias probe on both kinds of machine instead of skipping on CI.
+    The ROOT half of _fs_folds_case()/`_dest_folds_case` asks whether
+    `<root>/.git` and `<root>/.GIT` are one file. On a case-insensitive
+    filesystem they already are and this does nothing, so the fixture below is
+    the REAL defect, unforced. On a case-sensitive one a symlink `.GIT -> .git`
+    makes stat() and `-ef` answer the same way, which is what lets one table row
+    exercise the alias probe on both kinds of machine instead of skipping on CI.
+
+    Its counterpart one level down is _make_directory_case_folding(), which does
+    the same thing for a DIRECTORY on the path -- the half that stands in for a
+    folding volume mounted below the root.
 
     The symlink is at the worktree ROOT and on no path either implementation
     walks (the component walk runs root -> private -> the leaf, and the
@@ -3480,6 +3484,327 @@ def case_the_filesystem_case_measurement_is_taken_from_the_filesystem():
             f"measure, and follows a planted .GIT")
 
 
+def _scratch_repo_tracking_an_absent_alias(td, name):
+    """A standalone repository that gitignores private/, whose INDEX holds
+    private/HOUSEHOLD.yaml, and for which no working-tree file of that name has
+    ever existed.
+
+    TRACKED BUT ABSENT is the whole fixture, and it is why the index entry is
+    written with `update-index --cacheinfo` instead of being added and then
+    deleted: nothing has to be removed to make the file absent, and the on-disk
+    walk therefore has NOTHING to resolve -- `private/household.yaml` is not
+    there under either spelling. That is the state in which the two alias probes
+    stop covering for each other: the walk cannot see an index entry with no
+    file, so only the ':(icase)' pathspec can, and that one is switched on by the
+    case measurement alone.
+
+    Standalone rather than a worktree of this checkout, for the reason
+    _alias_scratch_repo() gives: every worktree here shares a --local config
+    stating core.precomposeUnicode=true.
+    """
+    repo = pathlib.Path(td) / name
+    (repo / "private").mkdir(parents=True)
+    for args in (["init", "-q", "."],
+                 ["config", "core.precomposeUnicode", "false"],
+                 ["config", "core.ignoreCase", "false"]):
+        subprocess.run(["git", "-C", str(repo)] + args, capture_output=True, check=True)
+    (repo / ".gitignore").write_text("private/\n")
+    blob = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"],
+                          input="household: {}\n", capture_output=True, text=True,
+                          check=True).stdout.strip()
+    subprocess.run(["git", "-C", str(repo), "update-index", "--add", "--cacheinfo",
+                    f"100644,{blob},private/HOUSEHOLD.yaml"],
+                   capture_output=True, check=True)
+    assert not (repo / "private" / "HOUSEHOLD.yaml").exists(), (
+        "the fixture wrote the file it is supposed to leave absent")
+    return repo
+
+
+def _make_directory_case_folding(d):
+    """Make the directory `d` itself measure as case-folding, on any filesystem
+    -- and say whether anything had to be done to it.
+
+    The same instrument _make_case_folding() uses one level up, for the same
+    reason: on a case-insensitive filesystem the entry already answers, and on a
+    case-sensitive one a symlink under the flipped spelling makes stat() and
+    `-ef` answer the same way, so ONE fixture exercises the per-directory probe
+    on both kinds of machine instead of skipping on CI.
+
+    It stands in for a case-insensitive volume MOUNTED at this directory, which
+    is the real shape and cannot be built inside a test: attaching a disk image
+    at a path inside another attached image is refused by macOS outright
+    (`hdiutil attach` exits 13), and mounting anything at all is not a thing a
+    test suite may leave behind. The real shape was reproduced by hand instead --
+    see _fs_folds_case()'s docstring for the measurement, which this fixture
+    reproduces the OBSERVABLE of: the root says "case is significant" and the
+    directory the write lands in folds.
+    """
+    (d / "seed").write_text("something to measure\n")
+    try:
+        (d / "SEED").symlink_to("seed")
+        return "forced with a SEED -> seed symlink"
+    except FileExistsError:
+        return "already case-insensitive"
+
+
+@case
+def case_the_case_measurement_follows_the_path_below_the_worktree_root():
+    """A case-folding volume mounted BELOW a case-sensitive worktree root used to
+    bypass the tracked-path guard entirely.
+
+    THE DEFECT. The fold measurement was one pair of stats at the worktree root,
+    and it decided whether the tracked question was asked a second time with
+    git's ':(icase)'. Where the root is case-sensitive and the directory the
+    write lands in is not, that answer is wrong about the filesystem that
+    matters, and the OTHER alias probe cannot cover for it: the on-disk walk
+    resolves a path only as far as it exists, so a tracked-but-ABSENT
+    `private/HOUSEHOLD.yaml` has no on-disk spelling to find. Both probes miss
+    it, check-ignore says `private/household.yaml` is ignored, the destination is
+    ACCEPTED -- and the copy then writes bytes that the destination's own git
+    reports as a modification of the committed file.
+
+    REPRODUCED FOR REAL, once, by hand, because a test may not mount anything:
+    two attached disk images on macOS 15, a case-sensitive APFS volume holding
+    the worktree and a case-insensitive HFS+ volume mounted at `<root>/private`.
+    The guard accepted `private/household.yaml`; after the write `git status`
+    reported `AM private/HOUSEHOLD.yaml` and `git add -A` staged the private
+    bytes under the committed name.
+
+    WHAT THIS CASE DOES INSTEAD, and what it therefore proves. It builds the same
+    OBSERVABLE without a mount: the directory the write lands in really folds
+    (measured, forced with a symlink only where the filesystem does not fold on
+    its own), and the ROOT's answer is forced to "case is significant" -- which is
+    what a case-sensitive root volume produces, and is the one half no fixture can
+    build on a filesystem that folds. So this proves the guard's REACTION to the
+    two answers disagreeing; the disk images proved that a real mount makes them
+    disagree.
+
+    THE POSITIVE CONTROLS ARE IN THE SAME RUN, both of them, because the fix
+    could otherwise be "refuse more":
+      * a path with no aliased index entry, in the same repository, still accepted;
+      * an ORDINARY destination on ONE filesystem, with the measurement NOT
+        forced, must get exactly the answer the root probe gives on its own --
+        the walk must not turn a single-filesystem destination into a refusal.
+    """
+    real_root_probe = PE._root_folds_case
+    with tempfile.TemporaryDirectory() as td:
+        repo = _scratch_repo_tracking_an_absent_alias(td, "submount")
+        how = _make_directory_case_folding(repo / "private")
+        root_says = real_root_probe(str(repo))
+        assert PE._dir_folds_case(str(repo / "private")) is True, (
+            f"_make_directory_case_folding ({how}) did not make private/ measure "
+            "as folding, so this case would prove nothing")
+
+        # The literal question finds nothing, which is the premise: the defect is
+        # only reachable where the plain pathspec has already said "untracked".
+        overrides = PE._destination_overrides(str(repo))
+        literal = PE._git(["ls-files", "--", PE._pathspec("private/household.yaml")],
+                          str(repo), None, overrides)
+        assert literal.returncode == 0 and not literal.stdout.strip(), (
+            f"the literal pathspec found the aliased entry: {literal.stdout!r}")
+        assert PE._ondisk_relpath(str(repo), "private/household.yaml") == \
+            "private/household.yaml", (
+                "the on-disk walk resolved a path that is absent under both "
+                "spellings, so this fixture no longer isolates the probe under test")
+
+        PE._root_folds_case = lambda worktree: False
+        try:
+            assert PE._fs_folds_case(str(repo)) is False, (
+                "the forced root answer did not take, so the case below is "
+                "measuring the ordinary root probe and not the path walk")
+            assert PE._fs_folds_case(str(repo), "private/household.yaml") is True, (
+                "the fold measurement stopped at the worktree root: a directory "
+                "on the path that resolves two case spellings to one file was "
+                "measured as case-sensitive")
+            try:
+                PE._require_uncommittable(str(repo), "private/household.yaml")
+            except PE.DestinationRefused as e:
+                assert e.reason == "tracked_path", e.reason
+                assert "HOUSEHOLD" in e.detail, (
+                    "the refusal does not name the committed spelling the write "
+                    f"would land on: {e.detail}")
+            else:
+                raise AssertionError(
+                    "private/household.yaml was ACCEPTED in a repository whose "
+                    "index holds private/HOUSEHOLD.yaml, with no file on disk for "
+                    "either spelling, and whose private/ directory resolves the "
+                    "two to one file -- the copy lands on a committed path")
+
+            # POSITIVE CONTROL 1: same repository, same forced root, a path with
+            # no aliased entry is still accepted.
+            PE._require_uncommittable(str(repo), "private/verify")
+
+            # AND AN UNMEASURABLE DIRECTORY ON THE PATH COUNTS AS FOLDING, by the
+            # same argument the root probe already used for an unstattable .git:
+            # a volume mounted at an EMPTY private/ holds nothing to measure, and
+            # that is the shape the finding describes -- tracked, absent, nothing
+            # on disk under either spelling.
+            blank = _scratch_repo_tracking_an_absent_alias(td, "unmeasurable")
+            assert PE._dir_folds_case(str(blank / "private")) is None, (
+                "the fixture's private/ is measurable, so the branch under test "
+                "is not the one being exercised")
+            assert PE._fs_folds_case(str(blank), "private/household.yaml") is True, (
+                "an unmeasurable directory on the path answered 'case is "
+                "significant', which is the ACCEPTING direction for a question "
+                "that was never answered")
+            try:
+                PE._require_uncommittable(str(blank), "private/household.yaml")
+            except PE.DestinationRefused as e:
+                assert e.reason == "tracked_path", e.reason
+            else:
+                raise AssertionError(
+                    "a destination whose private/ cannot be measured, and whose "
+                    "index holds private/HOUSEHOLD.yaml with no file on disk, was "
+                    "ACCEPTED")
+        finally:
+            PE._root_folds_case = real_root_probe
+
+        # POSITIVE CONTROL 2: an ORDINARY destination, nothing forced anywhere.
+        # The walk must return exactly what the root probe returns on its own, or
+        # this change refuses destinations it used to accept.
+        ordinary = _scratch_repo_tracking_an_absent_alias(td, "ordinary")
+        (ordinary / "private" / "README.md").write_text("a placeholder\n")
+        for path in ("private/1-raw-data", "private/verify", "private/notes.txt"):
+            assert PE._fs_folds_case(str(ordinary), path) is \
+                real_root_probe(str(ordinary)), (
+                    f"the path walk changed the fold answer for {path!r} on a "
+                    "destination that is all one filesystem -- an ordinary "
+                    "destination is about to be refused for a mount it does not have")
+            PE._require_uncommittable(str(ordinary), path)
+    return ("a tracked-but-absent case alias below a case-sensitive root is "
+            f"refused as tracked_path ({how}; this filesystem's own root probe "
+            f"says folds={root_says}), and both an unaliased path in the same "
+            "repository and every path of a single-filesystem destination are "
+            "still accepted")
+
+
+# The shell's own per-directory measurement, lifted out of the file rather than
+# described, in the same way _ONDISK_HARNESS lifts the on-disk walk.
+_DIRFOLDS_FN = re.compile(r"^_dir_folds_case\(\) \{[^\n]*\n(.*?)\n\}$", re.M | re.S)
+_FLIP_FN = re.compile(r"^_ascii_case_flip\(\) \{[^\n]*\n(.*?)\n\}$", re.M | re.S)
+_DIRFOLDS_HARNESS = """set -uo pipefail
+_ascii_case_flip() {
+%s
+}
+_dir_folds_case() {
+%s
+}
+_dir_folds_case "$1"
+printf '\\n'
+"""
+
+
+def _shell_dir_folds(directory):
+    text = SCRIPT.read_text()
+    flip, body = _FLIP_FN.search(text), _DIRFOLDS_FN.search(text)
+    assert flip and body, (
+        "stage-private-data.sh no longer defines _ascii_case_flip/_dir_folds_case, "
+        "so its case measurement cannot follow the path below the worktree root "
+        "and a folding volume mounted there is measured as case-sensitive")
+    r = subprocess.run(["/bin/bash", "-c",
+                        _DIRFOLDS_HARNESS % (flip.group(1), body.group(1)),
+                        "bash", str(directory)], capture_output=True, text=True)
+    assert r.returncode == 0, (
+        f"the shell probe exited {r.returncode} on {directory}: {r.stderr[-400:]!r}")
+    return r.stdout.strip()
+
+
+def _python_dir_folds(directory):
+    return {True: "yes", False: "no", None: "unknown"}[PE._dir_folds_case(str(directory))]
+
+
+@case
+def case_both_implementations_measure_case_folding_per_directory():
+    """THE AGREEMENT TABLE for the measurement that follows the path.
+
+    The destination table cannot carry a mounted volume and neither can any test
+    in this file, so the mechanism the two implementations now share is compared
+    directly, directory by directory, with the shell's own function lifted out of
+    the file. A difference here is a difference in which destinations the two
+    accept, and it would show up on a machine nobody ran the table on.
+
+    Every row's expectation is taken from the filesystem, measured once with an
+    instrument that shares no machinery with either implementation -- a file
+    written under one spelling and read back under the other -- so the table
+    asserts on a case-sensitive filesystem as well as on a folding one.
+
+    THE INSTRUMENT HAS ITS OWN POSITIVE CONTROLS: the forced row must answer
+    'yes' and the two permission rows must answer 'unknown' on EVERY filesystem,
+    so a harness that quietly ran nothing could not pass this case.
+    """
+    rows, bad = [], []
+    with tempfile.TemporaryDirectory() as td:
+        base = pathlib.Path(td)
+
+        def fixture(name):
+            d = base / name
+            d.mkdir()
+            return d
+
+        probe = fixture("instrument")
+        (probe / "case-probe").write_text("written under the lowercase name\n")
+        try:
+            fs_folds = (probe / "CASE-PROBE").read_text() == \
+                "written under the lowercase name\n"
+        except OSError:
+            fs_folds = False
+        natural = "yes" if fs_folds else "no"
+
+        ordinary = fixture("ordinary")
+        (ordinary / "README.md").write_text("x\n")
+        (ordinary / "data.csv").write_text("x\n")
+        forced = fixture("forced")
+        how = _make_directory_case_folding(forced)
+        empty = fixture("empty")
+        digits = fixture("no-ascii-letters")
+        (digits / "12345").write_text("x\n")
+        (digits / "-").write_text("x\n")
+        newline = fixture("trailing-newline")
+        (newline / "Ab\n").write_text("x\n")
+        dangling = fixture("dangling-first")
+        (dangling / "AAA").symlink_to("/no-such-target-anywhere")
+        (dangling / "bbb").write_text("x\n")
+        unreadable = fixture("unreadable")
+        (unreadable / "README.md").write_text("x\n")
+        (unreadable).chmod(0o000)
+        unsearchable = fixture("unsearchable")
+        (unsearchable / "README.md").write_text("x\n")
+        (unsearchable).chmod(0o444)
+
+        table = [
+            ("an ordinary directory", ordinary, natural),
+            ("a directory that folds", forced, "yes"),
+            ("an EMPTY directory", empty, "unknown"),
+            ("no entry with an ASCII letter", digits, "unknown"),
+            ("only a name ending in a newline", newline, "unknown"),
+            ("a dangling case alias FIRST", dangling, natural),
+            ("an unreadable directory", unreadable, "unknown"),
+            ("readable but UNSEARCHABLE", unsearchable, "unknown"),
+        ]
+        try:
+            for label, d, expected in table:
+                sh, py = _shell_dir_folds(d), _python_dir_folds(d)
+                rows.append(f"  {label:<32} shell={sh:<9} python={py:<9} "
+                            f"expected={expected}")
+                if sh != py:
+                    bad.append(f"{label}: shell={sh!r} python={py!r}")
+                elif sh != expected:
+                    bad.append(f"{label}: both said {sh!r}, this filesystem makes "
+                               f"{expected!r} the right answer")
+        finally:
+            unreadable.chmod(0o755)
+            unsearchable.chmod(0o755)
+
+    assert not bad, "; ".join(bad)
+    print(f"  {'fixture':<32} the two per-directory probes")
+    print("\n".join(rows))
+    unmeasurable = [t for t in table if t[2] == "unknown"]
+    return (f"the shell's own _dir_folds_case and _dir_folds_case() agree on all "
+            f"{len(table)} fixtures (this filesystem folds case: {fs_folds}; the "
+            f"folding row was {how}), including {len(unmeasurable)} that are "
+            "unmeasurable and therefore count as folding")
+
+
 @case
 def case_a_case_aliased_tracked_path_is_refused_by_the_tracked_question():
     """ISSUE #204's headline, on the tracked question alone.
@@ -4088,11 +4413,13 @@ def case_both_implementations_fold_the_alias_question_the_same_way():
     # The case fold: git's own ':(icase)', and only where the filesystem folds.
     assert PE._alias_pathspec("private/x", True) == ":(icase)" + PE._pathspec("private/x")
     assert PE._alias_pathspec("private/x", False) == PE._pathspec("private/x")
-    ask = re.search(r"if _dest_folds_case; then\n(.*?)\n  fi\n", text, re.S)
+    ask = re.search(r'if _dest_folds_case "\$rel"; then\n(.*?)\n  fi\n', text, re.S)
     assert ask and ":(icase)$rel" in ask.group(1), (
-        "stage-private-data.sh no longer gates ':(icase)' on _dest_folds_case, so "
-        "either it folds case where the filesystem does not or it never folds")
-    folds = re.search(r"^_dest_folds_case\(\) \{\n(.*?)\n\}$", text, re.M | re.S)
+        "stage-private-data.sh no longer gates ':(icase)' on _dest_folds_case -- "
+        "or no longer hands it the path being asked about, which is the same "
+        "defect one step earlier: the measurement would go back to the worktree "
+        "root and a folding volume mounted below it would be missed")
+    folds = re.search(r"^_dest_folds_case\(\) \{[^\n]*\n(.*?)\n\}$", text, re.M | re.S)
     assert folds, "stage-private-data.sh no longer measures the filesystem at all"
     for name in (PE.CASE_PROBE_NAME, PE.CASE_PROBE_ALIAS):
         assert f'/{name}"' in folds.group(1), (
@@ -4101,6 +4428,31 @@ def case_both_implementations_fold_the_alias_question_the_same_way():
     assert "-ef" in folds.group(1), (
         "the shell's case measurement no longer compares device and inode, so it "
         "is not measuring the filesystem")
+
+    # AND IT FOLLOWS THE PATH, which is the half a root-only probe cannot carry:
+    # a case-insensitive volume mounted below a case-sensitive root is measured
+    # as case-sensitive, and a tracked-but-absent entry differing only in case is
+    # then seen by neither alias probe. Behaviour is compared row by row in
+    # case_both_implementations_measure_case_folding_per_directory; what is
+    # checked here is that the shell WIRES that probe into the path walk, which a
+    # comparison of the function alone cannot see.
+    assert "_dir_folds_case" in folds.group(1), (
+        "the shell measures case at the worktree root only, so a folding volume "
+        "mounted below it goes unmeasured (the tracked-but-absent alias bypass)")
+    assert re.search(r"unknown\)\s*_FOLDS_WHERE=\"yes", folds.group(1)), (
+        "the shell no longer treats an unmeasurable directory as folding, so an "
+        "empty or unlistable directory on the path answers in the ACCEPTING "
+        "direction for a question that was never answered")
+    assert '"$cur/$comp"' in folds.group(1) and "cur=$cur/$comp" in folds.group(1), (
+        "the shell's case measurement does not descend the path, so only one "
+        "directory is ever measured")
+    perdir = _DIRFOLDS_FN.search(text)
+    assert perdir and "-ef" in perdir.group(1), (
+        "the shell's per-directory probe no longer compares device and inode")
+    assert "LC_ALL=C" in perdir.group(1) and "LC_ALL=C" in _FLIP_FN.search(text).group(1), (
+        "the shell's per-directory probe does not pin the collation and the case "
+        "fold to C, so it can measure a different entry than python's sorted "
+        "listing does, or fold bytes python leaves alone")
 
     # AND THE ON-DISK WALK (issues #223, #224). Its behaviour is compared row by
     # row in case_the_two_implementations_resolve_the_same_on_disk_spelling; what

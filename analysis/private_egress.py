@@ -626,10 +626,13 @@ DESTINATION_CONFIG_SCOPES = ("--worktree", "--local")
 # see _require_uncommittable() for the measured reason -- an index entry with no
 # file in the working tree has no on-disk spelling for the walk to find.
 ALIAS_CONFIG_OVERRIDE = (("core.precomposeUnicode", "true"),)
-# The name the case half of the alias probe is measured on. `.git` is the one
+# The name the ROOT's half of the case measurement is taken on. `.git` is the one
 # entry every worktree root is guaranteed to have -- a directory in the main
 # checkout, a gitfile in a linked worktree -- and it has case-varying characters,
-# so no directory listing is needed to find something to ask about.
+# so no directory listing is needed to find something to ask about. No directory
+# BELOW the root has a name like that, so the directories the path descends into
+# are measured on an entry of their own instead (_dir_folds_case), which is what
+# makes the answer follow the path onto a volume mounted under the root.
 CASE_PROBE_NAME = ".git"
 CASE_PROBE_ALIAS = ".GIT"
 
@@ -812,9 +815,72 @@ def _alias_overrides(overrides):
     return tuple(overrides) + ALIAS_CONFIG_OVERRIDE
 
 
-def _fs_folds_case(worktree):
-    """Does the filesystem holding `worktree` treat two spellings that differ
-    only in case as ONE file? MEASURED, not inferred from sys.platform.
+def _ascii_case_flip(name):
+    """`name` with every ASCII letter's case swapped, and nothing else touched.
+
+    ASCII AND ONLY ASCII, deliberately, because the shell measures with
+    `LC_ALL=C tr 'A-Za-z' 'a-zA-Z'` and the two implementations have to fold the
+    same bytes. str.swapcase() would fold 'É' as well, and a directory whose only
+    case-varying entry is non-ASCII would then be measured by python and not by
+    the shell -- the two would part company on a fixture nobody wrote.
+    """
+    return "".join(c.lower() if "A" <= c <= "Z"
+                   else c.upper() if "a" <= c <= "z"
+                   else c for c in name)
+
+
+def _dir_folds_case(directory):
+    """True / False / None: does `directory` itself resolve two case spellings of
+    one of its OWN entries to one file, or could that not be measured?
+
+    The generic form of the `.git`/`.GIT` probe below, for a directory that has
+    no name every instance is guaranteed to have. The entries are listed, the
+    first one whose ASCII case can be flipped is stat'd under both spellings,
+    and equal (st_dev, st_ino) is the answer -- the same comparison, the same
+    two-stat shape, and still nothing written.
+
+    Entries are taken in sorted order, matching the shell's LC_ALL=C glob, so
+    both implementations pick the SAME entry to measure. An entry that cannot be
+    stat'd under its own name (a dangling symlink) is skipped rather than read as
+    "does not fold": stat fails for both spellings there, which is not a
+    measurement.
+
+    None means UNMEASURABLE, and it has two causes with one remedy: the
+    directory could not be listed, or it holds no entry with an ASCII letter in
+    it (an empty directory is the ordinary case). The caller treats that as
+    folding -- see _fs_folds_case().
+
+    KNOWN IMPRECISION, stated rather than hidden: a case-sensitive directory
+    holding two HARD LINKS to one inode under case-aliased names ('README' and
+    'readme') measures as folding, because device and inode are what folding
+    looks like. It errs toward folding, which is the additive direction, and it
+    takes a destination built to look like one.
+    """
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return None
+    for name in names:
+        if name.endswith("\n"):
+            # The shell flips case through `$( )`, which strips trailing
+            # newlines, so it cannot carry this name to `tr` and back. Skipped on
+            # BOTH sides rather than measured on one: an entry only python can
+            # ask about is an entry the two implementations disagree on.
+            continue
+        flipped = _ascii_case_flip(name)
+        if flipped == name:
+            continue
+        here = os.path.join(directory, name)
+        try:
+            os.stat(here)
+        except OSError:
+            continue                     # a dangling link measures nothing
+        return _same_file(here, os.path.join(directory, flipped))
+    return None
+
+
+def _root_folds_case(worktree):
+    """The worktree ROOT's own answer, from a name every worktree root has.
 
     Two stat() calls on a name that is already there:
 
@@ -839,12 +905,6 @@ def _fs_folds_case(worktree):
     FAILS CLOSED TOWARD FOLDING. A `.git` that cannot be stat'd at all leaves the
     question unanswered, and the folding answer is the conservative one: the
     alias probe is additive, so folding can only make the guard refuse more.
-
-    WHAT IT DOES NOT COVER, stated because it is real: the probe is taken at the
-    worktree ROOT, so a case-insensitive volume mounted at a subdirectory of a
-    case-sensitive worktree is measured as case-sensitive and its aliases go
-    unfolded. The write-set this module is asked about lives under one directory
-    of the root in every caller today; a mount below it would need its own probe.
     """
     try:
         here = os.stat(os.path.join(worktree, CASE_PROBE_NAME))
@@ -855,6 +915,90 @@ def _fs_folds_case(worktree):
     except OSError:
         return False
     return (here.st_dev, here.st_ino) == (there.st_dev, there.st_ino)
+
+
+def _fs_folds_case(worktree, relpath=None, evidence=None):
+    """Does a write to `<worktree>/<relpath>` land on a filesystem that treats two
+    spellings differing only in case as ONE file? MEASURED at every directory the
+    path crosses, not inferred from sys.platform and not taken at the root alone.
+
+    THE ROOT IS NOT THE FILESYSTEM THE WRITE LANDS ON. The probe used to be one
+    pair of stats at the worktree root, and a case-insensitive volume mounted
+    BELOW that root was therefore measured as case-sensitive: `:(icase)` was left
+    off, and an index entry differing only in case -- with no file in the working
+    tree, so the on-disk walk has nothing to resolve either -- was found by
+    neither of the two alias probes. Reproduced on macOS 15 with two attached
+    disk images, a case-sensitive APFS volume holding the worktree and a
+    case-insensitive HFS+ volume mounted at `<root>/private`, an index holding
+    `private/HOUSEHOLD.yaml` written with `update-index --cacheinfo` so no file
+    ever existed for it:
+
+        _fs_folds_case(root)                     -> False   (right about the root)
+        _ondisk_relpath(private/household.yaml)  -> unchanged (nothing to resolve)
+        check-ignore ./private/household.yaml    -> 0, ignored
+        the guard ACCEPTED, the copy wrote private/household.yaml, and then
+        git status              ->  AM private/HOUSEHOLD.yaml
+        git add -A; git diff --cached  ->  the private bytes, under the tracked name
+
+    So the measurement follows the path. The root keeps its own probe -- `.git`
+    is the one entry a worktree root is guaranteed to have, and asking about it
+    costs no directory listing -- and where that says "folds" the answer is
+    already the additive one and the walk is skipped. Where it says "case is
+    significant", every EXISTING directory the path descends into is measured in
+    turn with _dir_folds_case(), and the FIRST one that folds decides. That is an
+    OR across the filesystems the path crosses, which is the right shape: an
+    alias can live at any component, and the directory that folds `1-raw-data` is
+    `private/`, not the root.
+
+    AN UNMEASURABLE DIRECTORY COUNTS AS FOLDING, by the same argument the root
+    probe already used for an unstattable `.git`: the alias probe is additive, so
+    folding can only make the guard refuse more, and refusing more is what an
+    unanswered question deserves. It costs a refusal only for a destination that
+    ALSO holds a case-aliased entry in its index, which is the thing being
+    guarded against.
+
+    NOT a device-change test, though that was the other candidate. Comparing
+    st_dev at each component would say WHERE to measure and still not say what
+    that filesystem does, so it would need this probe anyway; and the shell has
+    no portable st_dev -- `[ -ef ]` compares device and inode together and cannot
+    separate them, so the two implementations would have had to detect mount
+    boundaries by different means (st_dev against `df -P`) and could disagree on
+    a bind mount. Measuring behaviour directly needs no notion of a mount at all,
+    and answers for a filesystem this module has never heard of.
+
+    `evidence`, when a list is passed, gets one line saying where the answer came
+    from, for the refusal message. The shell sets _FOLDS_WHERE for the same
+    reason and in the same words.
+    """
+    if _root_folds_case(worktree):
+        if evidence is not None:
+            evidence.append(
+                "yes  (measured: .git and .GIT are one file at the worktree root)"
+                if os.path.exists(os.path.join(worktree, CASE_PROBE_NAME))
+                else f"yes  (unmeasurable: {os.path.join(worktree, CASE_PROBE_NAME)} "
+                     "could not be stat'd)")
+        return True
+    cur = worktree
+    for part in (p for p in (relpath or "").split("/") if p):
+        below = os.path.join(cur, part)
+        if not os.path.isdir(below):
+            break                        # the walk has left the existing tree
+        cur = below
+        folds = _dir_folds_case(cur)
+        if folds is True:
+            if evidence is not None:
+                evidence.append("yes  (measured: two case spellings are one file "
+                                f"in {cur})")
+            return True
+        if folds is None:
+            if evidence is not None:
+                evidence.append(f"yes  (unmeasurable: {cur} holds no entry whose "
+                                "ASCII case can be flipped)")
+            return True
+    if evidence is not None:
+        evidence.append("no   (measured at the worktree root and at every existing "
+                        "directory below it on this path)")
+    return False
 
 
 def _same_file(a, b):
@@ -1677,8 +1821,11 @@ def _alias_pathspec(relpath, fold_case):
     """The same path, as the pathspec that asks git about every index entry the
     FILESYSTEM would treat as this one (issue #204).
 
-    `fold_case` comes from _fs_folds_case(), so the ':(icase)' magic is added
-    where the filesystem really does fold case and nowhere else. Adding it
+    `fold_case` comes from _fs_folds_case(), which measures the worktree root AND
+    every existing directory the path descends into, so the ':(icase)' magic is
+    added where the filesystem THE WRITE LANDS ON really does fold case -- a
+    case-insensitive volume mounted below a case-sensitive root included -- and
+    nowhere else. Adding it
     unconditionally would be safe in the sense that the probe is additive, and
     wrong in the sense that on a case-sensitive filesystem `Private/x` and
     `private/x` are two files: refusing a correct destination because the
@@ -1895,7 +2042,8 @@ def _require_uncommittable(worktree, relpath, env=None):
     # spellings the filesystem holding the destination resolves to one file. See
     # ALIAS_CONFIG_OVERRIDE for the measurement and for what the plausible fix
     # (forcing core.ignoreCase) was measured to change, which is nothing.
-    fold_case = _fs_folds_case(worktree)
+    fold_evidence = []
+    fold_case = _fs_folds_case(worktree, relpath, fold_evidence)
     aliases = [_alias_pathspec(relpath, fold_case)]
     if ondisk != relpath:
         # The spelling the filesystem really holds, which the byte-oriented fold
@@ -1914,9 +2062,8 @@ def _require_uncommittable(worktree, relpath, env=None):
             "tracked_path",
             "nothing is tracked under this exact name, but the destination's "
             "filesystem resolves it to a path that is: "
-            f"{' '.join(r.stdout.split())[:200]}. Case"
-            + (" folds here (measured: .git and .GIT are one file at the "
-               "worktree root)" if fold_case else " is significant here")
+            f"{' '.join(r.stdout.split())[:200]}. Case folds: "
+            + (fold_evidence[0] if fold_evidence else str(fold_case))
             + ", and unicode composition folds wherever git was built to "
             "precompose"
             + (f"; on disk this path is spelled {ondisk!r}"

@@ -1303,15 +1303,36 @@ _require_isolation_proven() {
   _GIT_ALIAS_CONFIG=()
 }
 
-# Does the filesystem holding the destination treat two spellings that differ
-# only in case as ONE file? MEASURED here, not inferred from `uname`.
+# Does a write to $DST_REAL/$1 land on a filesystem that treats two spellings
+# differing only in case as ONE file? MEASURED here, not inferred from `uname`,
+# and measured at every directory the path crosses rather than at the root alone.
 #
-#   $DST_REAL/.git  -ef  $DST_REAL/.GIT
+# THE ROOT IS NOT THE FILESYSTEM THE WRITE LANDS ON. This used to be one `-ef` at
+# the worktree root, and a case-insensitive volume mounted BELOW that root was
+# therefore measured as case-sensitive: ':(icase)' was left off, and an index
+# entry differing from the path only in case -- with no file in the working tree,
+# so _ondisk_spelling has nothing to resolve either -- was seen by neither alias
+# probe. Reproduced on macOS 15 with two attached disk images, a case-sensitive
+# APFS volume holding the worktree and a case-insensitive HFS+ volume mounted at
+# <root>/private, over an index holding private/HOUSEHOLD.yaml written with
+# `update-index --cacheinfo` so no working-tree file ever existed for it: both
+# implementations measured "case is significant", accepted, and after the copy
+# `git status` reported `AM private/HOUSEHOLD.yaml` -- the private bytes staged
+# under the committed name by one `git add -A`.
+#
+# SO THE MEASUREMENT FOLLOWS THE PATH:
+#
+#   the ROOT keeps its own probe        $DST_REAL/.git  -ef  $DST_REAL/.GIT
+#   every EXISTING directory below it   _dir_folds_case, on an entry of its own
 #
 # `-ef` is "same device and inode", so an equal answer means the filesystem
 # resolved both spellings to one file, which is the whole of the question. A
 # case-sensitive filesystem has no .GIT and answers no; one that really holds a
-# separate .GIT answers no for the right reason.
+# separate .GIT answers no for the right reason. Where the root already folds the
+# answer is the additive one and no directory is listed at all. Where it does
+# not, the first directory below it that folds decides -- an OR across the
+# filesystems the path crosses, which is the right shape, because the directory
+# that folds `1-raw-data` is `private/` and not the root.
 #
 # NOTHING IS WRITTEN, which is what settles the ordering this measurement would
 # otherwise pose. The reliable way to detect case behaviour is usually to create
@@ -1322,14 +1343,98 @@ _require_isolation_proven() {
 # it is safe at any point in the guard. `.git` is the entry every worktree root
 # is guaranteed to have -- a directory in the main checkout, a gitfile in a
 # linked worktree -- and it has case-varying characters, so no directory listing
-# is needed to find something to ask about.
+# is needed to find something to ask about; no directory below the root has a
+# name like that, which is why those are measured on an entry of their own.
 #
-# FAILS CLOSED TOWARD FOLDING: a `.git` that cannot be stat'd at all leaves the
-# question unanswered, and folding is the conservative answer because the alias
-# probe is additive -- it can only make this script refuse more.
-_dest_folds_case() {
-  [ -e "$DST_REAL/.git" ] || return 0
-  [ "$DST_REAL/.git" -ef "$DST_REAL/.GIT" ]
+# NOT a mount-boundary test, though that was the other candidate. Detecting a
+# device change would say WHERE to measure and still not say what that filesystem
+# does, so it would need this probe anyway -- and `[ -ef ]` compares device and
+# inode together, so the shell cannot isolate a device at all without `stat`,
+# whose flags differ between BSD and GNU. Measuring behaviour directly needs no
+# notion of a mount, and private_egress.py can do exactly the same thing.
+#
+# FAILS CLOSED TOWARD FOLDING: a `.git` that cannot be stat'd, a directory that
+# cannot be listed, and a directory holding no entry whose ASCII case can be
+# flipped all leave the question unanswered, and folding is the conservative
+# answer because the alias probe is additive -- it can only make this script
+# refuse more, and only for a destination that also holds a case-aliased entry in
+# its index, which is the thing being guarded against.
+#
+# Sets _FOLDS_WHERE, in the same words private_egress._fs_folds_case() records,
+# so the refusal below names the directory the answer was taken from.
+
+# $1 with every ASCII letter's case swapped. LC_ALL=C on `tr` so the ranges are
+# bytes: python's _ascii_case_flip() folds exactly these pairs and no others, and
+# a measurement that folded more on one side than the other would put the two
+# implementations on different entries.
+_ascii_case_flip() {   # $1 = a name
+  printf '%s' "$1" | LC_ALL=C tr 'A-Za-z' 'a-zA-Z'
+}
+
+# Prints yes | no | unknown for ONE directory, measured on an entry it already
+# holds. Entries come from one LC_ALL=C glob, so this and python's
+# _dir_folds_case() pick the same entry to ask about. An entry that cannot be
+# stat'd under its own name (a dangling symlink) is skipped rather than read as
+# "does not fold": `-ef` is false for both spellings there, which is not a
+# measurement. `unknown` is an unlistable directory or one with no ASCII letter
+# in any entry -- an empty directory being the ordinary case.
+_dir_folds_case() {   # $1 = an existing directory
+  local d=$1 entry name flip
+  local LC_ALL=C
+  local had_nullglob=0 had_dotglob=0
+  local -a entries
+  if [ ! -r "$d" ] || [ ! -x "$d" ]; then printf 'unknown'; return 0; fi
+  if shopt -q nullglob; then had_nullglob=1; fi
+  if shopt -q dotglob; then had_dotglob=1; fi
+  shopt -s nullglob dotglob
+  entries=("$d"/*)
+  if [ "$had_nullglob" = 0 ]; then shopt -u nullglob; fi
+  if [ "$had_dotglob" = 0 ]; then shopt -u dotglob; fi
+  for entry in ${entries[@]+"${entries[@]}"}; do
+    name=${entry##*/}
+    flip=$(_ascii_case_flip "$name")
+    # `$( )` strips TRAILING newlines, so a name ending in one comes back
+    # shorter and this measurement would be taken on a path that is not the
+    # entry. Python skips exactly these names for the same reason: an entry only
+    # one implementation can ask about is one they can disagree on.
+    if [ "${#flip}" != "${#name}" ]; then continue; fi
+    if [ "$flip" = "$name" ]; then continue; fi
+    if [ ! -e "$entry" ]; then continue; fi
+    if [ "$entry" -ef "$d/$flip" ]; then printf 'yes'; else printf 'no'; fi
+    return 0
+  done
+  printf 'unknown'
+}
+
+_FOLDS_WHERE=
+_dest_folds_case() {   # $1 = a path this script writes, relative to $DST_REAL
+  local rel=${1:-} cur=$DST_REAL comp r ans
+  local LC_ALL=C
+  if [ ! -e "$DST_REAL/.git" ]; then
+    _FOLDS_WHERE="yes  (unmeasurable: $DST_REAL/.git could not be stat'd)"
+    return 0
+  fi
+  if [ "$DST_REAL/.git" -ef "$DST_REAL/.GIT" ]; then
+    _FOLDS_WHERE="yes  (measured: .git and .GIT are one file at the worktree root)"
+    return 0
+  fi
+  r=$rel
+  while [ -n "$r" ]; do
+    comp=${r%%/*}
+    if [ "$comp" = "$r" ]; then r=; else r=${r#*/}; fi
+    if [ -z "$comp" ]; then continue; fi
+    if [ ! -d "$cur/$comp" ]; then break; fi   # the walk has left the existing tree
+    cur=$cur/$comp
+    ans=$(_dir_folds_case "$cur")
+    case "$ans" in
+      yes)     _FOLDS_WHERE="yes  (measured: two case spellings are one file in $cur)"
+               return 0 ;;
+      unknown) _FOLDS_WHERE="yes  (unmeasurable: $cur holds no entry whose ASCII case can be flipped)"
+               return 0 ;;
+    esac
+  done
+  _FOLDS_WHERE="no   (measured at the worktree root and at every existing directory below it on this path)"
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -1521,12 +1626,12 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
   # was measured to change, which is nothing. ADDITIVE, and asked second, so a
   # path tracked under its own name still reports the plain fact.
   ondiskspec=
-  if _dest_folds_case; then
-    folds="yes  (measured: .git and .GIT are one file at the worktree root)"
+  if _dest_folds_case "$rel"; then
+    folds=$_FOLDS_WHERE
     aliasspec=":(icase)$rel"
     if [ "$ondisk" != "$rel" ]; then ondiskspec=":(icase)$ondisk"; fi
   else
-    folds="no   (measured: .GIT does not resolve to .git at the worktree root)"
+    folds=$_FOLDS_WHERE
     aliasspec="$rel"
     if [ "$ondisk" != "$rel" ]; then ondiskspec="$ondisk"; fi
   fi
