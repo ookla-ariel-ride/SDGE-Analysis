@@ -69,7 +69,11 @@ THE RULE, matching what stage-private-data.sh already enforces:
      that working tree's OWN git. Untracked is asked first and separately,
      because check-ignore consults the index and reports a tracked-though-
      ignored path as "not ignored" -- which would send the operator to edit a
-     .gitignore that was already correct.
+     .gitignore that was already correct. Both questions are asked about the
+     path THE FILESYSTEM SPELLS, not the one the caller typed: on a folding
+     volume a write to `private/1-raw-data` lands in an existing
+     `Private/1-raw-data`, which the tree may track and may not ignore, and git
+     answers about the bytes it is handed. See _ondisk_relpath().
   5. the thing already at the path is the KIND the caller says it will write.
      A hard link, a FIFO, a device node and a directory-where-a-file-goes are
      each invisible to 1-4: they are inside the tree, they are ignored there,
@@ -144,6 +148,11 @@ REASONS = {
                             "about this machine rather than about the repository",
     "tracked_path":         "the destination's own git TRACKS this path",
     "not_ignored":          "the destination's own git does not ignore this path",
+    "aliased_not_ignored":  "the destination ignores this path as it was SPELLED, and does "
+                            "not ignore the different on-disk spelling the write would "
+                            "actually land on",
+    "spelling_unresolved":  "which path on disk the write would land on could not be "
+                            "determined: a directory on the way to it could not be read",
     "ignore_unanswerable":  "the destination could not say whether it ignores this path",
     "tracked_unanswerable": "the destination could not be asked which paths it tracks",
     "glob_source_unlistable": "a leaf pattern's source directory could not be listed, so "
@@ -591,11 +600,47 @@ DESTINATION_CONFIG_SCOPES = ("--worktree", "--local")
 # proof of the adopted list. Off macOS git is built without precompose support
 # and the key is inert, which is the right behaviour rather than a limitation --
 # a filesystem that does not normalize has no alias to find.
+#
+# WHAT THIS BLOCK DOES NOT COVER, corrected here rather than left standing
+# (issues #223 and #224). Two sentences #204 left behind were wrong:
+#
+#   * "':(icase)' folds case."  It folds ASCII case. The magic is byte-oriented,
+#     so `:(icase)./private/househöld.yaml` does NOT find a tracked
+#     `private/HOUSEHÖLD.yaml` while `:(icase)./private/household.yaml` does find
+#     `private/HOUSEHOLD.yaml` -- measured side by side in one repository, on a
+#     filesystem that resolves both pairs to one file. core.precomposeUnicode
+#     above is a different axis (composition, not case) and closes none of it.
+#   * "#193/#194 closed the ignore-side version of this."  They closed the
+#     CONFIGURATION half -- an ambient core.ignoreCase or core.precomposeUnicode
+#     can no longer widen the destination's own rules. The PATH half was still
+#     open: an untracked directory on disk under the other case spelling made
+#     check-ignore answer "ignored" about a path the write never reached, and
+#     `git check-ignore` takes no pathspec magic at all (`:(icase)…` exits 128),
+#     so this block's remedy could not be carried over to it.
+#
+# Both are closed FOR A PATH THAT EXISTS ON DISK by _ondisk_relpath(), which
+# resolves the candidate to the spelling the filesystem actually holds before any
+# of the three questions is asked. That is filesystem truth rather than a model of
+# folding, so it needs no Unicode rules in either implementation and works for
+# check-ignore, which refuses magic. The ':(icase)' probe here is kept alongside
+# it, not replaced: see _require_uncommittable() for the measured reason -- an
+# index entry with no file in the working tree has no on-disk spelling for the
+# walk to find.
+#
+# WHERE THE TWO STILL MISS TOGETHER, said here rather than left to be inferred
+# from "neither subsumes the other": a tracked index entry that has NO
+# working-tree file and differs from the path only in NON-ASCII case is seen by
+# neither probe -- ':(icase)' folds ASCII only, and the walk has nothing to
+# resolve for a leaf that does not exist. Issue #230, open, and a boundary of what
+# the tracked question covers rather than a gap something else catches.
 ALIAS_CONFIG_OVERRIDE = (("core.precomposeUnicode", "true"),)
-# The name the case half of the alias probe is measured on. `.git` is the one
+# The name the ROOT's half of the case measurement is taken on. `.git` is the one
 # entry every worktree root is guaranteed to have -- a directory in the main
 # checkout, a gitfile in a linked worktree -- and it has case-varying characters,
-# so no directory listing is needed to find something to ask about.
+# so no directory listing is needed to find something to ask about. No directory
+# BELOW the root has a name like that, so the directories the path descends into
+# are measured on an entry of their own instead (_dir_folds_case), which is what
+# makes the answer follow the path onto a volume mounted under the root.
 CASE_PROBE_NAME = ".git"
 CASE_PROBE_ALIAS = ".GIT"
 
@@ -778,9 +823,72 @@ def _alias_overrides(overrides):
     return tuple(overrides) + ALIAS_CONFIG_OVERRIDE
 
 
-def _fs_folds_case(worktree):
-    """Does the filesystem holding `worktree` treat two spellings that differ
-    only in case as ONE file? MEASURED, not inferred from sys.platform.
+def _ascii_case_flip(name):
+    """`name` with every ASCII letter's case swapped, and nothing else touched.
+
+    ASCII AND ONLY ASCII, deliberately, because the shell measures with
+    `LC_ALL=C tr 'A-Za-z' 'a-zA-Z'` and the two implementations have to fold the
+    same bytes. str.swapcase() would fold 'É' as well, and a directory whose only
+    case-varying entry is non-ASCII would then be measured by python and not by
+    the shell -- the two would part company on a fixture nobody wrote.
+    """
+    return "".join(c.lower() if "A" <= c <= "Z"
+                   else c.upper() if "a" <= c <= "z"
+                   else c for c in name)
+
+
+def _dir_folds_case(directory):
+    """True / False / None: does `directory` itself resolve two case spellings of
+    one of its OWN entries to one file, or could that not be measured?
+
+    The generic form of the `.git`/`.GIT` probe below, for a directory that has
+    no name every instance is guaranteed to have. The entries are listed, the
+    first one whose ASCII case can be flipped is stat'd under both spellings,
+    and equal (st_dev, st_ino) is the answer -- the same comparison, the same
+    two-stat shape, and still nothing written.
+
+    Entries are taken in sorted order, matching the shell's LC_ALL=C glob, so
+    both implementations pick the SAME entry to measure. An entry that cannot be
+    stat'd under its own name (a dangling symlink) is skipped rather than read as
+    "does not fold": stat fails for both spellings there, which is not a
+    measurement.
+
+    None means UNMEASURABLE, and it has two causes with one remedy: the
+    directory could not be listed, or it holds no entry with an ASCII letter in
+    it (an empty directory is the ordinary case). The caller treats that as
+    folding -- see _fs_folds_case().
+
+    KNOWN IMPRECISION, stated rather than hidden: a case-sensitive directory
+    holding two HARD LINKS to one inode under case-aliased names ('README' and
+    'readme') measures as folding, because device and inode are what folding
+    looks like. It errs toward folding, which is the additive direction, and it
+    takes a destination built to look like one.
+    """
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return None
+    for name in names:
+        if name.endswith("\n"):
+            # The shell flips case through `$( )`, which strips trailing
+            # newlines, so it cannot carry this name to `tr` and back. Skipped on
+            # BOTH sides rather than measured on one: an entry only python can
+            # ask about is an entry the two implementations disagree on.
+            continue
+        flipped = _ascii_case_flip(name)
+        if flipped == name:
+            continue
+        here = os.path.join(directory, name)
+        try:
+            os.stat(here)
+        except OSError:
+            continue                     # a dangling link measures nothing
+        return _same_file(here, os.path.join(directory, flipped))
+    return None
+
+
+def _root_folds_case(worktree):
+    """The worktree ROOT's own answer, from a name every worktree root has.
 
     Two stat() calls on a name that is already there:
 
@@ -805,12 +913,6 @@ def _fs_folds_case(worktree):
     FAILS CLOSED TOWARD FOLDING. A `.git` that cannot be stat'd at all leaves the
     question unanswered, and the folding answer is the conservative one: the
     alias probe is additive, so folding can only make the guard refuse more.
-
-    WHAT IT DOES NOT COVER, stated because it is real: the probe is taken at the
-    worktree ROOT, so a case-insensitive volume mounted at a subdirectory of a
-    case-sensitive worktree is measured as case-sensitive and its aliases go
-    unfolded. The write-set this module is asked about lives under one directory
-    of the root in every caller today; a mount below it would need its own probe.
     """
     try:
         here = os.stat(os.path.join(worktree, CASE_PROBE_NAME))
@@ -821,6 +923,266 @@ def _fs_folds_case(worktree):
     except OSError:
         return False
     return (here.st_dev, here.st_ino) == (there.st_dev, there.st_ino)
+
+
+def _fs_folds_case(worktree, relpath=None, evidence=None):
+    """Does a write to `<worktree>/<relpath>` land on a filesystem that treats two
+    spellings differing only in case as ONE file? MEASURED at every directory the
+    path crosses, not inferred from sys.platform and not taken at the root alone.
+
+    THE ROOT IS NOT THE FILESYSTEM THE WRITE LANDS ON. The probe used to be one
+    pair of stats at the worktree root, and a case-insensitive volume mounted
+    BELOW that root was therefore measured as case-sensitive: `:(icase)` was left
+    off, and an index entry differing only in case -- with no file in the working
+    tree, so the on-disk walk has nothing to resolve either -- was found by
+    neither of the two alias probes. Reproduced on macOS 15 with two attached
+    disk images, a case-sensitive APFS volume holding the worktree and a
+    case-insensitive HFS+ volume mounted at `<root>/private`, an index holding
+    `private/HOUSEHOLD.yaml` written with `update-index --cacheinfo` so no file
+    ever existed for it:
+
+        _fs_folds_case(root)                     -> False   (right about the root)
+        _ondisk_relpath(private/household.yaml)  -> unchanged (nothing to resolve)
+        check-ignore ./private/household.yaml    -> 0, ignored
+        the guard ACCEPTED, the copy wrote private/household.yaml, and then
+        git status              ->  AM private/HOUSEHOLD.yaml
+        git add -A; git diff --cached  ->  the private bytes, under the tracked name
+
+    So the measurement follows the path. The root keeps its own probe -- `.git`
+    is the one entry a worktree root is guaranteed to have, and asking about it
+    costs no directory listing -- and where that says "folds" the answer is
+    already the additive one and the walk is skipped. Where it says "case is
+    significant", every EXISTING directory the path descends into is measured in
+    turn with _dir_folds_case(), and the FIRST one that folds decides.
+
+    THAT IS AN OR ALONG THE PATH, not the answer of the directory the write lands
+    in, and the difference is issue #231. The caller applies ':(icase)' to the
+    whole pathspec, so a folding ANCESTOR makes every component below it fold as
+    far as this answer is concerned. The OR is correct wherever case behaviour only
+    ever becomes MORE permissive deeper in -- the ordinary shape, and the one this
+    walk exists for, since the directory that folds `1-raw-data` is `private/` and
+    not the root. It is over-broad for the inverse: a case-SENSITIVE volume mounted
+    under a folding directory, where a destination this measurement used to accept
+    is now refused if the index holds the other case spelling. That IS a new
+    refusal, and the reason it ships anyway is its direction -- the alias probe can
+    only match more index entries, so the error is fail-closed rather than a hole.
+
+    AN UNMEASURABLE DIRECTORY COUNTS AS FOLDING, by the same argument the root
+    probe already used for an unstattable `.git`: the alias probe is additive, so
+    folding can only make the guard refuse more, and refusing more is what an
+    unanswered question deserves. It costs a refusal only for a destination that
+    ALSO holds a case-aliased entry in its index -- which is the thing being
+    guarded against wherever the two spellings really are one file, and a false
+    alarm where they are not (issue #231 again).
+
+    NOT a device-change test, though that was the other candidate. Comparing
+    st_dev at each component would say WHERE to measure and still not say what
+    that filesystem does, so it would need this probe anyway; and the shell has
+    no portable st_dev -- `[ -ef ]` compares device and inode together and cannot
+    separate them, so the two implementations would have had to detect mount
+    boundaries by different means (st_dev against `df -P`) and could disagree on
+    a bind mount. Measuring behaviour directly needs no notion of a mount at all,
+    and answers for a filesystem this module has never heard of.
+
+    `evidence`, when a list is passed, gets one line saying where the answer came
+    from, for the refusal message. The shell sets _FOLDS_WHERE for the same
+    reason and in the same words.
+    """
+    if _root_folds_case(worktree):
+        if evidence is not None:
+            evidence.append(
+                "yes  (measured: .git and .GIT are one file at the worktree root)"
+                if os.path.exists(os.path.join(worktree, CASE_PROBE_NAME))
+                else f"yes  (unmeasurable: {os.path.join(worktree, CASE_PROBE_NAME)} "
+                     "could not be stat'd)")
+        return True
+    cur = worktree
+    for part in (p for p in (relpath or "").split("/") if p):
+        below = os.path.join(cur, part)
+        if not os.path.isdir(below):
+            break                        # the walk has left the existing tree
+        cur = below
+        folds = _dir_folds_case(cur)
+        if folds is True:
+            if evidence is not None:
+                evidence.append("yes  (measured: two case spellings are one file "
+                                f"in {cur})")
+            return True
+        if folds is None:
+            if evidence is not None:
+                evidence.append(f"yes  (unmeasurable: {cur} holds no entry whose "
+                                "ASCII case can be flipped)")
+            return True
+    if evidence is not None:
+        evidence.append("no   (measured at the worktree root and at every existing "
+                        "directory below it on this path)")
+    return False
+
+
+def _same_file(a, b):
+    """The shell's `[ a -ef b ]`, spelled the same way it is: stat(2) on both,
+    equal device and inode, and FALSE when either cannot be stat'd.
+
+    stat and not lstat, because `-ef` follows links and the shell has no
+    lstat-shaped test. Keeping the two implementations on one predicate matters
+    more here than the choice itself: the only place the difference shows is a
+    directory holding two case-aliased SYMLINKS to one target, where lstat would
+    pick the entry and stat picks whichever comes first -- and a symbolic link on
+    a walked component is refused by both implementations anyway. A dangling
+    link is stat-unreadable, so it matches nothing and _ondisk_relpath() below
+    fails closed on it rather than guessing.
+    """
+    try:
+        sa, sb = os.stat(a), os.stat(b)
+    except OSError:
+        return False
+    return (sa.st_dev, sa.st_ino) == (sb.st_dev, sb.st_ino)
+
+
+def _ondisk_relpath(worktree, relpath):
+    """`relpath` as the destination's filesystem ACTUALLY SPELLS IT (issues #223,
+    #224) -- the path a write to `relpath` would land on, not the path the
+    caller typed.
+
+    WHY THIS EXISTS AT ALL. Every question this module puts to git is a question
+    about a path, and git answers it about the bytes it was handed. The
+    filesystem does not: on a case-folding volume `private/1-raw-data` and
+    `private/1-RAW-DATA` are one directory, and a `.gitignore` that says
+    `private/1-raw-data` covers only one of the two spellings once
+    core.ignoreCase is false -- which is the value #193 forces when the
+    destination states none. Measured, in a worktree of this checkout whose
+    ignore rules name the leaves:
+
+        on disk:   private/1-RAW-DATA        (untracked, created by hand)
+        asked:     private/1-raw-data
+        git check-ignore ./private/1-raw-data   -> 0   IGNORED
+        git check-ignore ./private/1-RAW-DATA   -> 1   NOT ignored
+        both implementations ACCEPTED, the copies ran, and afterwards
+        git status reported:  ?? private/1-RAW-DATA/
+
+    which is the 2026-08-13 incident shape exactly: the whole archive in a tree
+    that does not ignore it, one `git add -A` from a commit.
+
+    #204's remedy cannot be reused for it. That one re-asks `ls-files` with git's
+    own `:(icase)` pathspec magic, and `git check-ignore` REJECTS pathspec magic
+    outright -- measured on git 2.50.1, `:(icase)./private/1-raw-data` exits 128,
+    "pathspec magic not supported by this command". Nor is `:(icase)` the whole
+    answer even where it is accepted: it is BYTE-oriented, so it folds ASCII case
+    pairs and no others. Measured in a scratch repository holding both spellings,
+    with an ASCII control alongside so the contrast cannot be the fixture:
+
+        git ls-files -- ':(icase)./private/household.yaml'  -> private/HOUSEHOLD.yaml
+        git ls-files -- ':(icase)./private/househöld.yaml'  -> (nothing)
+        ... while the filesystem resolves BOTH pairs to one file
+
+    core.precomposeUnicode, which _alias_overrides() forces, normalizes
+    COMPOSITION and does nothing about case; the two are independent axes.
+
+    So neither implementation models the fold. This walks the path instead, one
+    component at a time, and asks the filesystem which entry each component
+    names -- ASCII, non-ASCII, normalization and anything a future volume folds,
+    without a line of Unicode in either language, FOR THE COMPONENTS THAT EXIST.
+
+    THE PATH USUALLY DOES NOT EXIST YET, which is the point of the module: the
+    walk resolves as far as the path really goes and takes the REST exactly as
+    asked. `private/1-raw-data` in a tree that holds only `Private/` resolves to
+    `Private/1-raw-data`. An absent LEAF is therefore asked about as typed, which
+    is what leaves the non-ASCII half of issue #230 open -- see
+    _require_uncommittable() for the combination the two alias probes both miss.
+
+    HOW A COMPONENT'S REAL SPELLING IS FOUND, and what it costs. The parent is
+    listed and the component is looked for BY NAME first; only when it is not
+    there under its own name -- and the path exists anyway, which is the fold --
+    are the parent's entries compared against it with _same_file(). The
+    by-name test is what makes the ordinary case one listdir and no stat, and it
+    is also correctness rather than speed: two hard-linked entries share an
+    inode, so an inode-first search could rename a component that is on disk
+    under exactly the name it was asked about. The cost is ONE listdir per
+    EXISTING component, and it is bounded by nothing but the size of those
+    directories: the walk here is `<root>/private/<leaf>`, so the directories
+    listed are the worktree root, `private/`, and (for the glob-expanded leaves)
+    `private/1-raw-data` -- tens of entries, not a tree walk. Entries are sorted
+    so that a tie between several inode-equal entries resolves the same way here
+    and in the shell, whose glob is sorted too.
+
+    FAILS CLOSED, with its own reason, on a component that cannot be read
+    (`spelling_unresolved`). That is a new failure mode this walk creates and it
+    gets its own code rather than borrowing `not_ignored`: an unreadable
+    directory mid-path means the guard cannot say WHICH path the write lands on,
+    which is not the same statement as "that path is committable", and the two
+    have different remedies. It covers a directory with no read or no search
+    permission, and a component that exists but matches no entry of its own
+    parent -- a case-aliased dangling symlink, or an entry removed underneath the
+    walk.
+
+    TWO mechanisms guard it, and both are needed -- measured, not doubled for
+    comfort. The explicit os.access() mirrors the shell's `[ -r ]`/`[ -x ]`,
+    which the shell cannot do without: a glob over an unreadable directory
+    expands to NOTHING rather than failing, so the shell would read "cannot list"
+    as "empty". The try/except catches what access() cannot promise -- it answers
+    for the real uid, and a directory can stop being listable between the two
+    calls. They also cover different modes: at mode 0444 os.listdir SUCCEEDS
+    while the directory is not searchable, so without access() python would walk
+    on where the shell refuses, and the two implementations would part company on
+    a fixture nobody had written.
+
+    NOT fail-closed, deliberately: a component that is absent, and a component
+    whose parent is not a directory at all. Neither is unanswerable -- the first
+    is the ordinary "the caller will create it", and the second is refused by
+    name (`not_a_directory`) by the component walk in _check_destination(). Both
+    take the rest of the path as asked, which is what those checks then report.
+    """
+    parts = [p for p in relpath.split("/") if p]
+    cur = worktree
+    out = []
+    for i, part in enumerate(parts):
+        if not os.path.isdir(cur):
+            out.extend(parts[i:])       # nothing below a non-directory to resolve
+            break
+        if not os.access(cur, os.R_OK | os.X_OK):
+            raise DestinationRefused(
+                "spelling_unresolved",
+                f"{cur} cannot be read and searched, so the entry it holds for "
+                f"{part!r} cannot be found. On a filesystem that folds case or "
+                "normalization the name a write lands on is not the name it was "
+                "given, and this guard asks git about the name it lands on -- "
+                "with that directory unreadable there is no such name to ask "
+                "about. Fix the permissions on it, or name a destination whose "
+                "path this run can read",
+                os.path.join(worktree, relpath))
+        try:
+            names = sorted(os.listdir(cur))
+        except OSError as e:
+            raise DestinationRefused(
+                "spelling_unresolved",
+                f"{cur} could not be listed ({e.__class__.__name__}: {e}), so "
+                f"the entry it holds for {part!r} -- and therefore the path a "
+                "write would actually land on -- is unknown",
+                os.path.join(worktree, relpath))
+        if part in names:
+            real = part
+        elif os.path.lexists(os.path.join(cur, part)):
+            # It resolves, under a spelling that is not the one asked for: the
+            # filesystem folded it. Which entry did it fold to?
+            real = next((n for n in names
+                         if _same_file(os.path.join(cur, n), os.path.join(cur, part))),
+                        None)
+            if real is None:
+                raise DestinationRefused(
+                    "spelling_unresolved",
+                    f"{os.path.join(cur, part)} resolves to something, and no "
+                    f"entry of {cur} is that same file -- so the guard cannot "
+                    "name the path a write would land on. A symbolic link with "
+                    "no target, or a directory changing underneath this run, "
+                    "both look like this. 'Probably somewhere' is not a property "
+                    "to write a private archive on",
+                    os.path.join(worktree, relpath))
+        else:
+            out.extend(parts[i:])       # not there yet; the caller creates it
+            break
+        out.append(real)
+        cur = os.path.join(cur, real)
+    return "/".join(out)
 
 
 def _physical(path):
@@ -1476,20 +1838,46 @@ def _pathspec(relpath):
 
 
 def _alias_pathspec(relpath, fold_case):
-    """The same path, as the pathspec that asks git about every index entry the
-    FILESYSTEM would treat as this one (issue #204).
+    """The same path, as the pathspec that asks git about the index entries
+    differing from it in ASCII CASE, or in unicode COMPOSITION (issue #204).
 
-    `fold_case` comes from _fs_folds_case(), so the ':(icase)' magic is added
-    where the filesystem really does fold case and nowhere else. Adding it
-    unconditionally would be safe in the sense that the probe is additive, and
-    wrong in the sense that on a case-sensitive filesystem `Private/x` and
-    `private/x` are two files: refusing a correct destination because the
-    repository tracks the other one is how guards get switched off.
+    That is the coverage, stated as narrowly as it really is, and it is NOT "every
+    index entry the filesystem would treat as this one": ':(icase)' folds ASCII
+    case pairs and no others, and core.precomposeUnicode -- forced alongside it in
+    _alias_overrides() -- folds composition. A non-ASCII case alias is reached by
+    the OTHER probe, the on-disk walk, and only where that walk has something on
+    disk to resolve. The last paragraph names the one combination neither reaches.
+
+    `fold_case` comes from _fs_folds_case(), which measures the worktree root AND
+    every existing directory the path descends into, so the ':(icase)' magic
+    follows the path onto a case-insensitive volume mounted below a case-sensitive
+    root rather than being decided at the root alone. It is an OR ALONG THE PATH,
+    and ':(icase)' then applies path-wide, so a folding ANCESTOR turns the magic on
+    for components below it that do not fold themselves (issue #231). Erring that
+    way is fail-closed -- the magic can only make ls-files match MORE index entries
+    -- which is why it ships, but it is a weaker statement than "exactly where the
+    write lands", and on a case-SENSITIVE mount nested under a folding one it can
+    refuse a destination that was correct. Adding it unconditionally would be safe
+    in that same sense and wrong in a larger one: on a case-sensitive filesystem
+    `Private/x` and `private/x` are two files, and refusing a correct destination
+    because the repository tracks the other one is how guards get switched off.
 
     Off that path this is _pathspec() exactly, so the alias probe still asks
     about the same path with the same magic neutralized -- the unicode half of
     the fold rides on core.precomposeUnicode, not on the spelling, and applies
     either way.
+
+    ':(icase)' FOLDS ASCII CASE, and only that (issue #224). It is a byte
+    comparison: `:(icase)./private/househöld.yaml` does not match a tracked
+    `private/HOUSEHÖLD.yaml`. This is not the whole of the tracked question for
+    that reason -- _require_uncommittable() hands the same call a second
+    pathspec, the one _ondisk_relpath() resolved, which folds whatever the
+    filesystem folds FOR A PATH THAT EXISTS ON DISK. Where the path does not exist
+    there is nothing to resolve, so the two blind spots OVERLAP in exactly one
+    combination: an index entry that is tracked, has no working-tree file, and
+    differs from the path only in NON-ASCII case is seen by neither probe. Filed
+    as issue #230 and left open deliberately; it is a boundary of this guard, not
+    something covered elsewhere.
     """
     return (":(icase)" if fold_case else "") + _pathspec(relpath)
 
@@ -1638,10 +2026,43 @@ def _require_uncommittable(worktree, relpath, env=None):
     its index.
 
     THREE QUESTIONS, not two (issue #204): the tracked one is asked twice, once
-    by the bytes and once under the equivalence the destination's own filesystem
-    uses -- because on a case-insensitive or normalizing filesystem a write to
-    `private/household.yaml` lands on a tracked `Private/household.yaml` while
-    the literal question reports it untracked. See ALIAS_CONFIG_OVERRIDE.
+    by the bytes and once about the aliases the destination's own filesystem
+    resolves to the same file -- as far as the two alias probes below reach, which
+    is not the whole of that equivalence -- because on a case-insensitive or
+    normalizing filesystem a write to `private/household.yaml` lands on a tracked
+    `Private/household.yaml` while the literal question reports it untracked. See
+    ALIAS_CONFIG_OVERRIDE.
+
+    AND EVERY ONE OF THEM IS ASKED ABOUT THE PATH ON DISK (issues #223, #224).
+    `relpath` is what the caller typed; _ondisk_relpath() says what the
+    filesystem spells it as, and those differ exactly when a write to the one
+    lands on the other. Both spellings are put to git, because the index can hold
+    both at once and each question refuses for its own reason:
+
+      * TRACKED -- the on-disk spelling joins the alias pathspec. This is what
+        catches the NON-ASCII fold that `:(icase)` cannot see (#224), FOR A PATH
+        THAT EXISTS ON DISK: the byte fold misses `HOUSEHÖLD.yaml` while the
+        filesystem resolves it.
+      * IGNORED -- asked of the on-disk spelling FIRST, because that is the path
+        the bytes go to. `aliased_not_ignored` when only it is unignored (#223);
+        plain `not_ignored` when the spellings are the same, or when the typed
+        spelling is the unignored one, which is what that code has always meant.
+
+    The `:(icase)` probe STAYS rather than being replaced by the walk, and the
+    reason is measurable: an index entry whose working-tree file is ABSENT --
+    tracked, deleted in the tree, not committed -- has no on-disk spelling to
+    resolve, so only the pathspec fold finds it, while a file present under a
+    non-ASCII cased name is invisible to the pathspec fold and only the walk
+    finds it. Neither subsumes the other; asserted in
+    test_private_egress.case_the_two_alias_probes_each_catch_what_the_other_misses.
+
+    AND THEIR BLIND SPOTS OVERLAP, which "neither subsumes the other" does not
+    say: an index entry that is BOTH absent from the working tree AND differs from
+    the path only in NON-ASCII case is seen by neither -- `:(icase)` folds ASCII
+    only, and the walk has nothing on disk to resolve for a leaf that does not
+    exist. That combination is issue #230, filed and deliberately not fixed here.
+    It is the stated boundary of the tracked question, not a case some other check
+    picks up.
 
     This is the ONLY place in this module where a caller-supplied path becomes a
     git PATHSPEC (everything else hands git a -C directory), so it is the one
@@ -1649,6 +2070,7 @@ def _require_uncommittable(worktree, relpath, env=None):
     what a leading ':' otherwise does to the questions below.
     """
     overrides = _require_isolation_proven(worktree, env)
+    ondisk = _ondisk_relpath(worktree, relpath)
     spec = _pathspec(relpath)
     r = _git(["ls-files", "--", spec], worktree, env, overrides)
     if r.returncode != 0:
@@ -1667,9 +2089,15 @@ def _require_uncommittable(worktree, relpath, env=None):
     # spellings the filesystem holding the destination resolves to one file. See
     # ALIAS_CONFIG_OVERRIDE for the measurement and for what the plausible fix
     # (forcing core.ignoreCase) was measured to change, which is nothing.
-    fold_case = _fs_folds_case(worktree)
-    alias = _alias_pathspec(relpath, fold_case)
-    r = _git(["ls-files", "--", alias], worktree, env, _alias_overrides(overrides))
+    fold_evidence = []
+    fold_case = _fs_folds_case(worktree, relpath, fold_evidence)
+    aliases = [_alias_pathspec(relpath, fold_case)]
+    if ondisk != relpath:
+        # The spelling the filesystem really holds, which the byte-oriented fold
+        # above cannot reach for a non-ASCII cased name (issue #224). One call,
+        # two pathspecs: `ls-files` unions them and prints whichever matched.
+        aliases.append(_alias_pathspec(ondisk, fold_case))
+    r = _git(["ls-files", "--"] + aliases, worktree, env, _alias_overrides(overrides))
     if r.returncode != 0:
         raise DestinationRefused(
             "tracked_unanswerable",
@@ -1681,17 +2109,43 @@ def _require_uncommittable(worktree, relpath, env=None):
             "tracked_path",
             "nothing is tracked under this exact name, but the destination's "
             "filesystem resolves it to a path that is: "
-            f"{' '.join(r.stdout.split())[:200]}. Case"
-            + (" folds here (measured: .git and .GIT are one file at the "
-               "worktree root)" if fold_case else " is significant here")
+            f"{' '.join(r.stdout.split())[:200]}. Case folds: "
+            + (fold_evidence[0] if fold_evidence else str(fold_case))
             + ", and unicode composition folds wherever git was built to "
-            "precompose, so the write would land on a committed file under a "
+            "precompose"
+            + (f"; on disk this path is spelled {ondisk!r}"
+               if ondisk != relpath else "")
+            + ", so the write would land on a committed file under a "
             "spelling the guard was not asked about",
             os.path.join(worktree, relpath))
-    r = _git(["check-ignore", "-q", "--", spec], worktree, env, overrides)
-    if r.returncode == 0:
-        return
+    # THE IGNORE QUESTION, asked of the path the bytes actually reach. When the
+    # two spellings are the same -- every ordinary destination -- `ondisk_spec`
+    # IS `spec`, so this is the one call it has always been and the second one
+    # below is skipped.
+    ondisk_spec = _pathspec(ondisk)
+    r = _git(["check-ignore", "-q", "--", ondisk_spec], worktree, env, overrides)
+    if r.returncode not in (0, 1):
+        raise DestinationRefused(
+            "ignore_unanswerable",
+            f"'git check-ignore' exited {r.returncode} -- neither 'ignored' (0) nor "
+            "'not ignored' (1). 'Probably ignored' is not a property to write a "
+            "private archive on", os.path.join(worktree, relpath))
     if r.returncode == 1:
+        if ondisk != relpath:
+            raise DestinationRefused(
+                "aliased_not_ignored",
+                f"the destination ignores {relpath!r} as spelled, and the write "
+                f"does not go there: its filesystem already holds this path as "
+                f"{ondisk!r}, and that spelling is one 'git add -A' from a "
+                "commit. The rule and the directory disagree about case or about "
+                "unicode composition, and core.ignoreCase is what the DESTINATION "
+                "states (git's default, false, when it states none), so the rule "
+                "covers only the spelling it is written in. This is the "
+                "2026-08-13 incident shape -- the whole archive in a tree that "
+                "does not ignore it. Two remedies, both inside the destination: "
+                f"give its .gitignore a rule for {ondisk!r}, or rename that "
+                f"directory to {relpath!r} so the rule it already has covers it",
+                os.path.join(worktree, relpath))
         raise DestinationRefused(
             "not_ignored",
             "that working tree's own git would offer this path to 'git add' -- "
@@ -1703,6 +2157,28 @@ def _require_uncommittable(worktree, relpath, env=None):
             "spelling differs from the path's only in case or in unicode "
             "composition does not count either: the remedy is inside the "
             "destination, in its .gitignore or its .git/info/exclude",
+            os.path.join(worktree, relpath))
+    if ondisk == relpath:
+        return
+    # The on-disk spelling is ignored. The TYPED one is asked as well, and only
+    # here: it costs a second call exactly on the paths whose two spellings
+    # differ, and it keeps this from being the one change that makes the guard
+    # ACCEPT something it refused before. A destination whose rule covers the
+    # on-disk name and not the typed one is still told so, under the code that
+    # has always meant it.
+    r = _git(["check-ignore", "-q", "--", spec], worktree, env, overrides)
+    if r.returncode == 0:
+        return
+    if r.returncode == 1:
+        raise DestinationRefused(
+            "not_ignored",
+            f"the destination ignores the on-disk spelling {ondisk!r} but not "
+            f"{relpath!r} as it was asked about. Both are refused rather than "
+            "the difference being resolved silently: the two spellings are one "
+            "file here, and a rule that covers only one of them is a rule that "
+            "stops covering this archive the moment the directory is recreated "
+            "under the other. Add the missing spelling to that working tree's "
+            ".gitignore or .git/info/exclude",
             os.path.join(worktree, relpath))
     raise DestinationRefused(
         "ignore_unanswerable",

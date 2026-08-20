@@ -147,18 +147,53 @@ out["wildcard"]={"TOU-DR-P + PW3 (15 events dodged)":round(drp_batt),
                  "TOU-DR-P no battery (events hit)":round(drp_nobatt_energy+365*BSC)}
 
 # ---------- 2. Phantom / baseload ----------
-# non-EV floor: 3-5am intervals excluding EV charging (kW>2) days-hours
+# non-EV floor: 3-5am intervals excluding EV charging (kW>2) days-hours.
+#
+# ENERGY ONLY -- THIS BLOCK PUBLISHES NO DOLLAR FIGURE (issue #172). It used to
+# emit "annual_cost_at_blend": the annual kWh times a hardcoded flat 0.20
+# $/kWh, with rates(UDC5,CEA5) computed on the line above and never read by
+# this block (it belongs to the EV-session block, and now sits there).
+# Over this same year rates.py's own period weights give an hour-weighted
+# all-in import rate of $0.375/kWh, so that literal priced the energy 47% low.
+# The field is DELETED rather than repriced, for two reasons:
+#   * analysis/quiet_night_floor.py already prices the always-on load twice
+#     through rates.py -- a per-interval price map and a full monthly NEM
+#     re-bill -- and those two agree to 1.2%. They are what the report
+#     publishes. What that script prices is its OWN estimate of the load, not
+#     this block's: it applies an independently designed per-NIGHT rule (the
+#     1-5am median import power, a night dropped whole once any interval
+#     reaches its 2 kW gate, 43 of 365 nights kept) and reads 1.03 kW, against
+#     the 1.02 kW this per-INTERVAL rule reads (3-5am, Consumption <= 0.5 kWh
+#     per interval, 25th percentile). Two closely matching but SEPARATE
+#     measurements of one physical load -- not one load priced twice.
+#     Repricing here would mint a third, competing number for that load,
+#     which is the split CLAUDE.md section 3 and issue #140 closed.
+#   * a flat all-import blend is the wrong SHAPE for a solar house anyway:
+#     part of a constant floor displaces EXPORTS, valued at rates.credit (no
+#     NBC), rather than avoiding imports at rates.allin. quiet_night_floor.py
+#     splits the floor on that boundary; a single blended rate cannot.
+# See TECHNICAL.md section 3.5 item 2.
 night=d[(d.hour>=3)&(d.hour<5)]
 clean=night[night.Consumption<=0.5]  # exclude EV-charging intervals
 base_kw=clean.Consumption.quantile(0.25)*4
-r5=rates(UDC5,CEA5)
-avg_sop=0.1257  # blended SOP rate
 out["phantom"]={"baseload_kw":round(float(base_kw),2),
   "annual_kwh":round(float(base_kw*8760)),
-  "annual_cost_at_blend":round(float(base_kw*8760*0.20)),  # blended across periods ~20c
-  "note":"25th-pct 3-5am non-EV draw; cost blends SOP/off/on exposure"}
+  "note":"25th-pct 3-5am non-EV draw (per-INTERVAL rule: Consumption <= 0.5 kWh "
+         "per interval), ENERGY ONLY. The report prices the always-on load from "
+         "data/quiet_night_floor.json (rates.py, two methods) -- a SEPARATE, "
+         "closely matching estimate of the same physical load under its own "
+         "per-NIGHT rule (1-5am median, whole night dropped at a 2 kW gate, 43 of "
+         "365 nights kept, 1.03 kW), not this block's baseload_kw priced"}
 
 # ---------- 3. EV sessions ----------
+r5=rates(UDC5,CEA5)
+# Super-off-peak price for the "if every session had charged super-off-peak"
+# counterfactual, per season, built from THIS SCRIPT'S OWN EV-TOU-5 table --
+# the same vintage r5 prices the actual sessions with. That is the point:
+# wasted_vs_perfect is the difference between those two, so both sides must be
+# on one rate vintage (CLAUDE.md section 9). It replaces a hardcoded 0.1257,
+# which was the second flat $/kWh literal issue #172 found in this file.
+SOP5={s:UDC5[s]["sop"]+WFNBC+PCIA+CEA5[s]["sop"] for s in ("S","W")}
 d["kw"]=d.Consumption*4
 ev=d.kw>6.5   # EV charger signature ~7-11.5 kW
 d["evblk"]=(ev!=ev.shift()).cumsum()
@@ -169,13 +204,18 @@ for k,g in d[ev].groupby(d.evblk[ev]):
     r=r5[g.index]
     cost=(g.Consumption.values*r).sum()
     sess.append({"start":g.dt.iloc[0],"h":len(g)*0.25,"kwh":kwh,"cost":cost,
+                 "seas":g.seas.iloc[0],
                  "on_kwh":g[g.p=="on"].Consumption.sum(),"off_kwh":g[g.p=="off"].Consumption.sum()})
 S=pd.DataFrame(sess)
+# each session's energy at ITS OWN season's super-off-peak rate, not a
+# calendar-weighted scalar: the counterfactual moves a session in time of day,
+# never across seasons.
+sop_ref=float((S.kwh*S.seas.map(SOP5)).sum())
 out["ev_sessions"]={"count":len(S),"kwh_total":round(S.kwh.sum()),"cost_total":round(S.cost.sum()),
   "avg_kwh":round(S.kwh.mean(),1),"sessions_touching_onpeak":int((S.on_kwh>1).sum()),
   "onpeak_kwh_in_sessions":round(S.on_kwh.sum()),"offpeak_kwh_in_sessions":round(S.off_kwh.sum()),
-  "cost_if_all_sop":round(float(S.kwh.sum()*0.1257)),
-  "wasted_vs_perfect":round(float(S.cost.sum()-S.kwh.sum()*0.1257))}
+  "cost_if_all_sop":round(sop_ref),
+  "wasted_vs_perfect":round(float(S.cost.sum())-sop_ref)}
 
 # ---------- 4. Vacation detection ----------
 daily=d.groupby("date").agg(load_proxy=("Consumption","sum"),ev_kwh=("Consumption",lambda x:0))

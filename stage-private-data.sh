@@ -511,6 +511,36 @@ _GIT_DEST_CONFIG=()
 # reads it back under this array, not under the adopted one, or the readback
 # would confirm the destination's value and prove nothing about the value the
 # alias probe really runs with.
+#
+# WHAT THIS DOES NOT COVER, corrected here rather than left standing (issues
+# #223, #224). Two sentences #204 left behind were wrong:
+#
+#   * "':(icase)' folds case." It folds ASCII case. Measured side by side in one
+#     repository holding both spellings, on a filesystem that resolves each pair
+#     to one file:
+#         ls-files -- ':(icase)./private/household.yaml' -> private/HOUSEHOLD.yaml
+#         ls-files -- ':(icase)./private/househöld.yaml' -> (nothing)
+#     core.precomposeUnicode above is a different axis (composition, not case)
+#     and closes none of it.
+#   * "#193/#194 closed the ignore-side version of this." They closed the
+#     CONFIGURATION half: an ambient core.ignoreCase or core.precomposeUnicode
+#     can no longer widen the destination's own rules. The PATH half was still
+#     open -- an untracked directory on disk under another case spelling made
+#     check-ignore answer "ignored" about a path the write never reached -- and
+#     `git check-ignore` takes no pathspec magic at all, so this remedy could not
+#     be carried over to it.
+#
+# Both are closed FOR A PATH THAT EXISTS ON DISK by _ondisk_spelling below, which
+# resolves the path against the filesystem before any question is asked about it.
+# The ':(icase)' probe is kept ALONGSIDE it, not replaced: an index entry with no
+# file in the working tree has no on-disk spelling for that walk to find, so only
+# the pathspec fold sees it.
+#
+# AND THE TWO MISS TOGETHER in one combination, stated rather than left to be
+# inferred: a tracked index entry with NO working-tree file that differs from the
+# path only in NON-ASCII case is seen by neither -- ':(icase)' folds ASCII only,
+# and the walk has nothing to resolve for a leaf that does not exist. Issue #230,
+# open, and a boundary of the tracked question rather than a gap covered later.
 _GIT_ALIAS_OVERRIDE=(-c core.precomposeUnicode=true)
 
 # EMPTY except while an alias question is being asked. _git splices it after
@@ -1280,15 +1310,46 @@ _require_isolation_proven() {
   _GIT_ALIAS_CONFIG=()
 }
 
-# Does the filesystem holding the destination treat two spellings that differ
-# only in case as ONE file? MEASURED here, not inferred from `uname`.
+# Does a write to $DST_REAL/$1 land on a filesystem that treats two spellings
+# differing only in case as ONE file? MEASURED here, not inferred from `uname`,
+# and measured at every directory the path crosses rather than at the root alone.
 #
-#   $DST_REAL/.git  -ef  $DST_REAL/.GIT
+# THE ROOT IS NOT THE FILESYSTEM THE WRITE LANDS ON. This used to be one `-ef` at
+# the worktree root, and a case-insensitive volume mounted BELOW that root was
+# therefore measured as case-sensitive: ':(icase)' was left off, and an index
+# entry differing from the path only in case -- with no file in the working tree,
+# so _ondisk_spelling has nothing to resolve either -- was seen by neither alias
+# probe. Reproduced on macOS 15 with two attached disk images, a case-sensitive
+# APFS volume holding the worktree and a case-insensitive HFS+ volume mounted at
+# <root>/private, over an index holding private/HOUSEHOLD.yaml written with
+# `update-index --cacheinfo` so no working-tree file ever existed for it: both
+# implementations measured "case is significant", accepted, and after the copy
+# `git status` reported `AM private/HOUSEHOLD.yaml` -- the private bytes staged
+# under the committed name by one `git add -A`.
+#
+# SO THE MEASUREMENT FOLLOWS THE PATH:
+#
+#   the ROOT keeps its own probe        $DST_REAL/.git  -ef  $DST_REAL/.GIT
+#   every EXISTING directory below it   _dir_folds_case, on an entry of its own
 #
 # `-ef` is "same device and inode", so an equal answer means the filesystem
 # resolved both spellings to one file, which is the whole of the question. A
 # case-sensitive filesystem has no .GIT and answers no; one that really holds a
-# separate .GIT answers no for the right reason.
+# separate .GIT answers no for the right reason. Where the root already folds the
+# answer is the additive one and no directory is listed at all. Where it does
+# not, the first directory below it that folds decides.
+#
+# THAT IS AN OR ALONG THE PATH, not the answer of the directory the write lands
+# in, and the difference is issue #231. ':(icase)' is applied to the whole
+# pathspec, so a folding ANCESTOR makes every component below it fold as far as
+# this answer goes. The OR is correct wherever case behaviour only ever becomes
+# MORE permissive deeper in -- the ordinary shape, and what this walk exists for,
+# since the directory that folds `1-raw-data` is `private/` and not the root. It
+# is over-broad for the inverse, a case-SENSITIVE volume mounted under a folding
+# directory, where a destination this measurement used to accept is now REFUSED if
+# the index holds the other case spelling. That is a new refusal, not none; it
+# ships because its direction is fail-closed -- the alias probe can only match
+# more index entries.
 #
 # NOTHING IS WRITTEN, which is what settles the ordering this measurement would
 # otherwise pose. The reliable way to detect case behaviour is usually to create
@@ -1299,19 +1360,261 @@ _require_isolation_proven() {
 # it is safe at any point in the guard. `.git` is the entry every worktree root
 # is guaranteed to have -- a directory in the main checkout, a gitfile in a
 # linked worktree -- and it has case-varying characters, so no directory listing
-# is needed to find something to ask about.
+# is needed to find something to ask about; no directory below the root has a
+# name like that, which is why those are measured on an entry of their own.
 #
-# FAILS CLOSED TOWARD FOLDING: a `.git` that cannot be stat'd at all leaves the
-# question unanswered, and folding is the conservative answer because the alias
-# probe is additive -- it can only make this script refuse more.
-_dest_folds_case() {
-  [ -e "$DST_REAL/.git" ] || return 0
-  [ "$DST_REAL/.git" -ef "$DST_REAL/.GIT" ]
+# NOT a mount-boundary test, though that was the other candidate. Detecting a
+# device change would say WHERE to measure and still not say what that filesystem
+# does, so it would need this probe anyway -- and `[ -ef ]` compares device and
+# inode together, so the shell cannot isolate a device at all without `stat`,
+# whose flags differ between BSD and GNU. Measuring behaviour directly needs no
+# notion of a mount, and private_egress.py can do exactly the same thing.
+#
+# FAILS CLOSED TOWARD FOLDING: a `.git` that cannot be stat'd, a directory that
+# cannot be listed, and a directory holding no entry whose ASCII case can be
+# flipped all leave the question unanswered, and folding is the conservative
+# answer because the alias probe is additive -- it can only make this script
+# refuse more, and only for a destination that also holds a case-aliased entry in
+# its index: the thing being guarded against wherever the two spellings really are
+# one file, and a false alarm where they are not (issue #231 again).
+#
+# Sets _FOLDS_WHERE, in the same words private_egress._fs_folds_case() records,
+# so the refusal below names the directory the answer was taken from.
+
+# $1 with every ASCII letter's case swapped. LC_ALL=C on `tr` so the ranges are
+# bytes: python's _ascii_case_flip() folds exactly these pairs and no others, and
+# a measurement that folded more on one side than the other would put the two
+# implementations on different entries.
+_ascii_case_flip() {   # $1 = a name
+  printf '%s' "$1" | LC_ALL=C tr 'A-Za-z' 'a-zA-Z'
+}
+
+# Prints yes | no | unknown for ONE directory, measured on an entry it already
+# holds. Entries come from one LC_ALL=C glob, so this and python's
+# _dir_folds_case() pick the same entry to ask about. An entry that cannot be
+# stat'd under its own name (a dangling symlink) is skipped rather than read as
+# "does not fold": `-ef` is false for both spellings there, which is not a
+# measurement. `unknown` is an unlistable directory or one with no ASCII letter
+# in any entry -- an empty directory being the ordinary case.
+_dir_folds_case() {   # $1 = an existing directory
+  local d=$1 entry name flip
+  local LC_ALL=C
+  local had_nullglob=0 had_dotglob=0
+  local -a entries
+  if [ ! -r "$d" ] || [ ! -x "$d" ]; then printf 'unknown'; return 0; fi
+  if shopt -q nullglob; then had_nullglob=1; fi
+  if shopt -q dotglob; then had_dotglob=1; fi
+  shopt -s nullglob dotglob
+  entries=("$d"/*)
+  if [ "$had_nullglob" = 0 ]; then shopt -u nullglob; fi
+  if [ "$had_dotglob" = 0 ]; then shopt -u dotglob; fi
+  for entry in ${entries[@]+"${entries[@]}"}; do
+    name=${entry##*/}
+    flip=$(_ascii_case_flip "$name")
+    # `$( )` strips TRAILING newlines, so a name ending in one comes back
+    # shorter and this measurement would be taken on a path that is not the
+    # entry. Python skips exactly these names for the same reason: an entry only
+    # one implementation can ask about is one they can disagree on.
+    if [ "${#flip}" != "${#name}" ]; then continue; fi
+    if [ "$flip" = "$name" ]; then continue; fi
+    if [ ! -e "$entry" ]; then continue; fi
+    if [ "$entry" -ef "$d/$flip" ]; then printf 'yes'; else printf 'no'; fi
+    return 0
+  done
+  printf 'unknown'
+}
+
+_FOLDS_WHERE=
+_dest_folds_case() {   # $1 = a path this script writes, relative to $DST_REAL
+  local rel=${1:-} cur=$DST_REAL comp r ans
+  local LC_ALL=C
+  if [ ! -e "$DST_REAL/.git" ]; then
+    _FOLDS_WHERE="yes  (unmeasurable: $DST_REAL/.git could not be stat'd)"
+    return 0
+  fi
+  if [ "$DST_REAL/.git" -ef "$DST_REAL/.GIT" ]; then
+    _FOLDS_WHERE="yes  (measured: .git and .GIT are one file at the worktree root)"
+    return 0
+  fi
+  r=$rel
+  while [ -n "$r" ]; do
+    comp=${r%%/*}
+    if [ "$comp" = "$r" ]; then r=; else r=${r#*/}; fi
+    if [ -z "$comp" ]; then continue; fi
+    if [ ! -d "$cur/$comp" ]; then break; fi   # the walk has left the existing tree
+    cur=$cur/$comp
+    ans=$(_dir_folds_case "$cur")
+    case "$ans" in
+      yes)     _FOLDS_WHERE="yes  (measured: two case spellings are one file in $cur)"
+               return 0 ;;
+      unknown) _FOLDS_WHERE="yes  (unmeasurable: $cur holds no entry whose ASCII case can be flipped)"
+               return 0 ;;
+    esac
+  done
+  _FOLDS_WHERE="no   (measured at the worktree root and at every existing directory below it on this path)"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# THE ON-DISK SPELLING (issues #223, #224) -- which path a write to $1 actually
+# reaches, resolved against the destination's filesystem instead of assumed from
+# the bytes this script typed.
+#
+# WHY. Every question below is put to git, and git answers about the bytes it is
+# handed; the filesystem does not. On a case-folding volume `private/1-raw-data`
+# and `private/1-RAW-DATA` are ONE directory, and a rule naming one of them
+# covers only that one once core.ignoreCase is false -- which is git's default,
+# and therefore what "CONFIGURATION ISOLATION" above adopts from a destination
+# that states nothing. Reproduced in a scratch repository whose .gitignore holds
+# `private/` and which holds an UNTRACKED `Private/` on disk:
+#
+#   git check-ignore -q -- private/1-raw-data   ->  0   IGNORED
+#   git check-ignore -q -- Private/1-raw-data   ->  1   NOT ignored
+#   ls-files finds nothing under either spelling -- correctly, nothing is tracked
+#   ... so the guard ACCEPTED, the copies ran, and git status then reported:
+#       ?? Private/
+#
+# which is the 2026-08-13 incident exactly: the whole archive in a tree that does
+# not ignore it, one `git add -A` from a commit.
+#
+# WHY NOT THE #204 REMEDY. That one re-asks `ls-files` with git's own ':(icase)'
+# magic. `git check-ignore` REJECTS pathspec magic outright -- measured on git
+# 2.50.1, ':(icase)private/1-raw-data' exits 128, "pathspec magic not supported
+# by this command" -- so there is nothing to carry over. And ':(icase)' is
+# BYTE-oriented even where it is accepted: it folds ASCII case pairs and no
+# others, so a tracked `private/HOUSEHÖLD.yaml` goes unseen while
+# `private/HOUSEHOLD.yaml` is found (measured side by side in one repository).
+# core.precomposeUnicode is a different axis -- composition, not case.
+#
+# WHY NOT core.ignoreCase=true. It does make a destination answer the ASCII case
+# correctly, and issue #193 decided deliberately to force `false` when the
+# repository states none, so that an AMBIENT value cannot widen the
+# destination's own rules. Turning it on here would reverse that decision
+# sideways. It would also not be enough: with core.ignoreCase=true, and measured,
+# `check-ignore private/vérify` exits 0 while `check-ignore private/VÉRIFY` exits
+# 1 on a filesystem that resolves the two to one directory -- git's fold is ASCII
+# too.
+#
+# SO THE FILESYSTEM IS ASKED INSTEAD, one component at a time. For the components
+# that EXIST that folds exactly what the filesystem folds -- ASCII, non-ASCII,
+# normalization, and whatever some later volume folds -- with no Unicode rules in
+# this script or in private_egress.py, and it works for check-ignore, which takes
+# no magic.
+#
+# THE PATH USUALLY DOES NOT EXIST YET, which is the point: the walk resolves as
+# far as the path really goes and takes the REST exactly as asked, so
+# `private/1-raw-data` in a tree holding only `Private/` resolves to
+# `Private/1-raw-data`. An absent LEAF is asked about as typed, which is what
+# leaves the non-ASCII half of issue #230 open -- see the alias block above for
+# the combination both alias probes miss.
+#
+# A COMPONENT'S REAL SPELLING is looked for BY NAME first and only then by
+# `-ef` -- same device and inode, the shell's own stat comparison. By name first
+# is correctness, not speed: two hard-linked entries share an inode, so an
+# inode-first search could rename a component that is on disk under exactly the
+# name it was asked about. Entries come from one glob per EXISTING component
+# (LC_ALL=C so the order matches the sorted listing private_egress.py compares
+# against), and the directories globbed here are the worktree root, private/,
+# and nothing else -- tens of entries, not a tree walk.
+#
+# FAILS CLOSED, with its own refusal, when a component cannot be read: a
+# directory with no read or no search permission, and a path that resolves while
+# matching no entry of its own parent (a case-aliased dangling symlink, or a
+# directory changing underneath the run). "Somewhere" is not a path to check.
+# An ABSENT component is not that case -- it is the ordinary "this script will
+# create it" -- and neither is a non-directory mid-path, which the DESTINATION
+# PATH GUARD below refuses by name.
+#
+# Sets _ONDISK_REL rather than echoing, and that is load-bearing: _refuse exits,
+# and an exit inside `$( )` kills only the subshell -- the caller would carry on
+# with an empty answer and no refusal printed at all.
+_ONDISK_REL=
+_ondisk_spelling() {   # $1 = a path this script writes, relative to $DST_REAL
+  local rel=$1 cur=$DST_REAL out= comp real entry name r i j n
+  local LC_ALL=C
+  local had_nullglob=0 had_dotglob=0
+  local -a parts entries
+  parts=()
+  r=$rel
+  while [ -n "$r" ]; do
+    comp=${r%%/*}
+    if [ "$comp" = "$r" ]; then r=; else r=${r#*/}; fi
+    if [ -n "$comp" ]; then parts+=("$comp"); fi
+  done
+  if shopt -q nullglob; then had_nullglob=1; fi
+  if shopt -q dotglob; then had_dotglob=1; fi
+  shopt -s nullglob dotglob
+  n=${#parts[@]}
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if [ ! -d "$cur" ]; then break; fi          # nothing below a non-directory
+    if [ ! -r "$cur" ] || [ ! -x "$cur" ]; then
+      _refuse "the destination's on-disk spelling of a path this script writes could not be resolved" \
+        "destination: $DST  (resolved: $DST_REAL)" \
+        "path:        $rel" \
+        "found:       $cur cannot be read and searched, so the entry it holds" \
+        "             for '${parts[$i]}' cannot be found" \
+        "expected:    a readable directory. On a filesystem that folds case or" \
+        "             unicode composition the name a write lands on is not the" \
+        "             name it was given, and the checks below ask git about the" \
+        "             name it LANDS ON -- with that directory unreadable there" \
+        "             is no such name to ask about." \
+        "Fix the permissions on it, or name a destination this run can read."
+    fi
+    comp=${parts[$i]}
+    entries=("$cur"/*)
+    real=
+    for entry in ${entries[@]+"${entries[@]}"}; do
+      name=${entry##*/}
+      if [ "$name" = "$comp" ]; then real=$comp; break; fi
+    done
+    if [ -z "$real" ]; then
+      if [ -e "$cur/$comp" ] || [ -L "$cur/$comp" ]; then
+        # It resolves under a spelling that is not the one asked for: the
+        # filesystem folded it. Which entry did it fold to?
+        for entry in ${entries[@]+"${entries[@]}"}; do
+          if [ "$entry" -ef "$cur/$comp" ]; then real=${entry##*/}; break; fi
+        done
+        if [ -z "$real" ]; then
+          _refuse "the destination's on-disk spelling of a path this script writes could not be resolved" \
+            "destination: $DST  (resolved: $DST_REAL)" \
+            "path:        $rel" \
+            "found:       $cur/$comp resolves to something, and no entry of" \
+            "             $cur is that same file" \
+            "expected:    a component this script can name. A symbolic link with" \
+            "             no target, or a directory changing underneath the run," \
+            "             both look like this, and neither leaves a path the" \
+            "             ignore check below could be asked about." \
+            "'Probably somewhere' is not a property to write a private archive on."
+        fi
+      else
+        break                                   # not there yet; the copies create it
+      fi
+    fi
+    out=${out:+$out/}$real
+    cur=$cur/$real
+    i=$((i+1))
+  done
+  # Whatever the walk did not reach is taken exactly as asked.
+  j=$i
+  while [ "$j" -lt "$n" ]; do
+    out=${out:+$out/}${parts[$j]}
+    j=$((j+1))
+  done
+  if [ "$had_nullglob" = 0 ]; then shopt -u nullglob; fi
+  if [ "$had_dotglob" = 0 ]; then shopt -u dotglob; fi
+  _ONDISK_REL=$out
 }
 
 _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_REAL
-  local rel=$1 rc=0 arc=0 tracked aliased aliasspec folds
+  local rel=$1 rc=0 arc=0 orc=0 tracked aliased aliasspec ondiskspec folds ondisk
   _require_isolation_proven
+  # WHICH PATH THE WRITE ACTUALLY REACHES, before any of the three questions is
+  # asked about it (issues #223, #224). Identical to $rel on every ordinary
+  # destination; different exactly where the filesystem folds a spelling the
+  # destination's own rules do not.
+  _ondisk_spelling "$rel"
+  ondisk=$_ONDISK_REL
   # TRACKED first, and the order is the whole point. check-ignore consults the
   # index, so a path that is tracked-though-ignored reports rc 1 -- measured on
   # a fixture whose .gitignore holds `private/` and which force-added
@@ -1338,21 +1641,36 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
     "             straight into the next commit's diff."
   # AND AGAIN UNDER THE FILESYSTEM'S OWN EQUIVALENCE (issue #204). The question
   # above is answered BY THE BYTES; this one asks which index entries the
-  # filesystem holding the destination resolves to this same file. ':(icase)'
+  # filesystem holding the destination resolves to this same file -- as far as the
+  # two pathspecs below reach, which is ASCII case, unicode composition, and any
+  # fold the on-disk walk could resolve, but not a non-ASCII case alias with no
+  # file on disk (issue #230). ':(icase)'
   # only where case really folds there -- see _dest_folds_case, and see
   # _GIT_ALIAS_OVERRIDE for the measurement and for what forcing core.ignoreCase
   # was measured to change, which is nothing. ADDITIVE, and asked second, so a
   # path tracked under its own name still reports the plain fact.
-  if _dest_folds_case; then
-    folds="yes  (measured: .git and .GIT are one file at the worktree root)"
+  ondiskspec=
+  if _dest_folds_case "$rel"; then
+    folds=$_FOLDS_WHERE
     aliasspec=":(icase)$rel"
+    if [ "$ondisk" != "$rel" ]; then ondiskspec=":(icase)$ondisk"; fi
   else
-    folds="no   (measured: .GIT does not resolve to .git at the worktree root)"
+    folds=$_FOLDS_WHERE
     aliasspec="$rel"
+    if [ "$ondisk" != "$rel" ]; then ondiskspec="$ondisk"; fi
   fi
   _GIT_ALIAS_CONFIG=(${_GIT_ALIAS_OVERRIDE[@]+"${_GIT_ALIAS_OVERRIDE[@]}"})
   arc=0
-  aliased=$(_git -C "$DST_REAL" ls-files -- "$aliasspec") || arc=$?
+  # TWO PATHSPECS where the filesystem spells this path differently (issue
+  # #224), because ':(icase)' folds ASCII case and the filesystem folds more
+  # than that: the on-disk name is asked about literally, which is what catches
+  # a tracked entry whose name carries a non-ASCII cased character. One call --
+  # `ls-files` unions the pathspecs and prints whichever matched.
+  if [ -z "$ondiskspec" ]; then
+    aliased=$(_git -C "$DST_REAL" ls-files -- "$aliasspec") || arc=$?
+  else
+    aliased=$(_git -C "$DST_REAL" ls-files -- "$aliasspec" "$ondiskspec") || arc=$?
+  fi
   _GIT_ALIAS_CONFIG=()
   if [ "$arc" -ne 0 ]; then
     _refuse "the destination could not be asked which paths it tracks" \
@@ -1368,16 +1686,39 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
     "destination: $DST  (resolved: $DST_REAL)" \
     "path:        $rel" \
     "tracked:     $(echo $aliased)" \
-    "asked as:    $aliasspec  (with core.precomposeUnicode=true)" \
+    "asked as:    $aliasspec${ondiskspec:+ $ondiskspec}  (with core.precomposeUnicode=true)" \
+    "on disk:     $ondisk" \
     "case folds:  $folds" \
     "expected:    an untracked path. Nothing is committed under this exact" \
     "             name, but this filesystem resolves the name above to one" \
     "             that is: the copy would land on a committed file under a" \
     "             spelling neither question before this one was asked about."
-  _git -C "$DST_REAL" check-ignore -q -- "$rel" || rc=$?
-  case "$rc" in
+  # THE IGNORE QUESTION, asked of the path the bytes actually reach (issue
+  # #223). On every ordinary destination $ondisk IS $rel and this is the single
+  # call it has always been.
+  _git -C "$DST_REAL" check-ignore -q -- "$ondisk" || orc=$?
+  case "$orc" in
     0) ;;
-    1) _refuse "the destination does not gitignore a path this script writes" \
+    1) if [ "$ondisk" != "$rel" ]; then
+         _refuse "the destination does not gitignore the path a write to it actually reaches" \
+           "destination: $DST  (resolved: $DST_REAL)" \
+           "path:        $rel" \
+           "on disk:     $ondisk" \
+           "found:       the rule covers '$rel' as spelled, and the write does" \
+           "             not go there: this filesystem already holds the path" \
+           "             as '$ondisk', and 'git check-ignore' reports THAT" \
+           "             spelling is NOT ignored" \
+           "expected:    a rule covering the name the copies land on. core.ignoreCase" \
+           "             is what the DESTINATION states (git's default, false, when" \
+           "             it states none) and git's own fold is ASCII-only, so a rule" \
+           "             covers only the spelling it is written in." \
+           "This is the 2026-08-13 incident shape: the whole archive in a tree" \
+           "that does not ignore it, one 'git add -A' from a public commit." \
+           "Two remedies, both inside the destination: give its .gitignore or" \
+           "its .git/info/exclude a rule for '$ondisk', or rename that" \
+           "directory to '$rel' so the rule it already has covers it."
+       fi
+       _refuse "the destination does not gitignore a path this script writes" \
          "destination: $DST  (resolved: $DST_REAL)" \
          "path:        $rel" \
          "found:       'git check-ignore' reports it is NOT ignored there" \
@@ -1394,12 +1735,41 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
          "destination itself, are the two places that answer it." ;;
     *) _refuse "the destination could not say whether it ignores a path this script writes" \
          "destination: $DST  (resolved: $DST_REAL)" \
-         "path:        $rel" \
-         "found:       'git check-ignore' exited $rc -- neither 'ignored' (0)" \
+         "path:        $ondisk" \
+         "found:       'git check-ignore' exited $orc -- neither 'ignored' (0)" \
          "             nor 'not ignored' (1), so the question went unanswered" \
          "expected:    an answerable question. 'Probably ignored' is not a" \
          "             property to write a private archive on." ;;
   esac
+  # The on-disk spelling is ignored. Where it is not the spelling this script
+  # asked about, the TYPED one is asked as well -- one extra call, only on the
+  # paths whose two spellings differ, and it is what keeps this change from
+  # being the one that makes the guard ACCEPT something it used to refuse.
+  if [ "$ondisk" != "$rel" ]; then
+    _git -C "$DST_REAL" check-ignore -q -- "$rel" || rc=$?
+    case "$rc" in
+      0) ;;
+      1) _refuse "the destination does not gitignore a path this script writes" \
+           "destination: $DST  (resolved: $DST_REAL)" \
+           "path:        $rel" \
+           "on disk:     $ondisk" \
+           "found:       the on-disk spelling is ignored and '$rel' is not." \
+           "             Both are refused rather than the difference being" \
+           "             resolved silently: the two are one file here, and a" \
+           "             rule covering only one of them stops covering this" \
+           "             archive the moment the directory is recreated under" \
+           "             the other." \
+           "expected:    a rule covering both spellings. Add the missing one to" \
+           "             that working tree's .gitignore or .git/info/exclude." ;;
+      *) _refuse "the destination could not say whether it ignores a path this script writes" \
+           "destination: $DST  (resolved: $DST_REAL)" \
+           "path:        $rel" \
+           "found:       'git check-ignore' exited $rc -- neither 'ignored' (0)" \
+           "             nor 'not ignored' (1), so the question went unanswered" \
+           "expected:    an answerable question. 'Probably ignored' is not a" \
+           "             property to write a private archive on." ;;
+    esac
+  fi
 }
 
 _require_uncommittable "private/1-raw-data"
