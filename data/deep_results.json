@@ -7,8 +7,7 @@
  "phantom": {
   "baseload_kw": 1.02,
   "annual_kwh": 8935,
-  "annual_cost_at_blend": 1787,
-  "note": "25th-pct 3-5am non-EV draw; cost blends SOP/off/on exposure"
+  "note": "25th-pct 3-5am non-EV draw, ENERGY ONLY; this load is priced in data/quiet_night_floor.json (rates.py, two methods)"
  },
  "ev_sessions": {
   "count": 580,
@@ -18,8 +17,8 @@
   "sessions_touching_onpeak": 50,
   "onpeak_kwh_in_sessions": 958,
   "offpeak_kwh_in_sessions": 1716,
-  "cost_if_all_sop": 1788,
-  "wasted_vs_perfect": 1321
+  "cost_if_all_sop": 1795,
+  "wasted_vs_perfect": 1315
  },
  "vacation": {
   "non_ev_daily_median": 37.7,

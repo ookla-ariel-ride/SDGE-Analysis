@@ -1530,10 +1530,11 @@ def case_extra_results_trueup_ledger_matches_the_artifact():
 # and the archive holds THREE artifacts that each carry a figure for it. Only
 # data/quiet_night_floor.json can back a published one: extra_results.json's
 # phantom key has no generator anywhere in this repo's history, and
-# deep_results.json's is generated but prices the energy at a hardcoded flat
-# $0.20/kWh against an hour-weighted all-in import rate of about $0.375/kWh
-# (issue #172). Both are labelled superseded workpapers in TECHNICAL.md
-# §3.5/§3.11.
+# deep_results.json's is generated but states that load's energy and no price
+# at all -- it used to price it at a hardcoded flat $0.20/kWh against an
+# hour-weighted all-in import rate of about $0.375/kWh, and issue #172 deleted
+# the field rather than reprice it. Both are labelled superseded workpapers in
+# TECHNICAL.md §3.5/§3.11.
 #
 # The pair of cases below is what stops that split from reopening. The first
 # pins §13's own figures to the artifact; the second pins the three sections to
@@ -1680,9 +1681,7 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
                        ("deep_results.json:phantom.annual_kwh",
                         f"{dp['annual_kwh']:,} kWh"),
                        ("deep_results.json:phantom.baseload_kw",
-                        f"{dp['baseload_kw']:,} kW"),
-                       ("deep_results.json:phantom.annual_cost_at_blend",
-                        f"${dp['annual_cost_at_blend']:,}")):
+                        f"{dp['baseload_kw']:,} kW")):
         if any(value in f for f in figures.values()) or any(
                 f.startswith(value) for f in figures.values()):
             indistinct.append(who)
@@ -1691,6 +1690,15 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
     assert len(retired) >= 3, (
         "fewer than three superseded workpaper values are distinguishable from the live "
         f"ones, so this check can no longer tell them apart: {indistinct}")
+    # deep_results.json:phantom's own COST is not on that list because issue
+    # #172 removed it: it was the annual kWh times a hardcoded flat 0.20 $/kWh,
+    # roughly half what rates.py implies for that energy, and it was deleted
+    # rather than repriced so that one load keeps one published price. Checked
+    # structurally instead -- a cost key back in that block is a fourth figure
+    # for this load, whatever the report happens to say today.
+    assert not [k for k in dp if re.search(r"cost|usd|price|blend", k, re.I)], (
+        f"data/deep_results.json:phantom publishes a dollar figure again ({sorted(dp)}); "
+        "this load is priced in data/quiet_night_floor.json, through rates.py, two ways")
     for who, value in retired:
         assert value not in HTML, (
             f"the report states {value!r}, which is {who} -- a superseded workpaper "

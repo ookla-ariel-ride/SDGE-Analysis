@@ -493,9 +493,15 @@ def case_phantom_method_discrepancy_reconciles_the_two_live_pricings():
                          f"{abs(pricing['reconciliation']['gap_pct']):.1f}%")):
         assert value in rendered, (
             f"the reconciliation must state {what} ({value}) -- got: {rendered}")
+    # deep_results.json:phantom used to carry a THIRD price for this same load
+    # -- its annual kWh times a hardcoded flat 0.20 $/kWh, about half what
+    # rates.py implies for that energy. Issue #172 deleted the field instead of
+    # repricing it, precisely so there is nothing here to cite, so the check is
+    # now structural: that block states energy and no dollars.
     dp = rt._json("deep_results.json")["phantom"]
-    assert f"${dp['annual_cost_at_blend']:,}" not in rendered, (
-        f"the reconciliation cites deep_results' superseded flat-blend cost: {rendered}")
+    assert not [k for k in dp if re.search(r"cost|usd|price|blend", k, re.I)], (
+        f"deep_results.json:phantom publishes a dollar figure again ({sorted(dp)}) -- "
+        "this load is priced in quiet_night_floor.json, through rates.py, two ways")
     assert "does not settle" not in rendered, (
         "the reconciliation still says the report does not settle which pricing is right, "
         f"which was true of the retired cross-section comparison, not of this one: {rendered}")
@@ -718,9 +724,10 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     third artifact's figures -- one load with three numbers across three
     sections. Only quiet_night_floor.json can carry a published figure:
     extra_results.json's phantom has no generator anywhere in this repo's
-    history, and deep_results.json's is generated but priced at a hardcoded
-    flat $0.20/kWh against an hour-weighted all-in import rate of about
-    $0.375/kWh (issue #172). So both halves are pinned to the artifact AND to
+    history, and deep_results.json's carries the load's energy but no price
+    at all -- it used to be priced at a hardcoded flat $0.20/kWh against an
+    hour-weighted all-in import rate of about $0.375/kWh, and issue #172
+    deleted that field rather than reprice it. So both halves are pinned to the artifact AND to
     the values the section's own NIGHT_FLOOR_* tokens render, which is what
     stops the split from reopening one section at a time.
 
@@ -775,9 +782,14 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
                 assert f"{doc[key]:,}" not in teaser, (
                     f"teaser cites {who}'s {key} ({doc[key]:,}), a superseded workpaper "
                     f"(TECHNICAL.md 3.5/3.11) -- got: {teaser}")
-    assert f"${dr['phantom']['annual_cost_at_blend']:,}" not in teaser, (
-        "teaser cites deep_results' flat-$0.20/kWh cost, which issue #172 shows is about "
-        f"half the real price of that energy -- got: {teaser}")
+    # Its cost figure cannot be checked absent by value any more, because issue
+    # #172 removed it: deep_results.json:phantom priced the energy at a flat
+    # 0.20 $/kWh against a $0.375/kWh hour-weighted all-in import rate, and the
+    # field was deleted rather than repriced (quiet_night_floor.json already
+    # prices this load twice through rates.py). The guard is that it stays gone.
+    assert not [k for k in dr["phantom"] if re.search(r"cost|usd|price|blend", k, re.I)], (
+        "deep_results.json:phantom publishes a dollar figure again "
+        f"({sorted(dr['phantom'])}), so this teaser has a superseded price to drift back to")
     return (f"SEC9_TEASER cites behavior_rebuild's {sessions} sessions (not "
             f"deep_results' {stale}) and quiet_night_floor's own floor figures "
             f"({kwh} at ${cost:,.0f}/yr), with both superseded workpapers' values absent")

@@ -1464,12 +1464,13 @@ def _sec9_teaser(ctx):
     #     through, saying in its own comment that the methodology has no
     #     record here. A figure that cannot be reproduced cannot be published
     #     (CLAUDE.md section 0).
-    #   - data/deep_results.json:phantom does have a live generator, but
-    #     deep_analyses.py prices it with a hardcoded flat $0.20/kWh with the
-    #     rates module computed and unused on the line above; the hour-weighted
-    #     all-in import rate across the analysis year is $0.375/kWh, so that
-    #     blend is roughly half the real price of the energy. Tracked as its
-    #     own issue (#172) against that script; see TECHNICAL.md section 3.5.
+    #   - data/deep_results.json:phantom does have a live generator, but it
+    #     states that load's ENERGY and no price at all. It used to carry one:
+    #     its annual kWh times a hardcoded flat $0.20/kWh, against a
+    #     $0.375/kWh hour-weighted all-in import rate across the analysis
+    #     year, so roughly half the real price of the energy. Issue #172
+    #     deleted the field rather than repricing it -- a reprice would have
+    #     put a third number on one load. See TECHNICAL.md section 3.5 item 2.
     #   - data/quiet_night_floor.json takes every rate from rates.py and
     #     prices the same load two independent ways that agree to 1.2%.
     # So the floor figures here are that artifact's, resolved through the SAME
@@ -7026,8 +7027,10 @@ def _night_floor_annual_cost(ctx):
     EVERY SECTION THAT PRICES THIS LOAD NOW RESOLVES THROUGH HERE (issue
     #140). Two older figures for the same load exist in the archive --
     extra_results.json:phantom, which has no generator at all, and
-    deep_results.json:phantom, whose generator prices the energy at a
-    hardcoded flat $0.20/kWh -- and neither backs a published number any
+    deep_results.json:phantom, which states that load's energy but no longer
+    prices it at all (issue #172 deleted a hardcoded flat $0.20/kWh field
+    rather than reprice it, since this artifact already prices the load) --
+    and neither backs a published number any
     more; SEC9_TEASER's own comment states the evidence for that. They are
     labelled as superseded workpapers in TECHNICAL.md sections 3.5 and 3.11,
     which is where CLAUDE.md puts method lineage, so a reader who finds one in

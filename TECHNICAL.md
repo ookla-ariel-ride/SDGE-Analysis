@@ -415,27 +415,41 @@ land in `deep_results.json`.
 1. **TOU-DR-P + battery wildcard.** TOU-DR-P priced with UDC 0.32948 flat and the CEA TOU-DR-P
    generation row (§3.0), plus a Reduce-Your-Use surcharge of **$1.16/kWh** on 15 assumed event
    days (the 15 summer days with the highest on-peak imports), 4–9 pm. Three scenarios: TOU-DR-P
-   with a PW3 that dodges every event ($6,719), EV-TOU-5 with the same PW3 ($3,192), TOU-DR-P
-   with no battery and all events hit ($7,483).
+   with a PW3 that dodges every event ($6,757), EV-TOU-5 with the same PW3 ($3,202), TOU-DR-P
+   with no battery and all events hit ($7,527).
 2. **Phantom/baseload — SUPERSEDED WORKPAPER (issue #140). Not published anywhere in the
    report; do not cite it.** Take 3–5 am intervals with `Consumption ≤ 0.5` kWh (excludes EV
-   charging); baseload kW = 25th percentile × 4 → 1.02 kW; annualized at a blended $0.20/kWh →
-   $1,787/yr. The live figure for this load is §3.28's, from
-   `analysis/quiet_night_floor.py` → `data/quiet_night_floor.json`. What retires this one is
-   the price, not the floor: the `0.20` is a hardcoded literal on the annualization line, with
-   `rates(UDC5, CEA5)` computed on the line above and then not used, while the
-   hour-weighted all-in import rate across the analysis year is **$0.375/kWh**
-   (`rates.allin` over the same 8,760 hours, weighted by how many of them fall in each
-   season x period). So $1,787/yr is roughly half the price of that energy, and the "upper
-   bound" this document used to call it was backwards in exactly the direction that matters
-   — the same 8,935 kWh/yr at that blend is about **$3,350/yr**. The hardcoded rate
-   is filed as issue #172 against `deep_analyses.py`; it is left in place here rather than
-   fixed in passing, since changing it changes a committed artifact.
+   charging); baseload kW = 25th percentile × 4 → 1.02 kW → 8,935 kWh/yr. **Energy only: this
+   block states no dollar figure** (issue #172). The price of this load is §3.28's, from
+   `analysis/quiet_night_floor.py` → `data/quiet_night_floor.json`.
+
+   It used to state one. `annual_cost_at_blend` was the annual kWh times a hardcoded flat
+   `0.20` $/kWh on the annualization line, with `rates(UDC5, CEA5)` computed on the line above
+   and then not used by that block, giving $1,787/yr. The hour-weighted all-in import rate
+   across the analysis year is **$0.37527/kWh** (`rates.allin` over the year's own 35,040
+   fifteen-minute stamps, assigned by `rates.period_at` so the holiday rule applies, weighted
+   by how many fall in each season × period), so the same 8,935 kWh is about **$3,353** on a
+   flat blend — the literal priced the energy **47% low**, an understatement rather than the
+   upper bound this document once called it. The field was **deleted rather than repriced**,
+   for two reasons. `quiet_night_floor.py` already prices this identical load two ways through
+   `rates.py` and those two agree to 1.2% (§3.28), so a reprice here would put a third number
+   on one load — the split §3.28 and issue #140 closed. And a flat all-import blend is the
+   wrong shape for a solar house in any case: part of a constant floor displaces **exports**,
+   worth `rates.credit` (no NBC), rather than avoiding imports at `rates.allin`, which is the
+   split `quiet_night_floor.py` models and a single blended rate cannot.
 3. **EV charging sessions.** Interval kW = `Consumption × 4`; intervals with kW > 6.5 are
    charger-on; contiguous runs form sessions; session kWh = Σ imports − 0.4 kW house base ×
-   duration; sessions < 3 kWh discarded. Results: 576 sessions, 14,158 kWh, $3,081/yr at actual
-   timing vs $1,780 if all charging were at a $0.1257/kWh blended super-off-peak rate → $1,301/yr
-   lost to mistimed charging; 931 kWh of session energy fell on-peak, 1,718 kWh off-peak.
+   duration; sessions < 3 kWh discarded. Results: 580 sessions, 14,226 kWh, $3,109/yr at actual
+   timing vs $1,795 if every session's energy had charged in super-off-peak → $1,315/yr lost to
+   mistimed charging; 958 kWh of session energy fell on-peak, 1,716 kWh off-peak. The
+   super-off-peak counterfactual prices each session's kWh at **its own season's** sop rate,
+   read from the same `UDC5`/`CEA5` table the actual-timing cost uses — one rate vintage on
+   both sides of the subtraction, which is what makes the difference meaningful. It replaced a
+   hardcoded `0.1257` $/kWh, the second flat literal issue #172 found in this script. **All
+   three figures are workpaper values, not published ones:** the report's EV-mistiming numbers
+   come from `behavior_rebuild.py`'s canonical NEM re-bill ($1,221/yr at 100% compliance) and
+   `extended_findings.py`'s `home_ev_cost_if_all_sop` ($1,742/yr), both priced through
+   `rates.py`.
 4. **Vacation detection.** Daily sums of the SAM hourly load excluding hours > 7 kWh (crude
    non-EV load); away threshold = max(10th percentile, 20 kWh/day) = 26.3; 37 away-days detected
    against a 37.7 kWh/day non-EV median.
@@ -3679,9 +3693,10 @@ one of which reads this file — so the three sections cannot state different fi
 load. The two older `phantom` workpapers are labelled superseded where they are documented
 (§3.5 item 2 and §3.11) and are cited nowhere in the report. Which of the three could back a
 published figure was decided on reproducibility, not preference: `extra_results.json:phantom`
-has no generator at all, `deep_results.json:phantom` has one but prices the energy with a
-hardcoded flat `0.20` $/kWh against a $0.375/kWh hour-weighted all-in import rate (issue
-#172), and this script draws every rate from `rates.py` and prices the load twice.
+has no generator at all, `deep_results.json:phantom` has one but states that load's energy and
+no price (it priced it at a hardcoded flat `0.20` $/kWh against a $0.375/kWh hour-weighted
+all-in import rate until issue #172 deleted the field rather than reprice it), and this script
+draws every rate from `rates.py` and prices the load twice.
 
 **Measurement (issue AC1).** `night_floor_series()` computes a NEW, independently-designed
 per-night rule — for each calendar night, the median 1-5am import power, EXCLUDING any
