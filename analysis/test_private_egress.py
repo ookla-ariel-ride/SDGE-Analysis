@@ -1423,9 +1423,11 @@ TABLE = [
              "value of core.ignoreCase -- all three were measured identical -- so "
              "both sides ask a second time with git's own ':(icase)' fold. That "
              "fold is ASCII-only (issue #224); the non-ASCII half is carried by "
-             "the on-disk spelling walk wherever the path exists on disk, and "
-             "not at all where it does not (issue #230). Its fixtures are in "
-             "case_the_two_implementations_resolve_the_same_on_disk_spelling",
+             "the on-disk spelling walk wherever the path exists on disk, and by "
+             "enumerating the index where it does not (issue #230). Its fixtures "
+             "are in case_the_two_implementations_resolve_the_same_on_disk_"
+             "spelling and case_both_implementations_decide_case_per_component_"
+             "the_same_way",
              probe=("private/household.yaml", "file"), single="tracked_path"),
     DestCase("a worktree holding an ON-DISK case alias", _worktree_holding_an_on_disk_case_alias,
              None,
@@ -3497,9 +3499,10 @@ def _scratch_repo_tracking_an_absent_alias(td, name):
     there under either spelling. That is the state in which the two alias probes
     stop covering for each other: the walk cannot see an index entry with no
     file, so only the ':(icase)' pathspec can, and that one is switched on by the
-    case measurement alone. The alias here is ASCII on purpose -- in this same
-    state a NON-ASCII cased alias is seen by neither probe, which is issue #230
-    and is not what this fixture asserts.
+    case measurement alone. The alias here is ASCII on purpose: in this same
+    state a NON-ASCII cased alias is seen by neither of those two and is caught
+    by the index enumeration instead, which is issue #230 and is asserted by
+    case_a_tracked_but_absent_non_ascii_case_alias_is_refused rather than here.
 
     Standalone rather than a worktree of this checkout, for the reason
     _alias_scratch_repo() gives: every worktree here shares a --local config
@@ -3589,13 +3592,14 @@ def case_the_case_measurement_follows_the_path_below_the_worktree_root():
         forced, must get exactly the answer the root probe gives on its own --
         the walk must not turn a single-filesystem destination into a refusal.
 
-    THOSE CONTROLS ARE SCOPED TO ONE FILESYSTEM, and the scope is the honest
-    limit of what this case proves. Walking the path DOES introduce a new refusal
-    in the inverse nesting -- a case-SENSITIVE volume mounted under a folding
-    directory, where the OR along the path turns ':(icase)' on for a component
-    that does not fold, so an index entry differing only in case is reported as an
-    alias when the two are really two files. Issue #231; the direction is
-    fail-closed, and no fixture here can mount anything to assert it either way.
+    THOSE CONTROLS ARE SCOPED TO ONE FILESYSTEM, which is the honest limit of
+    what THIS case proves. The inverse nesting -- a case-SENSITIVE volume mounted
+    under a folding directory, where the OR along the path used to turn
+    ':(icase)' on for a component that does not fold -- was issue #231, and the
+    OR is no longer what decides: every entry the pathspec returns is filtered
+    against a per-component fold vector. Asserted in
+    case_case_folding_is_decided_per_component_and_not_path_wide, which supplies
+    the three per-directory answers the way this case supplies the root's.
     """
     real_root_probe = PE._root_folds_case
     with tempfile.TemporaryDirectory() as td:
@@ -3781,6 +3785,23 @@ def case_both_implementations_measure_case_folding_per_directory():
         unsearchable = fixture("unsearchable")
         (unsearchable / "README.md").write_text("x\n")
         (unsearchable).chmod(0o444)
+        # The KNOWN IMPRECISION, as a row rather than a sentence (issue #231,
+        # AC4): two hard links to one inode under case-aliased names measure as
+        # folding on a case-sensitive filesystem, because device and inode are
+        # what folding looks like. It is not fixed, and _dir_folds_case() says
+        # why -- distinguishing it (both spellings present as separate entries)
+        # would take away the only instrument a test has for building a folding
+        # directory on a machine that does not fold, which is what
+        # _make_directory_case_folding() and the `forced` row above are. On a
+        # folding filesystem the link cannot be made and the single entry
+        # answers 'yes' on its own, so the row expects 'yes' either way.
+        hardlink = fixture("hard-linked-alias")
+        (hardlink / "README").write_text("x\n")
+        try:
+            os.link(str(hardlink / "README"), str(hardlink / "readme"))
+            hardlink_how = "two hard links, one inode"
+        except OSError:
+            hardlink_how = "already case-insensitive: one entry"
 
         table = [
             ("an ordinary directory", ordinary, natural),
@@ -3789,6 +3810,7 @@ def case_both_implementations_measure_case_folding_per_directory():
             ("no entry with an ASCII letter", digits, "unknown"),
             ("only a name ending in a newline", newline, "unknown"),
             ("a dangling case alias FIRST", dangling, natural),
+            ("a HARD-LINKED case alias pair", hardlink, "yes"),
             ("an unreadable directory", unreadable, "unknown"),
             ("readable but UNSEARCHABLE", unsearchable, "unknown"),
         ]
@@ -3812,8 +3834,761 @@ def case_both_implementations_measure_case_folding_per_directory():
     unmeasurable = [t for t in table if t[2] == "unknown"]
     return (f"the shell's own _dir_folds_case and _dir_folds_case() agree on all "
             f"{len(table)} fixtures (this filesystem folds case: {fs_folds}; the "
-            f"folding row was {how}), including {len(unmeasurable)} that are "
-            "unmeasurable and therefore count as folding")
+            f"folding row was {how}, the hard-linked row {hardlink_how}), "
+            f"including {len(unmeasurable)} that are unmeasurable and therefore "
+            "count as folding")
+
+
+# The shell's own per-component fold vector and its classifier, lifted out of
+# the file the same way _dir_folds_case and _ondisk_spelling are. Four functions
+# come across because they call each other; nothing is described.
+_FOLDVEC_FN = re.compile(r"^_dest_folds_vector\(\) \{[^\n]*\n(.*?)\n\}$", re.M | re.S)
+_CLASSIFY_FN = re.compile(r"^_classify_alias\(\) \{[^\n]*\n(.*?)\n\}$", re.M | re.S)
+_SPLIT_FN = re.compile(r"^_split_components\(\) \{[^\n]*\n(.*?)\n\}$", re.M | re.S)
+_CASEFOLD_FN = re.compile(r"^_case_fold\(\) \{[^\n]*\n(.*?)\n\}$", re.M | re.S)
+# The GENERATED table the shell's _case_fold runs, lifted as the literal it is.
+# Lifted rather than substituted from private_egress.CASE_FOLD_SED, which would
+# make every comparison below tautological: the whole point is that the shell's
+# own copy is what answers. That the two copies are the same text is a separate
+# assertion, in case_the_case_fold_table_is_generated_from_pythons_own_fold.
+_CASEFOLD_SED = re.compile(r"^_CASE_FOLD_SED='\n(.*?)\n'$", re.M | re.S)
+_PERCOMP_HARNESS = """set -uo pipefail
+DST_REAL=$1
+_ascii_case_flip() {
+%(flip)s
+}
+_dir_folds_case() {
+%(dirfolds)s
+}
+_CASE_FOLD_SED='
+%(foldsed)s
+'
+_case_fold() {
+%(casefold)s
+}
+_split_components() {
+%(split)s
+}
+_FOLDS_VEC=()
+_dest_folds_vector() {
+%(vector)s
+}
+_classify_alias() {
+%(classify)s
+}
+if [ -n "${4:-}" ]; then _FOLDS_VEC=($4); else _dest_folds_vector "$2"; fi
+if [ "${#_FOLDS_VEC[@]}" -gt 0 ]; then printf '%%s' "${_FOLDS_VEC[*]}"; fi
+printf '|'
+if [ -n "${3:-}" ]; then _classify_alias "$2" "$3"; fi
+printf '\\n'
+"""
+
+
+def _shell_per_component(root, relpath, entry=None, vector=None):
+    """(the shell's fold vector, its classification of `entry`) -- from the
+    shell script's own functions, lifted verbatim.
+
+    `vector`, when given, is SUPPLIED to both implementations instead of
+    measured, and that is not a shortcut: a directory that does not fold cannot
+    be built on a filesystem that does, so the arrangement issue #231 is about
+    -- a case-SENSITIVE descendant under a folding ancestor -- would otherwise
+    be asserted on a case-sensitive machine and skipped on a folding one. The
+    measurement has its own rows above; these are about the classifier.
+    """
+    text = SCRIPT.read_text()
+    parts = {
+        "flip": _FLIP_FN.search(text), "dirfolds": _DIRFOLDS_FN.search(text),
+        "casefold": _CASEFOLD_FN.search(text), "split": _SPLIT_FN.search(text),
+        "vector": _FOLDVEC_FN.search(text), "classify": _CLASSIFY_FN.search(text),
+        "foldsed": _CASEFOLD_SED.search(text),
+    }
+    missing = sorted(k for k, v in parts.items() if not v)
+    assert not missing, (
+        f"stage-private-data.sh no longer defines {missing} -- its case answer "
+        "is back to one boolean for the whole path, so a folding ancestor folds "
+        "every component below it (issue #231) and a tracked-but-absent "
+        "non-ASCII alias is seen by nothing (issue #230)")
+    script = _PERCOMP_HARNESS % {k: v.group(1) for k, v in parts.items()}
+    r = subprocess.run(["/bin/bash", "-c", script, "bash", str(root), relpath,
+                        entry or "",
+                        "" if vector is None
+                        else " ".join("yes" if v else "no" for v in vector)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, (
+        f"the shell probe exited {r.returncode} on {relpath!r}: {r.stderr[-400:]!r}")
+    vec, _, cls = r.stdout.strip().partition("|")
+    return tuple(v == "yes" for v in vec.split()), (cls or None)
+
+
+@case
+def case_both_implementations_decide_case_per_component_the_same_way():
+    """THE AGREEMENT TABLE for the two mechanisms issues #231 and #230 added.
+
+    The destination table cannot carry either arrangement: it cannot mount a
+    volume, and stage-private-data.sh's three declared paths are pure ASCII, so
+    no non-ASCII alias of them exists to build. That is exactly how the last
+    shared defect survived a green table. So the two implementations' own
+    functions are compared directly -- the shell's lifted out of the file, not
+    described -- on fixtures chosen for the two arrangements:
+
+      * FOLDING ANCESTOR / CASE-SENSITIVE DESCENDANT (issue #231): a directory
+        forced to measure as folding with a case-aliased pair, holding an
+        ordinary subdirectory that does not fold on a case-sensitive machine.
+        The vector must differ between the two components, and an index entry
+        differing only in case at the deeper one must classify as 'spurious'.
+      * TRACKED-BUT-ABSENT NON-ASCII LEAF (issue #230): a leaf that is not on
+        disk, compared against an index entry differing only in non-ASCII case,
+        which must classify as 'match' where the parent folds -- and against a
+        near-twin that is not a case pair, which must not.
+
+    THE INSTRUMENT HAS ITS OWN POSITIVE CONTROLS: an identical entry must
+    classify as 'match' and a plainly different one as 'keep' on EVERY
+    filesystem, so a harness that quietly ran nothing could not pass.
+    """
+    rows, bad = [], []
+    with tempfile.TemporaryDirectory() as td:
+        base = pathlib.Path(td) / "wt"
+        (base / "private" / "sensitive").mkdir(parents=True)
+        (base / ".git").mkdir()
+        (base / "private" / "sensitive" / "Keep.txt").write_text("measurable\n")
+        (base / "private" / "README.md").write_text("x\n")
+        forced = _make_directory_case_folding(base / "private")
+        root_folds = PE._root_folds_case(str(base))
+        deep_folds = PE._dir_folds_case(str(base / "private" / "sensitive"))
+
+        # (label, relpath, index entry or None, supplied vector or None). A row
+        # with no vector MEASURES this filesystem on both sides; a row with one
+        # asserts the classifier on every machine.
+        ancestor = (False, True, False)      # issue #231's arrangement, exactly
+        folding = (True, True)
+        sensitive = (False, False)
+        table = [
+            ("the fold vector, three components", "private/sensitive/foo", None, None),
+            ("the fold vector, absent leaf", "private/household.yaml", None, None),
+            ("identical entry", "private/household.yaml",
+             "private/household.yaml", folding),
+            ("ASCII case alias, folding parent", "private/household.yaml",
+             "private/HOUSEHOLD.yaml", folding),
+            ("FOLDING ANCESTOR, case-sensitive descendant", "private/sensitive/foo",
+             "private/sensitive/FOO", ancestor),
+            ("the same path, folding descendant", "private/sensitive/foo",
+             "private/sensitive/FOO", (False, True, True)),
+            ("a case alias at a case-sensitive root", "private/household.yaml",
+             "Private/household.yaml", sensitive),
+            ("NON-ASCII case alias, folding parent", "private/househöld.yaml",
+             "private/HOUSEHÖLD.yaml", folding),
+            ("NON-ASCII case alias, NOT folding", "private/househöld.yaml",
+             "private/HOUSEHÖLD.yaml", sensitive),
+            ("NON-ASCII near-twin, not a case pair", "private/bílls.csv",
+             "private/bålls.csv", folding),
+            ("a plainly different entry", "private/household.yaml",
+             "private/notes.txt", folding),
+            ("an entry DEEPER than the candidate", "private/verify",
+             "private/VERIFY/usage.csv", folding),
+            ("an entry SHORTER than the candidate", "private/verify/usage.csv",
+             "private/verify", (True, True, True)),
+            ("composition, not case", "private/houséhold.yaml",
+             "private/" + unicodedata.normalize("NFD", "houséhold.yaml"), folding),
+        ]
+        expected = {
+            "identical entry": "match",
+            "ASCII case alias, folding parent": "match",
+            "FOLDING ANCESTOR, case-sensitive descendant": "spurious",
+            "the same path, folding descendant": "match",
+            "a case alias at a case-sensitive root": "spurious",
+            "NON-ASCII case alias, folding parent": "match",
+            "NON-ASCII case alias, NOT folding": "spurious",
+            "NON-ASCII near-twin, not a case pair": "keep",
+            "a plainly different entry": "keep",
+            "an entry DEEPER than the candidate": "match",
+            "an entry SHORTER than the candidate": "keep",
+            "composition, not case": "keep",
+        }
+        for label, rel, entry, vector in table:
+            sh_vec, sh_cls = _shell_per_component(base, rel, entry, vector)
+            py_vec = vector if vector is not None else PE._fold_vector(str(base), rel)
+            py_cls = None if entry is None else PE._classify_alias(rel, entry, py_vec)
+            rows.append(f"  {label:<44} {rel:<28} "
+                        f"vec={''.join('YN'[not v] for v in py_vec):<4} "
+                        f"shell={sh_cls or '-':<9} python={py_cls or '-'}")
+            if tuple(sh_vec) != tuple(py_vec):
+                bad.append(f"{label}: fold vector shell={sh_vec} python={py_vec}")
+            elif sh_cls != py_cls:
+                bad.append(f"{label}: shell={sh_cls!r} python={py_cls!r}")
+            elif label in expected and py_cls != expected[label]:
+                bad.append(f"{label}: both said {py_cls!r}, expected "
+                           f"{expected[label]!r}")
+
+        assert not bad, "; ".join(bad)
+        # THE MEASURED ROWS REALLY MEASURED SOMETHING, or the two rows with no
+        # supplied vector are agreement about nothing.
+        vec = PE._fold_vector(str(base), "private/sensitive/foo")
+        assert vec[1] is True, (
+            f"private/ did not measure as folding ({forced}), so the measured "
+            f"rows carry no folding ancestor at all: {vec}")
+    print(f"  {'fixture':<38} {'asked':<28} the two per-component mechanisms")
+    print("\n".join(rows))
+    return (f"the shell's own _dest_folds_vector/_classify_alias and "
+            f"_fold_vector()/_classify_alias() agree on all {len(table)} "
+            f"fixtures (root folds: {root_folds}; private/ forced {forced}; the "
+            f"case-sensitive descendant measures folds={deep_folds}), covering "
+            "the folding-ancestor and tracked-but-absent-non-ASCII arrangements")
+
+
+def _scratch_repo_tracking_absent_entries(td, name, entries):
+    """_scratch_repo_tracking_an_absent_alias() with the index entries named by
+    the caller: each is written with `update-index --cacheinfo`, so no
+    working-tree file for any of them ever exists and the on-disk walk has
+    nothing to resolve.
+    """
+    repo = pathlib.Path(td) / name
+    (repo / "private").mkdir(parents=True)
+    for args in (["init", "-q", "."],
+                 ["config", "core.precomposeUnicode", "false"],
+                 ["config", "core.ignoreCase", "false"]):
+        subprocess.run(["git", "-C", str(repo)] + args, capture_output=True, check=True)
+    (repo / ".gitignore").write_text("private/\n")
+    blob = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"],
+                          input="committed\n", capture_output=True, text=True,
+                          check=True).stdout.strip()
+    for entry in entries:
+        subprocess.run(["git", "-C", str(repo), "update-index", "--add",
+                        "--cacheinfo", f"100644,{blob},{entry}"],
+                       capture_output=True, check=True)
+        assert not os.path.lexists(str(repo / entry)), (
+            f"the fixture wrote {entry!r}, which it is supposed to leave absent")
+    return repo
+
+
+@case
+def case_case_folding_is_decided_per_component_and_not_path_wide():
+    """ISSUE #231: a folding ANCESTOR used to make every component below it fold.
+
+    THE DEFECT. _fs_folds_case() returns at the FIRST directory on the path that
+    folds, and _alias_pathspec() then applies ':(icase)' to the WHOLE path --
+    which is all a pathspec can express, because git applies the magic path-wide.
+    So a case-insensitive volume mounted at `private/` turned the fold on for
+    `private/sensitive/` as well, whatever THAT directory does.
+
+    REPRODUCED FOR REAL, before the fix, on three nested mounts (a test may not
+    leave a mount behind, so this is recorded rather than repeated here): a
+    case-sensitive APFS image holding the worktree, a case-insensitive one
+    mounted at <root>/private, a case-sensitive one at <root>/private/sensitive,
+    and an index holding `private/sensitive/FOO` with no working-tree file --
+
+        _root_folds_case(wt)                 -> False
+        _dir_folds_case(private/)            -> True
+        _dir_folds_case(private/sensitive/)  -> False
+        _fs_folds_case(private/sensitive/foo)-> True   (the OR)
+        ls-files ':(icase)./private/sensitive/foo' -> private/sensitive/FOO
+        VERDICT -> REFUSED [tracked_path]
+
+    and `private/sensitive/FOO` is a genuinely different file from
+    `private/sensitive/foo` on that volume. A wrong refusal, not a hole -- which
+    is why it shipped -- but the equivalence relation was wrong.
+
+    WHAT THIS CASE DOES INSTEAD. The three per-directory answers are supplied
+    directly, which is the same instrument
+    case_the_case_measurement_follows_the_path_below_the_worktree_root uses for
+    the root: what is under test is the guard's REACTION to a folding ancestor
+    and a non-folding descendant, and the mounts proved that a real arrangement
+    produces those answers. On the real mounts, after the fix, the same three
+    fixtures gave ACCEPTED / REFUSED / ACCEPTED exactly as below.
+
+    BOTH POSITIVE CONTROLS ARE IN THE SAME RUN, because a fix that refuses less
+    has to be shown not to refuse less than it should:
+      * the #232 submount bypass -- `private/household.yaml` against a tracked
+        `private/HOUSEHOLD.yaml`, differing in a component whose own parent DOES
+        fold -- must still be REFUSED;
+      * an ordinary path with no aliased entry must still be ACCEPTED.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        repo = _scratch_repo_tracking_absent_entries(
+            td, "per-component",
+            ("private/HOUSEHOLD.yaml", "private/sensitive/FOO"))
+        (repo / "private" / "sensitive").mkdir()
+        (repo / "private" / "sensitive" / "Keep.txt").write_text("measurable\n")
+
+        # The arrangement: root case-sensitive, private/ folding, and the volume
+        # mounted at private/sensitive/ case-sensitive.
+        arrangement = {str(repo / "private"): True,
+                       str(repo / "private" / "sensitive"): False}
+        real_root, real_dir = PE._root_folds_case, PE._dir_folds_case
+        PE._root_folds_case = lambda worktree: False
+        PE._dir_folds_case = lambda d: arrangement.get(str(d), real_dir(d))
+        try:
+            assert PE._fold_vector(str(repo), "private/sensitive/foo") == \
+                (False, True, False), PE._fold_vector(str(repo), "private/sensitive/foo")
+            # The premise: git still matches the entry path-wide, so the filter
+            # is the only thing that can be doing the work below.
+            overrides = PE._alias_overrides(PE._destination_overrides(str(repo)))
+            matched = PE._git(
+                ["ls-files", "--", PE._alias_pathspec("private/sensitive/foo", True)],
+                str(repo), None, overrides).stdout.strip()
+            assert matched == "private/sensitive/FOO", (
+                "the path-wide pathspec no longer matches the entry, so this case "
+                f"is not exercising the filter: {matched!r}")
+            assert PE._fs_folds_case(str(repo), "private/sensitive/foo") is True, (
+                "the OR along the path no longer says 'folds', so the ':(icase)' "
+                "this filter exists to narrow is not being applied at all")
+
+            # THE FIX: a component whose own parent does not fold is not folded.
+            try:
+                PE._require_uncommittable(str(repo), "private/sensitive/foo")
+            except PE.DestinationRefused as e:
+                raise AssertionError(
+                    "private/sensitive/foo was REFUSED on a destination whose "
+                    "private/sensitive/ does NOT fold case: the index holds "
+                    "private/sensitive/FOO, which is a different file there, and "
+                    f"only a folding ANCESTOR says otherwise ({e.reason}: "
+                    f"{e.detail[:200]})")
+
+            # POSITIVE CONTROL 1 -- the #232 submount bypass still refuses. Same
+            # repository, same run, same forced arrangement: the difference is
+            # that `household.yaml`'s parent is the folding private/.
+            try:
+                PE._require_uncommittable(str(repo), "private/household.yaml")
+            except PE.DestinationRefused as e:
+                assert e.reason == "tracked_path", e.reason
+                assert "HOUSEHOLD" in e.detail, e.detail
+            else:
+                raise AssertionError(
+                    "the per-component filter dropped a real alias: "
+                    "private/household.yaml differs from the tracked "
+                    "private/HOUSEHOLD.yaml in a component whose own parent "
+                    "directory folds, and the write lands on the committed file")
+
+            # POSITIVE CONTROL 2 -- an ordinary path with nothing aliased.
+            try:
+                PE._require_uncommittable(str(repo), "private/verify")
+            except PE.DestinationRefused as e:
+                raise AssertionError(
+                    f"an ordinary path was refused ({e.reason}): {e.detail[:200]}")
+        finally:
+            PE._root_folds_case, PE._dir_folds_case = real_root, real_dir
+    return ("a tracked entry differing only in case in a component whose own "
+            "parent does NOT fold is no longer treated as an alias, while the "
+            "same run still refuses one whose parent DOES fold and still accepts "
+            "an ordinary path")
+
+
+@case
+def case_a_tracked_but_absent_non_ascii_case_alias_is_refused():
+    """ISSUE #230: the combination both alias probes missed.
+
+    An index entry that is tracked, has NO working-tree file, and differs from
+    the path only in NON-ASCII case is invisible to both:
+
+      * ':(icase)' is byte-oriented, so it folds ASCII case pairs and no others;
+      * the on-disk walk resolves a path only as far as it EXISTS, and a leaf
+        that is not there has nothing to resolve.
+
+    REPRODUCED FIRST, and the end state recorded, on macOS 15 (APFS
+    case-insensitive, git 2.50.1) with an index holding `private/HOUSEHÖLD.yaml`
+    written by `update-index --cacheinfo`:
+
+        guard verdict for private/househöld.yaml  ->  ACCEPTED
+        (the copy runs)
+        git status --porcelain  ->  AM "private/HOUSEH\\303\\226LD.yaml"
+        git diff --cached       ->  the private bytes, under the tracked name
+
+    THE FIX IS NOT A THIRD PROBE OF THE SAME KIND. There is no write-free way to
+    ask a filesystem whether it would collide two names that are BOTH absent, so
+    the question is put to the side that does hold something -- the index is
+    enumerated and each entry compared against the candidate component by
+    component, under the generated fold and the per-component fold vector.
+
+    MEASURED ON BOTH KINDS OF MACHINE, not skipped on one. The two measurements
+    are FORCED here, with the instruments the neighbouring cases use, so what is
+    asserted is the guard's reaction to "this directory folds" rather than the
+    filesystem this suite happens to run on. The reproduction above says a real
+    folding volume gives those answers.
+
+    THE POSITIVE CONTROLS ARE IN THE SAME RUN: the ASCII alias must still be
+    refused (it is the probe this one does not replace), and an ordinary path in
+    the same repository must still be accepted.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        repo = _scratch_repo_tracking_absent_entries(
+            td, "wide-absent",
+            ("private/HOUSEHÖLD.yaml", "private/HOUSEHOLD.yaml"))
+        how_root = _make_case_folding(repo)
+        how_dir = _make_directory_case_folding(repo / "private")
+        folds = PE._fold_vector(str(repo), "private/househöld.yaml")
+        assert folds == (True, True), (
+            f"the fold measurement was not forced ({how_root}; {how_dir}): {folds}")
+
+        # THE REPRODUCTION, taken before the guard is asked, in this fixture.
+        overrides = PE._alias_overrides(PE._destination_overrides(str(repo)))
+        byte_fold = PE._git(
+            ["ls-files", "--", PE._alias_pathspec("private/househöld.yaml", True)],
+            str(repo), None, overrides).stdout.strip()
+        assert not byte_fold, (
+            "':(icase)' now folds non-ASCII case on this git, so issue #230's "
+            f"premise no longer holds: {byte_fold!r}")
+        walked = PE._ondisk_relpath(str(repo), "private/househöld.yaml")
+        assert walked == "private/househöld.yaml", (
+            f"the walk resolved an absent leaf to {walked!r}; if it can do that, "
+            "the claim above needs re-measuring")
+
+        try:
+            PE._require_uncommittable(str(repo), "private/househöld.yaml")
+        except PE.DestinationRefused as e:
+            assert e.reason == "tracked_path", (
+                f"the write lands on a COMMITTED file and the guard said "
+                f"{e.reason!r}: {e.detail[:200]}")
+            assert "HOUSEH" in e.detail, (
+                f"the refusal does not name the committed spelling: {e.detail}")
+        else:
+            raise AssertionError(
+                "private/househöld.yaml was ACCEPTED in a repository whose index "
+                "holds private/HOUSEHÖLD.yaml with no working-tree file, on a "
+                "destination measured to fold case -- 'git add -A' then stages "
+                "the private bytes under the committed name")
+
+        # POSITIVE CONTROL 1: the ASCII alias, which ':(icase)' does see, is
+        # still refused -- the enumeration did not replace the probe it joins.
+        try:
+            PE._require_uncommittable(str(repo), "private/household.yaml")
+        except PE.DestinationRefused as e:
+            assert e.reason == "tracked_path", e.reason
+        else:
+            raise AssertionError("#204's ASCII case stopped being refused")
+
+        # POSITIVE CONTROL 2: an ordinary path in the same repository, whose
+        # index holds two near-miss entries, is still accepted.
+        try:
+            PE._require_uncommittable(str(repo), "private/verify")
+        except PE.DestinationRefused as e:
+            raise AssertionError(
+                f"an ordinary path was refused ({e.reason}): {e.detail[:200]}")
+
+        # AND THE NEAR-TWIN THAT IS NOT A CASE PAIR: 'í' and 'å' differ in a bit
+        # the fold does not touch, so a destination tracking one must not refuse
+        # the other. The over-refusal this mechanism could cause, measured.
+        twin = _scratch_repo_tracking_absent_entries(
+            td, "near-twin", ("private/bílls.csv",))
+        _make_case_folding(twin)
+        _make_directory_case_folding(twin / "private")
+        try:
+            PE._require_uncommittable(str(twin), "private/bålls.csv")
+        except PE.DestinationRefused as e:
+            raise AssertionError(
+                "the generated fold treated two names that are not a case pair as one "
+                f"file, and refused a correct destination ({e.reason}): "
+                f"{e.detail[:200]}")
+    return ("a tracked-but-absent index entry differing only in NON-ASCII case "
+            "is refused as tracked_path where ':(icase)' finds nothing and the "
+            "on-disk walk has nothing to resolve; the ASCII alias still refuses, "
+            "and neither an ordinary path nor a non-ASCII near-twin does")
+
+
+# The five blocks a filename realistically uses, which is the population the
+# miss below is counted over. Latin-1 Supplement, Latin Extended-A, Latin
+# Extended-B, Greek and Cyrillic -- named here rather than inline so the number
+# in the failure message is attached to the set it was measured on.
+FILENAME_CASE_BLOCKS = ((0x00C0, 0x00FF), (0x0100, 0x017F), (0x0180, 0x024F),
+                        (0x0370, 0x03FF), (0x0400, 0x04FF))
+
+
+@case
+def case_the_case_fold_table_is_generated_from_pythons_own_fold():
+    """ISSUE #233: the fold both implementations use is GENERATED, the two
+    copies of it are the same text, and it covers the domain it says it does.
+
+    THE DEFECT THIS PINS. The table this replaces was three byte ranges -- A-Z,
+    \\200-\\237 and \\300-\\337, each with 0x20 set -- and was documented as a
+    deliberate SUPERSET that could only over-match, so its residue was called
+    fail-closed. Both halves were false. It folded a pair only where the UTF-8
+    differs in the 0x20 bit of the FINAL byte, so a case pair that crosses a lead
+    byte did not fold at all: of the cased pairs in FILENAME_CASE_BLOCKS it
+    folded 61 and MISSED 319, all of Latin Extended-A and -B among them. An
+    unfolded pair is an alias the guard does not see, so that residue admitted
+    writes -- fail-OPEN. This case re-counts the miss against the OLD table and
+    asserts the new one does not have it.
+
+    WHAT IS ASSERTED, in one place because these are one property:
+
+      1. the committed table is what case_fold_sed_script() generates from
+         python's str.lower() TODAY -- regenerated here, not trusted
+      2. stage-private-data.sh's _CASE_FOLD_SED literal is byte-identical to
+         private_egress.CASE_FOLD_SED. This is the anti-drift binding: the two
+         implementations cannot fold differently while one text is both
+      3. the two implementations agree over the WHOLE declared domain, all
+         1392 pairs, the shell's side run from the shell's own literal
+      4. the structural properties the agreement rests on -- no escaping, no
+         target that is also a source, no source that prefixes another -- which
+         is what makes sed's rule-at-a-time pass and this module's single regex
+         pass the same function
+      5. the old table's 319-pair miss is gone, and the pairs the new table
+         deliberately leaves out are still out
+
+    THE NEGATIVE CONTROLS ARE IN THE SAME RUN, because a fold that joined
+    everything would pass 1-3 and be useless: two unrelated accents must stay
+    apart, and so must the pair the OLD table over-matched.
+    """
+    # 1. REGENERATED, not trusted.
+    fresh = PE.case_fold_sed_script()
+    assert fresh == PE.CASE_FOLD_SED.rstrip("\n"), (
+        "private_egress.CASE_FOLD_SED is not what str.lower() generates today. "
+        "Run: ./.venv/bin/python analysis/private_egress.py --regenerate-case-fold")
+
+    # 2. ONE TEXT, TWO FILES.
+    shell = _CASEFOLD_SED.search(SCRIPT.read_text())
+    assert shell, (
+        "stage-private-data.sh no longer carries a _CASE_FOLD_SED literal, so "
+        "its fold is written down somewhere this suite cannot compare")
+    assert shell.group(1) == fresh, (
+        "stage-private-data.sh's fold table has drifted from private_egress.py's. "
+        "Run: ./.venv/bin/python analysis/private_egress.py --regenerate-case-fold")
+
+    # 4. THE STRUCTURAL PROPERTIES, re-checked through the generator's own gate.
+    pairs = PE.case_fold_pairs()
+    PE._check_case_fold_pairs(pairs)
+    assert len(pairs) == len(PE.CASE_FOLD_PAIRS), (
+        f"the committed table parses to {len(PE.CASE_FOLD_PAIRS)} pairs and the "
+        f"domain has {len(pairs)}")
+
+    # 3. THE WHOLE DOMAIN, both implementations. The shell's side is run in ONE
+    # sed pass over every source rather than 1392 forks of _case_fold: the
+    # per-call wrapper is exercised separately just below, and this half is
+    # about the table. Sources are fed one per line because that is the only
+    # separator a name cannot contain that sed also splits on.
+    sources = [a for a, _ in pairs]
+    batched = subprocess.run(
+        ["/bin/bash", "-c", f"_CASE_FOLD_SED='\n{shell.group(1)}\n'\n"
+                            'LC_ALL=C sed -e "$_CASE_FOLD_SED"'],
+        input="\n".join(sources), capture_output=True, text=True)
+    assert batched.returncode == 0, (
+        f"the shell fold exited {batched.returncode}: {batched.stderr[-400:]!r}")
+    got = batched.stdout.split("\n")
+    want = [b for _, b in pairs]
+    disagree = [(s, g, w) for s, g, w in zip(sources, got, want) if g != w]
+    assert len(got) == len(want) and not disagree, (
+        f"the shell fold and str.lower() disagree on {len(disagree)} of "
+        f"{len(sources)} pairs (first: {disagree[:3]})")
+    py_bad = [s for s, w in zip(sources, want)
+              if PE._case_fold(s) != w.encode()]
+    assert not py_bad, (
+        f"_case_fold() and str.lower() disagree on {len(py_bad)} pairs: "
+        f"{py_bad[:5]}")
+
+    # AND THE PER-CALL WRAPPER, on names rather than bare code points, so the
+    # trailing '.' and the printf/pipe shape are compared too.
+    text = SCRIPT.read_text()
+    fn = _CASEFOLD_FN.search(text)
+    assert fn, "stage-private-data.sh no longer defines _case_fold"
+    harness = (f"_CASE_FOLD_SED='\n{shell.group(1)}\n'\n"
+               f"_case_fold() {{\n{fn.group(1)}\n}}\n_case_fold \"$1\"\n")
+    names = ["private", "household.yaml", "РИСК.yaml", "риск.yaml",
+             "HOUSEHÖLD.yaml", "BÍLLS.csv", "bålls.csv", "Ｈｏｕｓｅ", "Ⱥ", "K",
+             "𐐀eseret", "ᏣᎳᏆ", "Ἀλφα", "ĀĂĄĆ", "İ", "ς", "‐", "‰",
+             "a b\tc", "dots...", "1-raw-data"]
+    for name in names:
+        r = subprocess.run(["/bin/bash", "-c", harness, "bash", name],
+                           capture_output=True)
+        assert r.returncode == 0, (
+            f"the shell _case_fold exited {r.returncode} on {name!r}: "
+            f"{r.stderr[-300:]!r}")
+        assert r.stdout == PE._case_fold(name) + b".", (
+            f"the two _case_fold implementations disagree on {name!r}: "
+            f"shell={r.stdout!r} python={PE._case_fold(name) + b'.'!r}")
+
+    # 5a. THE OLD TABLE'S MISS, re-counted here so the number in the docstring
+    # is measured rather than remembered. The old map, spelled out.
+    old = bytes.maketrans(
+        bytes(range(0x41, 0x5B)) + bytes(range(0x80, 0xA0)) + bytes(range(0xC0, 0xE0)),
+        bytes(range(0x61, 0x7B)) + bytes(range(0xA0, 0xC0)) + bytes(range(0xE0, 0x100)))
+    old_folded = old_missed = 0
+    for low, high in FILENAME_CASE_BLOCKS:
+        for cp in range(low, high + 1):
+            up = chr(cp)
+            lo = up.lower()
+            if lo == up or len(lo) != 1:
+                continue
+            if up.encode().translate(old) == lo.encode().translate(old):
+                old_folded += 1
+            else:
+                old_missed += 1
+    assert (old_folded, old_missed) == (61, 319), (
+        f"the retired byte map folds {old_folded} and misses {old_missed} of the "
+        "cased pairs in FILENAME_CASE_BLOCKS, not 61 and 319 -- the defect this "
+        "case pins is not the one being measured")
+    still_missed = [chr(cp) for low, high in FILENAME_CASE_BLOCKS
+                    for cp in range(low, high + 1)
+                    if chr(cp).lower() != chr(cp) and len(chr(cp).lower()) == 1
+                    and PE._case_fold(chr(cp)) != PE._case_fold(chr(cp).lower())]
+    assert not still_missed, (
+        f"{len(still_missed)} cased pairs in the blocks a filename uses are still "
+        f"unfolded, so issue #230 is still open over them: {still_missed[:8]}")
+
+    # 5b. AND THE STATED RESIDUE IS STILL THE STATED RESIDUE. If any of these
+    # starts folding, the domain paragraph at CASE_FOLD_SED is out of date --
+    # which is the failure mode this whole case exists to prevent.
+    for label, a, b in (("full casefold, final sigma", "ς", "σ"),
+                        ("full casefold, long s", "ſ", "s"),
+                        ("multi-code-point lowercase, U+0130", "İ", "i")):
+        assert PE._case_fold(a) != PE._case_fold(b), (
+            f"{label} now folds; CASE_FOLD_SED's residue paragraph says it does "
+            "not, and a domain statement that is wrong is the defect itself")
+
+    # 6. AND THE SHELL'S CHEAP GATE SURVIVED THE WIDENING. It skips index
+    # entries before _classify_alias is forked for them, and one of its two
+    # skips assumed the fold preserved BYTE LENGTH -- true of the retired byte
+    # map, false of 24 pairs here. An unsound skip is silent: the shell drops an
+    # entry python matches, on a fixture whose paths are ASCII it never fires,
+    # and every fixture in this suite has ASCII paths. So it is asked directly,
+    # about every length-changing pair the table actually has.
+    gate = re.search(r"^_gate_skips_entry\(\) \{[^\n]*\n(.*?)\n\}$",
+                     text, re.M | re.S)
+    assert gate, (
+        "stage-private-data.sh no longer defines _gate_skips_entry, so the skip "
+        "that must not drop a length-changing fold match cannot be exercised")
+    changing = [(a, b) for a, b in pairs
+                if len(a.encode()) != len(b.encode())]
+    assert changing, (
+        "the table has no length-changing pair, so this check is vacuous -- and "
+        "the shell's LENGTH skip could then be unconditional again")
+    rows = ([(f"{b}rivate/x", f"{a}rivate/x", False) for a, b in changing]
+            + [("private/household.yaml", "private/household.yaml", False),
+               ("private/household.yaml", "private/HOUSEHOLD.yaml", False),
+               ("private/x", "analysis/rates.py", True),
+               ("private/x", "data/y", True),
+               ("private/x", "README.md", True)])
+    probe = (f"_gate_skips_entry() {{\n{gate.group(1)}\n}}\n"
+             'while IFS=$\'\\t\' read -r rel entry; do\n'
+             '  if _gate_skips_entry "$rel" "$entry"; then echo skip; '
+             'else echo keep; fi\n'
+             'done\n')
+    # UNDER BOTH LOCALES, and that is the point rather than thoroughness.
+    # ${#var} counts CHARACTERS in a UTF-8 locale and BYTES in C, and
+    # _require_uncommittable sets neither, so a length skip can be sound in the
+    # environment a test runs in and unsound in the one the staging runs in.
+    # This suite's own environment is whichever the operator has.
+    for locale in ("C", "en_US.UTF-8"):
+        env = dict(os.environ, LC_ALL=locale)
+        r = subprocess.run(["/bin/bash", "-c", probe], env=env,
+                           input="".join(f"{rel}\t{entry}\n"
+                                         for rel, entry, _ in rows),
+                           capture_output=True, text=True)
+        assert r.returncode == 0, (
+            f"the gate probe exited {r.returncode} under LC_ALL={locale}: "
+            f"{r.stderr[-400:]!r}")
+        verdicts = r.stdout.split()
+        assert len(verdicts) == len(rows), (
+            f"the gate probe answered {len(verdicts)} of {len(rows)} rows under "
+            f"LC_ALL={locale}")
+        wrong = [(rel, entry, v) for (rel, entry, want), v in zip(rows, verdicts)
+                 if (v == "skip") != want]
+        assert not wrong, (
+            f"the shell's cheap gate is wrong on {len(wrong)} rows under "
+            f"LC_ALL={locale}: {wrong[:3]}. A 'skip' where the table expects "
+            "'keep' drops an entry _classify_alias would have called a match, so "
+            "the shell accepts what python refuses")
+    # AND THE ROWS IT MUST NOT SKIP REALLY ARE MATCHES, or "do not skip" is
+    # advice about nothing.
+    for rel, entry, want in rows:
+        if want or "/" not in entry:
+            continue
+        depth = len([p for p in rel.split("/") if p])
+        assert PE._classify_alias(rel, entry, (True,) * depth) == "match", (
+            f"{entry!r} is not a match for {rel!r}, so requiring the gate to "
+            "keep it proves nothing")
+
+    # THE NEGATIVE CONTROLS.
+    assert PE._case_fold("bílls.csv") != PE._case_fold("bålls.csv"), (
+        "'í' and 'å' are not a case pair and the fold joined them: it would "
+        "refuse destinations that are genuinely different files")
+    assert PE._case_fold("‐") != PE._case_fold("‰"), (
+        "the pair the RETIRED byte map over-matched folds again; APFS keeps "
+        "U+2010 and U+2030 apart, so joining them is an over-refusal")
+    return (f"the case fold is generated from str.lower() ({len(pairs)} pairs), "
+            "both copies are the same text, the two implementations agree over "
+            "the whole domain, and the retired byte map's 319-pair miss in the "
+            "five blocks a filename uses is closed")
+
+
+@case
+def case_a_tracked_but_absent_cyrillic_case_alias_is_refused():
+    """ISSUE #233's end-to-end pin: the exact pair the retired byte map missed.
+
+    `private/РИСК.yaml` in the index with no working-tree file, and a candidate
+    `private/риск.yaml`. Every write-free oracle answers ENOENT for both
+    spellings, ':(icase)' folds ASCII only, and the retired byte map did not
+    fold Cyrillic Р (d0 a0) to р (d1 80) because the pair crosses the lead byte
+    -- so all three questions came back empty and the guard ACCEPTED. On this
+    checkout's APFS volume the two names are ONE FILE, measured: writing one and
+    stat'ing the other returns the same st_dev and st_ino.
+
+    Kept separate from case_a_tracked_but_absent_non_ascii_case_alias_is_refused
+    on purpose. That one's fixture uses 'Ö'/'ö', which the retired map DID fold,
+    so it passed throughout the period this hole was open. A pair that crosses
+    the lead byte is what tells the two tables apart.
+
+    THE POSITIVE CONTROLS ARE IN THE SAME RUN: an ordinary path in the same
+    repository must still be accepted, and a Cyrillic name that is NOT a case
+    pair of the candidate must not be refused -- the over-refusal a wider fold
+    risks, measured rather than argued.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        repo = _scratch_repo_tracking_absent_entries(
+            td, "cyrillic-absent", ("private/РИСК.yaml",))
+        how_root = _make_case_folding(repo)
+        how_dir = _make_directory_case_folding(repo / "private")
+        folds = PE._fold_vector(str(repo), "private/риск.yaml")
+        assert folds == (True, True), (
+            f"the fold measurement was not forced ({how_root}; {how_dir}): {folds}")
+
+        # THE REPRODUCTION, taken before the guard is asked. Both other probes
+        # must still come back empty, or this fixture is testing something else.
+        overrides = PE._alias_overrides(PE._destination_overrides(str(repo)))
+        pathspec = PE._git(
+            ["ls-files", "--", PE._alias_pathspec("private/риск.yaml", True)],
+            str(repo), None, overrides).stdout.strip()
+        assert not pathspec, (
+            "':(icase)' now folds Cyrillic on this git, so this fixture no "
+            f"longer reproduces the hole: {pathspec!r}")
+        walked = PE._ondisk_relpath(str(repo), "private/риск.yaml")
+        assert walked == "private/риск.yaml", (
+            f"the walk resolved an absent leaf to {walked!r}, which it cannot do "
+            "for a name that is not on disk")
+
+        try:
+            PE._require_uncommittable(str(repo), "private/риск.yaml")
+        except PE.DestinationRefused as e:
+            assert e.reason == "tracked_path", (
+                f"the write lands on a COMMITTED file and the guard said "
+                f"{e.reason!r}: {e.detail[:200]}")
+            assert "РИСК" in e.detail, (
+                f"the refusal does not name the committed spelling: {e.detail}")
+        else:
+            raise AssertionError(
+                "private/риск.yaml was ACCEPTED in a repository whose index "
+                "holds private/РИСК.yaml with no working-tree file, on a "
+                "destination measured to fold case -- this is issue #230 still "
+                "open for every case pair that crosses a UTF-8 lead byte")
+
+        # POSITIVE CONTROL 1: an ordinary path is still accepted.
+        try:
+            PE._require_uncommittable(str(repo), "private/verify")
+        except PE.DestinationRefused as e:
+            raise AssertionError(
+                f"an ordinary path was refused ({e.reason}): {e.detail[:200]}")
+
+        # POSITIVE CONTROL 2: THE OVER-REFUSAL THE WIDENING RISKS. 'РИСК' and
+        # 'ПИСК' differ in a letter, not in case, and the widened fold must not
+        # join them.
+        try:
+            PE._require_uncommittable(str(repo), "private/писк.yaml")
+        except PE.DestinationRefused as e:
+            raise AssertionError(
+                "the widened fold treated two Cyrillic names that are not a case "
+                f"pair as one file, and refused a correct destination "
+                f"({e.reason}): {e.detail[:200]}")
+    return ("a tracked-but-absent Cyrillic case alias -- the shape the retired "
+            "byte map missed because the pair crosses a UTF-8 lead byte -- is "
+            "refused as tracked_path, while an ordinary path and a Cyrillic "
+            "near-twin are still accepted")
 
 
 @case
@@ -4165,7 +4940,7 @@ def case_a_non_ascii_case_aliased_tracked_path_is_refused():
             found[rel] = r.stdout.strip()
         assert found["private/household.yaml"], (
             "the ASCII control is not found by ':(icase)' either, so this fixture "
-            "does not show what the byte fold can and cannot reach")
+            "does not show what the pathspec fold can and cannot reach")
         if not PE._same_file(str(repo / "private" / "HOUSEHÖLD.yaml"),
                              str(repo / "private" / "househöld.yaml")):
             # A case-sensitive filesystem: the two ARE two files, and refusing
@@ -4304,13 +5079,15 @@ def case_the_two_alias_probes_each_catch_what_the_other_misses():
     branch just closed.
 
     NEITHER SUBSUMING THE OTHER IS NOT THE SAME AS COVERING EVERYTHING BETWEEN
-    THEM, and this case does not claim that it is. The two blind spots overlap
-    where BOTH conditions hold at once -- a tracked entry with no working-tree
-    file whose name differs from the path by NON-ASCII case -- and that
-    combination is issue #230, open on purpose. The fixtures below are each
-    one-sided deliberately (an ASCII alias for the absent-entry half, a present
-    file for the non-ASCII half); a fixture combining them would be a failing
-    test of unfixed behaviour, not a guard.
+    THEM, and this case still does not claim that it is. The two blind spots
+    overlap where BOTH conditions hold at once -- a tracked entry with no
+    working-tree file whose name differs from the path by NON-ASCII case -- and
+    that combination is answered by a THIRD question rather than by either of
+    these two: _index_case_aliases() enumerates the index and compares component
+    by component (issue #230, asserted in
+    case_a_tracked_but_absent_non_ascii_case_alias_is_refused). The fixtures
+    below stay one-sided deliberately, because what they exist to prove is that
+    neither of THESE probes may be dropped.
     """
     with tempfile.TemporaryDirectory() as td:
         repo = _alias_scratch_repo(td, "absent-entry", "private/HOUSEHOLD.yaml")
@@ -4344,7 +5121,7 @@ def case_the_two_alias_probes_each_catch_what_the_other_misses():
                 "':(icase)' now folds non-ASCII case on this git, so this half of "
                 "the claim needs re-measuring")
             assert PE._ondisk_relpath(str(wide), "private/bílls.csv") == \
-                "private/BÍLLS.csv", "the walk did not find what the byte fold missed"
+                "private/BÍLLS.csv", "the walk did not find what the pathspec fold missed"
     return ("the pathspec fold is the only probe that sees a tracked entry with "
             "no working-tree file, and the on-disk walk is the only one that "
             "sees a non-ASCII cased name: neither probe subsumes the other")
@@ -4495,6 +5272,33 @@ def case_both_implementations_fold_the_alias_question_the_same_way():
         "case goes unseen (issue #224)")
     assert asks.index("_ondisk_spelling") < asks.index("ls-files"), (
         "the walk runs after the first question it is supposed to inform")
+
+    # AND THE TWO MECHANISMS THAT MAKE THE ANSWER COMPONENT-LOCAL (issues #231,
+    # #230). Their behaviour is compared row by row in
+    # case_both_implementations_decide_case_per_component_the_same_way; what is
+    # checked here is that _require_uncommittable really USES them, which a
+    # comparison of the functions alone cannot see -- an unwired filter reads
+    # exactly like the path-wide answer it replaces.
+    assert '_dest_folds_vector "$rel"' in asks, (
+        "stage-private-data.sh no longer measures case PER COMPONENT before the "
+        "alias question, so git's path-wide ':(icase)' decides alone and a "
+        "folding ancestor folds every component below it (issue #231)")
+    assert "_classify_alias" in asks, (
+        "stage-private-data.sh no longer filters the index entries git returned "
+        "against the per-component answer, so the vector is measured and thrown "
+        "away (issue #231)")
+    assert "ls-files -z" in asks, (
+        "the shell's alias question no longer asks for NUL-separated names, so a "
+        "non-ASCII index entry comes back QUOTED and is split on the wrong bytes")
+    idx = re.search(r'if \[ "\$vecfolds" = yes \]; then\n(.*?)\n  fi\n', asks, re.S)
+    assert idx and "ls-files -z" in idx.group(1), (
+        "stage-private-data.sh no longer enumerates the destination's index, so "
+        "a tracked-but-absent entry differing only in NON-ASCII case is seen by "
+        "nothing: ':(icase)' folds ASCII bytes and the on-disk walk has no file "
+        "to resolve (issue #230)")
+    assert "match" in idx.group(1), (
+        "the index enumeration does not act on the classifier's 'match', so it "
+        "lists the index and decides nothing from it")
     return ("both implementations force the same alias configuration "
             f"({dict(PE.ALIAS_CONFIG_OVERRIDE)}), fold case with git's own "
             f"':(icase)' only where {PE.CASE_PROBE_NAME}/{PE.CASE_PROBE_ALIAS} "
@@ -6823,6 +7627,32 @@ TRUSTED_FACTS = {
               "refusal. Fixed upstream of here, by confirming the entry first",
         answer="reorder",
         proof="case_a_committable_destination_is_refused"),
+
+    "does this destination's INDEX already hold this path under a name its "
+    "filesystem folds to the one about to be written": dict(
+        oracle="git", where=("_index_case_aliases",),
+        about="the destination's whole index, listed with `ls-files -z` and "
+              "compared against the candidate component by component. It is the "
+              "question for a name that does not exist on disk yet: `:(icase)` "
+              "folds ASCII bytes only, and the on-disk walk needs one of the two "
+              "names to be there, so a tracked-but-absent NON-ASCII case alias "
+              "was seen by neither (issue #230)",
+        stale="no about the index, and MODELLED about the fold. The index is read "
+              "once per path, beside the two pathspec questions, and describes "
+              "the same repository they do. The comparison is the one place this "
+              "module does not ask the filesystem what two names mean -- for two "
+              "names that are both absent there is nothing to ask -- so it uses a "
+              "GENERATED table, python's own str.lower() emitted as the sed "
+              "script both implementations run (CASE_FOLD_SED). It is neither a "
+              "superset nor a subset of what a folding volume does: it joins "
+              "exactly the pairs str.lower() joins, and the pairs it leaves out "
+              "-- full-casefold equivalences, U+0130, NFC/NFD -- are aliases it "
+              "does not see, so THAT RESIDUE ERRS OPEN and is written down at "
+              "CASE_FOLD_SED rather than implied. It is gated on the "
+              "per-component fold vector, so a case-sensitive directory folds "
+              "nothing at all",
+        answer="stated residue",
+        proof="case_a_tracked_but_absent_non_ascii_case_alias_is_refused"),
 
     "does a register entry's directory exist, and where does it resolve": dict(
         oracle="filesystem", where=("_resolve_register", "_physical"),
