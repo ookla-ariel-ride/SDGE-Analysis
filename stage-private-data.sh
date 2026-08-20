@@ -475,6 +475,48 @@ _GIT_FORCED_CONFIG=(-c core.excludesFile=/dev/null)
 # closes the divergence rather than documenting it.
 _GIT_DEST_CONFIG=()
 
+# ---------------------------------------------------------------------------
+# THE ALIAS OVERRIDE (issue #204) -- the one value this script forces AGAINST
+# what the destination says, and only for the second tracked question.
+#
+# `git ls-files -- <pathspec>` matches index entries BY THE BYTES, and on the
+# filesystem this script runs on that is the wrong equivalence. Reproduced on
+# macOS (APFS, git 2.50.1) in a scratch repository whose .gitignore holds
+# `private/` and whose index holds `Private/household.yaml`:
+#
+#   write to private/household.yaml
+#     git status                                    ->  M Private/household.yaml
+#   git ls-files -- ./private/household.yaml        ->  nothing ("not tracked")
+#   git check-ignore -q -- ./private/household.yaml ->  0       ("ignored")
+#
+# Both of the questions below answer in the ADMITTING direction while the write
+# lands on a committed file.
+#
+# NOT core.ignoreCase, which is the plausible fix and is measurably not the
+# mechanism: unforced, false and true were measured on that fixture and all
+# three report the path as untracked, because core.ignoreCase governs how git
+# matches working-tree paths against the index during status and checkout, not
+# how a pathspec resolves against index entries.
+#
+# What does work, measured on the same fixture: the ':(icase)' pathspec magic
+# for the case half, and core.precomposeUnicode=true for the unicode half (an
+# index holding the NFC spelling answers an NFD pathspec only under it). Both
+# folds are GIT'S OWN, which is what lets private_egress.py fold identically
+# without a locale casefold or a unicode library this shell has no equivalent
+# for.
+#
+# APPENDED to the -c list rather than replacing an entry in it: the last -c for
+# a key is the one git uses, so this states the single value it changes and the
+# adopted list stays the single statement of the rest. _require_isolation_proven
+# reads it back under this array, not under the adopted one, or the readback
+# would confirm the destination's value and prove nothing about the value the
+# alias probe really runs with.
+_GIT_ALIAS_OVERRIDE=(-c core.precomposeUnicode=true)
+
+# EMPTY except while an alias question is being asked. _git splices it after
+# _GIT_DEST_CONFIG, so an ordinary probe carries exactly what it carried before.
+_GIT_ALIAS_CONFIG=()
+
 # The operator's own protected-scope values, handed back only where git refused
 # to answer -- see "WHAT THE ISOLATION MUST NOT TAKE AWAY" above. Empty until a
 # fatal makes _git ask for them.
@@ -501,13 +543,15 @@ _GIT_AMBIENT_CONFIG=()
 _git() {
   local rc=0 where="."
   [ "${1:-}" != "-C" ] || where=${2:-.}
-  command git "${_GIT_FORCED_CONFIG[@]}" ${_GIT_DEST_CONFIG[@]+"${_GIT_DEST_CONFIG[@]}"} "$@" || rc=$?
+  command git "${_GIT_FORCED_CONFIG[@]}" ${_GIT_DEST_CONFIG[@]+"${_GIT_DEST_CONFIG[@]}"} \
+    ${_GIT_ALIAS_CONFIG[@]+"${_GIT_ALIAS_CONFIG[@]}"} "$@" || rc=$?
   if [ "$rc" -eq 128 ]; then
     _load_ambient_protected_config "$where"
     if [ ${#_GIT_AMBIENT_CONFIG[@]} -gt 0 ]; then
       rc=0
       command git "${_GIT_FORCED_CONFIG[@]}" \
         ${_GIT_DEST_CONFIG[@]+"${_GIT_DEST_CONFIG[@]}"} \
+        ${_GIT_ALIAS_CONFIG[@]+"${_GIT_ALIAS_CONFIG[@]}"} \
         "${_GIT_AMBIENT_CONFIG[@]}" "$@" || rc=$?
     fi
   fi
@@ -1139,33 +1183,37 @@ _refuse() {   # $1 = headline, remaining args = detail lines.
 # of _require_uncommittable for that reason, and private_egress.py calls its own
 # copy from the same place.
 # ---------------------------------------------------------------------------
-_require_isolation_proven() {
-  local effective rc kv key want said
+# One key, read back through whatever -c list is active right now. Factored out
+# so the alias pass below proves its value the same way the adopted list does,
+# with one refusal to keep in step rather than two.
+#   $1 key   $2 the value this script forces   $3 "alias" for the alias pass
+_prove_config_key() {
+  local key=$1 want=$2 pass=${3:-} effective rc=0 said expected
   local -a remedy
-  _adopt_destination_config
-  # DERIVED FROM THE WRAPPER, not restated. Both arrays are the ones _git puts
-  # on every command line, so a key added to the forcing above is read back here
-  # with no second edit -- the defect this loop had when it named
-  # core.excludesFile itself. _GIT_AMBIENT_CONFIG is deliberately not walked:
-  # its values are the operator's, multi-valued, and `config --get` of one prints
-  # whichever entry came first, so there is nothing here to compare.
-  for kv in "${_GIT_FORCED_CONFIG[@]}" ${_GIT_DEST_CONFIG[@]+"${_GIT_DEST_CONFIG[@]}"}; do
-    if [ "$kv" = "-c" ]; then continue; fi   # the arrays hold their own option flags
-    key=${kv%%=*}
-    want=${kv#*=}
-    rc=0
-    effective=$(_git -C "$DST_REAL" config --get "$key" 2>/dev/null) || rc=$?
-    if [ "$effective" = "$want" ]; then continue; fi
-    # git's own words about the failure, so the message diagnoses itself rather
-    # than reporting a silence and guessing at the cause.
-    said=$(_git -C "$DST_REAL" config --get "$key" 2>&1 >/dev/null) || true
-    [ -n "$said" ] || said="(nothing on stderr)"
-    # The remedy is the one for THIS key, which the old message was not: it
-    # ended in "upgrade git" whatever had happened, and that is right only for
-    # the case it was written for -- the -c ignored. The two keys taken FROM the
-    # destination reach this refusal by a route the -c mechanism is not on trial
-    # in, and an operator sent to upgrade git for a config file that changed
-    # underneath the run fixes nothing and learns to distrust the refusal.
+  effective=$(_git -C "$DST_REAL" config --get "$key" 2>/dev/null) || rc=$?
+  if [ "$effective" = "$want" ]; then return 0; fi
+  # git's own words about the failure, so the message diagnoses itself rather
+  # than reporting a silence and guessing at the cause.
+  said=$(_git -C "$DST_REAL" config --get "$key" 2>&1 >/dev/null) || true
+  [ -n "$said" ] || said="(nothing on stderr)"
+  # The remedy is the one for THIS key, which the old message was not: it
+  # ended in "upgrade git" whatever had happened, and that is right only for
+  # the case it was written for -- the -c ignored. The two keys taken FROM the
+  # destination reach this refusal by a route the -c mechanism is not on trial
+  # in, and an operator sent to upgrade git for a config file that changed
+  # underneath the run fixes nothing and learns to distrust the refusal.
+  expected="$want, which is what this script forces"
+  if [ "$pass" = "alias" ]; then
+    expected="$want, which this script forces for the ALIAS question alone"
+    remedy=("This is the one key forced AGAINST what the destination says, and"
+            "only for the second tracked question (issue #204): the literal one"
+            "runs with the destination's own value, and this one asks whether an"
+            "index entry differing from the path only in unicode composition"
+            "would be written over. A readback that disagrees means the -c never"
+            "reached this git, so that question was answered with the wrong"
+            "matching -- upgrade git if it said nothing above, and fix what it"
+            "printed if it did.")
+  else
     case "$key" in
       core.ignoreCase|core.precomposeUnicode)
         remedy=("This key is not switched off, it is taken FROM the destination:"
@@ -1184,28 +1232,85 @@ _require_isolation_proven() {
                 "is unproven because the question could not be asked, not because"
                 "the answer was wrong.") ;;
     esac
-    _refuse "this git could not be isolated from the operator's own configuration" \
-      "destination: $DST  (resolved: $DST_REAL)" \
-      "found:       $key reads back as '${effective:-<unset>}'" \
-      "             ('git config --get $key' exited $rc)" \
-      "git said:    $said" \
-      "expected:    $want, which is what this script forces -- with 'git -c'" \
-      "             on every command, and, for core.excludesFile, with" \
-      "             GIT_CONFIG_COUNT/KEY/VALUE as well" \
-      "git version: $(_git --version 2>/dev/null || echo unknown)" \
-      "The ignore check below asks the destination whether it would let this" \
-      "household's archive be committed. If the operator's global, XDG or system" \
-      "configuration can still supply core.excludesFile -- or widen the matching" \
-      "with core.ignoreCase or core.precomposeUnicode -- that answer is about" \
-      "this machine rather than about the repository, and a destination that" \
-      "does NOT ignore private/ can answer that it does." \
-      "${remedy[@]}" \
-      "Nothing was written, and nothing about the destination is at fault."
+  fi
+  _refuse "this git could not be isolated from the operator's own configuration" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "found:       $key reads back as '${effective:-<unset>}'" \
+    "             ('git config --get $key' exited $rc)" \
+    "git said:    $said" \
+    "expected:    $expected -- with 'git -c'" \
+    "             on every command, and, for core.excludesFile, with" \
+    "             GIT_CONFIG_COUNT/KEY/VALUE as well" \
+    "git version: $(_git --version 2>/dev/null || echo unknown)" \
+    "The ignore check below asks the destination whether it would let this" \
+    "household's archive be committed. If the operator's global, XDG or system" \
+    "configuration can still supply core.excludesFile -- or widen the matching" \
+    "with core.ignoreCase or core.precomposeUnicode -- that answer is about" \
+    "this machine rather than about the repository, and a destination that" \
+    "does NOT ignore private/ can answer that it does." \
+    "${remedy[@]}" \
+    "Nothing was written, and nothing about the destination is at fault."
+}
+
+_require_isolation_proven() {
+  local kv
+  _adopt_destination_config
+  # DERIVED FROM THE WRAPPER, not restated. Both arrays are the ones _git puts
+  # on every command line, so a key added to the forcing above is read back here
+  # with no second edit -- the defect this loop had when it named
+  # core.excludesFile itself. _GIT_AMBIENT_CONFIG is deliberately not walked:
+  # its values are the operator's, multi-valued, and `config --get` of one prints
+  # whichever entry came first, so there is nothing here to compare.
+  for kv in "${_GIT_FORCED_CONFIG[@]}" ${_GIT_DEST_CONFIG[@]+"${_GIT_DEST_CONFIG[@]}"}; do
+    if [ "$kv" = "-c" ]; then continue; fi   # the arrays hold their own option flags
+    _prove_config_key "${kv%%=*}" "${kv#*=}"
   done
+  # AND THE ALIAS LIST, under ITSELF (issue #204). Read back with
+  # _GIT_ALIAS_CONFIG active, because a `config --get` run without it would
+  # report the value the destination states -- confirming the adopted list a
+  # second time and proving nothing about the list the alias probe runs with.
+  # Only the keys that DIFFER are re-asked: the rest are the same -c options in
+  # the same order, proved by the loop above, and re-asking would double every
+  # readback for every path.
+  _GIT_ALIAS_CONFIG=(${_GIT_ALIAS_OVERRIDE[@]+"${_GIT_ALIAS_OVERRIDE[@]}"})
+  for kv in "${_GIT_ALIAS_OVERRIDE[@]}"; do
+    if [ "$kv" = "-c" ]; then continue; fi
+    _prove_config_key "${kv%%=*}" "${kv#*=}" alias
+  done
+  _GIT_ALIAS_CONFIG=()
+}
+
+# Does the filesystem holding the destination treat two spellings that differ
+# only in case as ONE file? MEASURED here, not inferred from `uname`.
+#
+#   $DST_REAL/.git  -ef  $DST_REAL/.GIT
+#
+# `-ef` is "same device and inode", so an equal answer means the filesystem
+# resolved both spellings to one file, which is the whole of the question. A
+# case-sensitive filesystem has no .GIT and answers no; one that really holds a
+# separate .GIT answers no for the right reason.
+#
+# NOTHING IS WRITTEN, which is what settles the ordering this measurement would
+# otherwise pose. The reliable way to detect case behaviour is usually to create
+# a probe file and see whether the alias resolves -- inside a destination this
+# script has not yet decided it may write to. Asking about an entry that is
+# already there removes the ordering question instead of answering it: `-ef`
+# stats, so it creates nothing and opens nothing (a FIFO cannot block it), and
+# it is safe at any point in the guard. `.git` is the entry every worktree root
+# is guaranteed to have -- a directory in the main checkout, a gitfile in a
+# linked worktree -- and it has case-varying characters, so no directory listing
+# is needed to find something to ask about.
+#
+# FAILS CLOSED TOWARD FOLDING: a `.git` that cannot be stat'd at all leaves the
+# question unanswered, and folding is the conservative answer because the alias
+# probe is additive -- it can only make this script refuse more.
+_dest_folds_case() {
+  [ -e "$DST_REAL/.git" ] || return 0
+  [ "$DST_REAL/.git" -ef "$DST_REAL/.GIT" ]
 }
 
 _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_REAL
-  local rel=$1 rc=0 tracked
+  local rel=$1 rc=0 arc=0 tracked aliased aliasspec folds
   _require_isolation_proven
   # TRACKED first, and the order is the whole point. check-ignore consults the
   # index, so a path that is tracked-though-ignored reports rc 1 -- measured on
@@ -1231,6 +1336,44 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
     "expected:    an untracked path. A tracked file stays in the index whatever" \
     "             .gitignore says, so staging the archive over one puts it" \
     "             straight into the next commit's diff."
+  # AND AGAIN UNDER THE FILESYSTEM'S OWN EQUIVALENCE (issue #204). The question
+  # above is answered BY THE BYTES; this one asks which index entries the
+  # filesystem holding the destination resolves to this same file. ':(icase)'
+  # only where case really folds there -- see _dest_folds_case, and see
+  # _GIT_ALIAS_OVERRIDE for the measurement and for what forcing core.ignoreCase
+  # was measured to change, which is nothing. ADDITIVE, and asked second, so a
+  # path tracked under its own name still reports the plain fact.
+  if _dest_folds_case; then
+    folds="yes  (measured: .git and .GIT are one file at the worktree root)"
+    aliasspec=":(icase)$rel"
+  else
+    folds="no   (measured: .GIT does not resolve to .git at the worktree root)"
+    aliasspec="$rel"
+  fi
+  _GIT_ALIAS_CONFIG=(${_GIT_ALIAS_OVERRIDE[@]+"${_GIT_ALIAS_OVERRIDE[@]}"})
+  arc=0
+  aliased=$(_git -C "$DST_REAL" ls-files -- "$aliasspec") || arc=$?
+  _GIT_ALIAS_CONFIG=()
+  if [ "$arc" -ne 0 ]; then
+    _refuse "the destination could not be asked which paths it tracks" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "path:        $rel" \
+      "asked as:    $aliasspec" \
+      "found:       'git ls-files' failed on the ALIAS question" \
+      "expected:    a listing, so a path already COMMITTED there under a" \
+      "             spelling this filesystem treats as the same file can be" \
+      "             told from one that is genuinely absent"
+  fi
+  [ -z "$aliased" ] || _refuse "the destination TRACKS a path this script writes" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "path:        $rel" \
+    "tracked:     $(echo $aliased)" \
+    "asked as:    $aliasspec  (with core.precomposeUnicode=true)" \
+    "case folds:  $folds" \
+    "expected:    an untracked path. Nothing is committed under this exact" \
+    "             name, but this filesystem resolves the name above to one" \
+    "             that is: the copy would land on a committed file under a" \
+    "             spelling neither question before this one was asked about."
   _git -C "$DST_REAL" check-ignore -q -- "$rel" || rc=$?
   case "$rc" in
     0) ;;

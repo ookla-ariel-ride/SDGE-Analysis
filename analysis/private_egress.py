@@ -210,6 +210,13 @@ class Destination:
 # answer about a differently-cased path, so a refusal names a file the caller
 # never asked about. Cleared, like the rest, rather than rejected.
 #
+# Which is not the same as never folding case (issue #204). GIT_ICASE_PATHSPECS
+# applies the fold to EVERY pathspec at once -- including check-ignore's, which
+# it turns fatal -- from an environment this module does not control. The alias
+# probe applies ':(icase)' to ONE ls-files pathspec, on purpose, where the
+# filesystem was measured to fold, and only to ADD a refusal. See
+# ALIAS_CONFIG_OVERRIDE.
+#
 # Deliberately kept: GIT_EXEC_PATH, GIT_SSH_COMMAND, GIT_TEMPLATE_DIR and the
 # like. They say HOW git runs, not which repository it is looking at, and on a
 # relocatable install clearing GIT_EXEC_PATH breaks git outright -- turning a
@@ -528,6 +535,70 @@ DESTINATION_CONFIG_KEYS = (
 # standing.
 DESTINATION_CONFIG_SCOPES = ("--worktree", "--local")
 
+# ---------------------------------------------------------------------------
+# THE ALIAS PROBE (issue #204) -- the SECOND tracked question, asked under the
+# filesystem's own idea of which two spellings are one file.
+#
+# The tracked question above is `git ls-files -- <pathspec>`, and a pathspec
+# matches index entries BY THE BYTES. On a case-insensitive filesystem that is
+# the wrong equivalence, and the gap is not theoretical -- reproduced on macOS
+# (APFS, git 2.50.1) in a scratch repository whose .gitignore holds `private/`
+# and whose index holds `Private/household.yaml`:
+#
+#   write to private/household.yaml
+#     git status                        ->  M Private/household.yaml
+#   git ls-files -- ./private/household.yaml     ->  nothing  ("not tracked")
+#   git check-ignore -q -- ./private/household.yaml  ->  0     ("ignored")
+#
+# Both questions answer in the ADMITTING direction while the write lands on a
+# committed file. The same happens for unicode composition: an index holding
+# `private/houséhold.yaml` (NFC) is not matched by the NFD spelling of the
+# same name, and on this filesystem the two are one file.
+#
+# NOT core.ignoreCase, which is the plausible fix and is measurably not the
+# mechanism. All three values were measured on the fixture above and are
+# IDENTICAL -- unforced, false and true all report the path as untracked --
+# because core.ignoreCase governs how git matches working-tree paths against the
+# index during status and checkout, not how a pathspec resolves against index
+# entries. Forcing it would have closed nothing while reading as a fix.
+#
+# What does work, measured on the same fixture:
+#
+#   ls-files -- ':(icase)./private/household.yaml'   ->  Private/household.yaml
+#   -c core.precomposeUnicode=true, NFD pathspec     ->  the NFC index entry
+#
+# So the fold is git's OWN, on both sides of the agreement table -- no locale
+# casefold, no unicodedata call the shell has no equivalent for, and identical
+# semantics in the two implementations by construction.
+#
+# ADDITIVE, AND THAT IS WHAT MAKES IT SAFE TO ASK SECOND: the alias probe can
+# only turn ACCEPT into REFUSE. It is asked after the literal one, so a path
+# that is tracked under its own name still reports the plain fact rather than a
+# fold, and it raises the SAME reason (tracked_path) because it is the same
+# question -- "is this write going to land on something committed here".
+#
+# ':(icase)./' rather than ':(icase,literal)./': `literal` would switch globbing
+# off, and _expand() answers a zero-match leaf pattern with the pattern itself,
+# which git evaluates as a glob against the index. Measured verdict-identical to
+# the plain './' spelling on every magic-looking name in PATHSPEC_EQUIVALENT --
+# ':(top)x', ':(exclude)x', '::x', ':!x', ':/x' -- because the './' this prefixes
+# is still what the path itself starts with, so nothing after the magic is
+# parsed as more magic.
+#
+# core.precomposeUnicode=true is FORCED here, and only here: it is the one value
+# this module sets against the destination's own statement of it, so it is
+# proved separately in _require_isolation_proven() rather than riding on the
+# proof of the adopted list. Off macOS git is built without precompose support
+# and the key is inert, which is the right behaviour rather than a limitation --
+# a filesystem that does not normalize has no alias to find.
+ALIAS_CONFIG_OVERRIDE = (("core.precomposeUnicode", "true"),)
+# The name the case half of the alias probe is measured on. `.git` is the one
+# entry every worktree root is guaranteed to have -- a directory in the main
+# checkout, a gitfile in a linked worktree -- and it has case-varying characters,
+# so no directory listing is needed to find something to ask about.
+CASE_PROBE_NAME = ".git"
+CASE_PROBE_ALIAS = ".GIT"
+
 
 def _unisolated_env(env=None):
     """`env` (default os.environ) with every variable DROPPED that sanitized_env()
@@ -690,6 +761,66 @@ def _destination_overrides(worktree, env=None):
     derived = tuple((key, _destination_config(worktree, key, default, env))
                     for key, default in DESTINATION_CONFIG_KEYS)
     return tuple(GIT_CONFIG_OVERRIDES) + derived
+
+
+def _alias_overrides(overrides):
+    """The -c list for the ALIAS probe: the proved list, with
+    ALIAS_CONFIG_OVERRIDE appended.
+
+    APPENDED rather than substituted, and the last `-c` for a key is the one git
+    uses, so this states the one value it changes instead of restating the whole
+    list -- there is no second derivation for the two to drift apart, which is
+    the property _require_isolation_proven() exists to keep.
+
+    A pure function of the list already proved, so the caller cannot hand the
+    alias probe a set of overrides that was never checked.
+    """
+    return tuple(overrides) + ALIAS_CONFIG_OVERRIDE
+
+
+def _fs_folds_case(worktree):
+    """Does the filesystem holding `worktree` treat two spellings that differ
+    only in case as ONE file? MEASURED, not inferred from sys.platform.
+
+    Two stat() calls on a name that is already there:
+
+        <worktree>/.git   and   <worktree>/.GIT
+
+    equal (st_dev, st_ino) means the filesystem resolved both spellings to one
+    file, which is the whole of the question. A case-sensitive filesystem
+    answers ENOENT for the second, and one that really holds a separate `.GIT`
+    answers with a different inode -- both correctly "no".
+
+    NOTHING IS WRITTEN, which settles the ordering problem this measurement
+    would otherwise pose. The reliable way to detect case behaviour is usually
+    to create a probe file and see whether the alias resolves; here that would
+    mean writing inside a destination the guard has not yet decided it may write
+    to, so the measurement would have to precede -- and could not be conditioned
+    on -- its own verdict. Using an entry the destination already has removes the
+    ordering question rather than answering it: stat() creates nothing, opens
+    nothing (so a FIFO cannot block it) and follows no final symlink into a
+    write. It is safe at any point, and it is asked here, before the probe whose
+    pathspec it decides.
+
+    FAILS CLOSED TOWARD FOLDING. A `.git` that cannot be stat'd at all leaves the
+    question unanswered, and the folding answer is the conservative one: the
+    alias probe is additive, so folding can only make the guard refuse more.
+
+    WHAT IT DOES NOT COVER, stated because it is real: the probe is taken at the
+    worktree ROOT, so a case-insensitive volume mounted at a subdirectory of a
+    case-sensitive worktree is measured as case-sensitive and its aliases go
+    unfolded. The write-set this module is asked about lives under one directory
+    of the root in every caller today; a mount below it would need its own probe.
+    """
+    try:
+        here = os.stat(os.path.join(worktree, CASE_PROBE_NAME))
+    except OSError:
+        return True
+    try:
+        there = os.stat(os.path.join(worktree, CASE_PROBE_ALIAS))
+    except OSError:
+        return False
+    return (here.st_dev, here.st_ino) == (there.st_dev, there.st_ino)
 
 
 def _physical(path):
@@ -1344,6 +1475,25 @@ def _pathspec(relpath):
     return "./" + relpath
 
 
+def _alias_pathspec(relpath, fold_case):
+    """The same path, as the pathspec that asks git about every index entry the
+    FILESYSTEM would treat as this one (issue #204).
+
+    `fold_case` comes from _fs_folds_case(), so the ':(icase)' magic is added
+    where the filesystem really does fold case and nowhere else. Adding it
+    unconditionally would be safe in the sense that the probe is additive, and
+    wrong in the sense that on a case-sensitive filesystem `Private/x` and
+    `private/x` are two files: refusing a correct destination because the
+    repository tracks the other one is how guards get switched off.
+
+    Off that path this is _pathspec() exactly, so the alias probe still asks
+    about the same path with the same magic neutralized -- the unicode half of
+    the fold rides on core.precomposeUnicode, not on the spelling, and applies
+    either way.
+    """
+    return (":(icase)" if fold_case else "") + _pathspec(relpath)
+
+
 def _isolation_remedy(key):
     """What to actually do about a key that did not read back, which is not the
     same sentence for every key that can reach this refusal.
@@ -1371,6 +1521,26 @@ def _isolation_remedy(key):
             "on -- upgrade git. If git printed an error, that error is the thing "
             "to fix first: the isolation is unproven because the question could "
             "not be asked, not because the answer was wrong.")
+
+
+def _alias_isolation_remedy(key):
+    """The same sentence for the ALIAS override, which reaches the readback by a
+    different route and has a different remedy.
+
+    _isolation_remedy() would answer for core.precomposeUnicode with the
+    destination-derived text -- "it is taken FROM this destination" -- and that
+    is exactly wrong here: this is the one value this module sets AGAINST what
+    the destination says, so an operator sent to inspect the destination's
+    .git/config would find the value it states and no fault in it.
+    """
+    return (f"{key} is the one key this guard forces against the destination's "
+            "own statement of it, for the ALIAS question alone (issue #204): the "
+            "literal tracked question runs with the value the destination states, "
+            "and this second one asks whether an index entry that differs from "
+            "the path only in unicode composition would be written over. A "
+            "readback that disagrees means the -c did not reach this git, so the "
+            "alias question was answered with the wrong matching -- upgrade git "
+            "if it said nothing, and fix what it printed if it did.")
 
 
 def _require_isolation_proven(worktree, env=None):
@@ -1412,22 +1582,32 @@ def _require_isolation_proven(worktree, env=None):
     for the rest of the call is the shape of most defects review has found here.
     """
     overrides = _destination_overrides(worktree, env)
-    for key, value in overrides:
-        r = _git(["config", "--get", key], worktree, env, overrides)
-        effective = r.stdout.strip()
-        if effective == value:
-            continue
-        version = _git(["--version"], worktree, env).stdout.strip() or "unknown"
-        raise DestinationRefused(
-            "isolation_unproven",
-            f"{key} reads back as "
-            f"{effective or '<unset>'!r} in {worktree}, not "
-            f"{value!r} ('git config --get {key}' exited {r.returncode}"
-            + (_git_said(r.stderr) or " -- nothing on stderr")
-            + f"; {version}). The ignore question below would then be answered by the "
-            "operator's global, XDG or system configuration rather than by the "
-            "repository, and a destination that does NOT ignore private data could "
-            "answer that it does. " + _isolation_remedy(key), worktree)
+    # TWO LISTS, because two probes run with two lists (issue #204). The second
+    # is the first with ALIAS_CONFIG_OVERRIDE appended, and it is read back under
+    # ITSELF -- reading core.precomposeUnicode back under the adopted list would
+    # confirm the destination's value and prove nothing about the one the alias
+    # probe actually runs with. Only the keys that DIFFER are re-asked: the rest
+    # are the same -c options in the same order, already proved above, and asking
+    # again would double every readback for every path.
+    for pairs, probe, remedy in ((overrides, overrides, _isolation_remedy),
+                                 (ALIAS_CONFIG_OVERRIDE, _alias_overrides(overrides),
+                                  _alias_isolation_remedy)):
+        for key, value in pairs:
+            r = _git(["config", "--get", key], worktree, env, probe)
+            effective = r.stdout.strip()
+            if effective == value:
+                continue
+            version = _git(["--version"], worktree, env).stdout.strip() or "unknown"
+            raise DestinationRefused(
+                "isolation_unproven",
+                f"{key} reads back as "
+                f"{effective or '<unset>'!r} in {worktree}, not "
+                f"{value!r} ('git config --get {key}' exited {r.returncode}"
+                + (_git_said(r.stderr) or " -- nothing on stderr")
+                + f"; {version}). The ignore question below would then be answered by the "
+                "operator's global, XDG or system configuration rather than by the "
+                "repository, and a destination that does NOT ignore private data could "
+                "answer that it does. " + remedy(key), worktree)
     return overrides
 
 
@@ -1453,14 +1633,20 @@ def _require_uncommittable(worktree, relpath, env=None):
     middle two on the command line in _git() -- switched off, and taken from the
     destination's own configuration, respectively -- and
     _require_isolation_proven() above checks that the git in front of us really
-    did apply every one of them, handing back the list the two probes then run
+    did apply every one of them, handing back the list the probes then run
     with. What is left is the destination's own .gitignore, its info/exclude and
     its index.
 
+    THREE QUESTIONS, not two (issue #204): the tracked one is asked twice, once
+    by the bytes and once under the equivalence the destination's own filesystem
+    uses -- because on a case-insensitive or normalizing filesystem a write to
+    `private/household.yaml` lands on a tracked `Private/household.yaml` while
+    the literal question reports it untracked. See ALIAS_CONFIG_OVERRIDE.
+
     This is the ONLY place in this module where a caller-supplied path becomes a
     git PATHSPEC (everything else hands git a -C directory), so it is the one
-    place _pathspec() has to be applied -- see there for what a leading ':'
-    otherwise does to both questions below.
+    place _pathspec() and _alias_pathspec() have to be applied -- see there for
+    what a leading ':' otherwise does to the questions below.
     """
     overrides = _require_isolation_proven(worktree, env)
     spec = _pathspec(relpath)
@@ -1476,6 +1662,32 @@ def _require_uncommittable(worktree, relpath, env=None):
             "a tracked file stays in the index whatever .gitignore says, so "
             "writing private data over one puts it straight into the next "
             "commit's diff", os.path.join(worktree, relpath))
+    # AND AGAIN UNDER THE FILESYSTEM'S OWN EQUIVALENCE (issue #204). The
+    # question above is answered BY THE BYTES; this one is answered by which
+    # spellings the filesystem holding the destination resolves to one file. See
+    # ALIAS_CONFIG_OVERRIDE for the measurement and for what the plausible fix
+    # (forcing core.ignoreCase) was measured to change, which is nothing.
+    fold_case = _fs_folds_case(worktree)
+    alias = _alias_pathspec(relpath, fold_case)
+    r = _git(["ls-files", "--", alias], worktree, env, _alias_overrides(overrides))
+    if r.returncode != 0:
+        raise DestinationRefused(
+            "tracked_unanswerable",
+            f"'git ls-files' could not be asked about the paths {relpath!r} "
+            f"aliases in {worktree}: {(r.stderr or '').strip()[:200]}",
+            os.path.join(worktree, relpath))
+    if r.stdout.strip():
+        raise DestinationRefused(
+            "tracked_path",
+            "nothing is tracked under this exact name, but the destination's "
+            "filesystem resolves it to a path that is: "
+            f"{' '.join(r.stdout.split())[:200]}. Case"
+            + (" folds here (measured: .git and .GIT are one file at the "
+               "worktree root)" if fold_case else " is significant here")
+            + ", and unicode composition folds wherever git was built to "
+            "precompose, so the write would land on a committed file under a "
+            "spelling the guard was not asked about",
+            os.path.join(worktree, relpath))
     r = _git(["check-ignore", "-q", "--", spec], worktree, env, overrides)
     if r.returncode == 0:
         return
