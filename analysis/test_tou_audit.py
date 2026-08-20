@@ -12,6 +12,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_tou_audit.py
 import contextlib
 import csv
 import datetime as dt
+import json
 import os
 import pathlib
 import sys
@@ -796,6 +797,110 @@ def case_row_that_drifts_from_the_schema_stops_the_run():
     return "a bucket row that drifts from the published schema stops the run"
 
 
+class _SpyOS:
+    """`os`, with replace() recording what was on disk when it was called."""
+
+    def __init__(self, inner, log, watch):
+        self._inner, self._log, self._watch = inner, log, watch
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def replace(self, src, dst):
+        self._log.append((pathlib.Path(src).name,
+                          sorted(p.name for p in self._watch.iterdir()
+                                 if ".tmp" in p.name)))
+        return self._inner.replace(src, dst)
+
+
+def case_no_destination_is_replaced_until_both_temps_exist():
+    """The promotion order itself, observed rather than inferred (issue #226).
+
+    Both temporary files must be complete before the FIRST rename of the run,
+    whoever performs it. The observation is deliberately made at the os.replace
+    level rather than at the publish.promote_set call, so it stays a statement
+    about what reaches the filesystem: a writer that promoted each file as it
+    finished would arrive at its first rename holding one staged temp, which is
+    the state that publishes a fresh CSV beside a stale summary.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        dest = pathlib.Path(td)
+        seen = []
+        real_os, real_pub_os = T.os, T._publish.os
+        T.os = _SpyOS(real_os, seen, dest)
+        T._publish.os = _SpyOS(real_pub_os, seen, dest)
+        try:
+            T.write_artifacts([_one_real_row()], {"verdict": "new"}, dest=dest)
+        finally:
+            T.os, T._publish.os = real_os, real_pub_os
+        assert seen, "nothing was renamed, so nothing was published"
+        assert len(seen[0][1]) == 2, (
+            f"the first rename of the run ran with {seen[0][1]} staged -- both "
+            "temporary files must exist before any destination is touched")
+        assert sorted(p.name for p in dest.iterdir()
+                      if not p.name.startswith(".")) == [
+            "tou_audit.csv", "tou_audit_summary.json"], sorted(dest.iterdir())
+    return "no destination is renamed until both temporary files are written"
+
+
+def case_failure_between_the_two_files_touches_neither_artifact():
+    """A failure after the CSV is prepared but before the JSON is promoted
+    leaves BOTH committed artifacts exactly as they were (issue #226).
+
+    The injection is a json.dump that raises the way a full filesystem, a quota
+    or an unserializable value does. Under the per-file write-then-replace loop
+    this fires with data/tou_audit.csv ALREADY replaced, so the run publishes a
+    new CSV beside the previous JSON -- and in that order every time, so the
+    JSON is always the stale side rather than one of the two at random.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        dest = pathlib.Path(td)
+        prior_csv = "period,season\nprior,csv\n"
+        prior_json = '{"verdict": "prior json"}\n'
+        (dest / "tou_audit.csv").write_text(prior_csv)
+        (dest / "tou_audit_summary.json").write_text(prior_json)
+        row = _one_real_row()
+
+        class _BoomJson:
+            def dump(self, *a, **k):
+                raise RuntimeError("injected: JSON serialization failed")
+
+        real_json = T.json
+        T.json = _BoomJson()
+        try:
+            T.write_artifacts([row], {"verdict": "new"}, dest=dest)
+        except RuntimeError as e:
+            assert "injected" in str(e), e
+        except SystemExit as e:                       # pragma: no cover - guard
+            raise AssertionError(f"the writer converted the failure: {e}")
+        else:
+            raise AssertionError("the writer swallowed the injected failure")
+        finally:
+            T.json = real_json
+
+        assert (dest / "tou_audit.csv").read_text() == prior_csv, (
+            "the CSV was promoted while the JSON was still to be serialized -- "
+            "the pair is not published together")
+        assert (dest / "tou_audit_summary.json").read_text() == prior_json, \
+            "the JSON destination was touched by a failed run"
+        strays = sorted(p.name for p in dest.iterdir() if ".tmp" in p.name)
+        assert not strays, f"a failed run left temporary files behind: {strays}"
+
+        # POSITIVE CONTROL: the same writer, the same destination, no injection.
+        # Without it this case would also pass on a writer that refuses every
+        # call, which publishes nothing at all.
+        T.write_artifacts([row], {"verdict": "new"}, dest=dest)
+        lines = (dest / "tou_audit.csv").read_text().splitlines()
+        assert lines[0] == ",".join(T.ROW_FIELDS), lines[0]
+        assert len(lines) == 2 and lines[1].startswith("4/1/26 - 4/30/26,"), lines
+        got = json.loads((dest / "tou_audit_summary.json").read_text())
+        assert got == {"verdict": "new"}, got
+        assert sorted(p.name for p in dest.iterdir()
+                      if not p.name.startswith(".")) == [
+            "tou_audit.csv", "tou_audit_summary.json"], sorted(dest.iterdir())
+    return "a failure between the two files leaves both committed artifacts untouched"
+
+
 CASES = [
     # TOU assignment
     case_on_peak_window_edges,
@@ -847,6 +952,9 @@ CASES = [
     case_empty_result_refuses_before_opening_anything,
     case_header_is_written_without_any_rows_to_read_it_off,
     case_row_that_drifts_from_the_schema_stops_the_run,
+    # publishing the two artifacts as a pair
+    case_no_destination_is_replaced_until_both_temps_exist,
+    case_failure_between_the_two_files_touches_neither_artifact,
     case_main_refuses_an_empty_audit_before_it_writes,
 ]
 

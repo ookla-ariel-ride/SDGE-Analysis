@@ -105,7 +105,9 @@ skipped, and leaves no trace at all. The two artifacts must list the same period
 and each period's buckets must sum to the statement's own net_kwh.
 
 Run from the private/verify sandbox with the Green Button export as usage.csv.
-Writes data/tou_audit.csv and data/tou_audit_summary.json atomically.
+Writes data/tou_audit.csv and data/tou_audit_summary.json as one set: both files
+are built in full before either is published, so a run that fails part-way
+publishes neither. See write_artifacts for what that does and does not promise.
 """
 import collections
 import csv
@@ -116,6 +118,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import publish as _publish
 import rates as R
 
 # Determined by fitting the changeover day inside the 2/27/26-3/27/26 statement:
@@ -790,22 +793,66 @@ def check_publishable(rows, audited, skipped, cov_start, cov_end):
 
 
 def write_artifacts(rows, out, dest=None):
-    """Write both artifacts atomically. Columns come from ROW_FIELDS, never rows[0]."""
+    """Stage BOTH artifacts in full, then publish them as one set (issue #226).
+
+    The CSV and the JSON are two views of a single audit run and the report cites
+    both, so a reader who finds them disagreeing has no way to tell which one is
+    speaking for the run. Building each file and promoting it in turn published
+    exactly that: the CSV was replaced before the JSON was even serialized, so
+    any failure in between left a fresh CSV beside the previous summary -- and in
+    that order every time, which makes the JSON always the stale half rather than
+    one of the two at random.
+
+    WHAT IS GUARANTEED HERE. Both temporary files are written and closed before
+    anything is promoted, so every failure that belongs to BUILDING a file -- a
+    serialization error, a full filesystem, a quota, a permission change, a row
+    the writer cannot encode -- lands while both destinations still hold their
+    previous contents. A failed run publishes nothing and leaves nothing behind:
+    the partial temporaries are removed on the way out. Promotion itself is
+    delegated to publish.promote_set rather than re-implemented here, so this
+    pair gets the same protocol parse_bills.py and analyze.py publish under -- an
+    exclusive lock, whole-file targets, and restoration of the pre-call set on a
+    Python-level failure, with .bak recovery copies that make the NEXT run refuse
+    to start if an abrupt kill interrupted a promotion.
+
+    WHAT IS NOT GUARANTEED, and publish.py says so at more length: reader
+    isolation. Promoting two files is two renames, so a reader overlapping that
+    window can still observe a mixed pair; what it cannot observe is a truncated
+    file, and what it cannot leave behind is a mismatch nobody notices. Nor is
+    durability claimed -- nothing here is fsynced, so a machine crash just after
+    a successful run can lose a rename the filesystem reported as done. Every one
+    of those residues has the same repair: re-run this script, and let the
+    regeneration gate diff both artifacts against the committed copies.
+
+    Columns come from ROW_FIELDS, never rows[0] (issue #215).
+    """
     dest = DATA if dest is None else dest
     dest.mkdir(exist_ok=True)
-    for path, kind in ((dest / "tou_audit.csv", "csv"),
-                       (dest / "tou_audit_summary.json", "json")):
-        tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
-        with open(tmp, "w", newline="") as fh:
-            if kind == "csv":
-                w = csv.DictWriter(fh, fieldnames=list(ROW_FIELDS),
-                                   lineterminator="\n")
-                w.writeheader()
-                w.writerows(rows)
-            else:
-                json.dump(out, fh, indent=2)
-                fh.write("\n")
-        os.replace(tmp, path)
+    staged = {}
+    try:
+        for name, kind in (("tou_audit.csv", "csv"),
+                           ("tou_audit_summary.json", "json")):
+            tmp = dest / f"{name}.tmp{os.getpid()}"
+            staged[name] = str(tmp)      # recorded BEFORE the write, so a file
+            with open(tmp, "w", newline="") as fh:   # that fails mid-write is
+                if kind == "csv":                    # still cleaned up below
+                    w = csv.DictWriter(fh, fieldnames=list(ROW_FIELDS),
+                                       lineterminator="\n")
+                    w.writeheader()
+                    w.writerows(rows)
+                else:
+                    json.dump(out, fh, indent=2)
+                    fh.write("\n")
+            # The close above is the flush: a filesystem that ran out of room
+            # reports it here, while both destinations are still untouched.
+    except BaseException:
+        for tmp in staged.values():
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass                     # nothing to clean up is not a failure
+        raise
+    _publish.promote_set(staged, str(dest))
 
 
 def main():
