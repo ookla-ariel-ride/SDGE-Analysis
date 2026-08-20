@@ -5194,8 +5194,21 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
     Your-Use surcharge, the $2/kWh ELRP rate, and the external constants
     (Climate Credit, ITC, SGIP, EV pack sizes, HPWH efficiency). Those are
     cited to public sources in the entries themselves and would need a
-    generator before a test could mean anything."""
+    generator before a test could mean anything.
+
+    Seven of the pins are token-derived, and some of those tokens need
+    private/household.yaml, which CI does not have. They are resolved up
+    front rather than inline in the pins list, for three reasons: an
+    unresolvable token drops its pin WHOLE (several interpolate the rendered
+    string into the figure, so a None would be asserted as the literal
+    "None" -- a wrong figure rather than an absent one); every pin that does
+    NOT need the archive still runs; and the dropped token names go into the
+    summary line, so a reader can see coverage shrank and by what."""
     rt = _report_tokens()
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
     nem3 = json.loads((ROOT / "data" / "nem3_grandfathering.json").read_text())
     pfd = json.loads((ROOT / "data" / "perfect_foresight_dispatch.json").read_text())
     dsgs = json.loads((ROOT / "data" / "dsgs_vpp_backtest.json").read_text())
@@ -5208,6 +5221,30 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
                  csv.DictReader((ROOT / "data" / "gas_monthly_therms.csv")
                                 .read_text().splitlines()))
 
+    # BaseException, not Exception: resolve_token's fail-closed signal is
+    # SystemExit, which is NOT an Exception subclass. Building these inline in
+    # the pins list let that SystemExit escape the runner -- which only catches
+    # AssertionError -- and end the whole run at this case, with no FAIL line
+    # and no tally, taking every later case with it. Catching Exception here
+    # would reproduce exactly that. A skip is pardoned only when it is the
+    # archive that is missing (_missing_archive_exit, same test the heading-
+    # verdict resolver uses): with the archive present every token must still
+    # resolve, so a genuinely broken token fails this case instead of quietly
+    # deleting its own coverage.
+    resolved, skipped = {}, set()
+    for token in ("CAPACITY_FACTOR", "EXPORTED_SHARE", "SOILING_RATE_RANGE",
+                  "SPECIFIC_YIELD", "DEGRADATION_NAIVE_RANGE",
+                  "NIGHT_FLOOR_MEDIAN", "NIGHT_FLOOR_ANNUAL_COST"):
+        try:
+            resolved[token] = rt.resolve_token(token)
+        except BaseException as e:                # noqa: BLE001 - that is the point
+            assert _missing_archive_exit(e, archive, loader), (
+                f"report_tokens could not resolve {token}, and NOT because this checkout "
+                f"lacks the private archive (present: {archive}) -- the glossary figure "
+                f"cannot be checked against a token that is itself broken: "
+                f"{type(e).__name__}: {e}")
+            skipped.add(token)
+
     # (glossary entry, figure as it must appear, what derives it)
     pins = [
         ("Grandfathering",
@@ -5215,19 +5252,6 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
          f"${nem3['grandfathering_value_range_usd_per_yr']['high']:,.2f} per year",
          "nem3_grandfathering.json:grandfathering_value_range_usd_per_yr"),
         ("Therm", f"~{therms:,.0f} therms/yr", "data/gas_monthly_therms.csv, summed"),
-        ("Capacity factor", rt.resolve_token("CAPACITY_FACTOR"), "CAPACITY_FACTOR"),
-        ("Self-consumption vs export",
-         f"exports {rt.resolve_token('EXPORTED_SHARE')} of its production",
-         "EXPORTED_SHARE"),
-        # The token renders "0.45-2.4%/month"; the glossary spells the unit out.
-        # Only the numeric range is pinned, so the prose stays free.
-        ("Soiling",
-         f"{rt.resolve_token('SOILING_RATE_RANGE').replace('%/month', '')}% lost per dry month",
-         "SOILING_RATE_RANGE"),
-        ("Specific yield", f"{rt.resolve_token('SPECIFIC_YIELD')} kWh/kW/yr",
-         "SPECIFIC_YIELD"),
-        ("Degradation", rt.resolve_token("DEGRADATION_NAIVE_RANGE"),
-         "DEGRADATION_NAIVE_RANGE"),
         ("Dispatch policy",
          f"~${round(disp['pw3']['greedy']['save'] - disp['pw3']['evening']['save']):,}/yr more",
          "battery_dispatch_policies.json: greedy.save − evening.save"),
@@ -5247,13 +5271,30 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
          "extended_results.json:electrification_dividend.dividend_yr"),
         ("Electrification dividend", f"~${div['dividend_yr_post_fix']:,}/yr",
          "extended_results.json:electrification_dividend.dividend_yr_post_fix"),
-        ("Phantom load", f"median {rt.resolve_token('NIGHT_FLOOR_MEDIAN')}",
-         "NIGHT_FLOOR_MEDIAN"),
     ]
+    # The token-derived pins, each appended only when its token resolved, and
+    # each built from the RESOLVED string -- so a pin whose figure interpolates
+    # an unavailable token is skipped whole rather than compared against text
+    # containing "None".
+    for term, figure_of, token in (
+        ("Capacity factor", lambda v: v, "CAPACITY_FACTOR"),
+        ("Self-consumption vs export", lambda v: f"exports {v} of its production",
+         "EXPORTED_SHARE"),
+        # The token renders "0.45-2.4%/month"; the glossary spells the unit out.
+        # Only the numeric range is pinned, so the prose stays free.
+        ("Soiling", lambda v: f"{v.replace('%/month', '')}% lost per dry month",
+         "SOILING_RATE_RANGE"),
+        ("Specific yield", lambda v: f"{v} kWh/kW/yr", "SPECIFIC_YIELD"),
+        ("Degradation", lambda v: v, "DEGRADATION_NAIVE_RANGE"),
+        ("Phantom load", lambda v: f"median {v}", "NIGHT_FLOOR_MEDIAN"),
+    ):
+        if token in resolved:
+            pins.append((term, figure_of(resolved[token]), token))
     # NIGHT_FLOOR_ANNUAL_COST renders both pricings in one sentence; the
     # glossary spreads them across its own. Pin the amounts, not the wording.
-    for amount in re.findall(r"\$[\d,]+", rt.resolve_token("NIGHT_FLOOR_ANNUAL_COST")):
-        pins.append(("Phantom load", amount, "NIGHT_FLOOR_ANNUAL_COST"))
+    if "NIGHT_FLOOR_ANNUAL_COST" in resolved:
+        for amount in re.findall(r"\$[\d,]+", resolved["NIGHT_FLOOR_ANNUAL_COST"]):
+            pins.append(("Phantom load", amount, "NIGHT_FLOOR_ANNUAL_COST"))
 
     entries = {}
     for line in GLOSSARY.splitlines():
@@ -5273,8 +5314,10 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
             f"GLOSSARY.md's '{term}' entry does not carry {figure!r}, the value {source} "
             "derives -- the glossary and the artifact state different figures for the "
             "same quantity")
+    note = (f"{len(skipped)} unresolvable without the private archive ({sorted(skipped)})"
+            if skipped else "all resolved")
     return (f"{len(pins)} figures across {len(set(t for t, _, _ in pins))} GLOSSARY.md "
-            "entries match the artifacts and tokens that derive them")
+            f"entries match the artifacts and tokens that derive them ({note})")
 
 
 CASES = [
