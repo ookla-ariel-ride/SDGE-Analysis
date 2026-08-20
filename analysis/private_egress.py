@@ -105,6 +105,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import unicodedata
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -673,11 +674,47 @@ CASE_PROBE_ALIAS = ".GIT"
 # applies it with one regex. Neither side writes down a fold rule of its own, so
 # there is no second derivation for the two to drift apart. Regenerate with
 #
-#     ./.venv/bin/python analysis/private_egress.py --regenerate-case-fold
+#     python3 analysis/private_egress.py --regenerate-case-fold
 #
-# which rewrites the marked block in BOTH files from str.lower(); the same
-# generator is re-run by test_private_egress.case_the_case_fold_table_is_
-# generated_from_pythons_own_fold, which fails if either copy has moved.
+# run on the NEWEST interpreter available, which rewrites the marked block in
+# BOTH files.
+#
+# THE DOMAIN IS PINNED, NOT RE-DERIVED PER RUN (issue #234). str.lower() is a
+# property of the interpreter's Unicode version, not a constant: this table is
+# 1392 pairs under Unicode 13 (python 3.9), 1432 under 15 (3.12) and 1459 under
+# 16 (3.14), all measured. A committed table asserted EQUAL to what the running
+# interpreter generates is therefore asserted against whichever python happens
+# to run the suite -- it passed locally on 3.9 and failed on the 3.12 CI pins in
+# the same commit, which is how this was found. So:
+#
+#   * the table is generated under the newest interpreter to hand, making it the
+#     WIDEST fold available rather than the local one;
+#   * CASE_FOLD_UNICODE below records the Unicode version it came from, written
+#     by the generator rather than typed;
+#   * the guard case asserts the committed table is a SUPERSET of the running
+#     interpreter's str.lower(), and byte-equal only when that interpreter's
+#     unicodedata.unidata_version is the recorded one.
+#
+# SUPERSET IS THE FAIL-CLOSED DIRECTION HERE, which is what lets the assertion
+# be relaxed to it. A pair the table joins that the running python does not know
+# is a pair some later Unicode assigned: the guard sees an alias the local
+# interpreter cannot name, and the worst it costs is an over-refusal of a
+# destination that is genuinely two files. A pair the running python knows and
+# the table lacks is an alias NOBODY sees, which is the fail-open condition
+# issue #230 exists to close -- so that is the direction that fails the suite,
+# loudly, naming the missing pairs.
+#
+# WHAT HAPPENS ON ANOTHER INTERPRETER, both directions, because both happen:
+#   * NEWER (a Unicode this table predates). The suite passes as long as every
+#     pair that python knows is in the table, and fails the moment one is not --
+#     which is a real staleness and not a version quarrel. The remedy is to
+#     regenerate on that interpreter, which widens the table and moves
+#     CASE_FOLD_UNICODE forward.
+#   * OLDER. Regeneration REFUSES: regenerate_case_fold() compares the table it
+#     would write against the committed one and will not drop a pair, so running
+#     the command on 3.9 today reports what it would lose and writes nothing.
+#     An older interpreter can still RUN the guard -- the superset holds
+#     trivially -- it just cannot narrow the domain by regenerating.
 #
 # WHAT IT FOLDS, EXACTLY: every code point whose str.lower() is a SINGLE
 # different code point, and nothing else. ASCII A-Z, the whole of the 2-byte
@@ -713,12 +750,21 @@ CASE_PROBE_ALIAS = ".GIT"
 # not see -- and the first two were MEASURED to fold on this checkout's APFS
 # volume, so neither is theoretical:
 #
-#   * FULL-CASEFOLD equivalences simple lowercasing does not reach: the 194 code
-#     points where str.casefold() differs from str.lower(), among them U+03C2
-#     final sigma / U+03C3 sigma, U+017F long s / 's', U+00B5 micro sign /
-#     U+03BC. str.casefold() does not build the table because it is many-to-one
-#     on LENGTH -- 'ß' casefolds to 'ss' -- and a per-code-point substitution
-#     cannot express that without changing what a name's components are.
+#   * FULL-CASEFOLD equivalences simple lowercasing does not reach: the 297 code
+#     points whose str.casefold() differs from their str.lower(), among them
+#     U+03C2 final sigma / U+03C3 sigma, U+017F long s / 's', U+00B5 micro sign
+#     / U+03BC. That count is SOURCE CODE POINTS, one per code point cp for
+#     which chr(cp).casefold() != chr(cp).lower(), and it is the whole residue
+#     rather than the reachable part of it: 194 of the 297 casefold to a single
+#     code point and 103 to more than one (the 297 land on 178 distinct
+#     casefolded strings). Counting only the single-code-point 194 understates
+#     what simple lowercasing misses, and this residue is fail-open, so the
+#     understating direction is the dangerous one. str.casefold() does not build
+#     the table because it is many-to-one on LENGTH -- 'ß' casefolds to 'ss' --
+#     and a per-code-point substitution cannot express that without changing
+#     what a name's components are. All four counts are asserted against the
+#     running interpreter by the guard case, not restated from memory; they are
+#     identical under Unicode 13, 14, 15 and 16 (measured).
 #   * U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE, whose str.lower() is two
 #     code points, excluded for the same reason. This is the one residue that
 #     is NOT reachable here: APFS was measured to keep U+0130 and 'i' apart.
@@ -728,7 +774,7 @@ CASE_PROBE_ALIAS = ".GIT"
 #     ALIAS_CONFIG_OVERRIDE -- and are NOT joined for the tracked-but-absent
 #     entry this table exists for.
 #
-# THE TABLE DOES NOT PRESERVE BYTE LENGTH, for 24 of its pairs: U+023A 'Ⱥ' ->
+# THE TABLE DOES NOT PRESERVE BYTE LENGTH, for 26 of its pairs: U+023A 'Ⱥ' ->
 # U+2C65 'ⱥ' grows from two UTF-8 bytes to three, U+212A KELVIN SIGN -> 'k'
 # shrinks from three to one. Nothing in this module ever depended on that;
 # stage-private-data.sh's cheap pre-filter did, and no longer does -- see "A
@@ -737,6 +783,7 @@ CASE_PROBE_ALIAS = ".GIT"
 # Where either name DOES exist the filesystem is asked instead, by
 # _ondisk_relpath(), and none of the above applies.
 # --- BEGIN GENERATED CASE FOLD (private_egress.py --regenerate-case-fold) ---
+CASE_FOLD_UNICODE = "16.0.0"
 CASE_FOLD_SED = """\
 s/A/a/g;s/B/b/g;s/C/c/g;s/D/d/g;s/E/e/g;s/F/f/g;s/G/g/g;s/H/h/g
 s/I/i/g;s/J/j/g;s/K/k/g;s/L/l/g;s/M/m/g;s/N/n/g;s/O/o/g;s/P/p/g
@@ -812,111 +859,125 @@ s/Ꮤ/ꮤ/g;s/Ꮥ/ꮥ/g;s/Ꮦ/ꮦ/g;s/Ꮧ/ꮧ/g;s/Ꮨ/ꮨ/g;s/Ꮩ/ꮩ/g;s/Ꮪ/�
 s/Ꮬ/ꮬ/g;s/Ꮭ/ꮭ/g;s/Ꮮ/ꮮ/g;s/Ꮯ/ꮯ/g;s/Ꮰ/ꮰ/g;s/Ꮱ/ꮱ/g;s/Ꮲ/ꮲ/g;s/Ꮳ/ꮳ/g
 s/Ꮴ/ꮴ/g;s/Ꮵ/ꮵ/g;s/Ꮶ/ꮶ/g;s/Ꮷ/ꮷ/g;s/Ꮸ/ꮸ/g;s/Ꮹ/ꮹ/g;s/Ꮺ/ꮺ/g;s/Ꮻ/ꮻ/g
 s/Ꮼ/ꮼ/g;s/Ꮽ/ꮽ/g;s/Ꮾ/ꮾ/g;s/Ꮿ/ꮿ/g;s/Ᏸ/ᏸ/g;s/Ᏹ/ᏹ/g;s/Ᏺ/ᏺ/g;s/Ᏻ/ᏻ/g
-s/Ᏼ/ᏼ/g;s/Ᏽ/ᏽ/g;s/Ა/ა/g;s/Ბ/ბ/g;s/Გ/გ/g;s/Დ/დ/g;s/Ე/ე/g;s/Ვ/ვ/g
-s/Ზ/ზ/g;s/Თ/თ/g;s/Ი/ი/g;s/Კ/კ/g;s/Ლ/ლ/g;s/Მ/მ/g;s/Ნ/ნ/g;s/Ო/ო/g
-s/Პ/პ/g;s/Ჟ/ჟ/g;s/Რ/რ/g;s/Ს/ს/g;s/Ტ/ტ/g;s/Უ/უ/g;s/Ფ/ფ/g;s/Ქ/ქ/g
-s/Ღ/ღ/g;s/Ყ/ყ/g;s/Შ/შ/g;s/Ჩ/ჩ/g;s/Ც/ც/g;s/Ძ/ძ/g;s/Წ/წ/g;s/Ჭ/ჭ/g
-s/Ხ/ხ/g;s/Ჯ/ჯ/g;s/Ჰ/ჰ/g;s/Ჱ/ჱ/g;s/Ჲ/ჲ/g;s/Ჳ/ჳ/g;s/Ჴ/ჴ/g;s/Ჵ/ჵ/g
-s/Ჶ/ჶ/g;s/Ჷ/ჷ/g;s/Ჸ/ჸ/g;s/Ჹ/ჹ/g;s/Ჺ/ჺ/g;s/Ჽ/ჽ/g;s/Ჾ/ჾ/g;s/Ჿ/ჿ/g
-s/Ḁ/ḁ/g;s/Ḃ/ḃ/g;s/Ḅ/ḅ/g;s/Ḇ/ḇ/g;s/Ḉ/ḉ/g;s/Ḋ/ḋ/g;s/Ḍ/ḍ/g;s/Ḏ/ḏ/g
-s/Ḑ/ḑ/g;s/Ḓ/ḓ/g;s/Ḕ/ḕ/g;s/Ḗ/ḗ/g;s/Ḙ/ḙ/g;s/Ḛ/ḛ/g;s/Ḝ/ḝ/g;s/Ḟ/ḟ/g
-s/Ḡ/ḡ/g;s/Ḣ/ḣ/g;s/Ḥ/ḥ/g;s/Ḧ/ḧ/g;s/Ḩ/ḩ/g;s/Ḫ/ḫ/g;s/Ḭ/ḭ/g;s/Ḯ/ḯ/g
-s/Ḱ/ḱ/g;s/Ḳ/ḳ/g;s/Ḵ/ḵ/g;s/Ḷ/ḷ/g;s/Ḹ/ḹ/g;s/Ḻ/ḻ/g;s/Ḽ/ḽ/g;s/Ḿ/ḿ/g
-s/Ṁ/ṁ/g;s/Ṃ/ṃ/g;s/Ṅ/ṅ/g;s/Ṇ/ṇ/g;s/Ṉ/ṉ/g;s/Ṋ/ṋ/g;s/Ṍ/ṍ/g;s/Ṏ/ṏ/g
-s/Ṑ/ṑ/g;s/Ṓ/ṓ/g;s/Ṕ/ṕ/g;s/Ṗ/ṗ/g;s/Ṙ/ṙ/g;s/Ṛ/ṛ/g;s/Ṝ/ṝ/g;s/Ṟ/ṟ/g
-s/Ṡ/ṡ/g;s/Ṣ/ṣ/g;s/Ṥ/ṥ/g;s/Ṧ/ṧ/g;s/Ṩ/ṩ/g;s/Ṫ/ṫ/g;s/Ṭ/ṭ/g;s/Ṯ/ṯ/g
-s/Ṱ/ṱ/g;s/Ṳ/ṳ/g;s/Ṵ/ṵ/g;s/Ṷ/ṷ/g;s/Ṹ/ṹ/g;s/Ṻ/ṻ/g;s/Ṽ/ṽ/g;s/Ṿ/ṿ/g
-s/Ẁ/ẁ/g;s/Ẃ/ẃ/g;s/Ẅ/ẅ/g;s/Ẇ/ẇ/g;s/Ẉ/ẉ/g;s/Ẋ/ẋ/g;s/Ẍ/ẍ/g;s/Ẏ/ẏ/g
-s/Ẑ/ẑ/g;s/Ẓ/ẓ/g;s/Ẕ/ẕ/g;s/ẞ/ß/g;s/Ạ/ạ/g;s/Ả/ả/g;s/Ấ/ấ/g;s/Ầ/ầ/g
-s/Ẩ/ẩ/g;s/Ẫ/ẫ/g;s/Ậ/ậ/g;s/Ắ/ắ/g;s/Ằ/ằ/g;s/Ẳ/ẳ/g;s/Ẵ/ẵ/g;s/Ặ/ặ/g
-s/Ẹ/ẹ/g;s/Ẻ/ẻ/g;s/Ẽ/ẽ/g;s/Ế/ế/g;s/Ề/ề/g;s/Ể/ể/g;s/Ễ/ễ/g;s/Ệ/ệ/g
-s/Ỉ/ỉ/g;s/Ị/ị/g;s/Ọ/ọ/g;s/Ỏ/ỏ/g;s/Ố/ố/g;s/Ồ/ồ/g;s/Ổ/ổ/g;s/Ỗ/ỗ/g
-s/Ộ/ộ/g;s/Ớ/ớ/g;s/Ờ/ờ/g;s/Ở/ở/g;s/Ỡ/ỡ/g;s/Ợ/ợ/g;s/Ụ/ụ/g;s/Ủ/ủ/g
-s/Ứ/ứ/g;s/Ừ/ừ/g;s/Ử/ử/g;s/Ữ/ữ/g;s/Ự/ự/g;s/Ỳ/ỳ/g;s/Ỵ/ỵ/g;s/Ỷ/ỷ/g
-s/Ỹ/ỹ/g;s/Ỻ/ỻ/g;s/Ỽ/ỽ/g;s/Ỿ/ỿ/g;s/Ἀ/ἀ/g;s/Ἁ/ἁ/g;s/Ἂ/ἂ/g;s/Ἃ/ἃ/g
-s/Ἄ/ἄ/g;s/Ἅ/ἅ/g;s/Ἆ/ἆ/g;s/Ἇ/ἇ/g;s/Ἐ/ἐ/g;s/Ἑ/ἑ/g;s/Ἒ/ἒ/g;s/Ἓ/ἓ/g
-s/Ἔ/ἔ/g;s/Ἕ/ἕ/g;s/Ἠ/ἠ/g;s/Ἡ/ἡ/g;s/Ἢ/ἢ/g;s/Ἣ/ἣ/g;s/Ἤ/ἤ/g;s/Ἥ/ἥ/g
-s/Ἦ/ἦ/g;s/Ἧ/ἧ/g;s/Ἰ/ἰ/g;s/Ἱ/ἱ/g;s/Ἲ/ἲ/g;s/Ἳ/ἳ/g;s/Ἴ/ἴ/g;s/Ἵ/ἵ/g
-s/Ἶ/ἶ/g;s/Ἷ/ἷ/g;s/Ὀ/ὀ/g;s/Ὁ/ὁ/g;s/Ὂ/ὂ/g;s/Ὃ/ὃ/g;s/Ὄ/ὄ/g;s/Ὅ/ὅ/g
-s/Ὑ/ὑ/g;s/Ὓ/ὓ/g;s/Ὕ/ὕ/g;s/Ὗ/ὗ/g;s/Ὠ/ὠ/g;s/Ὡ/ὡ/g;s/Ὢ/ὢ/g;s/Ὣ/ὣ/g
-s/Ὤ/ὤ/g;s/Ὥ/ὥ/g;s/Ὦ/ὦ/g;s/Ὧ/ὧ/g;s/ᾈ/ᾀ/g;s/ᾉ/ᾁ/g;s/ᾊ/ᾂ/g;s/ᾋ/ᾃ/g
-s/ᾌ/ᾄ/g;s/ᾍ/ᾅ/g;s/ᾎ/ᾆ/g;s/ᾏ/ᾇ/g;s/ᾘ/ᾐ/g;s/ᾙ/ᾑ/g;s/ᾚ/ᾒ/g;s/ᾛ/ᾓ/g
-s/ᾜ/ᾔ/g;s/ᾝ/ᾕ/g;s/ᾞ/ᾖ/g;s/ᾟ/ᾗ/g;s/ᾨ/ᾠ/g;s/ᾩ/ᾡ/g;s/ᾪ/ᾢ/g;s/ᾫ/ᾣ/g
-s/ᾬ/ᾤ/g;s/ᾭ/ᾥ/g;s/ᾮ/ᾦ/g;s/ᾯ/ᾧ/g;s/Ᾰ/ᾰ/g;s/Ᾱ/ᾱ/g;s/Ὰ/ὰ/g;s/Ά/ά/g
-s/ᾼ/ᾳ/g;s/Ὲ/ὲ/g;s/Έ/έ/g;s/Ὴ/ὴ/g;s/Ή/ή/g;s/ῌ/ῃ/g;s/Ῐ/ῐ/g;s/Ῑ/ῑ/g
-s/Ὶ/ὶ/g;s/Ί/ί/g;s/Ῠ/ῠ/g;s/Ῡ/ῡ/g;s/Ὺ/ὺ/g;s/Ύ/ύ/g;s/Ῥ/ῥ/g;s/Ὸ/ὸ/g
-s/Ό/ό/g;s/Ὼ/ὼ/g;s/Ώ/ώ/g;s/ῼ/ῳ/g;s/Ω/ω/g;s/K/k/g;s/Å/å/g;s/Ⅎ/ⅎ/g
-s/Ⅰ/ⅰ/g;s/Ⅱ/ⅱ/g;s/Ⅲ/ⅲ/g;s/Ⅳ/ⅳ/g;s/Ⅴ/ⅴ/g;s/Ⅵ/ⅵ/g;s/Ⅶ/ⅶ/g;s/Ⅷ/ⅷ/g
-s/Ⅸ/ⅸ/g;s/Ⅹ/ⅹ/g;s/Ⅺ/ⅺ/g;s/Ⅻ/ⅻ/g;s/Ⅼ/ⅼ/g;s/Ⅽ/ⅽ/g;s/Ⅾ/ⅾ/g;s/Ⅿ/ⅿ/g
-s/Ↄ/ↄ/g;s/Ⓐ/ⓐ/g;s/Ⓑ/ⓑ/g;s/Ⓒ/ⓒ/g;s/Ⓓ/ⓓ/g;s/Ⓔ/ⓔ/g;s/Ⓕ/ⓕ/g;s/Ⓖ/ⓖ/g
-s/Ⓗ/ⓗ/g;s/Ⓘ/ⓘ/g;s/Ⓙ/ⓙ/g;s/Ⓚ/ⓚ/g;s/Ⓛ/ⓛ/g;s/Ⓜ/ⓜ/g;s/Ⓝ/ⓝ/g;s/Ⓞ/ⓞ/g
-s/Ⓟ/ⓟ/g;s/Ⓠ/ⓠ/g;s/Ⓡ/ⓡ/g;s/Ⓢ/ⓢ/g;s/Ⓣ/ⓣ/g;s/Ⓤ/ⓤ/g;s/Ⓥ/ⓥ/g;s/Ⓦ/ⓦ/g
-s/Ⓧ/ⓧ/g;s/Ⓨ/ⓨ/g;s/Ⓩ/ⓩ/g;s/Ⰰ/ⰰ/g;s/Ⰱ/ⰱ/g;s/Ⰲ/ⰲ/g;s/Ⰳ/ⰳ/g;s/Ⰴ/ⰴ/g
-s/Ⰵ/ⰵ/g;s/Ⰶ/ⰶ/g;s/Ⰷ/ⰷ/g;s/Ⰸ/ⰸ/g;s/Ⰹ/ⰹ/g;s/Ⰺ/ⰺ/g;s/Ⰻ/ⰻ/g;s/Ⰼ/ⰼ/g
-s/Ⰽ/ⰽ/g;s/Ⰾ/ⰾ/g;s/Ⰿ/ⰿ/g;s/Ⱀ/ⱀ/g;s/Ⱁ/ⱁ/g;s/Ⱂ/ⱂ/g;s/Ⱃ/ⱃ/g;s/Ⱄ/ⱄ/g
-s/Ⱅ/ⱅ/g;s/Ⱆ/ⱆ/g;s/Ⱇ/ⱇ/g;s/Ⱈ/ⱈ/g;s/Ⱉ/ⱉ/g;s/Ⱊ/ⱊ/g;s/Ⱋ/ⱋ/g;s/Ⱌ/ⱌ/g
-s/Ⱍ/ⱍ/g;s/Ⱎ/ⱎ/g;s/Ⱏ/ⱏ/g;s/Ⱐ/ⱐ/g;s/Ⱑ/ⱑ/g;s/Ⱒ/ⱒ/g;s/Ⱓ/ⱓ/g;s/Ⱔ/ⱔ/g
-s/Ⱕ/ⱕ/g;s/Ⱖ/ⱖ/g;s/Ⱗ/ⱗ/g;s/Ⱘ/ⱘ/g;s/Ⱙ/ⱙ/g;s/Ⱚ/ⱚ/g;s/Ⱛ/ⱛ/g;s/Ⱜ/ⱜ/g
-s/Ⱝ/ⱝ/g;s/Ⱞ/ⱞ/g;s/Ⱡ/ⱡ/g;s/Ɫ/ɫ/g;s/Ᵽ/ᵽ/g;s/Ɽ/ɽ/g;s/Ⱨ/ⱨ/g;s/Ⱪ/ⱪ/g
-s/Ⱬ/ⱬ/g;s/Ɑ/ɑ/g;s/Ɱ/ɱ/g;s/Ɐ/ɐ/g;s/Ɒ/ɒ/g;s/Ⱳ/ⱳ/g;s/Ⱶ/ⱶ/g;s/Ȿ/ȿ/g
-s/Ɀ/ɀ/g;s/Ⲁ/ⲁ/g;s/Ⲃ/ⲃ/g;s/Ⲅ/ⲅ/g;s/Ⲇ/ⲇ/g;s/Ⲉ/ⲉ/g;s/Ⲋ/ⲋ/g;s/Ⲍ/ⲍ/g
-s/Ⲏ/ⲏ/g;s/Ⲑ/ⲑ/g;s/Ⲓ/ⲓ/g;s/Ⲕ/ⲕ/g;s/Ⲗ/ⲗ/g;s/Ⲙ/ⲙ/g;s/Ⲛ/ⲛ/g;s/Ⲝ/ⲝ/g
-s/Ⲟ/ⲟ/g;s/Ⲡ/ⲡ/g;s/Ⲣ/ⲣ/g;s/Ⲥ/ⲥ/g;s/Ⲧ/ⲧ/g;s/Ⲩ/ⲩ/g;s/Ⲫ/ⲫ/g;s/Ⲭ/ⲭ/g
-s/Ⲯ/ⲯ/g;s/Ⲱ/ⲱ/g;s/Ⲳ/ⲳ/g;s/Ⲵ/ⲵ/g;s/Ⲷ/ⲷ/g;s/Ⲹ/ⲹ/g;s/Ⲻ/ⲻ/g;s/Ⲽ/ⲽ/g
-s/Ⲿ/ⲿ/g;s/Ⳁ/ⳁ/g;s/Ⳃ/ⳃ/g;s/Ⳅ/ⳅ/g;s/Ⳇ/ⳇ/g;s/Ⳉ/ⳉ/g;s/Ⳋ/ⳋ/g;s/Ⳍ/ⳍ/g
-s/Ⳏ/ⳏ/g;s/Ⳑ/ⳑ/g;s/Ⳓ/ⳓ/g;s/Ⳕ/ⳕ/g;s/Ⳗ/ⳗ/g;s/Ⳙ/ⳙ/g;s/Ⳛ/ⳛ/g;s/Ⳝ/ⳝ/g
-s/Ⳟ/ⳟ/g;s/Ⳡ/ⳡ/g;s/Ⳣ/ⳣ/g;s/Ⳬ/ⳬ/g;s/Ⳮ/ⳮ/g;s/Ⳳ/ⳳ/g;s/Ꙁ/ꙁ/g;s/Ꙃ/ꙃ/g
-s/Ꙅ/ꙅ/g;s/Ꙇ/ꙇ/g;s/Ꙉ/ꙉ/g;s/Ꙋ/ꙋ/g;s/Ꙍ/ꙍ/g;s/Ꙏ/ꙏ/g;s/Ꙑ/ꙑ/g;s/Ꙓ/ꙓ/g
-s/Ꙕ/ꙕ/g;s/Ꙗ/ꙗ/g;s/Ꙙ/ꙙ/g;s/Ꙛ/ꙛ/g;s/Ꙝ/ꙝ/g;s/Ꙟ/ꙟ/g;s/Ꙡ/ꙡ/g;s/Ꙣ/ꙣ/g
-s/Ꙥ/ꙥ/g;s/Ꙧ/ꙧ/g;s/Ꙩ/ꙩ/g;s/Ꙫ/ꙫ/g;s/Ꙭ/ꙭ/g;s/Ꚁ/ꚁ/g;s/Ꚃ/ꚃ/g;s/Ꚅ/ꚅ/g
-s/Ꚇ/ꚇ/g;s/Ꚉ/ꚉ/g;s/Ꚋ/ꚋ/g;s/Ꚍ/ꚍ/g;s/Ꚏ/ꚏ/g;s/Ꚑ/ꚑ/g;s/Ꚓ/ꚓ/g;s/Ꚕ/ꚕ/g
-s/Ꚗ/ꚗ/g;s/Ꚙ/ꚙ/g;s/Ꚛ/ꚛ/g;s/Ꜣ/ꜣ/g;s/Ꜥ/ꜥ/g;s/Ꜧ/ꜧ/g;s/Ꜩ/ꜩ/g;s/Ꜫ/ꜫ/g
-s/Ꜭ/ꜭ/g;s/Ꜯ/ꜯ/g;s/Ꜳ/ꜳ/g;s/Ꜵ/ꜵ/g;s/Ꜷ/ꜷ/g;s/Ꜹ/ꜹ/g;s/Ꜻ/ꜻ/g;s/Ꜽ/ꜽ/g
-s/Ꜿ/ꜿ/g;s/Ꝁ/ꝁ/g;s/Ꝃ/ꝃ/g;s/Ꝅ/ꝅ/g;s/Ꝇ/ꝇ/g;s/Ꝉ/ꝉ/g;s/Ꝋ/ꝋ/g;s/Ꝍ/ꝍ/g
-s/Ꝏ/ꝏ/g;s/Ꝑ/ꝑ/g;s/Ꝓ/ꝓ/g;s/Ꝕ/ꝕ/g;s/Ꝗ/ꝗ/g;s/Ꝙ/ꝙ/g;s/Ꝛ/ꝛ/g;s/Ꝝ/ꝝ/g
-s/Ꝟ/ꝟ/g;s/Ꝡ/ꝡ/g;s/Ꝣ/ꝣ/g;s/Ꝥ/ꝥ/g;s/Ꝧ/ꝧ/g;s/Ꝩ/ꝩ/g;s/Ꝫ/ꝫ/g;s/Ꝭ/ꝭ/g
-s/Ꝯ/ꝯ/g;s/Ꝺ/ꝺ/g;s/Ꝼ/ꝼ/g;s/Ᵹ/ᵹ/g;s/Ꝿ/ꝿ/g;s/Ꞁ/ꞁ/g;s/Ꞃ/ꞃ/g;s/Ꞅ/ꞅ/g
-s/Ꞇ/ꞇ/g;s/Ꞌ/ꞌ/g;s/Ɥ/ɥ/g;s/Ꞑ/ꞑ/g;s/Ꞓ/ꞓ/g;s/Ꞗ/ꞗ/g;s/Ꞙ/ꞙ/g;s/Ꞛ/ꞛ/g
-s/Ꞝ/ꞝ/g;s/Ꞟ/ꞟ/g;s/Ꞡ/ꞡ/g;s/Ꞣ/ꞣ/g;s/Ꞥ/ꞥ/g;s/Ꞧ/ꞧ/g;s/Ꞩ/ꞩ/g;s/Ɦ/ɦ/g
-s/Ɜ/ɜ/g;s/Ɡ/ɡ/g;s/Ɬ/ɬ/g;s/Ɪ/ɪ/g;s/Ʞ/ʞ/g;s/Ʇ/ʇ/g;s/Ʝ/ʝ/g;s/Ꭓ/ꭓ/g
-s/Ꞵ/ꞵ/g;s/Ꞷ/ꞷ/g;s/Ꞹ/ꞹ/g;s/Ꞻ/ꞻ/g;s/Ꞽ/ꞽ/g;s/Ꞿ/ꞿ/g;s/Ꟃ/ꟃ/g;s/Ꞔ/ꞔ/g
-s/Ʂ/ʂ/g;s/Ᶎ/ᶎ/g;s/Ꟈ/ꟈ/g;s/Ꟊ/ꟊ/g;s/Ꟶ/ꟶ/g;s/Ａ/ａ/g;s/Ｂ/ｂ/g;s/Ｃ/ｃ/g
-s/Ｄ/ｄ/g;s/Ｅ/ｅ/g;s/Ｆ/ｆ/g;s/Ｇ/ｇ/g;s/Ｈ/ｈ/g;s/Ｉ/ｉ/g;s/Ｊ/ｊ/g;s/Ｋ/ｋ/g
-s/Ｌ/ｌ/g;s/Ｍ/ｍ/g;s/Ｎ/ｎ/g;s/Ｏ/ｏ/g;s/Ｐ/ｐ/g;s/Ｑ/ｑ/g;s/Ｒ/ｒ/g;s/Ｓ/ｓ/g
-s/Ｔ/ｔ/g;s/Ｕ/ｕ/g;s/Ｖ/ｖ/g;s/Ｗ/ｗ/g;s/Ｘ/ｘ/g;s/Ｙ/ｙ/g;s/Ｚ/ｚ/g;s/𐐀/𐐨/g
-s/𐐁/𐐩/g;s/𐐂/𐐪/g;s/𐐃/𐐫/g;s/𐐄/𐐬/g;s/𐐅/𐐭/g;s/𐐆/𐐮/g;s/𐐇/𐐯/g;s/𐐈/𐐰/g
-s/𐐉/𐐱/g;s/𐐊/𐐲/g;s/𐐋/𐐳/g;s/𐐌/𐐴/g;s/𐐍/𐐵/g;s/𐐎/𐐶/g;s/𐐏/𐐷/g;s/𐐐/𐐸/g
-s/𐐑/𐐹/g;s/𐐒/𐐺/g;s/𐐓/𐐻/g;s/𐐔/𐐼/g;s/𐐕/𐐽/g;s/𐐖/𐐾/g;s/𐐗/𐐿/g;s/𐐘/𐑀/g
-s/𐐙/𐑁/g;s/𐐚/𐑂/g;s/𐐛/𐑃/g;s/𐐜/𐑄/g;s/𐐝/𐑅/g;s/𐐞/𐑆/g;s/𐐟/𐑇/g;s/𐐠/𐑈/g
-s/𐐡/𐑉/g;s/𐐢/𐑊/g;s/𐐣/𐑋/g;s/𐐤/𐑌/g;s/𐐥/𐑍/g;s/𐐦/𐑎/g;s/𐐧/𐑏/g;s/𐒰/𐓘/g
-s/𐒱/𐓙/g;s/𐒲/𐓚/g;s/𐒳/𐓛/g;s/𐒴/𐓜/g;s/𐒵/𐓝/g;s/𐒶/𐓞/g;s/𐒷/𐓟/g;s/𐒸/𐓠/g
-s/𐒹/𐓡/g;s/𐒺/𐓢/g;s/𐒻/𐓣/g;s/𐒼/𐓤/g;s/𐒽/𐓥/g;s/𐒾/𐓦/g;s/𐒿/𐓧/g;s/𐓀/𐓨/g
-s/𐓁/𐓩/g;s/𐓂/𐓪/g;s/𐓃/𐓫/g;s/𐓄/𐓬/g;s/𐓅/𐓭/g;s/𐓆/𐓮/g;s/𐓇/𐓯/g;s/𐓈/𐓰/g
-s/𐓉/𐓱/g;s/𐓊/𐓲/g;s/𐓋/𐓳/g;s/𐓌/𐓴/g;s/𐓍/𐓵/g;s/𐓎/𐓶/g;s/𐓏/𐓷/g;s/𐓐/𐓸/g
-s/𐓑/𐓹/g;s/𐓒/𐓺/g;s/𐓓/𐓻/g;s/𐲀/𐳀/g;s/𐲁/𐳁/g;s/𐲂/𐳂/g;s/𐲃/𐳃/g;s/𐲄/𐳄/g
-s/𐲅/𐳅/g;s/𐲆/𐳆/g;s/𐲇/𐳇/g;s/𐲈/𐳈/g;s/𐲉/𐳉/g;s/𐲊/𐳊/g;s/𐲋/𐳋/g;s/𐲌/𐳌/g
-s/𐲍/𐳍/g;s/𐲎/𐳎/g;s/𐲏/𐳏/g;s/𐲐/𐳐/g;s/𐲑/𐳑/g;s/𐲒/𐳒/g;s/𐲓/𐳓/g;s/𐲔/𐳔/g
-s/𐲕/𐳕/g;s/𐲖/𐳖/g;s/𐲗/𐳗/g;s/𐲘/𐳘/g;s/𐲙/𐳙/g;s/𐲚/𐳚/g;s/𐲛/𐳛/g;s/𐲜/𐳜/g
-s/𐲝/𐳝/g;s/𐲞/𐳞/g;s/𐲟/𐳟/g;s/𐲠/𐳠/g;s/𐲡/𐳡/g;s/𐲢/𐳢/g;s/𐲣/𐳣/g;s/𐲤/𐳤/g
-s/𐲥/𐳥/g;s/𐲦/𐳦/g;s/𐲧/𐳧/g;s/𐲨/𐳨/g;s/𐲩/𐳩/g;s/𐲪/𐳪/g;s/𐲫/𐳫/g;s/𐲬/𐳬/g
-s/𐲭/𐳭/g;s/𐲮/𐳮/g;s/𐲯/𐳯/g;s/𐲰/𐳰/g;s/𐲱/𐳱/g;s/𐲲/𐳲/g;s/𑢠/𑣀/g;s/𑢡/𑣁/g
-s/𑢢/𑣂/g;s/𑢣/𑣃/g;s/𑢤/𑣄/g;s/𑢥/𑣅/g;s/𑢦/𑣆/g;s/𑢧/𑣇/g;s/𑢨/𑣈/g;s/𑢩/𑣉/g
-s/𑢪/𑣊/g;s/𑢫/𑣋/g;s/𑢬/𑣌/g;s/𑢭/𑣍/g;s/𑢮/𑣎/g;s/𑢯/𑣏/g;s/𑢰/𑣐/g;s/𑢱/𑣑/g
-s/𑢲/𑣒/g;s/𑢳/𑣓/g;s/𑢴/𑣔/g;s/𑢵/𑣕/g;s/𑢶/𑣖/g;s/𑢷/𑣗/g;s/𑢸/𑣘/g;s/𑢹/𑣙/g
-s/𑢺/𑣚/g;s/𑢻/𑣛/g;s/𑢼/𑣜/g;s/𑢽/𑣝/g;s/𑢾/𑣞/g;s/𑢿/𑣟/g;s/𖹀/𖹠/g;s/𖹁/𖹡/g
-s/𖹂/𖹢/g;s/𖹃/𖹣/g;s/𖹄/𖹤/g;s/𖹅/𖹥/g;s/𖹆/𖹦/g;s/𖹇/𖹧/g;s/𖹈/𖹨/g;s/𖹉/𖹩/g
-s/𖹊/𖹪/g;s/𖹋/𖹫/g;s/𖹌/𖹬/g;s/𖹍/𖹭/g;s/𖹎/𖹮/g;s/𖹏/𖹯/g;s/𖹐/𖹰/g;s/𖹑/𖹱/g
-s/𖹒/𖹲/g;s/𖹓/𖹳/g;s/𖹔/𖹴/g;s/𖹕/𖹵/g;s/𖹖/𖹶/g;s/𖹗/𖹷/g;s/𖹘/𖹸/g;s/𖹙/𖹹/g
-s/𖹚/𖹺/g;s/𖹛/𖹻/g;s/𖹜/𖹼/g;s/𖹝/𖹽/g;s/𖹞/𖹾/g;s/𖹟/𖹿/g;s/𞤀/𞤢/g;s/𞤁/𞤣/g
-s/𞤂/𞤤/g;s/𞤃/𞤥/g;s/𞤄/𞤦/g;s/𞤅/𞤧/g;s/𞤆/𞤨/g;s/𞤇/𞤩/g;s/𞤈/𞤪/g;s/𞤉/𞤫/g
-s/𞤊/𞤬/g;s/𞤋/𞤭/g;s/𞤌/𞤮/g;s/𞤍/𞤯/g;s/𞤎/𞤰/g;s/𞤏/𞤱/g;s/𞤐/𞤲/g;s/𞤑/𞤳/g
-s/𞤒/𞤴/g;s/𞤓/𞤵/g;s/𞤔/𞤶/g;s/𞤕/𞤷/g;s/𞤖/𞤸/g;s/𞤗/𞤹/g;s/𞤘/𞤺/g;s/𞤙/𞤻/g
-s/𞤚/𞤼/g;s/𞤛/𞤽/g;s/𞤜/𞤾/g;s/𞤝/𞤿/g;s/𞤞/𞥀/g;s/𞤟/𞥁/g;s/𞤠/𞥂/g;s/𞤡/𞥃/g
+s/Ᏼ/ᏼ/g;s/Ᏽ/ᏽ/g;s/Ᲊ/ᲊ/g;s/Ა/ა/g;s/Ბ/ბ/g;s/Გ/გ/g;s/Დ/დ/g;s/Ე/ე/g
+s/Ვ/ვ/g;s/Ზ/ზ/g;s/Თ/თ/g;s/Ი/ი/g;s/Კ/კ/g;s/Ლ/ლ/g;s/Მ/მ/g;s/Ნ/ნ/g
+s/Ო/ო/g;s/Პ/პ/g;s/Ჟ/ჟ/g;s/Რ/რ/g;s/Ს/ს/g;s/Ტ/ტ/g;s/Უ/უ/g;s/Ფ/ფ/g
+s/Ქ/ქ/g;s/Ღ/ღ/g;s/Ყ/ყ/g;s/Შ/შ/g;s/Ჩ/ჩ/g;s/Ც/ც/g;s/Ძ/ძ/g;s/Წ/წ/g
+s/Ჭ/ჭ/g;s/Ხ/ხ/g;s/Ჯ/ჯ/g;s/Ჰ/ჰ/g;s/Ჱ/ჱ/g;s/Ჲ/ჲ/g;s/Ჳ/ჳ/g;s/Ჴ/ჴ/g
+s/Ჵ/ჵ/g;s/Ჶ/ჶ/g;s/Ჷ/ჷ/g;s/Ჸ/ჸ/g;s/Ჹ/ჹ/g;s/Ჺ/ჺ/g;s/Ჽ/ჽ/g;s/Ჾ/ჾ/g
+s/Ჿ/ჿ/g;s/Ḁ/ḁ/g;s/Ḃ/ḃ/g;s/Ḅ/ḅ/g;s/Ḇ/ḇ/g;s/Ḉ/ḉ/g;s/Ḋ/ḋ/g;s/Ḍ/ḍ/g
+s/Ḏ/ḏ/g;s/Ḑ/ḑ/g;s/Ḓ/ḓ/g;s/Ḕ/ḕ/g;s/Ḗ/ḗ/g;s/Ḙ/ḙ/g;s/Ḛ/ḛ/g;s/Ḝ/ḝ/g
+s/Ḟ/ḟ/g;s/Ḡ/ḡ/g;s/Ḣ/ḣ/g;s/Ḥ/ḥ/g;s/Ḧ/ḧ/g;s/Ḩ/ḩ/g;s/Ḫ/ḫ/g;s/Ḭ/ḭ/g
+s/Ḯ/ḯ/g;s/Ḱ/ḱ/g;s/Ḳ/ḳ/g;s/Ḵ/ḵ/g;s/Ḷ/ḷ/g;s/Ḹ/ḹ/g;s/Ḻ/ḻ/g;s/Ḽ/ḽ/g
+s/Ḿ/ḿ/g;s/Ṁ/ṁ/g;s/Ṃ/ṃ/g;s/Ṅ/ṅ/g;s/Ṇ/ṇ/g;s/Ṉ/ṉ/g;s/Ṋ/ṋ/g;s/Ṍ/ṍ/g
+s/Ṏ/ṏ/g;s/Ṑ/ṑ/g;s/Ṓ/ṓ/g;s/Ṕ/ṕ/g;s/Ṗ/ṗ/g;s/Ṙ/ṙ/g;s/Ṛ/ṛ/g;s/Ṝ/ṝ/g
+s/Ṟ/ṟ/g;s/Ṡ/ṡ/g;s/Ṣ/ṣ/g;s/Ṥ/ṥ/g;s/Ṧ/ṧ/g;s/Ṩ/ṩ/g;s/Ṫ/ṫ/g;s/Ṭ/ṭ/g
+s/Ṯ/ṯ/g;s/Ṱ/ṱ/g;s/Ṳ/ṳ/g;s/Ṵ/ṵ/g;s/Ṷ/ṷ/g;s/Ṹ/ṹ/g;s/Ṻ/ṻ/g;s/Ṽ/ṽ/g
+s/Ṿ/ṿ/g;s/Ẁ/ẁ/g;s/Ẃ/ẃ/g;s/Ẅ/ẅ/g;s/Ẇ/ẇ/g;s/Ẉ/ẉ/g;s/Ẋ/ẋ/g;s/Ẍ/ẍ/g
+s/Ẏ/ẏ/g;s/Ẑ/ẑ/g;s/Ẓ/ẓ/g;s/Ẕ/ẕ/g;s/ẞ/ß/g;s/Ạ/ạ/g;s/Ả/ả/g;s/Ấ/ấ/g
+s/Ầ/ầ/g;s/Ẩ/ẩ/g;s/Ẫ/ẫ/g;s/Ậ/ậ/g;s/Ắ/ắ/g;s/Ằ/ằ/g;s/Ẳ/ẳ/g;s/Ẵ/ẵ/g
+s/Ặ/ặ/g;s/Ẹ/ẹ/g;s/Ẻ/ẻ/g;s/Ẽ/ẽ/g;s/Ế/ế/g;s/Ề/ề/g;s/Ể/ể/g;s/Ễ/ễ/g
+s/Ệ/ệ/g;s/Ỉ/ỉ/g;s/Ị/ị/g;s/Ọ/ọ/g;s/Ỏ/ỏ/g;s/Ố/ố/g;s/Ồ/ồ/g;s/Ổ/ổ/g
+s/Ỗ/ỗ/g;s/Ộ/ộ/g;s/Ớ/ớ/g;s/Ờ/ờ/g;s/Ở/ở/g;s/Ỡ/ỡ/g;s/Ợ/ợ/g;s/Ụ/ụ/g
+s/Ủ/ủ/g;s/Ứ/ứ/g;s/Ừ/ừ/g;s/Ử/ử/g;s/Ữ/ữ/g;s/Ự/ự/g;s/Ỳ/ỳ/g;s/Ỵ/ỵ/g
+s/Ỷ/ỷ/g;s/Ỹ/ỹ/g;s/Ỻ/ỻ/g;s/Ỽ/ỽ/g;s/Ỿ/ỿ/g;s/Ἀ/ἀ/g;s/Ἁ/ἁ/g;s/Ἂ/ἂ/g
+s/Ἃ/ἃ/g;s/Ἄ/ἄ/g;s/Ἅ/ἅ/g;s/Ἆ/ἆ/g;s/Ἇ/ἇ/g;s/Ἐ/ἐ/g;s/Ἑ/ἑ/g;s/Ἒ/ἒ/g
+s/Ἓ/ἓ/g;s/Ἔ/ἔ/g;s/Ἕ/ἕ/g;s/Ἠ/ἠ/g;s/Ἡ/ἡ/g;s/Ἢ/ἢ/g;s/Ἣ/ἣ/g;s/Ἤ/ἤ/g
+s/Ἥ/ἥ/g;s/Ἦ/ἦ/g;s/Ἧ/ἧ/g;s/Ἰ/ἰ/g;s/Ἱ/ἱ/g;s/Ἲ/ἲ/g;s/Ἳ/ἳ/g;s/Ἴ/ἴ/g
+s/Ἵ/ἵ/g;s/Ἶ/ἶ/g;s/Ἷ/ἷ/g;s/Ὀ/ὀ/g;s/Ὁ/ὁ/g;s/Ὂ/ὂ/g;s/Ὃ/ὃ/g;s/Ὄ/ὄ/g
+s/Ὅ/ὅ/g;s/Ὑ/ὑ/g;s/Ὓ/ὓ/g;s/Ὕ/ὕ/g;s/Ὗ/ὗ/g;s/Ὠ/ὠ/g;s/Ὡ/ὡ/g;s/Ὢ/ὢ/g
+s/Ὣ/ὣ/g;s/Ὤ/ὤ/g;s/Ὥ/ὥ/g;s/Ὦ/ὦ/g;s/Ὧ/ὧ/g;s/ᾈ/ᾀ/g;s/ᾉ/ᾁ/g;s/ᾊ/ᾂ/g
+s/ᾋ/ᾃ/g;s/ᾌ/ᾄ/g;s/ᾍ/ᾅ/g;s/ᾎ/ᾆ/g;s/ᾏ/ᾇ/g;s/ᾘ/ᾐ/g;s/ᾙ/ᾑ/g;s/ᾚ/ᾒ/g
+s/ᾛ/ᾓ/g;s/ᾜ/ᾔ/g;s/ᾝ/ᾕ/g;s/ᾞ/ᾖ/g;s/ᾟ/ᾗ/g;s/ᾨ/ᾠ/g;s/ᾩ/ᾡ/g;s/ᾪ/ᾢ/g
+s/ᾫ/ᾣ/g;s/ᾬ/ᾤ/g;s/ᾭ/ᾥ/g;s/ᾮ/ᾦ/g;s/ᾯ/ᾧ/g;s/Ᾰ/ᾰ/g;s/Ᾱ/ᾱ/g;s/Ὰ/ὰ/g
+s/Ά/ά/g;s/ᾼ/ᾳ/g;s/Ὲ/ὲ/g;s/Έ/έ/g;s/Ὴ/ὴ/g;s/Ή/ή/g;s/ῌ/ῃ/g;s/Ῐ/ῐ/g
+s/Ῑ/ῑ/g;s/Ὶ/ὶ/g;s/Ί/ί/g;s/Ῠ/ῠ/g;s/Ῡ/ῡ/g;s/Ὺ/ὺ/g;s/Ύ/ύ/g;s/Ῥ/ῥ/g
+s/Ὸ/ὸ/g;s/Ό/ό/g;s/Ὼ/ὼ/g;s/Ώ/ώ/g;s/ῼ/ῳ/g;s/Ω/ω/g;s/K/k/g;s/Å/å/g
+s/Ⅎ/ⅎ/g;s/Ⅰ/ⅰ/g;s/Ⅱ/ⅱ/g;s/Ⅲ/ⅲ/g;s/Ⅳ/ⅳ/g;s/Ⅴ/ⅴ/g;s/Ⅵ/ⅵ/g;s/Ⅶ/ⅶ/g
+s/Ⅷ/ⅷ/g;s/Ⅸ/ⅸ/g;s/Ⅹ/ⅹ/g;s/Ⅺ/ⅺ/g;s/Ⅻ/ⅻ/g;s/Ⅼ/ⅼ/g;s/Ⅽ/ⅽ/g;s/Ⅾ/ⅾ/g
+s/Ⅿ/ⅿ/g;s/Ↄ/ↄ/g;s/Ⓐ/ⓐ/g;s/Ⓑ/ⓑ/g;s/Ⓒ/ⓒ/g;s/Ⓓ/ⓓ/g;s/Ⓔ/ⓔ/g;s/Ⓕ/ⓕ/g
+s/Ⓖ/ⓖ/g;s/Ⓗ/ⓗ/g;s/Ⓘ/ⓘ/g;s/Ⓙ/ⓙ/g;s/Ⓚ/ⓚ/g;s/Ⓛ/ⓛ/g;s/Ⓜ/ⓜ/g;s/Ⓝ/ⓝ/g
+s/Ⓞ/ⓞ/g;s/Ⓟ/ⓟ/g;s/Ⓠ/ⓠ/g;s/Ⓡ/ⓡ/g;s/Ⓢ/ⓢ/g;s/Ⓣ/ⓣ/g;s/Ⓤ/ⓤ/g;s/Ⓥ/ⓥ/g
+s/Ⓦ/ⓦ/g;s/Ⓧ/ⓧ/g;s/Ⓨ/ⓨ/g;s/Ⓩ/ⓩ/g;s/Ⰰ/ⰰ/g;s/Ⰱ/ⰱ/g;s/Ⰲ/ⰲ/g;s/Ⰳ/ⰳ/g
+s/Ⰴ/ⰴ/g;s/Ⰵ/ⰵ/g;s/Ⰶ/ⰶ/g;s/Ⰷ/ⰷ/g;s/Ⰸ/ⰸ/g;s/Ⰹ/ⰹ/g;s/Ⰺ/ⰺ/g;s/Ⰻ/ⰻ/g
+s/Ⰼ/ⰼ/g;s/Ⰽ/ⰽ/g;s/Ⰾ/ⰾ/g;s/Ⰿ/ⰿ/g;s/Ⱀ/ⱀ/g;s/Ⱁ/ⱁ/g;s/Ⱂ/ⱂ/g;s/Ⱃ/ⱃ/g
+s/Ⱄ/ⱄ/g;s/Ⱅ/ⱅ/g;s/Ⱆ/ⱆ/g;s/Ⱇ/ⱇ/g;s/Ⱈ/ⱈ/g;s/Ⱉ/ⱉ/g;s/Ⱊ/ⱊ/g;s/Ⱋ/ⱋ/g
+s/Ⱌ/ⱌ/g;s/Ⱍ/ⱍ/g;s/Ⱎ/ⱎ/g;s/Ⱏ/ⱏ/g;s/Ⱐ/ⱐ/g;s/Ⱑ/ⱑ/g;s/Ⱒ/ⱒ/g;s/Ⱓ/ⱓ/g
+s/Ⱔ/ⱔ/g;s/Ⱕ/ⱕ/g;s/Ⱖ/ⱖ/g;s/Ⱗ/ⱗ/g;s/Ⱘ/ⱘ/g;s/Ⱙ/ⱙ/g;s/Ⱚ/ⱚ/g;s/Ⱛ/ⱛ/g
+s/Ⱜ/ⱜ/g;s/Ⱝ/ⱝ/g;s/Ⱞ/ⱞ/g;s/Ⱟ/ⱟ/g;s/Ⱡ/ⱡ/g;s/Ɫ/ɫ/g;s/Ᵽ/ᵽ/g;s/Ɽ/ɽ/g
+s/Ⱨ/ⱨ/g;s/Ⱪ/ⱪ/g;s/Ⱬ/ⱬ/g;s/Ɑ/ɑ/g;s/Ɱ/ɱ/g;s/Ɐ/ɐ/g;s/Ɒ/ɒ/g;s/Ⱳ/ⱳ/g
+s/Ⱶ/ⱶ/g;s/Ȿ/ȿ/g;s/Ɀ/ɀ/g;s/Ⲁ/ⲁ/g;s/Ⲃ/ⲃ/g;s/Ⲅ/ⲅ/g;s/Ⲇ/ⲇ/g;s/Ⲉ/ⲉ/g
+s/Ⲋ/ⲋ/g;s/Ⲍ/ⲍ/g;s/Ⲏ/ⲏ/g;s/Ⲑ/ⲑ/g;s/Ⲓ/ⲓ/g;s/Ⲕ/ⲕ/g;s/Ⲗ/ⲗ/g;s/Ⲙ/ⲙ/g
+s/Ⲛ/ⲛ/g;s/Ⲝ/ⲝ/g;s/Ⲟ/ⲟ/g;s/Ⲡ/ⲡ/g;s/Ⲣ/ⲣ/g;s/Ⲥ/ⲥ/g;s/Ⲧ/ⲧ/g;s/Ⲩ/ⲩ/g
+s/Ⲫ/ⲫ/g;s/Ⲭ/ⲭ/g;s/Ⲯ/ⲯ/g;s/Ⲱ/ⲱ/g;s/Ⲳ/ⲳ/g;s/Ⲵ/ⲵ/g;s/Ⲷ/ⲷ/g;s/Ⲹ/ⲹ/g
+s/Ⲻ/ⲻ/g;s/Ⲽ/ⲽ/g;s/Ⲿ/ⲿ/g;s/Ⳁ/ⳁ/g;s/Ⳃ/ⳃ/g;s/Ⳅ/ⳅ/g;s/Ⳇ/ⳇ/g;s/Ⳉ/ⳉ/g
+s/Ⳋ/ⳋ/g;s/Ⳍ/ⳍ/g;s/Ⳏ/ⳏ/g;s/Ⳑ/ⳑ/g;s/Ⳓ/ⳓ/g;s/Ⳕ/ⳕ/g;s/Ⳗ/ⳗ/g;s/Ⳙ/ⳙ/g
+s/Ⳛ/ⳛ/g;s/Ⳝ/ⳝ/g;s/Ⳟ/ⳟ/g;s/Ⳡ/ⳡ/g;s/Ⳣ/ⳣ/g;s/Ⳬ/ⳬ/g;s/Ⳮ/ⳮ/g;s/Ⳳ/ⳳ/g
+s/Ꙁ/ꙁ/g;s/Ꙃ/ꙃ/g;s/Ꙅ/ꙅ/g;s/Ꙇ/ꙇ/g;s/Ꙉ/ꙉ/g;s/Ꙋ/ꙋ/g;s/Ꙍ/ꙍ/g;s/Ꙏ/ꙏ/g
+s/Ꙑ/ꙑ/g;s/Ꙓ/ꙓ/g;s/Ꙕ/ꙕ/g;s/Ꙗ/ꙗ/g;s/Ꙙ/ꙙ/g;s/Ꙛ/ꙛ/g;s/Ꙝ/ꙝ/g;s/Ꙟ/ꙟ/g
+s/Ꙡ/ꙡ/g;s/Ꙣ/ꙣ/g;s/Ꙥ/ꙥ/g;s/Ꙧ/ꙧ/g;s/Ꙩ/ꙩ/g;s/Ꙫ/ꙫ/g;s/Ꙭ/ꙭ/g;s/Ꚁ/ꚁ/g
+s/Ꚃ/ꚃ/g;s/Ꚅ/ꚅ/g;s/Ꚇ/ꚇ/g;s/Ꚉ/ꚉ/g;s/Ꚋ/ꚋ/g;s/Ꚍ/ꚍ/g;s/Ꚏ/ꚏ/g;s/Ꚑ/ꚑ/g
+s/Ꚓ/ꚓ/g;s/Ꚕ/ꚕ/g;s/Ꚗ/ꚗ/g;s/Ꚙ/ꚙ/g;s/Ꚛ/ꚛ/g;s/Ꜣ/ꜣ/g;s/Ꜥ/ꜥ/g;s/Ꜧ/ꜧ/g
+s/Ꜩ/ꜩ/g;s/Ꜫ/ꜫ/g;s/Ꜭ/ꜭ/g;s/Ꜯ/ꜯ/g;s/Ꜳ/ꜳ/g;s/Ꜵ/ꜵ/g;s/Ꜷ/ꜷ/g;s/Ꜹ/ꜹ/g
+s/Ꜻ/ꜻ/g;s/Ꜽ/ꜽ/g;s/Ꜿ/ꜿ/g;s/Ꝁ/ꝁ/g;s/Ꝃ/ꝃ/g;s/Ꝅ/ꝅ/g;s/Ꝇ/ꝇ/g;s/Ꝉ/ꝉ/g
+s/Ꝋ/ꝋ/g;s/Ꝍ/ꝍ/g;s/Ꝏ/ꝏ/g;s/Ꝑ/ꝑ/g;s/Ꝓ/ꝓ/g;s/Ꝕ/ꝕ/g;s/Ꝗ/ꝗ/g;s/Ꝙ/ꝙ/g
+s/Ꝛ/ꝛ/g;s/Ꝝ/ꝝ/g;s/Ꝟ/ꝟ/g;s/Ꝡ/ꝡ/g;s/Ꝣ/ꝣ/g;s/Ꝥ/ꝥ/g;s/Ꝧ/ꝧ/g;s/Ꝩ/ꝩ/g
+s/Ꝫ/ꝫ/g;s/Ꝭ/ꝭ/g;s/Ꝯ/ꝯ/g;s/Ꝺ/ꝺ/g;s/Ꝼ/ꝼ/g;s/Ᵹ/ᵹ/g;s/Ꝿ/ꝿ/g;s/Ꞁ/ꞁ/g
+s/Ꞃ/ꞃ/g;s/Ꞅ/ꞅ/g;s/Ꞇ/ꞇ/g;s/Ꞌ/ꞌ/g;s/Ɥ/ɥ/g;s/Ꞑ/ꞑ/g;s/Ꞓ/ꞓ/g;s/Ꞗ/ꞗ/g
+s/Ꞙ/ꞙ/g;s/Ꞛ/ꞛ/g;s/Ꞝ/ꞝ/g;s/Ꞟ/ꞟ/g;s/Ꞡ/ꞡ/g;s/Ꞣ/ꞣ/g;s/Ꞥ/ꞥ/g;s/Ꞧ/ꞧ/g
+s/Ꞩ/ꞩ/g;s/Ɦ/ɦ/g;s/Ɜ/ɜ/g;s/Ɡ/ɡ/g;s/Ɬ/ɬ/g;s/Ɪ/ɪ/g;s/Ʞ/ʞ/g;s/Ʇ/ʇ/g
+s/Ʝ/ʝ/g;s/Ꭓ/ꭓ/g;s/Ꞵ/ꞵ/g;s/Ꞷ/ꞷ/g;s/Ꞹ/ꞹ/g;s/Ꞻ/ꞻ/g;s/Ꞽ/ꞽ/g;s/Ꞿ/ꞿ/g
+s/Ꟁ/ꟁ/g;s/Ꟃ/ꟃ/g;s/Ꞔ/ꞔ/g;s/Ʂ/ʂ/g;s/Ᶎ/ᶎ/g;s/Ꟈ/ꟈ/g;s/Ꟊ/ꟊ/g;s/Ɤ/ɤ/g
+s/Ꟍ/ꟍ/g;s/Ꟑ/ꟑ/g;s/Ꟗ/ꟗ/g;s/Ꟙ/ꟙ/g;s/Ꟛ/ꟛ/g;s/Ƛ/ƛ/g;s/Ꟶ/ꟶ/g;s/Ａ/ａ/g
+s/Ｂ/ｂ/g;s/Ｃ/ｃ/g;s/Ｄ/ｄ/g;s/Ｅ/ｅ/g;s/Ｆ/ｆ/g;s/Ｇ/ｇ/g;s/Ｈ/ｈ/g;s/Ｉ/ｉ/g
+s/Ｊ/ｊ/g;s/Ｋ/ｋ/g;s/Ｌ/ｌ/g;s/Ｍ/ｍ/g;s/Ｎ/ｎ/g;s/Ｏ/ｏ/g;s/Ｐ/ｐ/g;s/Ｑ/ｑ/g
+s/Ｒ/ｒ/g;s/Ｓ/ｓ/g;s/Ｔ/ｔ/g;s/Ｕ/ｕ/g;s/Ｖ/ｖ/g;s/Ｗ/ｗ/g;s/Ｘ/ｘ/g;s/Ｙ/ｙ/g
+s/Ｚ/ｚ/g;s/𐐀/𐐨/g;s/𐐁/𐐩/g;s/𐐂/𐐪/g;s/𐐃/𐐫/g;s/𐐄/𐐬/g;s/𐐅/𐐭/g;s/𐐆/𐐮/g
+s/𐐇/𐐯/g;s/𐐈/𐐰/g;s/𐐉/𐐱/g;s/𐐊/𐐲/g;s/𐐋/𐐳/g;s/𐐌/𐐴/g;s/𐐍/𐐵/g;s/𐐎/𐐶/g
+s/𐐏/𐐷/g;s/𐐐/𐐸/g;s/𐐑/𐐹/g;s/𐐒/𐐺/g;s/𐐓/𐐻/g;s/𐐔/𐐼/g;s/𐐕/𐐽/g;s/𐐖/𐐾/g
+s/𐐗/𐐿/g;s/𐐘/𐑀/g;s/𐐙/𐑁/g;s/𐐚/𐑂/g;s/𐐛/𐑃/g;s/𐐜/𐑄/g;s/𐐝/𐑅/g;s/𐐞/𐑆/g
+s/𐐟/𐑇/g;s/𐐠/𐑈/g;s/𐐡/𐑉/g;s/𐐢/𐑊/g;s/𐐣/𐑋/g;s/𐐤/𐑌/g;s/𐐥/𐑍/g;s/𐐦/𐑎/g
+s/𐐧/𐑏/g;s/𐒰/𐓘/g;s/𐒱/𐓙/g;s/𐒲/𐓚/g;s/𐒳/𐓛/g;s/𐒴/𐓜/g;s/𐒵/𐓝/g;s/𐒶/𐓞/g
+s/𐒷/𐓟/g;s/𐒸/𐓠/g;s/𐒹/𐓡/g;s/𐒺/𐓢/g;s/𐒻/𐓣/g;s/𐒼/𐓤/g;s/𐒽/𐓥/g;s/𐒾/𐓦/g
+s/𐒿/𐓧/g;s/𐓀/𐓨/g;s/𐓁/𐓩/g;s/𐓂/𐓪/g;s/𐓃/𐓫/g;s/𐓄/𐓬/g;s/𐓅/𐓭/g;s/𐓆/𐓮/g
+s/𐓇/𐓯/g;s/𐓈/𐓰/g;s/𐓉/𐓱/g;s/𐓊/𐓲/g;s/𐓋/𐓳/g;s/𐓌/𐓴/g;s/𐓍/𐓵/g;s/𐓎/𐓶/g
+s/𐓏/𐓷/g;s/𐓐/𐓸/g;s/𐓑/𐓹/g;s/𐓒/𐓺/g;s/𐓓/𐓻/g;s/𐕰/𐖗/g;s/𐕱/𐖘/g;s/𐕲/𐖙/g
+s/𐕳/𐖚/g;s/𐕴/𐖛/g;s/𐕵/𐖜/g;s/𐕶/𐖝/g;s/𐕷/𐖞/g;s/𐕸/𐖟/g;s/𐕹/𐖠/g;s/𐕺/𐖡/g
+s/𐕼/𐖣/g;s/𐕽/𐖤/g;s/𐕾/𐖥/g;s/𐕿/𐖦/g;s/𐖀/𐖧/g;s/𐖁/𐖨/g;s/𐖂/𐖩/g;s/𐖃/𐖪/g
+s/𐖄/𐖫/g;s/𐖅/𐖬/g;s/𐖆/𐖭/g;s/𐖇/𐖮/g;s/𐖈/𐖯/g;s/𐖉/𐖰/g;s/𐖊/𐖱/g;s/𐖌/𐖳/g
+s/𐖍/𐖴/g;s/𐖎/𐖵/g;s/𐖏/𐖶/g;s/𐖐/𐖷/g;s/𐖑/𐖸/g;s/𐖒/𐖹/g;s/𐖔/𐖻/g;s/𐖕/𐖼/g
+s/𐲀/𐳀/g;s/𐲁/𐳁/g;s/𐲂/𐳂/g;s/𐲃/𐳃/g;s/𐲄/𐳄/g;s/𐲅/𐳅/g;s/𐲆/𐳆/g;s/𐲇/𐳇/g
+s/𐲈/𐳈/g;s/𐲉/𐳉/g;s/𐲊/𐳊/g;s/𐲋/𐳋/g;s/𐲌/𐳌/g;s/𐲍/𐳍/g;s/𐲎/𐳎/g;s/𐲏/𐳏/g
+s/𐲐/𐳐/g;s/𐲑/𐳑/g;s/𐲒/𐳒/g;s/𐲓/𐳓/g;s/𐲔/𐳔/g;s/𐲕/𐳕/g;s/𐲖/𐳖/g;s/𐲗/𐳗/g
+s/𐲘/𐳘/g;s/𐲙/𐳙/g;s/𐲚/𐳚/g;s/𐲛/𐳛/g;s/𐲜/𐳜/g;s/𐲝/𐳝/g;s/𐲞/𐳞/g;s/𐲟/𐳟/g
+s/𐲠/𐳠/g;s/𐲡/𐳡/g;s/𐲢/𐳢/g;s/𐲣/𐳣/g;s/𐲤/𐳤/g;s/𐲥/𐳥/g;s/𐲦/𐳦/g;s/𐲧/𐳧/g
+s/𐲨/𐳨/g;s/𐲩/𐳩/g;s/𐲪/𐳪/g;s/𐲫/𐳫/g;s/𐲬/𐳬/g;s/𐲭/𐳭/g;s/𐲮/𐳮/g;s/𐲯/𐳯/g
+s/𐲰/𐳰/g;s/𐲱/𐳱/g;s/𐲲/𐳲/g;s/𐵐/𐵰/g;s/𐵑/𐵱/g;s/𐵒/𐵲/g;s/𐵓/𐵳/g;s/𐵔/𐵴/g
+s/𐵕/𐵵/g;s/𐵖/𐵶/g;s/𐵗/𐵷/g;s/𐵘/𐵸/g;s/𐵙/𐵹/g;s/𐵚/𐵺/g;s/𐵛/𐵻/g;s/𐵜/𐵼/g
+s/𐵝/𐵽/g;s/𐵞/𐵾/g;s/𐵟/𐵿/g;s/𐵠/𐶀/g;s/𐵡/𐶁/g;s/𐵢/𐶂/g;s/𐵣/𐶃/g;s/𐵤/𐶄/g
+s/𐵥/𐶅/g;s/𑢠/𑣀/g;s/𑢡/𑣁/g;s/𑢢/𑣂/g;s/𑢣/𑣃/g;s/𑢤/𑣄/g;s/𑢥/𑣅/g;s/𑢦/𑣆/g
+s/𑢧/𑣇/g;s/𑢨/𑣈/g;s/𑢩/𑣉/g;s/𑢪/𑣊/g;s/𑢫/𑣋/g;s/𑢬/𑣌/g;s/𑢭/𑣍/g;s/𑢮/𑣎/g
+s/𑢯/𑣏/g;s/𑢰/𑣐/g;s/𑢱/𑣑/g;s/𑢲/𑣒/g;s/𑢳/𑣓/g;s/𑢴/𑣔/g;s/𑢵/𑣕/g;s/𑢶/𑣖/g
+s/𑢷/𑣗/g;s/𑢸/𑣘/g;s/𑢹/𑣙/g;s/𑢺/𑣚/g;s/𑢻/𑣛/g;s/𑢼/𑣜/g;s/𑢽/𑣝/g;s/𑢾/𑣞/g
+s/𑢿/𑣟/g;s/𖹀/𖹠/g;s/𖹁/𖹡/g;s/𖹂/𖹢/g;s/𖹃/𖹣/g;s/𖹄/𖹤/g;s/𖹅/𖹥/g;s/𖹆/𖹦/g
+s/𖹇/𖹧/g;s/𖹈/𖹨/g;s/𖹉/𖹩/g;s/𖹊/𖹪/g;s/𖹋/𖹫/g;s/𖹌/𖹬/g;s/𖹍/𖹭/g;s/𖹎/𖹮/g
+s/𖹏/𖹯/g;s/𖹐/𖹰/g;s/𖹑/𖹱/g;s/𖹒/𖹲/g;s/𖹓/𖹳/g;s/𖹔/𖹴/g;s/𖹕/𖹵/g;s/𖹖/𖹶/g
+s/𖹗/𖹷/g;s/𖹘/𖹸/g;s/𖹙/𖹹/g;s/𖹚/𖹺/g;s/𖹛/𖹻/g;s/𖹜/𖹼/g;s/𖹝/𖹽/g;s/𖹞/𖹾/g
+s/𖹟/𖹿/g;s/𞤀/𞤢/g;s/𞤁/𞤣/g;s/𞤂/𞤤/g;s/𞤃/𞤥/g;s/𞤄/𞤦/g;s/𞤅/𞤧/g;s/𞤆/𞤨/g
+s/𞤇/𞤩/g;s/𞤈/𞤪/g;s/𞤉/𞤫/g;s/𞤊/𞤬/g;s/𞤋/𞤭/g;s/𞤌/𞤮/g;s/𞤍/𞤯/g;s/𞤎/𞤰/g
+s/𞤏/𞤱/g;s/𞤐/𞤲/g;s/𞤑/𞤳/g;s/𞤒/𞤴/g;s/𞤓/𞤵/g;s/𞤔/𞤶/g;s/𞤕/𞤷/g;s/𞤖/𞤸/g
+s/𞤗/𞤹/g;s/𞤘/𞤺/g;s/𞤙/𞤻/g;s/𞤚/𞤼/g;s/𞤛/𞤽/g;s/𞤜/𞤾/g;s/𞤝/𞤿/g;s/𞤞/𞥀/g
+s/𞤟/𞥁/g;s/𞤠/𞥂/g;s/𞤡/𞥃/g
 """
 # --- END GENERATED CASE FOLD ---
 CASE_FOLD_MARKERS = ("# --- BEGIN GENERATED CASE FOLD "
                      "(private_egress.py --regenerate-case-fold) ---",
                      "# --- END GENERATED CASE FOLD ---")
+# One substitution of the generated table, read back out of a block that is
+# about to be replaced -- deliberately tolerant, because it is asked of text
+# regenerate_case_fold() has not validated yet and its only job is to see which
+# pairs would be LOST. What the table must be, exactly, is _parse_case_fold().
+_CASE_FOLD_RULE = re.compile(r"s/([^/;\n]+)/([^/;\n]+)/g")
 
 
 def case_fold_pairs():
@@ -942,11 +1003,18 @@ def case_fold_sed_script(pairs=None, per_line=8):
     """The generated table, as the sed script BOTH implementations use.
 
     `s/<upper>/<lower>/g`, one command per pair, packed `per_line` to a line
-    with ';' separators so the block is 171 lines rather than 1392. Every source
-    and target is a letter, so nothing in it is a sed metacharacter, a '/', a
-    newline or a "'" -- which is what lets the same text be a shell
-    single-quoted literal, a python triple-quoted literal and a sed script with
-    no escaping anywhere. Asserted, not assumed, by _check_case_fold_pairs().
+    with ';' separators so the block is an eighth of the rule count in lines
+    rather than one line per rule. Every source and target is a letter, so
+    nothing in it is a sed metacharacter, a '/', a newline or a "'" -- which is
+    what lets the same text be a shell single-quoted literal, a python
+    triple-quoted literal and a sed script with no escaping anywhere. Asserted,
+    not assumed, by _check_case_fold_pairs().
+
+    `pairs` defaults to case_fold_pairs(), which is the RUNNING interpreter's
+    domain and not necessarily the committed one: what is committed is pinned at
+    CASE_FOLD_UNICODE, so this returns the committed text only on an interpreter
+    carrying that Unicode version. regenerate_case_fold() passes its pairs in
+    for that reason.
     """
     rules = [f"s/{a}/{b}/g" for a, b in _check_case_fold_pairs(
         case_fold_pairs() if pairs is None else pairs)]
@@ -1012,7 +1080,7 @@ CASE_FOLD_PAIRS = _parse_case_fold(CASE_FOLD_SED)
 _CASE_FOLD_MAP = dict(CASE_FOLD_PAIRS)
 # One leftmost pass over the raw bytes, which is the same function as sed's
 # rule-at-a-time pass for this table -- see _check_case_fold_pairs() properties
-# 2 and 3 for why. Compiled once: the alternation has ~1400 branches.
+# 2 and 3 for why. Compiled once: the alternation has one branch per table pair.
 _CASE_FOLD_RE = re.compile(b"|".join(re.escape(s) for s, _ in CASE_FOLD_PAIRS))
 
 
@@ -3360,37 +3428,111 @@ def regenerate_case_fold(root=ROOT):
     and report which of them changed.
 
     The regeneration path the generated table needs, and the reason the table
-    may be committed at all: nobody edits those 171 lines by hand, and a reader
-    who wants to know what they say runs case_fold_pairs(). The two blocks carry
-    the SAME text in two quotings -- a python triple-quoted string here, a shell
-    single-quoted string there -- which is safe because
+    may be committed at all: nobody edits those lines by hand, and a reader who
+    wants to know what they say runs case_fold_pairs(). The two blocks carry the
+    SAME table text in two quotings -- a python triple-quoted string here, a
+    shell single-quoted string there -- which is safe because
     _check_case_fold_pairs() has proved no pair needs escaping in either.
 
-    Both files are rewritten atomically-ish (read all, write all) and only when
-    the text actually changes, so a no-op run leaves both mtimes alone.
+    THE WHOLE POINT OF THIS ENTRY POINT IS THAT THE TWO FILES STAY IDENTICAL,
+    so it may not leave them divergent (issue #234). Reading, validating and
+    writing each file in turn did exactly that: this file's block was rewritten
+    before the shell's markers were so much as looked at, so a shell script with
+    a mangled or missing marker got the python half updated and an assertion --
+    the two folds different, from the command that exists to keep them the same.
+    Both files are now read and validated and both replacement texts built
+    BEFORE either is written, and each write goes to a temporary in the target's
+    own directory and lands with os.replace(), so a file is never observed
+    half-written and a failure part-way through leaves the file it has not
+    reached untouched. Two replaces are still two syscalls: a kill between them
+    leaves the first file new and the second old, which the guard case then
+    fails on. What cannot happen any more is a validation error doing it.
+
+    NEVER NARROWS THE DOMAIN. str.lower() grows with the interpreter's Unicode
+    version, so regenerating on an older python than the table was built with
+    would silently DELETE pairs -- aliases the guard would stop seeing, which is
+    fail-open. A run that would drop any committed pair refuses and writes
+    nothing, naming what it would have lost. See the domain note at
+    CASE_FOLD_UNICODE.
+
+    The checks here raise AssertionError rather than using `assert`, because
+    `python -O` strips the statement and this function writes files.
     """
     begin, end = CASE_FOLD_MARKERS
-    body = case_fold_sed_script()
-    changed = []
+    version = unicodedata.unidata_version
+    pairs = case_fold_pairs()
+    body = case_fold_sed_script(pairs)
+
+    fresh = set(pairs)
+
+    # PHASE 1 -- read and validate BOTH files, and build BOTH outputs. Nothing
+    # is written while anything here can still fail.
+    planned = []
     for path, opening, closing in (
-            (root / "analysis" / "private_egress.py", 'CASE_FOLD_SED = """\\', '"""'),
-            (root / "stage-private-data.sh", "_CASE_FOLD_SED='", "'")):
+            (root / "analysis" / "private_egress.py",
+             f'CASE_FOLD_UNICODE = "{version}"\nCASE_FOLD_SED = """\\', '"""'),
+            (root / "stage-private-data.sh",
+             f"# generated from python's str.lower() under Unicode {version}\n"
+             "_CASE_FOLD_SED='", "'")):
         text = path.read_text()
         head, mark, rest = text.partition(begin + "\n")
-        assert mark, f"{path} has no generated-case-fold block to rewrite"
-        _, mark, tail = rest.partition(end + "\n")
-        assert mark, f"{path}'s generated-case-fold block has no end marker"
+        if not mark:
+            raise AssertionError(
+                f"{path} has no generated-case-fold block to rewrite, so "
+                f"nothing was written to either file")
+        was, mark, tail = rest.partition(end + "\n")
+        if not mark:
+            raise AssertionError(
+                f"{path}'s generated-case-fold block has no end marker, so "
+                f"nothing was written to either file")
+        # The table THIS FILE already carries, read out of the block about to be
+        # replaced rather than off this module's own import, so the answer is
+        # about the file being rewritten.
+        held = set(_CASE_FOLD_RULE.findall(was))
+        dropped = sorted(held - fresh)
+        if dropped:
+            raise AssertionError(
+                f"this interpreter's str.lower() (Unicode {version}) would drop "
+                f"{len(dropped)} of the {len(held)} pairs {path.name} already "
+                f"carries, so nothing was written to either file: {dropped[:5]}. "
+                f"Regenerate on an interpreter whose Unicode is at least the one "
+                f"that block records, since a narrower fold is an alias the "
+                f"guard stops seeing (fail-open).")
         block = f"{begin}\n{opening}\n{body}\n{closing}\n{end}\n"
-        if head + block + tail != text:
-            path.write_text(head + block + tail)
-            changed.append(path.name)
+        planned.append((path, text, head + block + tail))
+
+    # PHASE 2 -- publish. Only files whose text really moved are touched, so a
+    # no-op run leaves both mtimes alone.
+    changed = []
+    for path, old, new in planned:
+        if new == old:
+            continue
+        tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
+        try:
+            tmp.write_text(new)
+            # os.replace hands the DESTINATION the temporary's inode, and with
+            # it the temporary's mode: without this, stage-private-data.sh comes
+            # back without its execute bit.
+            os.chmod(str(tmp), os.stat(str(path)).st_mode & 0o7777)
+            os.replace(str(tmp), str(path))
+        except BaseException:
+            try:
+                os.unlink(str(tmp))
+            except OSError:
+                pass                  # nothing to clean up is not a failure
+            raise
+        changed.append(path.name)
     return changed
 
 
 if __name__ == "__main__":   # pragma: no cover - manual smoke check
     if sys.argv[1:2] == ["--regenerate-case-fold"]:
-        moved = regenerate_case_fold()
-        print(f"case fold: {len(CASE_FOLD_PAIRS)} pairs; "
+        try:
+            moved = regenerate_case_fold()
+        except AssertionError as exc:      # a refusal, not a crash: it is the
+            raise SystemExit(f"case fold: {exc}")   # answer the operator asked for
+        print(f"case fold: {len(case_fold_pairs())} pairs from Unicode "
+              f"{unicodedata.unidata_version}; "
               + (f"rewrote {', '.join(moved)}" if moved else "both copies were current"))
         raise SystemExit(0)
     if len(sys.argv) != 3 or sys.argv[1] not in KINDS:
