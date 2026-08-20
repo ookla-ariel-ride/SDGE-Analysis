@@ -2344,7 +2344,9 @@ and the day-ahead's own inline conservation check. On this house's real data, th
 never actually wanted combined throughput above the cap even before this fix existed —
 simultaneous full charge and full discharge always wastes round-trip efficiency for no bill
 benefit, so the cost-minimizing solution already avoided it on its own — so the annual
-headline figures ($2,546.24/yr perfect-foresight save, $217.24/yr gap) are UNCHANGED. The
+headline figures of that era ($2,546.24/yr perfect-foresight save, $217.24/yr gap — issue
+#40's power-split change later moved them to today's $2,545.39/yr and $217.39/yr) are
+UNCHANGED by THIS fix. The
 day-ahead case DID move slightly: a single day's local LP, optimizing over a much shorter
 horizon with a fixed starting SOC, found the combined cap genuinely binding on some days,
 moving day-ahead's save from $1,711.13/yr to **$1,711.28/yr** (a $0.15/yr correction) and the
@@ -3224,9 +3226,10 @@ existing claim, not just asserted to agree.** `degradation_block()` refits the 2
 `avg_eff_kwh_per_kw_day` series (excluding 2020's partial 357-day year, matching index.html's
 own "full years 2021-2025" framing) three ways: OLS (-1.765%/yr), CAGR first-to-last
 (-1.332%/yr), and Theil-Sen median-of-pairwise-slopes (-1.484%/yr, a robustness check against
-the 2023 outlier dominating a 5-point OLS). All three independently reproduce index.html's
-already-published "naive fit reads ~1.3-1.7%/yr" claim from a committed, reproducible
-artifact rather than hand arithmetic — CONFIRMED, not merely asserted. The tighter "best-
+the 2023 outlier dominating a 5-point OLS). Their span, rounded to one decimal, is the
+"~1.3-1.8%/yr" naive band index.html publishes and `report_tokens.DEGRADATION_NAIVE_RANGE`
+renders — the band is those three estimators, so the page states no containment the artifact
+does not already carry. The tighter "best-
 estimate ~0.5-1.0%/yr" verdict in that same paragraph is a different matter: it is a
 qualitative downward adjustment (reasoning: the naive metric isn't weather-normalized, so true
 degradation is probably lower), and no committed artifact in this repo independently derives

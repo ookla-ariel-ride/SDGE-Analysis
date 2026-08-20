@@ -967,8 +967,9 @@ def ev_block(cons):
 
 
 # ---------------------------------------------------------------------------
-# 6. Degradation trend: artifact-backed, reconciled against index.html's
-#    existing hand-computed claim (AC2, AC6).
+# 6. Degradation trend: artifact-backed, reconciled against the one claim in
+#    index.html section 9 that is still hand-reasoned rather than derived from
+#    this artifact -- the "best-estimate ~0.5-1.0%/yr" verdict (AC2, AC6).
 # ---------------------------------------------------------------------------
 def _theil_sen(x, y):
     slopes = []
@@ -1012,6 +1013,23 @@ def degradation_block():
 
     peak_to_trough_pct = (max(eff.values()) - min(eff.values())) / min(eff.values()) * 100
 
+    # What the three fits establish BETWEEN THEM -- the only agreement claim
+    # left here that is not circular (see the reconciliation block's comment).
+    # Direction is read off the figures rather than assumed: an array that
+    # gained over the window, or a set of fits that straddle zero, each gets
+    # its own sentence instead of inheriting a decline word.
+    naive = [ols_pct_per_yr, cagr_pct_per_yr, ts_pct_per_yr]
+    naive_spread_pp = max(naive) - min(naive)
+    if max(naive) < 0:
+        naive_direction = ("all three fits agree the size-normalized output "
+                           "DECLINED across 2021-2025")
+    elif min(naive) > 0:
+        naive_direction = ("all three fits agree the size-normalized output "
+                           "ROSE across 2021-2025")
+    else:
+        naive_direction = ("the three fits do NOT agree on a direction across "
+                           "2021-2025 -- their span straddles zero")
+
     return {
         "annual_efficiency_kwh_per_kw_day": eff,
         "ols_pct_per_yr": round(ols_pct_per_yr, 3),
@@ -1036,23 +1054,57 @@ def degradation_block():
             "following ~134 dry days (~4.4 months) with no rain -- a "
             "VALIDATED (not modeled) single-event swing, reused read-only "
             "from analysis/soiling_analysis.py, never recomputed here."),
+        # WHICH OF THE REPORT'S CLAIMS IS STILL SOMETHING TO RECONCILE AGAINST.
+        # This block used to pin the report's naive band as a hand-typed
+        # "existing_report_naive_range_pct_per_yr": [1.3, 1.7] literal, from
+        # the days when that band WAS hand arithmetic in the prose and this
+        # refit was the artifact-backed check on it. It is not that any more:
+        # report_tokens.DEGRADATION_NAIVE_RANGE renders the published band as
+        # the SPAN of the three estimators below, rounded to a tenth. So the
+        # literal was a second copy of this script's own answer, and it went
+        # stale exactly the way a copy does -- still reading 1.3-1.7 after the
+        # estimators' span had moved to 1.3-1.8 (issue #165). Re-deriving the
+        # span here instead would fix the staleness and keep the emptiness: a
+        # figure compared against itself confirms nothing, however current the
+        # copy is. The field is therefore gone, not corrected. The estimators
+        # are published above; the span belongs to whoever renders it, once.
+        #
+        # The best-estimate range below IS still an independent claim. Section
+        # 9 states "best-estimate ~0.5-1.0%/yr" as hand-reasoned prose that no
+        # committed artifact derives, so measuring this script's evidence
+        # against it is a real reconciliation -- and it finds a real
+        # disagreement, recorded in gap_on_the_best_estimate.
         "reconciliation": {
-            "existing_report_naive_range_pct_per_yr": [1.3, 1.7],
             "existing_report_best_estimate_range_pct_per_yr": [0.5, 1.0],
             "existing_report_location": (
                 'index.html, section 9, "Array health: 6-year degradation '
-                'trend" (hand-computed prose, not previously artifact-backed)'),
+                'trend" -- specifically its hand-reasoned "best-estimate '
+                '~0.5-1.0%/yr" verdict, which no committed artifact in this '
+                "repo derives. The naive band printed in the same section is "
+                "NOT an independent claim to reconcile against: "
+                "report_tokens.DEGRADATION_NAIVE_RANGE renders it from this "
+                "artifact's own three estimators."),
             "this_scripts_naive_figures_pct_per_yr": {
                 "ols": round(ols_pct_per_yr, 2),
                 "cagr": round(cagr_pct_per_yr, 2),
                 "theil_sen": round(ts_pct_per_yr, 2),
             },
-            "agreement_on_the_naive_range": (
-                "CONFIRMED: this script's independently computed OLS "
-                f"({ols_pct_per_yr:.2f}%/yr) and CAGR ({cagr_pct_per_yr:.2f}"
-                "%/yr) reproduce the existing report's stated naive "
-                "~1.3-1.7%/yr range closely, from a committed, reproducible "
-                "artifact rather than hand arithmetic."),
+            "agreement_among_the_three_naive_estimators": (
+                f"{naive_direction}, and they land within "
+                f"{naive_spread_pp:.2f} percentage points of one another "
+                "despite being deliberately different instruments: OLS is "
+                "pulled by every point including the 2023 outlier, "
+                "first-to-last CAGR uses ONLY the two endpoints, and the "
+                "Theil-Sen median-of-pairwise-slopes leans on neither. Three "
+                "fits with different failure modes landing together is "
+                "evidence that the naive trend is a property of the annual "
+                "series rather than of one fit's sensitivity. It is NOT "
+                "evidence about true panel degradation, which needs the "
+                "weather normalization this repo cannot do before 2025-07-24 "
+                "-- see gap_on_the_best_estimate. This is the only agreement "
+                "claim available here: the report's published naive band is "
+                "the span of these same three figures, so checking them "
+                "against it would be checking a number against itself."),
             "gap_on_the_best_estimate": (
                 "NOT DETERMINED -- and not bounded either (Codex review pass "
                 "3, finding 2: an earlier draft claimed a 0%/yr-to-naive-rate "

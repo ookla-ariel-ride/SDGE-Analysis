@@ -4981,6 +4981,345 @@ def case_the_two_structural_guards_reject_the_defects_they_exist_to_catch():
             "and only a missing private archive can drop a token from the agreement check")
 
 
+# ---------------------------------------------------------------------------
+# Cross-document figure pins (issues #165, #166, #176).
+#
+# Each of these three ties a number index.html publishes to the artifact that
+# derives it AND to the second document that restates it, so neither side can
+# move alone. All three existed as live disagreements: a stale glossary ratio,
+# two unnamed derivations of whole-home load, and a naive degradation band the
+# report's own cited estimators fell outside of.
+# ---------------------------------------------------------------------------
+
+GLOSSARY = (ROOT / "GLOSSARY.md").read_text()
+
+# "~2.5× cleaner" / "about 2.5× cleaner" -- the ratio, wherever it is stated.
+_CARBON_RATIO_RE = re.compile(r"([\d.]+)× cleaner")
+# The two whole-home-load figures §1 reconciles, and the gap it states.
+_LOAD_BALANCE_RE = re.compile(r"Whole-home load is <b>([\d,]+) kWh/yr</b>")
+_LOAD_CT_RE = re.compile(r"totals ([\d,]+) kWh: ([\d.]+)% below the energy balance")
+# The naive degradation band, at both of the places §9 prints it.
+_NAIVE_BAND_RES = (
+    re.compile(r"naïve fit reads ~([\d.]+)–([\d.]+)%/yr"),
+    re.compile(r"~([\d.]+)–([\d.]+)%/yr naïve band"),
+)
+
+
+def case_midday_vs_overnight_carbon_ratio_is_one_comparison_in_both_documents():
+    """issue #176: GLOSSARY.md said midday grid power is ~2.2x cleaner than
+    overnight while index.html §0 said ~2.5x, and nothing tied either to an
+    artifact.
+
+    They were the SAME comparison -- window mean against window mean -- on two
+    generations of the carbon study: 279.0/125.1 = 2.2 on the retired 4-sample-
+    day basis in data/carbon_results.json, 270.1/109.1 = 2.5 on the 364-day
+    basis in data/carbon_fullyear_results.json. The glossary carried the stale
+    one.
+
+    The 2.5x figure also carried a wrong LABEL on the page: it was published as
+    a point comparison ("cleaner at noon than at 3am"), which those same hourly
+    means put at 2.6x (279.8 at 03h against 107.3 at 12h), not 2.5x. So this
+    case pins three things at once -- the ratio in each document, the window
+    means it comes from, and that each document names the two WINDOWS rather
+    than two hours, since the number is a window average and the point
+    comparison is a different (and differently-valued) statistic."""
+    cf_path = ROOT / "data" / "carbon_fullyear_results.json"
+    assert cf_path.exists(), f"{cf_path} is committed public data and must exist"
+    wm = json.loads(cf_path.read_text())["intensity_kg_per_mwh"]["window_means_annual"]
+    overnight, midday = wm["sop_overnight_00_06"], wm["solar_midday_10_14"]
+    expected = f"{overnight / midday:.1f}"
+
+    m = re.search(r"<li><b>Exploit the 10am–2pm weekday window.*?</li>", HTML, re.S)
+    assert m, "§0's 10am-2pm window bullet not found in index.html"
+    bullet = m.group(0)
+    entry = next((ln for ln in GLOSSARY.splitlines()
+                  if ln.startswith("**Grid carbon intensity**")), None)
+    assert entry, "GLOSSARY.md has no 'Grid carbon intensity' entry to check"
+
+    for where, text in (("index.html §0", bullet), ("GLOSSARY.md", entry)):
+        hit = _CARBON_RATIO_RE.search(text)
+        assert hit, (f"{where} no longer states a 'N× cleaner' midday/overnight ratio -- "
+                     "that figure is what this case pins to "
+                     "carbon_fullyear_results.json's window means, so it cannot be "
+                     "checked at all if the document stops publishing it")
+        assert hit.group(1) == expected, (
+            f"{where} publishes {hit.group(1)}× cleaner, but "
+            f"carbon_fullyear_results.json's window means give "
+            f"{overnight}/{midday} = {expected}× -- the two documents and the artifact "
+            "must state one ratio")
+        for window in ("10am–2pm", "midnight–6am"):
+            assert window in text or window.replace("–", "-") in text, (
+                f"{where} states the ratio without naming the {window} window it "
+                "averages over; the same artifact's hourly means make the noon-vs-3am "
+                "POINT comparison a different number "
+                f"({json.loads(cf_path.read_text())['intensity_kg_per_mwh']['annual_avg_by_hour'][3]}"
+                " against "
+                f"{json.loads(cf_path.read_text())['intensity_kg_per_mwh']['annual_avg_by_hour'][12]}"
+                " kg/MWh), so which comparison this is has to be said")
+
+    for value in (f"{midday}", f"{overnight}"):
+        assert value in entry, (
+            f"GLOSSARY.md's grid-carbon entry no longer cites the {value} kg CO₂/MWh "
+            "window mean it takes the ratio from, so the ratio is back to hand arithmetic")
+    return (f"index.html §0 and GLOSSARY.md both state the midday/overnight ratio as "
+            f"{expected}×, over the named 10am–2pm and midnight–6am windows, from "
+            f"carbon_fullyear_results.json's {overnight}/{midday} kg CO₂/MWh window means")
+
+
+def case_whole_home_load_names_both_derivations_and_states_their_gap():
+    """issue #166: ANNUAL_LOAD_KWH resolved to 29,914 while index.html §2
+    published 29,857, and neither derivation was named.
+
+    They are two independent measurements of one quantity. 29,914 is the
+    utility-meter energy balance -- imports + (production − exports), every
+    term from a committed artifact (data/report_data.json:totals and
+    data/enphase_daily_production.csv). 29,857 is the Enphase consumption CT's
+    own annual total, which no committed artifact carries; it lives in the
+    gitignored SAM 8760 export. Both are right, and their 0.2% agreement is
+    evidence, so the report publishes the artifact-backed one and states the
+    other as corroboration.
+
+    This pins the published figure to the token that derives it, the balance's
+    three terms to their artifacts, and the stated gap to the two figures it
+    is the gap between -- so re-basing either meter without rewriting the
+    reconciliation fails here."""
+    rt = _report_tokens()
+    rendered = rt.resolve_token("ANNUAL_LOAD_KWH")
+
+    balance = _LOAD_BALANCE_RE.search(HTML)
+    assert balance, ("§1 no longer states 'Whole-home load is <b>N kWh/yr</b>' -- that "
+                     "figure is what this case pins ANNUAL_LOAD_KWH to")
+    assert balance.group(1) == rendered, (
+        f"§1 publishes a whole-home load of {balance.group(1)} kWh/yr but "
+        f"ANNUAL_LOAD_KWH renders {rendered} from data/report_data.json:totals and "
+        "data/enphase_daily_production.csv -- the page and the token that derives it "
+        "state different loads")
+    assert f"{rendered} kWh/yr load" in HTML, (
+        f"§2's 'covers N% of the home's ... kWh/yr load' bullet does not carry "
+        f"{rendered}, the figure §1 and ANNUAL_LOAD_KWH agree on -- the two sections "
+        "would publish two different whole-home loads")
+
+    imp, exp = RD["totals"]["imp"], RD["totals"]["exp"]
+    production = rt.resolve_token("ANNUAL_PRODUCTION_KWH")
+    terms = f"({imp:,} + {production} − {exp:,})"
+    assert terms in HTML, (
+        f"§1 does not show the energy balance as {terms}; those three terms are what "
+        "makes the published load traceable rather than asserted")
+
+    ct = _LOAD_CT_RE.search(HTML)
+    assert ct, ("§1 no longer states the consumption CT's own total and how far it sits "
+                "from the energy balance -- that reconciliation is the point of "
+                "publishing two derivations")
+    ct_kwh = float(ct.group(1).replace(",", ""))
+    balance_kwh = float(rendered.replace(",", ""))
+    expected_gap = f"{abs(balance_kwh - ct_kwh) / balance_kwh * 100:.1f}"
+    assert ct.group(2) == expected_gap, (
+        f"§1 says the consumption CT reads {ct.group(2)}% below the energy balance, but "
+        f"{ct.group(1)} against {rendered} is {expected_gap}% -- the stated agreement "
+        "does not match the two figures it is between")
+    return (f"§1 and §2 publish one whole-home load ({rendered} kWh/yr, the "
+            f"ANNUAL_LOAD_KWH energy balance {terms}), with the consumption CT's "
+            f"{ct.group(1)} kWh named as corroboration {expected_gap}% away")
+
+
+def case_degradation_naive_band_contains_every_estimator_it_is_built_from():
+    """issue #165: DEGRADATION_NAIVE_RANGE resolved to 1.3-1.8%/yr while §9
+    published ~1.3-1.7%/yr -- and then asserted that OLS −1.77%/yr "lands
+    inside" that band, which it does not.
+
+    The band IS the span of gross_import_decomposition.json's three
+    estimators, so containment is a property of the artifact, not a claim the
+    prose gets to make independently. This case checks it arithmetically: both
+    printed copies of the band must be the token's own endpoints, and every
+    estimator the artifact carries must fall inside them, to within the half
+    printed digit the endpoints are rounded to. The published −1.77 failed
+    that (1.765 > 1.7 + 0.05); the artifact's own −1.76 does not."""
+    gd_path = ROOT / "data" / "gross_import_decomposition.json"
+    assert gd_path.exists(), f"{gd_path} is committed public data and must exist"
+    deg = json.loads(gd_path.read_text())["degradation"]
+    estimators = {"OLS": deg["ols_pct_per_yr"], "CAGR": deg["cagr_pct_per_yr"],
+                  "Theil-Sen": deg["theil_sen_pct_per_yr"]}
+
+    rt = _report_tokens()
+    rendered = rt.resolve_token("DEGRADATION_NAIVE_RANGE")
+    token_band = re.search(r"([\d.]+)–([\d.]+)%/yr", rendered)
+    assert token_band, (
+        f"DEGRADATION_NAIVE_RANGE renders {rendered!r}, which states no numeric band -- "
+        "the estimators no longer agree on a direction, and §9's prose has to say so "
+        "instead of printing a range this case can check")
+    lo, hi = (float(token_band.group(1)), float(token_band.group(2)))
+
+    for pattern in _NAIVE_BAND_RES:
+        hit = pattern.search(HTML)
+        assert hit, (f"§9 no longer prints the naive band in the form {pattern.pattern!r} "
+                     "-- both copies of that band are what this case pins to "
+                     "DEGRADATION_NAIVE_RANGE")
+        assert (hit.group(1), hit.group(2)) == (token_band.group(1), token_band.group(2)), (
+            f"§9 publishes a naive band of {hit.group(1)}–{hit.group(2)}%/yr but "
+            f"DEGRADATION_NAIVE_RANGE renders {rendered!r} from "
+            "gross_import_decomposition.json's three estimators")
+
+    for name, value in estimators.items():
+        assert lo - 0.05 <= abs(value) <= hi + 0.05, (
+            f"§9 states the naive band as {lo}–{hi}%/yr and calls it the span of its "
+            f"three estimators, but {name} is {value}%/yr, outside that band -- the "
+            "published containment claim is arithmetically false")
+        printed = f"{abs(value):.2f}%/yr"
+        assert printed in HTML, (
+            f"§9 no longer prints {name} as {printed}; the three estimator figures the "
+            "band is built from have to be the artifact's own, not restated by hand")
+    return (f"§9's naive band ({lo}–{hi}%/yr, both copies) is DEGRADATION_NAIVE_RANGE's "
+            "own span, and each of "
+            + ", ".join(f"{n} {v}%/yr" for n, v in estimators.items())
+            + " falls inside it")
+
+
+def case_glossary_figures_match_the_artifacts_that_derive_them():
+    """issues #176 AC5/AC6 and #216: GLOSSARY.md is a public, linked document
+    that no artifact-agreement case covered, so it is where stale figures
+    accumulated -- #140 found a retired phantom figure surviving there after
+    index.html, TECHNICAL.md and the tests had all been swept, and #176 found
+    a carbon ratio two generations old.
+
+    A one-off sweep only holds until the next regeneration, so this pins the
+    glossary's artifact-derived figures the way the report's own are pinned:
+    each entry names the artifact path or the token that derives it, and the
+    string has to be present in that entry. Four were wrong when this was
+    written -- the optimality gap ($217.24 against the artifact's $217.39),
+    both electrification-dividend figures ($3,230/$4,440 against $3,191/
+    $4,429), and the gas total (~342 against ~343 therms).
+
+    Figures deliberately NOT pinned here, because no committed artifact
+    carries them: the SAIDI/SAIFI outage-hours band, the $1.16/kWh Reduce-
+    Your-Use surcharge, the $2/kWh ELRP rate, and the external constants
+    (Climate Credit, ITC, SGIP, EV pack sizes, HPWH efficiency). Those are
+    cited to public sources in the entries themselves and would need a
+    generator before a test could mean anything.
+
+    Seven of the pins are token-derived, and some of those tokens need
+    private/household.yaml, which CI does not have. They are resolved up
+    front rather than inline in the pins list, for three reasons: an
+    unresolvable token drops its pin WHOLE (several interpolate the rendered
+    string into the figure, so a None would be asserted as the literal
+    "None" -- a wrong figure rather than an absent one); every pin that does
+    NOT need the archive still runs; and the dropped token names go into the
+    summary line, so a reader can see coverage shrank and by what."""
+    rt = _report_tokens()
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    nem3 = json.loads((ROOT / "data" / "nem3_grandfathering.json").read_text())
+    pfd = json.loads((ROOT / "data" / "perfect_foresight_dispatch.json").read_text())
+    dsgs = json.loads((ROOT / "data" / "dsgs_vpp_backtest.json").read_text())
+    curve = json.loads((ROOT / "data" / "battery_sizing_curve.json").read_text())
+    ext = json.loads((ROOT / "data" / "extended_results.json").read_text())
+    disp = DISPATCH
+    gap = pfd["greedy_comparison"]
+    div = ext["electrification_dividend"]
+    therms = sum(float(row["therms"]) for row in
+                 csv.DictReader((ROOT / "data" / "gas_monthly_therms.csv")
+                                .read_text().splitlines()))
+
+    # BaseException, not Exception: resolve_token's fail-closed signal is
+    # SystemExit, which is NOT an Exception subclass. Building these inline in
+    # the pins list let that SystemExit escape the runner -- which only catches
+    # AssertionError -- and end the whole run at this case, with no FAIL line
+    # and no tally, taking every later case with it. Catching Exception here
+    # would reproduce exactly that. A skip is pardoned only when it is the
+    # archive that is missing (_missing_archive_exit, same test the heading-
+    # verdict resolver uses): with the archive present every token must still
+    # resolve, so a genuinely broken token fails this case instead of quietly
+    # deleting its own coverage.
+    resolved, skipped = {}, set()
+    for token in ("CAPACITY_FACTOR", "EXPORTED_SHARE", "SOILING_RATE_RANGE",
+                  "SPECIFIC_YIELD", "DEGRADATION_NAIVE_RANGE",
+                  "NIGHT_FLOOR_MEDIAN", "NIGHT_FLOOR_ANNUAL_COST"):
+        try:
+            resolved[token] = rt.resolve_token(token)
+        except BaseException as e:                # noqa: BLE001 - that is the point
+            assert _missing_archive_exit(e, archive, loader), (
+                f"report_tokens could not resolve {token}, and NOT because this checkout "
+                f"lacks the private archive (present: {archive}) -- the glossary figure "
+                f"cannot be checked against a token that is itself broken: "
+                f"{type(e).__name__}: {e}")
+            skipped.add(token)
+
+    # (glossary entry, figure as it must appear, what derives it)
+    pins = [
+        ("Grandfathering",
+         f"${nem3['grandfathering_value_range_usd_per_yr']['low']:,.2f}–"
+         f"${nem3['grandfathering_value_range_usd_per_yr']['high']:,.2f} per year",
+         "nem3_grandfathering.json:grandfathering_value_range_usd_per_yr"),
+        ("Therm", f"~{therms:,.0f} therms/yr", "data/gas_monthly_therms.csv, summed"),
+        ("Dispatch policy",
+         f"~${round(disp['pw3']['greedy']['save'] - disp['pw3']['evening']['save']):,}/yr more",
+         "battery_dispatch_policies.json: greedy.save − evening.save"),
+        ("DSGS",
+         f"**${dsgs['per_aggregation_sensitivity']['net_usd_min']:,.0f}–"
+         f"${dsgs['per_aggregation_sensitivity']['net_usd_max']:,.0f}**",
+         "dsgs_vpp_backtest.json:per_aggregation_sensitivity"),
+        ("DSGS", f"${dsgs['revenue']['reserve_20pct']['net_usd']:,.2f}",
+         "dsgs_vpp_backtest.json:revenue.reserve_20pct.net_usd"),
+        ("Knee (sizing curve)", f"lands at {curve['current_behavior']['knee']['kwh']:,.0f} kWh",
+         "battery_sizing_curve.json:current_behavior.knee.kwh"),
+        ("Optimality gap", f"${gap['optimality_gap_usd']:,.2f}/yr gap",
+         "perfect_foresight_dispatch.json:greedy_comparison.optimality_gap_usd"),
+        ("Optimality gap", f"({gap['optimality_gap_pct_of_greedy']:,.1f}% of the shipping",
+         "perfect_foresight_dispatch.json:greedy_comparison.optimality_gap_pct_of_greedy"),
+        ("Electrification dividend", f"about ${div['dividend_yr']:,}/yr here today",
+         "extended_results.json:electrification_dividend.dividend_yr"),
+        ("Electrification dividend", f"~${div['dividend_yr_post_fix']:,}/yr",
+         "extended_results.json:electrification_dividend.dividend_yr_post_fix"),
+    ]
+    # The token-derived pins, each appended only when its token resolved, and
+    # each built from the RESOLVED string -- so a pin whose figure interpolates
+    # an unavailable token is skipped whole rather than compared against text
+    # containing "None".
+    for term, figure_of, token in (
+        ("Capacity factor", lambda v: v, "CAPACITY_FACTOR"),
+        ("Self-consumption vs export", lambda v: f"exports {v} of its production",
+         "EXPORTED_SHARE"),
+        # The token renders "0.45-2.4%/month"; the glossary spells the unit out.
+        # Only the numeric range is pinned, so the prose stays free.
+        ("Soiling", lambda v: f"{v.replace('%/month', '')}% lost per dry month",
+         "SOILING_RATE_RANGE"),
+        ("Specific yield", lambda v: f"{v} kWh/kW/yr", "SPECIFIC_YIELD"),
+        ("Degradation", lambda v: v, "DEGRADATION_NAIVE_RANGE"),
+        ("Phantom load", lambda v: f"median {v}", "NIGHT_FLOOR_MEDIAN"),
+    ):
+        if token in resolved:
+            pins.append((term, figure_of(resolved[token]), token))
+    # NIGHT_FLOOR_ANNUAL_COST renders both pricings in one sentence; the
+    # glossary spreads them across its own. Pin the amounts, not the wording.
+    if "NIGHT_FLOOR_ANNUAL_COST" in resolved:
+        for amount in re.findall(r"\$[\d,]+", resolved["NIGHT_FLOOR_ANNUAL_COST"]):
+            pins.append(("Phantom load", amount, "NIGHT_FLOOR_ANNUAL_COST"))
+
+    entries = {}
+    for line in GLOSSARY.splitlines():
+        if line.startswith("**"):
+            entries.setdefault(line.split("**")[1], []).append(line)
+
+    for term, figure, source in pins:
+        # Prefix match: several entries carry a parenthetical or an alias after
+        # the term ("Dispatch policy (evening-only / ...)"), and renaming that
+        # tail is a prose choice, not a figure moving.
+        matched = [head for head in entries if head.startswith(term)]
+        assert matched, (
+            f"GLOSSARY.md no longer has a '{term}' entry, so the figure this case pins "
+            f"to {source} cannot be checked at all")
+        body = "\n".join(line for head in matched for line in entries[head])
+        assert figure in body, (
+            f"GLOSSARY.md's '{term}' entry does not carry {figure!r}, the value {source} "
+            "derives -- the glossary and the artifact state different figures for the "
+            "same quantity")
+    note = (f"{len(skipped)} unresolvable without the private archive ({sorted(skipped)})"
+            if skipped else "all resolved")
+    return (f"{len(pins)} figures across {len(set(t for t, _, _ in pins))} GLOSSARY.md "
+            f"entries match the artifacts and tokens that derive them ({note})")
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -5050,6 +5389,10 @@ CASES = [
     case_every_h2_section_opens_with_exactly_one_conclusion_line,
     case_basic_tier_verdict_lines_stay_inside_the_density_cap,
     case_the_two_structural_guards_reject_the_defects_they_exist_to_catch,
+    case_midday_vs_overnight_carbon_ratio_is_one_comparison_in_both_documents,
+    case_whole_home_load_names_both_derivations_and_states_their_gap,
+    case_degradation_naive_band_contains_every_estimator_it_is_built_from,
+    case_glossary_figures_match_the_artifacts_that_derive_them,
 ]
 
 
