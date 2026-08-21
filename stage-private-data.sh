@@ -1859,7 +1859,7 @@ _gate_skips_entry() {   # $1 = a path relative to $DST_REAL   $2 = an index entr
   # this one, and the caller (_require_uncommittable) sets neither. The length
   # skip was sound under UTF-8 for a reason nobody wrote down -- one code point
   # folds to one code point, so a character count is fold-invariant -- and
-  # unsound under C, where the 24 length-changing pairs move the count. Pinned
+  # unsound under C, where the 26 length-changing pairs move the count. Pinned
   # so the skip has ONE meaning and one argument for it, rather than two that
   # depend on the environment the staging happens to run in.
   local LC_ALL=C

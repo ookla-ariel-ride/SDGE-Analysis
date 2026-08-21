@@ -4541,6 +4541,13 @@ def case_the_case_fold_table_is_generated_from_pythons_own_fold():
         ("length-changing pairs of the COMMITTED table, private_egress.py",
          module, r"DOES NOT PRESERVE BYTE LENGTH, for (\d+) of its pairs",
          sum(1 for a, b in pairs if len(a.encode()) != len(b.encode()))),
+        # The shell states this one too, and was the ONLY stated count checked
+        # in just one file: widening the table moved it from 24 to 26, the
+        # python copy was updated and this one was not. Every other row here
+        # comes in both spellings, which is why only this figure went stale.
+        ("length-changing pairs of the COMMITTED table, stage-private-data.sh",
+         flat_script, r"the (\d+) length-changing pairs",
+         sum(1 for a, b in pairs if len(a.encode()) != len(b.encode()))),
     )
     for label, haystack, pattern, measured in stated:
         found = re.search(pattern, haystack)
