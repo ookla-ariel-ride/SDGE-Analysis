@@ -103,6 +103,7 @@ import fnmatch
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import unicodedata
@@ -3444,9 +3445,15 @@ def regenerate_case_fold(root=ROOT):
     BEFORE either is written, and each write goes to a temporary in the target's
     own directory and lands with os.replace(), so a file is never observed
     half-written and a failure part-way through leaves the file it has not
-    reached untouched. Two replaces are still two syscalls: a kill between them
-    leaves the first file new and the second old, which the guard case then
-    fails on. What cannot happen any more is a validation error doing it.
+    reached untouched. Two replaces are still two syscalls, so a file that has
+    already landed is kept as a .bak and PUT BACK if a later replace fails: the
+    set advances or reverts together, and an exception part-way through
+    publication can no longer leave the python guard folding pairs the shell
+    guard does not -- the narrower side being the fail-open one. A hard kill
+    still lands between two syscalls; what it leaves is the .bak beside the
+    file as the recovery copy, and the guard case that asserts both files record
+    ONE Unicode version fails until it is used. carbon_fullyear.py and
+    parse_bills.py publish their artifact sets the same way.
 
     NEVER NARROWS THE DOMAIN. str.lower() grows with the interpreter's Unicode
     version, so regenerating on an older python than the table was built with
@@ -3503,25 +3510,51 @@ def regenerate_case_fold(root=ROOT):
 
     # PHASE 2 -- publish. Only files whose text really moved are touched, so a
     # no-op run leaves both mtimes alone.
+    #
+    # AND PUBLISH THEM AS A SET. Building both texts before writing either closes
+    # a VALIDATION failure splitting the pair, but two os.replace calls are two
+    # syscalls, and an exception, a full disk or a permission change on the
+    # second one would still leave this file on the new table and the shell on
+    # the old. That is the divergence the whole entry point exists to prevent,
+    # and it is fail-open in the shell's direction: the stale side folds fewer
+    # pairs, so it sees fewer aliases. Each file that has already landed is
+    # copied aside first and restored if a later one fails.
     changed = []
-    for path, old, new in planned:
-        if new == old:
-            continue
-        tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
-        try:
-            tmp.write_text(new)
-            # os.replace hands the DESTINATION the temporary's inode, and with
-            # it the temporary's mode: without this, stage-private-data.sh comes
-            # back without its execute bit.
-            os.chmod(str(tmp), os.stat(str(path)).st_mode & 0o7777)
-            os.replace(str(tmp), str(path))
-        except BaseException:
+    published = []                    # (path, bak) for files already replaced
+    try:
+        for path, old, new in planned:
+            if new == old:
+                continue
+            tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
+            bak = path.with_name(f"{path.name}.bak{os.getpid()}")
             try:
-                os.unlink(str(tmp))
-            except OSError:
-                pass                  # nothing to clean up is not a failure
-            raise
-        changed.append(path.name)
+                tmp.write_text(new)
+                # os.replace hands the DESTINATION the temporary's inode, and with
+                # it the temporary's mode: without this, stage-private-data.sh comes
+                # back without its execute bit.
+                os.chmod(str(tmp), os.stat(str(path)).st_mode & 0o7777)
+                # copy2 rather than a rename: the ORIGINAL must stay in place
+                # until its replacement lands, and copy2 carries the mode, so a
+                # revert restores the execute bit too.
+                shutil.copy2(str(path), str(bak))
+                os.replace(str(tmp), str(path))
+            except BaseException:
+                for leftover in (tmp, bak):
+                    try:
+                        os.unlink(str(leftover))
+                    except OSError:
+                        pass          # nothing to clean up is not a failure
+                raise
+            published.append((path, bak))
+            changed.append(path.name)
+    except BaseException:
+        # Back to the pair we started with. os.replace consumes the .bak, and
+        # reversed() puts the files back in the order they were taken.
+        for path, bak in reversed(published):
+            os.replace(str(bak), str(path))
+        raise
+    for _, bak in published:
+        os.unlink(str(bak))
     return changed
 
 

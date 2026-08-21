@@ -4690,10 +4690,21 @@ def case_regenerating_the_case_fold_writes_both_files_or_neither():
     execute bit, which os.replace() takes from the temporary unless the mode is
     carried over -- the exact way an atomic write breaks a script.
 
-    NOT CLAIMED: that the two files are published as one atomic set. Two
-    replaces are two syscalls and a kill between them still leaves the first
-    file new and the second old. What is closed is a VALIDATION failure doing
-    it, which is the failure this actually had.
+    AND THEY ARE PUBLISHED AS A SET. Two replaces are two syscalls, so closing
+    the validation half still left an exception on the SECOND replace -- a full
+    disk, a permission change, a concurrent write -- leaving this file on the
+    new table and the shell on the old, which is the same divergence by a later
+    route. It is fail-open in the shell's direction, because the stale side
+    folds fewer pairs and therefore sees fewer aliases. A file that has landed
+    is now copied aside and restored if a later replace fails, so the pair
+    advances or reverts together. Injected below on the second replace, with the
+    retired two-bare-replaces shape run on the same injection as the positive
+    control.
+
+    STILL NOT CLAIMED: atomicity against a hard kill. SIGKILL between two
+    syscalls cannot be caught, and what it leaves is the .bak beside the file as
+    the recovery copy -- plus a guard case that fails while the two files record
+    different Unicode versions, so the state is loud rather than silent.
     """
     begin, end = PE.CASE_FOLD_MARKERS
     with tempfile.TemporaryDirectory() as td:
@@ -4845,11 +4856,99 @@ def case_regenerating_the_case_fold_writes_both_files_or_neither():
         # AND A NO-OP RUN IS A NO-OP: running it twice must not report a change.
         assert PE.regenerate_case_fold(root=root) == [], (
             "a second regeneration rewrote files whose text had not moved")
+
+        # AND A FAILURE ON THE SECOND REPLACE REVERTS THE FIRST. Validation is
+        # not the only way the pair can split: publication is two syscalls.
+        #
+        # THE POSITIVE CONTROL FIRST -- the retired publication shape, two bare
+        # replaces with nothing kept aside, under the same injection. If this
+        # does not diverge the files, the injection is not reaching the write
+        # and what the real generator does with it proves nothing.
+        version = unicodedata.unidata_version
+        root, module, script = _case_fold_fixture(td, "old-publish")
+        before = (module.read_bytes(), script.read_bytes())
+        body = PE.case_fold_sed_script()
+        planned = []
+        for path, opening, closing in (
+                (module, f'CASE_FOLD_UNICODE = "{version}"\n'
+                         'CASE_FOLD_SED = """\\', '"""'),
+                (script, "# generated from python's str.lower() under Unicode "
+                         f"{version}\n_CASE_FOLD_SED='", "'")):
+            text = path.read_text()
+            head, _, rest = text.partition(begin + "\n")
+            _, _, tail = rest.partition(end + "\n")
+            planned.append(
+                (path, head + f"{begin}\n{opening}\n{body}\n{closing}\n{end}\n" + tail))
+
+        real_replace = os.replace
+        calls = []
+
+        def fail_on_second(src, dst):
+            """os.replace that dies on its SECOND call: the shell script's."""
+            calls.append(dst)
+            if len(calls) == 2:
+                raise OSError(28, "injected: no space left on device")
+            return real_replace(src, dst)
+
+        os.replace = fail_on_second
+        try:
+            for path, new in planned:
+                tmp = path.with_name(path.name + ".tmp")
+                tmp.write_text(new)
+                os.chmod(str(tmp), os.stat(str(path)).st_mode & 0o7777)
+                os.replace(str(tmp), str(path))
+        except OSError:
+            pass
+        finally:
+            os.replace = real_replace
+        assert module.read_bytes() != before[0] and script.read_bytes() == before[1], (
+            "the retired two-bare-replaces shape did not leave the two files on "
+            "different tables under an injected failure on the second replace, "
+            "so the injection is not reaching publication and the assertion "
+            "below would pass for the wrong reason")
+
+        # THE ASSERTION: the real entry point, same injection.
+        root, module, script = _case_fold_fixture(td, "second-replace-fails")
+        before = (module.read_bytes(), script.read_bytes())
+        mode_before = stat.S_IMODE(script.stat().st_mode)
+        leftovers_before = sorted(p.name for p in root.rglob("*"))
+        calls = []
+        os.replace = fail_on_second
+        try:
+            PE.regenerate_case_fold(root=root)
+        except OSError as e:
+            assert "injected" in str(e), (
+                f"the run failed for a reason other than the injection: {e}")
+        else:
+            raise AssertionError(
+                "a failing os.replace was reported as a successful "
+                "regeneration, so the injection never fired")
+        finally:
+            os.replace = real_replace
+        assert module.read_bytes() == before[0], (
+            "private_egress.py kept its new table after the shell script's "
+            "replace failed: the two implementations are left folding "
+            "different sets of pairs, and the shell's is the narrower, "
+            "fail-open one")
+        assert script.read_bytes() == before[1], (
+            "stage-private-data.sh moved despite its replace failing")
+        assert len(calls) == 3, (
+            f"publication made {len(calls)} replace calls, not the two writes "
+            "plus one revert this case is about -- the shape changed and the "
+            "injection may no longer be hitting the second FILE")
+        assert stat.S_IMODE(script.stat().st_mode) == mode_before, (
+            "the reverted files came back with a different mode")
+        assert sorted(p.name for p in root.rglob("*")) == leftovers_before, (
+            "the rolled-back run left a .tmp or .bak behind in a directory the "
+            "guard walks")
     return ("a malformed second block leaves the first file byte-identical (the "
             "retired shape rewrote it), so do a missing begin marker, a block "
-            "this interpreter would narrow, and a write that cannot happen; "
-            "both files land by replace rather than truncation with the shell "
-            "script's mode carried over, and a repeated run writes nothing")
+            "this interpreter would narrow, and a write that cannot happen; a "
+            "failure on the SECOND replace reverts the first file rather than "
+            "leaving the two on different tables (the retired publication shape "
+            "diverges on the same injection); both files land by replace rather "
+            "than truncation with the shell script's mode carried over, and a "
+            "repeated run writes nothing")
 
 
 @case
