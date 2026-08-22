@@ -1232,6 +1232,15 @@ def _worktree_tracking_a_case_aliased_staged_path(td, wt):
     (wt / "private" / "HOUSEHOLD.yaml").write_text("household: {}\n")
     subprocess.run(["git", "-C", str(wt), "add", "-f", "private/HOUSEHOLD.yaml"],
                    capture_output=True, check=True)
+    # AND private/ ITSELF HAS TO FOLD, not just the root. Forcing the root alone
+    # was enough while one boolean answered for the whole path; it stopped being
+    # enough when the answer became per component (issue #231), because the leaf
+    # alias is only a match where the leaf's OWN directory folds. On a
+    # case-folding filesystem private/ folds for free, so the fixture kept
+    # passing here and could not pass on a case-sensitive CI runner. Planted
+    # away from HOUSEHOLD.yaml: aliasing that name would create the
+    # private/household.yaml this fixture needs to stay absent.
+    _make_directory_case_folding(wt / "private", avoid="HOUSEHOLD.yaml")
     return wt, None
 
 
@@ -3526,7 +3535,7 @@ def _scratch_repo_tracking_an_absent_alias(td, name):
     return repo
 
 
-def _make_directory_case_folding(d):
+def _make_directory_case_folding(d, avoid=None):
     """Make the directory `d` itself measure as case-folding, on any filesystem
     -- and say whether anything had to be done to it.
 
@@ -3545,12 +3554,64 @@ def _make_directory_case_folding(d):
     reproduces the OBSERVABLE of: the root says "case is significant" and the
     directory the write lands in folds.
     """
-    (d / "seed").write_text("something to measure\n")
-    try:
-        (d / "SEED").symlink_to("seed")
-        return "forced with a SEED -> seed symlink"
-    except FileExistsError:
-        return "already case-insensitive"
+    # AIMED AT THE ENTRY THE PROBE WILL ACTUALLY DECIDE ON, which is not
+    # whatever this helper happens to add. _dir_folds_case() returns on the
+    # FIRST sorted entry it can flip and stat -- one entry answers the real
+    # question, because a filesystem folds or it does not -- so planting a
+    # `SEED`/`seed` pair forces nothing when the directory already holds an
+    # entry sorting ahead of it. `private/` holds `README.md`, and 'R' sorts
+    # before 'S' in the C collation both implementations use, so the probe
+    # measured README.md against a readme.md that does not exist and answered
+    # NO. On a case-folding filesystem every entry answers yes, so the helper
+    # looked sound on this machine and could not work on CI.
+    # `avoid` is the entry a caller cannot let this touch: the fixture that
+    # tracks private/HOUSEHOLD.yaml while private/household.yaml stays ABSENT
+    # would have its premise destroyed by an alias planted on that very name.
+    # Where the probe would decide on it, a decoy sorting ahead of it is planted
+    # instead, and the self-check below is what proves the decoy really does
+    # sort ahead on this filesystem.
+    chosen = None
+    for name in sorted(os.listdir(d)):
+        if name.endswith("\n"):
+            continue                     # the shell cannot carry it; see the probe
+        flipped = PE._ascii_case_flip(name)
+        if flipped == name:
+            continue
+        try:
+            os.stat(str(d / name))
+        except OSError:
+            continue                     # a dangling link measures nothing
+        if name == avoid or flipped == avoid:
+            break                        # decoy below; this one may not be aliased
+        chosen = (name, flipped)
+        break
+    if chosen:
+        name, flipped = chosen
+        try:
+            (d / flipped).symlink_to(name)
+            how = f"forced with a {flipped} -> {name} symlink"
+        except FileExistsError:
+            how = "already case-insensitive"
+    else:
+        # Nothing here the probe may decide on: give it one, under a name that
+        # sorts ahead of the entries already here. '0' precedes every ASCII
+        # letter in the C collation both implementations sort by.
+        (d / "0seed").write_text("something to measure\n")
+        try:
+            (d / "0SEED").symlink_to("0seed")
+            how = "forced with a 0SEED -> 0seed symlink"
+        except FileExistsError:
+            how = "already case-insensitive"
+    # AND THE INSTRUMENT CHECKS ITSELF. A forcing helper that quietly fails to
+    # force is worth less than no helper: it turns "this filesystem does not
+    # fold" into "the case under test proved nothing", and every caller then
+    # asserts against a measurement that was never moved.
+    assert PE._dir_folds_case(str(d)) is True, (
+        f"_make_directory_case_folding({d}) ran ({how}) and the directory still "
+        f"does not measure as folding. Entries: {sorted(os.listdir(d))[:8]}. The "
+        f"probe decides on the first of those it can flip and stat, so the alias "
+        f"has to be planted on THAT entry.")
+    return how
 
 
 @case
@@ -5151,6 +5212,13 @@ def case_a_case_aliased_tracked_path_is_refused_by_the_tracked_question():
     with tempfile.TemporaryDirectory() as td:
         repo = _alias_scratch_repo(td, "cased", "private/HOUSEHOLD.yaml")
         _make_case_folding(repo)
+        # The LEAF's own directory has to fold too, not only the root: the fold
+        # answer is per component now (issue #231), so an alias in private/ is a
+        # match only where private/ folds. Free on a case-folding filesystem,
+        # which is why forcing the root alone was enough here until CI ran it on
+        # one where it is not. Planted away from HOUSEHOLD.yaml, whose alias is
+        # the absent path under test.
+        _make_directory_case_folding(repo / "private", avoid="HOUSEHOLD.yaml")
 
         # The literal question, asked exactly as it was before the fix: the
         # pathspec matches index entries by the bytes and this one does not.
