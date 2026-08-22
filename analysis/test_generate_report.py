@@ -33,6 +33,10 @@ import generate_report as gr   # noqa: E402
 import llm_providers as lp     # noqa: E402
 import report_blocks as rb     # noqa: E402
 import report_tokens as rt     # noqa: E402
+# Cross-suite import, the convention test_battery_plan_matrix set with
+# test_scripts_runnable: the plan-repricing fixtures live beside the token
+# cases that prove them, and a copy here would reprice slightly differently.
+import test_report_tokens as trt  # noqa: E402
 
 CASES = []
 
@@ -1173,6 +1177,86 @@ def case_index_html_is_byte_unchanged_across_a_full_run():
             "ever touch index.generated.html")
     assert real_index.read_bytes() == original_bytes, "the REAL index.html changed on disk"
     return "index.html is byte-unchanged (both the promotion-dir copy and the real file)"
+
+
+@case
+def case_a_second_ranked_household_renders_packages_and_plans_on_one_stated_footing():
+    """ISSUE #200's acceptance case: the FULL template rendered for a
+    household ranked second, with the package figures and the plan comparison
+    on a stated common footing.
+
+    The fixture keeps the real household and the real artifacts and reprices
+    exactly ONE rival -- a plan mid_package_on_plans DOES price -- $1 below
+    the household's plan in report_tokens' parsed plan_results rows
+    (trt._plan_repriced; generate_report resolves tokens through the same
+    module object, so the substitution is visible to gr.run and restored on
+    the way out). That is the household issue #196 chromed and issue #200
+    prices for.
+
+    THE COMMON FOOTING is the thing asserted, in the one paragraph a reader
+    meets it: section 7's opening states the packages hold the losing plan,
+    points at the rate plan comparison, and then quotes what the MID package
+    saves RE-BILLED ON THE WINNING PLAN -- the figure read HERE off
+    mid_package_on_plans (never hardcoded) with its baseline named in the
+    same sentence: the same plan's no-package year, one rate vintage. And
+    sections 0 and 3 of the same rendered file state the same standing, so
+    the plan comparison and the package figures cannot tell two stories."""
+    _require_gitleaks()
+    _require_household()
+    provider, cheapest, priced = trt._plan_ranking_inputs()
+    own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
+    mid = rt._json("battery_plan_matrix.json")["mid_package_on_plans"]
+    rival = next((r["plan"] for r in sorted(priced, key=lambda r: float(r["total"]))
+                  if r["plan"] != cheapest and r["plan"] in mid["plans"]), None)
+    assert rival is not None, (
+        f"no rival data/plan_results.csv prices for {provider!r} is also in "
+        f"mid_package_on_plans ({sorted(mid['plans'])}); this case needs one to "
+        "put a priced winner ahead of the household")
+    save = mid["plans"][rival]["package_save"]
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td) / "cache"
+        dest_dir = pathlib.Path(td) / "dest"
+        dest_dir.mkdir()
+        manifest_path = pathlib.Path(td) / "manifest.json"
+        with trt._plan_repriced(provider, {cheapest: own, rival: own - 1}):
+            r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call())
+            assert r["wrote"], (
+                f"a household ranked second must still get a whole report; the run "
+                f"refused: {r['failures']}")
+            html = (dest_dir / "index.generated.html").read_text()
+
+    # (1) Section 7's opening paragraph carries the trails footing, priced
+    # clause included -- located as the one paragraph the fixed markup pins.
+    start = html.index(f"All packages keep <b>{cheapest}</b>")
+    para = html[start:html.index("</p>", start)]
+    assert "the plan this house is on, not the cheapest one" in para, para
+    assert f"{rival} prices lower in the rate plan comparison above" in para, para
+    assert "none of the savings below includes switching to it" in para, para
+
+    # (2) The quoted figure IS the artifact's package_save for the repriced
+    # winner, formatted the way report_tokens formats dollars.
+    assert f"Re-billed end-to-end on {rival}" in para, para
+    assert f"saves ${save:,.0f}/yr" in para, (
+        f"section 7 does not quote mid_package_on_plans.plans[{rival!r}]"
+        f".package_save (${save:,.0f}/yr): {para!r}")
+    # ... with the baseline stated in the same breath: same plan, no-package
+    # year, one rate vintage. That is the stated common footing.
+    assert ("no-package" in para and "same plan" in para
+            and "one rate vintage" in para), para
+
+    # (3) Sections 0 and 3 of the same file state the same standing.
+    assert "a cheaper rate plan exists" in html, (
+        "section 0 does not tell the second-ranked household a cheaper plan exists")
+    assert f"{cheapest} is not the cheapest plan for this house" in html, (
+        "section 3 does not report the trails standing section 7 is footed on")
+
+    # (4) A complete render: nothing unsubstituted survives.
+    assert "{{" not in html, "a {{TOKEN}} survived substitution"
+    assert "TODO" not in html, "a literal TODO string survived generation"
+    return (f"the full template renders for a household repriced second behind {rival}; "
+            f"section 7 quotes the MID package at ${save:,.0f}/yr re-billed on that "
+            "plan with its baseline named, sections 0 and 3 state the same standing, "
+            "and no {{ or TODO survives")
 
 
 # ---------------------------------------------------------------------------

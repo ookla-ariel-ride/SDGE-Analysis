@@ -5330,6 +5330,257 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
             f"entries match the artifacts and tokens that derive them ({note})")
 
 
+# ---------------------------------------------------------------------------
+# Issue #201: report-template.html's FIXED prose -- the live lines outside any
+# {{TOKEN}} slot or <!-- TODO --> block -- is what a regeneration emits
+# verbatim, so every substantial fixed-prose line in a template section must
+# appear in the SAME section of index.html. Three divergences (#182, #196,
+# #201) were each found by hand while proving byte-identity for something
+# else; nothing compared the two files' fixed prose until this case.
+#
+# The check is ONE-directional: index.html legitimately carries more than the
+# template (LLM-filled blocks, index-only paragraphs), so no index line is
+# ever required to appear in the template. Comments never count as fixed
+# prose: on the template side each <!-- ... --> becomes a wildcard hole (TODO
+# blocks render as generated prose), on the index side they are dropped.
+# {{TOKEN}} slots become non-greedy wildcards, which is what lets the same
+# pattern also catch a token replaced by a WRONG literal: the fixed text
+# around the hole still has to match, and a hand-edited
+# <code>analysis/wrong.py</code> where index.html says
+# <code>analysis/behavior_rebuild.py</code> is fixed text, not a hole.
+#
+# Only lines with at least _FIXED_PROSE_MIN_CHARS of real fixed content
+# (tags, tokens and comment holes stripped) are checked -- below that the
+# line is structural markup shared by construction. 30 was tuned on the fixed
+# repo: 72 template lines qualify across 16 sections, and every known
+# divergence line clears it comfortably. <script>/<style> bodies and the
+# header/meta/day-band region ahead of the first <h2> are out of scope.
+# ---------------------------------------------------------------------------
+_FIXED_PROSE_MIN_CHARS = 30
+_FIXED_PROSE_HOLE_SPLIT_RE = re.compile(r"\s*(?:\{\{[A-Z0-9_]+\}\}|\x00)\s*")
+_FIXED_PROSE_TOKEN_RE = re.compile(r"\{\{[A-Z0-9_]+\}\}")
+_FIXED_PROSE_TAG_RE = re.compile(r"<[^>]*>")
+_FIXED_PROSE_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b.*?</\1>", re.S | re.I)
+_FIXED_PROSE_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+# KNOWN drift, pinned line by line (issue #201). Each entry names one template
+# line -- (section id, a substring unique among that section's checked lines)
+# -- whose fixed prose does NOT appear in index.html today, with the reason it
+# was not resolved in #201's sweep: resolving it needs a new token, a new TODO
+# block, or an index.html edit, all outside that fix's scope. The case fails
+# the moment an entry HEALS (delete the entry) or stops matching any checked
+# template line (the line changed -- re-decide it), so this list can only
+# shrink truthfully. NEW drift is never allowed in by this list.
+_FIXED_PROSE_DRIFT_ALLOWED = {
+    ("s1", "Every 15-minute interval of the last"):
+        "index derives whole-home load in prose (29,914 kWh energy balance, CT-meter "
+        "cross-check); no tokens exist for those figures",
+    ("s2", "kW DC nameplate"):
+        "index adds module arithmetic and mount/orientation facts no token renders",
+    ("s2", "<b>In service since:</b>"):
+        "index words the NEM grandfathering span (~20 years) with no token for it",
+    ("s2", "<b>Production:</b>"):
+        "index names the concrete sources (CT meter; PVOutput) the template keeps "
+        "monitoring-agnostic per CLAUDE.md section 7",
+    ("s2", "<b>Where it goes:</b>"):
+        "index adds MWh splits and share-of-production parentheticals with no tokens",
+    ("s5", "the behaviors behind them"):
+        "index counts the behaviors (four); the count has no token",
+    ("s5", "Behaviors driving the current bill"):
+        "index counts the behaviors (Four); the count has no token",
+    ("s6", "Price-aware (all non-super-off-peak imports)"):
+        "index's expansion cell adds cycles/day; no token for pw3x cycles exists",
+    ("s8", "<b>More panels:"):
+        "deliberate divergence (#182): the template refuses to price added capacity "
+        "(pinned by its own case); index still publishes the priced timing paragraph",
+    ("s9", "degradation trend</h3>"):
+        "index's heading carries the measured span (6-year); no token owns it",
+    ("s9", "Inverter clipping"):
+        "index's heading bakes this household's verdict (none worth acting on)",
+    ("s9", "Phantom / always-on load"):
+        "index's heading bakes this household's verdict (identified, de-prioritized)",
+    ("s10", "detailed electric statements"):
+        "index adds the corpus date range and a findings count; neither has a token",
+    ("s10", "Generation billed at"):
+        "index names the CCA (CEA) in fixed prose the template keeps provider-neutral",
+    ("s10", "Model vs. actual"):
+        "index's note lead is a decomposition claim (six measured terms plus a "
+        "residual) that only the filled TODO can truthfully state",
+    ("s11", "The install invoice shows"):
+        "index appends the blended-$/kWh derivation (rate-history scaling, CA State "
+        "Auditor figures) with no tokens",
+    ("s12", "identical calendar windows in control years"):
+        "template is deliberately AHEAD here (#212's raw-ratio wording); index also "
+        "counts the control years (four) -- heals when index.html is regenerated",
+    ("s12", "Post ÷ pre (raw)</th>"):
+        "same #212 template-side change ('(raw)' column header) awaiting an "
+        "index.html regeneration",
+    ("s12", "How fast do the panels re-soil?"):
+        "index's heading adds a verdict clause (The evidence splits)",
+    ("s13", "Short workups pricing the context"):
+        "index counts the workups (Six) and dates NEM expiry (2039); no tokens",
+    ("s13", "Annual rate escalation</th>"):
+        "index prefixes the utility name (SDG&E) the template keeps neutral",
+    ("s13", "Level escalation vs spread escalation"):
+        "index's heading carries a verdict and an estimated pill reading '4 winter "
+        "rate changes'; the template's SPREAD_OBSERVATION_COUNT token renders a "
+        "different description (priced cells across periods) -- token drift, not "
+        "just prose",
+    ("s14", "<b>Confidence labels:</b>"):
+        "index adds report-specific evidence claims (example list, 'Sections 1-10 "
+        "are measured/modeled throughout')",
+    ("s14", "not advice from any utility"):
+        "index names vendors (SDG&E, CEA, Enphase, Tesla) the template keeps generic",
+}
+
+
+def _fixed_prose_sections(doc, comment_replacement):
+    """{section id: that section's text} with <script>/<style> bodies removed
+    and every HTML comment replaced (template: a \\x00 hole; index: a space).
+    Comments go first through re.S so a multi-line TODO block collapses onto
+    one line and its surrounding markup stays a single checkable line."""
+    doc = _FIXED_PROSE_SCRIPT_STYLE_RE.sub("", doc)
+    doc = _FIXED_PROSE_COMMENT_RE.sub(comment_replacement, doc)
+    hits = list(_SECTION_H2_RE_OPEN.finditer(doc))
+    out = {}
+    for i, m in enumerate(hits):
+        end = hits[i + 1].start() if i + 1 < len(hits) else len(doc)
+        out[m.group(1)] = doc[m.start():end]
+    return out
+
+
+_SECTION_H2_RE_OPEN = re.compile(r'<h2 id="([^"]+)"')
+
+
+def _fixed_prose_lines(section_text):
+    return [re.sub(r"\s+", " ", ln).strip() for ln in section_text.splitlines()
+            if ln.strip()]
+
+
+def _fixed_prose_content(line):
+    """The line's checkable fixed prose: comment holes, {{TOKEN}} slots, then
+    tags removed. What is left is text a regeneration must carry verbatim."""
+    return _FIXED_PROSE_TAG_RE.sub(
+        "", _FIXED_PROSE_TOKEN_RE.sub("", line.replace("\x00", ""))).strip()
+
+
+def _fixed_prose_pattern(line):
+    """Regex a template line must fullmatch against some same-section index
+    line: every hole ({{TOKEN}} or comment) becomes a non-greedy wildcard
+    absorbing its neighboring spaces, every fixed fragment is escaped."""
+    parts = _FIXED_PROSE_HOLE_SPLIT_RE.split(line)
+    return re.compile(".*?".join(re.escape(p) for p in parts), re.S)
+
+
+def _template_fixed_prose_drift(template_doc, index_doc):
+    """(checked line count, [(section id, collapsed template line), ...]) --
+    every checked template fixed-prose line that appears in NO line of the
+    same index.html section. Pure function of the two documents so the guard
+    case below can feed it mutated copies."""
+    tmpl = _fixed_prose_sections(template_doc, "\x00")
+    idx = _fixed_prose_sections(index_doc, " ")
+    checked, drifted = 0, []
+    for sid, ttext in tmpl.items():
+        ilines = _fixed_prose_lines(idx.get(sid, ""))
+        for line in _fixed_prose_lines(ttext):
+            if len(_fixed_prose_content(line)) < _FIXED_PROSE_MIN_CHARS:
+                continue
+            checked += 1
+            pat = _fixed_prose_pattern(line)
+            if not any(pat.fullmatch(il) for il in ilines):
+                drifted.append((sid, line))
+    return checked, drifted
+
+
+def case_template_fixed_prose_lines_all_appear_in_the_published_page():
+    checked, drifted = _template_fixed_prose_drift(TEMPLATE_HTML, HTML)
+    assert checked >= 50, (
+        f"only {checked} template fixed-prose lines qualified for checking -- the "
+        "parser or the threshold probably broke (72 qualified when this was written)")
+
+    # Route each drifted line through the allowance; an allowed line is known
+    # drift, an unmatched one is NEW drift and fails with its own text.
+    def _allowance_for(sid, line):
+        keys = [k for k in _FIXED_PROSE_DRIFT_ALLOWED
+                if k[0] == sid and k[1] in line]
+        assert len(keys) <= 1, (
+            f"ambiguous _FIXED_PROSE_DRIFT_ALLOWED entries for one section-{sid} "
+            f"line: {keys} -- make each substring unique")
+        return keys[0] if keys else None
+
+    used = set()
+    new_drift = []
+    for sid, line in drifted:
+        key = _allowance_for(sid, line)
+        if key is None:
+            new_drift.append((sid, line))
+        else:
+            used.add(key)
+    assert not new_drift, (
+        "template fixed prose that appears nowhere in the same section of "
+        "index.html -- the template is what a regeneration emits, so the published "
+        "page cannot be reproduced from it (adopt the published wording, tokens "
+        "preserved, per issue #201):\n" + "\n".join(
+            f"  section {sid}: {line}" for sid, line in new_drift))
+
+    stale = sorted(k for k in _FIXED_PROSE_DRIFT_ALLOWED if k not in used)
+    # A stale entry is one of two lies: the line now MATCHES index.html
+    # (healed -- delete the entry) or no checked template line carries the
+    # substring any more (the line changed -- re-decide it). Either way the
+    # allowance no longer describes real drift and must go.
+    assert not stale, (
+        f"_FIXED_PROSE_DRIFT_ALLOWED entries matching no drifted line: {stale} -- "
+        "each names known drift; if the line healed or was edited, delete or "
+        "re-decide the entry (the list only shrinks truthfully)")
+
+    return (f"all {checked} substantial template fixed-prose lines appear in the "
+            f"same section of index.html ({len(used)} known-drift lines allowed by "
+            f"_FIXED_PROSE_DRIFT_ALLOWED, {len(_FIXED_PROSE_DRIFT_ALLOWED)} listed)")
+
+
+def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
+    """The three defect shapes issue #201 names, reintroduced one at a time
+    into an in-memory copy of the template, must each be caught and NAMED
+    (section id + the offending line) -- a guard trusted on plausibility
+    alone has already shipped silent no-ops here (tests-must-fail memory)."""
+    baseline_checked, baseline_drift = _template_fixed_prose_drift(TEMPLATE_HTML, HTML)
+    mutations = [
+        ("s7 overlap-deduction wording resurrected",
+         "behavior and battery are simulated in ONE integrated pipeline "
+         "(EV shift first, then battery, re-billed end-to-end), so nothing "
+         "is double-counted.",
+         "behavior/battery interaction is modeled so nothing is double-counted "
+         "(overlap: {{OVERLAP_DEDUCTION}}/yr).",
+         "s7", "double-counted"),
+        ("s0 NEM dropped from the netting-model name",
+         "re-billing with the bill-validated NEM netting model",
+         "re-billing with the bill-validated netting model",
+         "s0", "netting model"),
+        ("s7 script token replaced by a wrong literal",
+         "the validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>)",
+         "the validated NEM netting model (<code>analysis/wrong.py</code>)",
+         "s7", "analysis/wrong.py"),
+    ]
+    for name, old, new, want_sid, want_frag in mutations:
+        assert TEMPLATE_HTML.count(old) == 1, (
+            f"mutation {name!r} no longer has a unique anchor in the template "
+            f"({TEMPLATE_HTML.count(old)} occurrences of {old!r}) -- re-anchor it")
+        mutated = TEMPLATE_HTML.replace(old, new)
+        assert mutated != TEMPLATE_HTML, f"mutation {name!r} was a no-op"
+        checked, drifted = _template_fixed_prose_drift(mutated, HTML)
+        introduced = [d for d in drifted if d not in baseline_drift]
+        assert introduced, (
+            f"the guard did NOT catch mutation {name!r}: no new drifted line "
+            f"beyond the {len(baseline_drift)} baseline entries")
+        assert all(sid == want_sid for sid, _ in introduced) and any(
+            want_frag in line for _, line in introduced), (
+            f"mutation {name!r} was caught but misattributed: expected section "
+            f"{want_sid} with a line containing {want_frag!r}, got {introduced}")
+    return (f"all {len(mutations)} reintroduced #201 defects are caught and "
+            f"attributed to their section ({baseline_checked} lines checked, "
+            f"{len(baseline_drift)} known-drift baseline)")
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -5403,6 +5654,8 @@ CASES = [
     case_whole_home_load_names_both_derivations_and_states_their_gap,
     case_degradation_naive_band_contains_every_estimator_it_is_built_from,
     case_glossary_figures_match_the_artifacts_that_derive_them,
+    case_template_fixed_prose_lines_all_appear_in_the_published_page,
+    case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch,
 ]
 
 

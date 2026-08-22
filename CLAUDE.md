@@ -151,7 +151,9 @@ When modeling load shifting or a battery, place shifted kWh into actual destinat
 modified year. A year-end "shifted × average rate" credit misprices the shift and breaks the
 monthly min/max bills. Attribute shiftable load honestly: identify EV sessions explicitly —
 in our data only ~22% of on-peak import was EV; the rest was house load that may not move.
-Model behavior and hardware together so savings aren't double-counted (state the overlap).
+Model behavior and hardware together so savings aren't double-counted (one integrated
+simulation re-billed end-to-end, per §9's one-pipeline rule — never a separately estimated
+overlap deduction).
 
 ## 2. Payback honesty.
 PACKAGE payback (hardware ÷ total savings incl. free behavior) ≠ ASSET payback (hardware ÷ the

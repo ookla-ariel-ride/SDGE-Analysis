@@ -279,7 +279,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <h2 id="s0">Bottom line</h2>
 <p class="verdict">{{S0_VERDICT}}</p>
 <div class="rec">
-<b>All dollar figures below are anchored to your ACTUAL bills</b> — a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements: <b>{{ACTUAL_ANNUAL_BILL}}/yr electric (~{{ACTUAL_MONTHLY_BILL}}/mo)</b>. Savings below are model <i>differences</i> at current rates, computed by physically moving energy between intervals and re-billing with the bill-validated netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>).<br><br>
+<b>All dollar figures below are anchored to your ACTUAL bills</b> — a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods): <b>{{ACTUAL_ANNUAL_BILL}}/yr electric (~{{ACTUAL_MONTHLY_BILL}}/mo)</b>. Savings below are model <i>differences</i> at current rates, computed by physically moving energy between intervals and re-billing with the bill-validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>).<br><br>
 <ol class="hang">
 <li><!-- TODO item 1 — PLAN VERDICT: which rate plan the artifacts price cheapest, with and without a battery; this house's margin against the runner-up; note whether the utility's own comparison tool agrees. THE STANDING IS NOT YOURS TO ASSERT. S0_BEST_PLAN_CARD and S0_VERDICT are among the values above and they state it — this house's plan may be the cheapest priced, may tie, may be beaten — so follow them, and never recommend staying on a plan the card says is beaten. The margin is SIGNED: a lead only where it is positive, and the amount this plan is behind where it is negative, so "clear of the runner-up" and "widens its lead" are claims to check before writing, not phrases to reuse. Reference voice for a house whose card says its plan is cheapest in every scenario tested: "Plan: stay on {{BEST_PLAN}} — cheapest with or without a battery ({{PLAN_MARGIN_VS_RUNNER_UP}}/yr against the runner-up), and a battery does not change that." Where the card or the verdict says otherwise, invert that sentence rather than softening it: name the plan, say plainly that it is not the cheapest priced here, keep the same signed margin figure, and send the reader to §3 for the ranking. --></li>
 <li><!-- TODO item 2 — FREE BEHAVIOR FIX: EV/large-load charging timing; session counts and kWh from session-level detection; savings at 100% and 80% compliance ({{EV_FIX_SAVINGS_100}} / {{EV_FIX_SAVINGS_80}}); call out where the money actually is (which TOU windows). --></li>
@@ -297,7 +297,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
   <div class="card"><div class="big">{{EV_FIX_SAVINGS_100}}/yr</div><div class="lbl">Free win: fully super-off-peak EV charging (session-level, 100% compliance)</div></div>
   <div class="card"><div class="big warn">~{{BATTERY_PAYBACK_RANGE}}</div><div class="lbl">Battery-alone payback with price-aware dispatch ({{BATTERY_PAYBACK_EVENING_ONLY}} evening-only)</div></div>
   <div class="card"><div class="big">{{PAYBACK_STATUS_SHORT}}</div><div class="lbl">{{SYSTEM_GROSS_COST}} install recovered ~{{PAYBACK_CROSSOVER_DATE}}; now {{SOLAR_ANNUAL_VALUE}}/yr</div></div>
-  <div class="card"><div class="big blue">{{CHEAP_WINDOW}}</div><div class="lbl">Weekday super-off-peak: {{SUPER_OFF_PEAK_RATE}} midday power — run everything flexible here</div></div>
+  <div class="card"><div class="big blue">{{CHEAP_WINDOW}}</div><div class="lbl">Weekday super-off-peak: {{SUPER_OFF_PEAK_RATE}} midday power, year-round — run everything flexible here</div></div>
 </div>
 
 <h2 id="s1">1 · The data (triple-verified)</h2>
@@ -401,7 +401,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </table>
 <p class="small"><!-- TODO: simulation assumptions — charge order, round-trip efficiency, power cap, rate basis, warranty/throughput note; cite the dispatch script ({{DISPATCH_SCRIPT}}). Note the charge/discharge asymmetry too — the bare {{BATTERY_MODEL}} unit charges at {{BATTERY_CHARGE_KW}} kW vs its {{BATTERY_KW}} kW discharge rating; {{BATTERY_EXPANDED_MODEL}} raises the charge input to {{BATTERY_EXPANDED_CHARGE_KW}} kW (discharge unchanged), relevant to any co-scheduling caution (e.g. simultaneous EV charging on the same circuit). --></p>
 
-<h3>Outage endurance (simulated, evening start, solar recharge)</h3>
+<h3>Outage endurance (simulated, 6pm start, solar recharge)</h3>
 <table>
 <thead><tr><th>Config</th><th>Essentials (~{{ESSENTIALS_KWH_DAY}} kWh/d)</th><th>House minus EV (~{{HOUSE_KWH_DAY}} kWh/d)</th></tr></thead>
 <tbody>
@@ -415,7 +415,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <h2 id="s7">7 · The decision: three packages</h2>
 <p class="verdict">{{S7_VERDICT}}</p>
-<p>All packages keep <b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}} <b>Baseline = your actual bills: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). No year-end lump-sum shortcuts; behavior/battery interaction is modeled so nothing is double-counted (overlap: {{OVERLAP_DEDUCTION}}/yr).</p>
+<p>All packages keep <b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}} <b>Baseline = your actual bills: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). No year-end lump-sum shortcuts; behavior and battery are simulated in ONE integrated pipeline (EV shift first, then battery, re-billed end-to-end), so nothing is double-counted.</p>
 
 <div class="grid3">
 <div class="pkg">
@@ -431,7 +431,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <div class="pkg best">
 <h3>MID — {{BATTERY_COST}} · + 1 {{BATTERY_MODEL}} ⭐ recommended</h3>
 <ul>
-<li><!-- TODO: combined savings (behavior + battery marginal, overlap excluded). --></li>
+<li><!-- TODO: combined savings from the one integrated pipeline (EV shift first, then battery, re-billed end-to-end). --></li>
 <li><!-- TODO: projected bill at constant current rates vs no-changes counterfactual; note rate-vintage caveat vs last year's actual. --></li>
 <li><!-- TODO: battery-alone payback under each dispatch policy, {{BATTERY_PAYBACK_RANGE}} headline, and the value of the dispatch-policy choice itself. --></li>
 <li><!-- TODO: backup sizing honesty — SOC-at-outage-start assumption, how to read multi-day endurance figures. --></li>
@@ -461,7 +461,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <ul>
 <li><!-- TODO: pre-battery checklist — panel/service headroom check, interconnection export-capability check, VPP enrollment step. --></li>
 </ul>
-<h3>3 · Pre-registered success metrics for the behavior fix <span class="pill y">modeled targets</span></h3>
+<h3>3 · Pre-registered success metrics for the EV fix <span class="pill y">modeled targets</span></h3>
 <p>Logged before the change so the evaluation can't be gamed. Check at the <b>next bill</b> and again after <b>two full billing cycles</b>:</p>
 <table class="evidence">
 <thead><tr><th>Metric</th><th>Now</th><th>Target</th></tr></thead>
@@ -505,7 +505,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <details class="sec" id="sec9" open>
 <summary><h2 id="s9">9 · Deeper analyses</h2><span class="teaser">{{SEC9_TEASER}}<!-- TODO: one line — the two or three headline findings from the deep dives. --></span></summary>
-<p>Questions that earned their own workups; each feeds a number used elsewhere in the report.</p>
+<p>The questions that earned their own workups; each feeds a number used elsewhere in the report.</p>
 
 <h3>Array health: multi-year degradation trend</h3>
 <p><!-- TODO: the size-normalized yearly efficiency series ({{ARRAY_EFFICIENCY_SERIES}}), the naive trend it implies ({{DEGRADATION_NAIVE_RANGE}}), and the weather/soiling caveat that stops the naive trend being a degradation rate ({{DEGRADATION_WEATHER_CAVEAT}}). Close on the verdict the artifact itself publishes: the true, weather-corrected rate is NOT DETERMINED and is not bounded either, because no daily production or weather record exists for the earlier years to separate soiling and cloud cover from panel ageing. Say what would settle it (a multi-year daily production plus rainfall record, or a measured before/after gain at each cleaning). Do not narrow that to a tighter bracket. --></p>
@@ -579,12 +579,12 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </details>
 
 <details class="sec" id="sec13" open>
-<summary><h2 id="s13">13 · Grid carbon, NEM's dollar value, escalation &amp; the price map</h2><span class="teaser">{{SEC13_TEASER}}<!-- TODO: one line — carbon-timing headline, NEM-grandfathering value, escalation effect on battery NPV. --></span></summary>
+<summary><h2 id="s13">13 · Grid carbon, NEM 2.0's dollar value, escalation &amp; the price map</h2><span class="teaser">{{SEC13_TEASER}}<!-- TODO: one line — carbon-timing headline, NEM-grandfathering value, escalation effect on battery NPV. --></span></summary>
 <p>Short workups pricing the context around everything above: when grid power is cleanest, what NEM grandfathering is worth, how rate escalation moves battery payback, what the always-on floor is made of, and what a single kWh costs hour by hour.</p>
 <h3>Grid-carbon timing <span class="pill y">modeled · {{CARBON_SAMPLE_DESCRIPTION}}</span></h3>
 <div class="chartbox"><canvas id="carbon" height="110"></canvas></div>
 <p><!-- TODO: overnight vs midday grid CO2 intensity from grid-operator data; the household's current import emissions; the emissions swing from retiming flexible load; the price-and-carbon alignment (or tension) of the cheap window; sampling caveats. --></p>
-<h3>What NEM grandfathering is worth: {{NEM_GRANDFATHER_VALUE_RANGE}}/yr <span class="pill y">modeled</span></h3>
+<h3>What NEM 2.0 grandfathering is worth: {{NEM_GRANDFATHER_VALUE_RANGE}}/yr <span class="pill y">modeled</span></h3>
 <p><!-- TODO: re-bill the year with successor-tariff export credits vs current NEM netting; the annual delta is the hard number behind §8's warning. --></p>
 <h3>Battery payback vs rate escalation <span class="pill y">modeled</span></h3>
 <table>
@@ -659,7 +659,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><b>Cleaning &amp; soiling (§12):</b> <!-- TODO: diff-in-diff window design and soiling-study method; cite data files and {{SOILING_SCRIPT}}. --></li>
 <li><b>Lifetime payback (§11):</b> <!-- TODO: counterfactual + rate-index method and precision; invoice/PTO provenance. --></li>
 <li><b>Carbon (§13):</b> <!-- TODO: grid-operator data files, intensity computation, grid-average-vs-marginal caveat; cite {{CARBON_SCRIPT}}. --></li>
-<li><b>NEM counterfactual &amp; price map (§13):</b> <!-- TODO: successor-tariff export-rate variants; price-map source file. --></li>
+<li><b>NBT counterfactual &amp; price map (§13):</b> <!-- TODO: successor-tariff export-rate variants; price-map source file. --></li>
 <li><b>Phantom decomposition (§13):</b> <!-- TODO: the quiet-night selection rule (window, per-night gate, and what the gate does and does not identify), the statistics computed from the kept nights, and the two pricing methods applied to the floor; name the script and the artifact it writes. --></li>
 </ul>
 <p class="small"><b>Data sources:</b> {{DATA_SOURCES_DETAIL}} <!-- TODO: full inventory with platform names and export types. --><br>
