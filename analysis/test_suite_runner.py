@@ -46,35 +46,41 @@ def case(fn):
 # list is asserted COMPLETE below rather than maintained by hand: a new
 # test_*.py with a main() that iterates CASES and is missing here fails.
 SUITES = [
-    # EVERY hand-rolled runner in analysis/, not the 17 the issue named. That
-    # count was the suites with no generic handler at all; the exposure measured
-    # wider. 24 more caught `Exception`, which does NOT catch SystemExit -- and
-    # SystemExit is the class that actually shipped a red CI (#221), because
-    # household.py fails closed with one whenever the private archive is absent,
-    # which is exactly how CI runs.
+    # EVERY hand-rolled runner in analysis/, discovered by the function each
+    # module actually CALLS from its __main__ block -- not by the name `main`.
+    # Three of them (test_stage_private_data, test_heat_pump_conversion,
+    # test_extra_results) call run(), are wired into CI and the coverage gate,
+    # and were invisible to a discovery that matched on the name. All three
+    # were exposed.
     "test_all_electric_endgame", "test_battery_backup_sims", "test_battery_plan_matrix",
     "test_battery_sizing_curve", "test_bill_decomposition", "test_carbon_dispatch_tradeoff",
     "test_carbon_fullyear", "test_cca_bundled_counterfactual", "test_cca_rate_extraction",
     "test_charge_discharge_distinct_naming", "test_deep_analyses", "test_dry_run",
     "test_dsgs_vpp_backtest", "test_egress_preflight", "test_extended_findings",
-    "test_generate_report", "test_gross_import_decomposition", "test_household",
-    "test_irreducible_bill", "test_lifetime_payback", "test_llm_providers",
-    "test_nem3_grandfathering", "test_package_results", "test_parse_bills",
-    "test_perfect_foresight_dispatch", "test_privacy_tiers", "test_private_egress",
-    "test_prose_lint", "test_publish", "test_quiet_night_floor",
-    "test_rates", "test_rates_history", "test_report_blocks",
-    "test_report_consistency", "test_report_tokens", "test_reprice_by_vintage",
-    "test_scripts_runnable", "test_service_headroom", "test_soiling_analysis",
+    "test_extra_results", "test_generate_report", "test_gross_import_decomposition",
+    "test_heat_pump_conversion", "test_household", "test_irreducible_bill",
+    "test_lifetime_payback", "test_llm_providers", "test_nem3_grandfathering",
+    "test_package_results", "test_parse_bills", "test_perfect_foresight_dispatch",
+    "test_privacy_tiers", "test_private_egress", "test_prose_lint",
+    "test_publish", "test_quiet_night_floor", "test_rates",
+    "test_rates_history", "test_report_blocks", "test_report_consistency",
+    "test_report_tokens", "test_reprice_by_vintage", "test_scripts_runnable",
+    "test_service_headroom", "test_soiling_analysis", "test_stage_private_data",
     "test_threeway_production_validation", "test_tou_audit", "test_tou_spread",
     "test_tou_structure_stress", "test_uncertainty_propagation",
 ]
 
-# EXEMPT FROM "KEEPS GOING", AND SHOWN RATHER THAN ASSUMED (AC1). Each of these
-# names the failing case and the class it raised, then deliberately stops --
-# their handler re-raises. That is a stated policy, not the silent truncation
-# this issue is about. They are NOT exempt from the sweep (they still had to
-# start catching SystemExit at all) and NOT exempt from reporting how far they
-# got, which is asserted below: stopping is a choice, going quiet is not.
+# The entry point, where it is not main().
+ENTRY = {
+    "test_extra_results": "run",
+    "test_heat_pump_conversion": "run",
+    "test_stage_private_data": "run",
+}
+
+# EXEMPT FROM "KEEPS GOING", AND SHOWN RATHER THAN ASSUMED (AC1). Each names the
+# failing case and the class it raised, then deliberately stops -- their handler
+# re-raises. NOT exempt from the sweep, and NOT exempt from saying how far they
+# got: stopping is a choice, going quiet is not.
 ABORTS_ON_FIRST_FAILURE = {
     "test_all_electric_endgame", "test_dry_run", "test_egress_preflight",
     "test_generate_report", "test_gross_import_decomposition", "test_llm_providers",
@@ -89,31 +95,28 @@ CASE_LISTS = {"test_parse_bills": ("STANDALONE_CASES", "CORPUS_CASES")}
 INJECTED = "injected: an exception class no runner anticipated"
 
 
-def _synthetic_cases():
-    """pass, raise, raise, pass -- so "it kept going" is observable.
+def _synthetic_cases(injected):
+    """pass, raise `injected`, pass -- ONE injected class per invocation.
 
-    TWO CLASSES, NOT ONE, and the second is the whole point. A KeyError alone is
-    caught by `except Exception`, so a suite reverted from the shared tuple back
-    to a bare `except Exception` still passed this file -- the test named the
-    SystemExit exposure and did not guard it. SystemExit inherits from
-    BaseException, so only a runner that names it explicitly survives one, and
-    that is the class household.py raises whenever the private archive is
-    absent, which is how CI runs.
+    THIS USED TO INJECT BOTH CLASSES IN ONE RUN, and that hid the thing the file
+    exists to check. A KeyError placed before the SystemExit meant every
+    abort-on-first-failure runner stopped at the KeyError and never reached the
+    SystemExit case, so reverting any of those eleven handlers from the shared
+    tuple back to `except Exception` left this suite green. The claim was that
+    any reverted handler fails here; it was true only for the runners that keep
+    going. Probing one class per invocation is what makes it true for all of
+    them.
     """
     def case_synthetic_first():
         return "the case before the injected one"
 
     def case_synthetic_raises():
-        raise KeyError(INJECTED)
-
-    def case_synthetic_exits():
-        raise SystemExit("injected: a fail-closed exit, as household.py raises")
+        raise injected
 
     def case_synthetic_last():
         return "the case after the injected one"
 
-    return [case_synthetic_first, case_synthetic_raises,
-            case_synthetic_exits, case_synthetic_last]
+    return [case_synthetic_first, case_synthetic_raises, case_synthetic_last]
 
 
 def _stub(name):
@@ -132,42 +135,42 @@ def _stub(name):
     return f
 
 
-def _run_one(modname):
-    """Import the suite, splice an injected failure in front of stubbed cases,
-    run main(). Returns (status, stdout); anything escaping main() is the defect
-    this file is about and is re-raised naming the suite."""
+def _run_one(modname, injected):
+    """Import the suite, splice ONE injected failure in front of stubbed cases,
+    call whatever function that module runs from __main__."""
     mod = __import__(modname)
     names = CASE_LISTS.get(modname, ("CASES",))
     saved = {n: list(getattr(mod, n)) for n in names}
+    entry = getattr(mod, ENTRY.get(modname, "main"))
     try:
         for i, n in enumerate(names):
             stubs = [_stub(c.__name__) for c in saved[n]]
-            setattr(mod, n, _synthetic_cases() + stubs if i == 0 else stubs)
+            setattr(mod, n, _synthetic_cases(injected) + stubs if i == 0 else stubs)
         out = _io.StringIO()
         status = 1
         try:
             with contextlib.redirect_stdout(out):
-                status = mod.main()
+                status = entry()
         except BaseException as exc:                        # noqa: BLE001
             # An abort-family runner re-raises on purpose -- some as
             # SystemExit(1), one as a bare `raise` carrying the original class.
             # Either is fine HERE; what it may not do is go quiet, which the
-            # caller checks. Everything else escaping the loop is the defect.
+            # caller checks.
             if modname in ABORTS_ON_FIRST_FAILURE:
                 status = exc.code if isinstance(getattr(exc, "code", None), int) else 1
             elif isinstance(exc, SystemExit):
                 raise AssertionError(
-                    f"{modname}.main() let a SystemExit escape the case loop. "
-                    f"SystemExit inherits from BaseException, so `except "
-                    f"Exception` walks straight past it -- and household.py "
-                    f"raises one whenever the private archive is absent, which "
-                    f"is how CI runs. Output:\n{out.getvalue()}") from None
+                    f"{modname} let a SystemExit escape the case loop. It "
+                    f"inherits from BaseException, so `except Exception` walks "
+                    f"straight past it -- and household.py raises one whenever "
+                    f"the private archive is absent, which is how CI runs. "
+                    f"Output:\n{out.getvalue()}") from None
             else:
                 raise AssertionError(
-                    f"{modname}.main() let a {type(exc).__name__} escape the "
-                    f"case loop, so the run ends with no tally and every case "
-                    f"after the failing one never executes -- issue #209's "
-                    f"whole shape. Output:\n{out.getvalue()}\n"
+                    f"{modname} let a {type(exc).__name__} escape the case "
+                    f"loop, so the run ends with no tally and every case after "
+                    f"the failing one never executes -- issue #209's whole "
+                    f"shape. Output:\n{out.getvalue()}\n"
                     f"{traceback.format_exc()}") from None
         return status, out.getvalue()
     finally:
@@ -177,42 +180,59 @@ def _run_one(modname):
 
 @case
 def case_every_runner_survives_an_unexpected_exception():
-    """The behavioural half, on every suite: a KeyError in the middle case must
-    be reported by name, must not stop the two around it, and must not cost the
-    tally."""
+    """Every runner, every class, one invocation each: the failing case must be
+    named, the run must still say how far it got, and a runner that keeps going
+    must actually keep going."""
     bad = []
+    injections = (
+        ("KeyError", KeyError(INJECTED)),
+        # The class `except Exception` does not catch, and the one household.py
+        # raises when the private archive is absent -- i.e. how CI runs.
+        ("SystemExit", SystemExit("injected: a fail-closed exit")),
+    )
     for modname in SUITES:
-        try:
-            status, out = _run_one(modname)
-        except AssertionError as e:
-            bad.append(str(e).split("\n")[0])
-            continue
-        if "case_synthetic_raises" not in out:
-            bad.append(f"{modname}: the injected case is not named in any FAIL line")
-        elif "KeyError" not in out:
-            bad.append(f"{modname}: the FAIL line does not say what was raised")
-        if modname in ABORTS_ON_FIRST_FAILURE:
-            # Exempt from "keeps going" -- but NOT from saying how far it got.
-            if "ran before this failure stopped the run" not in out:
-                bad.append(f"{modname}: stops at the first failure and does not "
-                           "say how many cases ran, so the truncation is as "
-                           "invisible as the defect this issue is about")
-        else:
-            if "case_synthetic_exits" not in out:
-                bad.append(f"{modname}: an injected SystemExit is not named in any "
-                           "FAIL line -- it inherits from BaseException, so "
-                           "`except Exception` walks straight past it")
-            if "the case after the injected one" not in out:
-                bad.append(f"{modname}: the case AFTER the injected one did not run")
-            if "passed" not in out:
-                bad.append(f"{modname}: no tally, so a truncated run is invisible")
-        if status != 1:
-            bad.append(f"{modname}: main() returned {status}, not 1, for a failing run")
+        for label, exc in injections:
+            try:
+                status, out = _run_one(modname, exc)
+            except AssertionError as e:
+                bad.append(f"[{label}] " + str(e).split("\n")[0])
+                continue
+            if "case_synthetic_raises" not in out:
+                bad.append(f"[{label}] {modname}: the injected case is not named "
+                           "in any FAIL line")
+            elif label not in out:
+                bad.append(f"[{label}] {modname}: the FAIL line does not say what "
+                           "was raised")
+            if modname in ABORTS_ON_FIRST_FAILURE:
+                if "ran before this failure stopped the run" not in out:
+                    bad.append(f"[{label}] {modname}: stops at the first failure "
+                               "and does not say how many cases ran, so the "
+                               "truncation is as invisible as the defect this "
+                               "issue is about")
+            else:
+                if "the case after the injected one" not in out:
+                    bad.append(f"[{label}] {modname}: the case AFTER the injected "
+                               "one did not run")
+                if "passed" not in out:
+                    bad.append(f"[{label}] {modname}: no tally, so a truncated run "
+                               "is invisible")
+            # TWO CONVENTIONS, and they collide numerically: most runners
+            # return `1 if failed else 0`, while test_heat_pump_conversion
+            # returns `failed == 0` and its __main__ inverts it. False == 0 in
+            # python, so a boolean failure is indistinguishable from an integer
+            # success by value -- only by type. Both are correct; asserting one
+            # of them would have been a false alarm about working code.
+            signalled = (status is False) if isinstance(status, bool) else (status == 1)
+            if not signalled:
+                bad.append(f"[{label}] {modname}: returned {status!r}, which is "
+                           "not how this runner signals failure, so a failing "
+                           "run would exit 0")
     assert not bad, (
-        f"{len(bad)} runner(s) still let one case take down the run:\n  "
-        + "\n  ".join(bad))
-    return (f"all {len(SUITES)} runners report an unexpected exception by name, "
-            "keep going, print their tally and return 1")
+        f"{len(bad)} runner/class combination(s) still let one case take down "
+        "the run:\n  " + "\n  ".join(bad))
+    return (f"all {len(SUITES)} runners name an injected KeyError AND an "
+            f"injected SystemExit, keep going or say where they stopped, and "
+            f"return 1 ({len(SUITES) * 2} probes)")
 
 
 @case
