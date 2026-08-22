@@ -5528,7 +5528,7 @@ def _fixed_prose_gate(template_doc, index_doc):
             f"line: {keys} -- make each substring unique")
         return keys[0] if keys else None
 
-    used = set()
+    matched = {}
     new_drift = []
     drifted_further = []
     for sid, line in drifted:
@@ -5540,7 +5540,21 @@ def _fixed_prose_gate(template_doc, index_doc):
         if _fixed_prose_line_digest(line) != pinned:
             drifted_further.append((sid, line, key, pinned))
         else:
-            used.add(key)
+            matched.setdefault(key, []).append((sid, line))
+    used = set(matched)
+    # An allowance blesses EXACTLY ONE line. A second drifted line carrying
+    # the same substring and digest -- a duplicate of the covered line -- is
+    # NEW drift, not something the old allowance ever decided; without this
+    # count a copy of a covered line rode in on the entry silently.
+    multi = {k: v for k, v in matched.items() if len(v) > 1}
+    assert not multi, (
+        "one _FIXED_PROSE_DRIFT_ALLOWED entry matched MORE THAN ONE drifted "
+        "line -- an allowance blesses exactly one line, so the extra copies "
+        "are NEW drift (a duplicated template line) the entry cannot cover:\n"
+        + "\n".join(
+            f"  entry {k} matched {len(v)} lines:\n" + "\n".join(
+                f"    section {sid}: {line}" for sid, line in v)
+            for k, v in sorted(multi.items())))
     # An entry blesses ONE exact line, pinned by digest -- never future edits
     # that keep its substring. A covered line whose digest moved is NEW drift.
     assert not drifted_further, (
@@ -5657,10 +5671,44 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
             "allowlisted line that keeps the entry's substring passed the "
             "public gate -- the digest pin is not being enforced")
 
+    # FIFTH defect shape (review-the-fix finding): the allowlisted line
+    # DUPLICATED whole. Both copies carry the substring AND the pinned
+    # digest, so neither the substring routing nor the digest pin objects --
+    # only the exactly-one count can see that one allowance is now blessing
+    # two lines, the second of which is NEW drift it never decided.
+    dup = ("<p>This section maps when the money leaves: your grid flows by "
+           "hour, season, and month, and the behaviors behind them.</p>")
+    name = "s5 allowlisted line duplicated whole"
+    assert TEMPLATE_HTML.count(dup) == 1, (
+        f"mutation {name!r} no longer has a unique anchor in the template "
+        f"({TEMPLATE_HTML.count(dup)} occurrences of {dup!r}) -- re-anchor it")
+    mutated = TEMPLATE_HTML.replace(dup, dup + "\n" + dup)
+    assert mutated != TEMPLATE_HTML, f"mutation {name!r} was a no-op"
+    assert ("s5", "the behaviors behind them") in _FIXED_PROSE_DRIFT_ALLOWED, (
+        "the fifth mutation targets the s5 'the behaviors behind them' "
+        "allowance, which no longer exists -- re-anchor the mutation")
+    try:
+        _fixed_prose_gate(mutated, HTML)
+    except AssertionError as e:
+        msg = str(e)
+        assert "MORE THAN ONE drifted line" in msg, (
+            f"mutation {name!r} was rejected, but not AS one allowance "
+            f"blessing multiple lines: {msg}")
+        assert ("('s5', 'the behaviors behind them')" in msg
+                and "matched 2 lines" in msg
+                and msg.count("maps when the money leaves") == 2), (
+            f"mutation {name!r} was caught but the message does not name the "
+            f"entry, the count, and both lines: {msg}")
+    else:
+        raise AssertionError(
+            f"the gate did NOT catch mutation {name!r}: a duplicate of an "
+            "allowlisted line passed the public gate -- the exactly-one "
+            "count per allowance is not being enforced")
+
     return (f"all {len(mutations)} reintroduced #201 defects plus the "
-            f"allowlisted-line-edited-further shape are caught and attributed "
-            f"to their section ({baseline_checked} lines checked, "
-            f"{len(baseline_drift)} known-drift baseline)")
+            f"allowlisted-line-edited-further and allowlisted-line-duplicated "
+            f"shapes are caught and attributed ({baseline_checked} lines "
+            f"checked, {len(baseline_drift)} known-drift baseline)")
 
 
 CASES = [

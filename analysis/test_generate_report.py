@@ -1226,24 +1226,36 @@ def case_a_second_ranked_household_renders_packages_and_plans_on_one_stated_foot
     # (0) THE ARTIFACT RELATIONSHIP THE SENTENCE RESTS ON, asserted before a
     # single line is rendered. battery_plan_matrix.py fail-closed asserts each
     # plan's no_battery within $1.00 of plan_results.csv's CEA total (its ref
-    # reads the provider == "CEA" rows) and stores round(no_b), so the two
-    # artifacts are mechanically reconciled, not merely labeled alike; mirror
-    # test_report_consistency's margin case and allow $3.00, past which the two
-    # generators actually disagree. Read the COMMITTED csv, not trt's parsed
-    # rows: the repricing fixture below edits rt's PARSED rows only, and the
-    # matrix was built against the committed totals -- the committed file is
-    # the side the tie-out actually ran against.
+    # reads the provider == "CEA" rows) BEFORE rounding, then stores
+    # round(no_b) -- one rounding, adding at most $0.50 -- so the stored cell
+    # can sit at most $1.50 from the CSV total; $2.00 bounds that with margin.
+    # (Not $3.00: that figure belongs to test_report_consistency's comparison
+    # of two MARGINS, where two such cells each contribute, and is too loose
+    # for a single level.) Read the COMMITTED csv, not trt's parsed rows: the
+    # repricing fixture below edits rt's PARSED rows only, and the matrix was
+    # built against the committed totals -- the committed file is the side
+    # the tie-out actually ran against.
+    #
+    # DESIGN DECISION, stated so nobody "fixes" it: the fixture's CSV
+    # repricing is deliberately COUNTERFACTUAL -- it exists to force the
+    # trails branch, not to describe a real ranking -- so no assertion here
+    # is about the synthetic repriced total, and the matrix is NOT repriced
+    # to match it. The production guarantee that ranking and matrix agree is
+    # the GENERATOR's own fail-closed $1 tie-out (mutation-tested in
+    # test_battery_plan_matrix.py); what this assertion pins is
+    # committed-CSV-to-committed-matrix coherence at render time.
     committed = list(csv.DictReader(
         (rt.ROOT / "data" / "plan_results.csv").read_text().splitlines()))
     csv_total = float(next(r["total"] for r in committed
                            if r["provider"] == "CEA" and r["plan"] == rival))
     no_batt = rt._json("battery_plan_matrix.json")["plans"][rival]["no_battery"]
-    assert abs(no_batt - csv_total) <= 3.0, (
+    assert abs(no_batt - csv_total) <= 2.0, (
         f"the ranking and the switch pricing are NOT on one footing: "
         f"battery_plan_matrix.json plans[{rival!r}].no_battery (${no_batt:,}) is "
         f"${abs(no_batt - csv_total):,.2f} from plan_results.csv's CEA total "
-        f"(${csv_total:,.2f}) -- past the generator's own $1.00 tie-out plus "
-        "roundings, so the two artifacts no longer reconcile")
+        f"(${csv_total:,.2f}) -- past the generator's own $1.00 pre-rounding "
+        "tie-out plus its one $0.50 rounding, so the two artifacts no longer "
+        "reconcile")
     # ... and the identity that makes "baseline = the same plan's no-package
     # year" checkable: package_save = no_battery - package_bill, up to $1
     # because the three fields are rounded independently by the generator.
