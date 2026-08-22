@@ -126,6 +126,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import suite_runner  # noqa: E402
 import bill_decomposition as B
 # parse_bills.py holds the twin of export_statement_dates(). It is imported here so
 # the two can be run side by side on the same bytes rather than read side by side by
@@ -1591,8 +1592,8 @@ def main():
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
             skipped += 1
-        except AssertionError as e:
-            print(f"FAIL  {case.__name__}: {e}")
+        except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
+            suite_runner.report_case_failure(case, e)
             failures += 1
     tail = f", {skipped} skipped" if skipped else ""
     print(f"\n{ran}/{len(CASES)} passed{tail}")

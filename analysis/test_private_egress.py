@@ -53,6 +53,7 @@ import unicodedata
 ANALYSIS = pathlib.Path(__file__).resolve().parent
 ROOT = ANALYSIS.parent
 sys.path.insert(0, str(ANALYSIS))
+import suite_runner  # noqa: E402
 
 import private_egress as PE  # noqa: E402
 
@@ -8574,8 +8575,8 @@ def main():
             print(f"SKIP  {c.__name__} ({e})")
             skips.append((c.__name__, str(e)))
             skipped += 1
-        except AssertionError as e:
-            print(f"FAIL  {c.__name__}: {e}")
+        except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
+            suite_runner.report_case_failure(c, e)
             failures += 1
     if skips:
         print(f"\n{'=' * 72}\nSKIPPED, and what each leaves unproven:")

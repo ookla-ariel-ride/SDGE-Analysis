@@ -66,6 +66,8 @@ import signal
 import stat
 import subprocess
 import sys
+
+import suite_runner
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -2961,8 +2963,8 @@ def run():
         except SkipCase as e:
             print(f"SKIP  {fn.__name__}: {e}")
             skipped += 1
-        except Exception as e:
-            print(f"FAIL  {fn.__name__}: {e}")
+        except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
+            suite_runner.report_case_failure(fn, e)
             failed += 1
     print(f"\n{passed}/{len(CASES)} passed, {skipped} skipped, {failed} failed")
     return 1 if failed else 0

@@ -25,6 +25,7 @@ import tempfile
 import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import suite_runner  # noqa: E402
 
 # Same fix as test_carbon_dispatch_tradeoff.py, for the same reason: point the
 # intake loader at a synthetic, invented household before the transitive import
@@ -544,7 +545,7 @@ def main():
         except AssertionError as e:
             print(f"FAIL {fn.__name__}\n     AssertionError: {e}")
             failures += 1
-        except Exception as exc:  # noqa: BLE001
+        except suite_runner.CASE_FAILURES as exc:  # noqa: BLE001
             print(f"FAIL {fn.__name__}\n     {type(exc).__name__}: {exc}")
             failures += 1
         else:

@@ -17,6 +17,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import suite_runner  # noqa: E402
 
 import llm_providers as lp  # noqa: E402
 
@@ -445,9 +446,13 @@ def main():
             skipped += 1
         except AssertionError as e:
             print(f"FAIL {fn.__name__}\n     AssertionError: {e}")
+            # Stopping is this runner's choice; going quiet is not.
+            print(f"\n{ran}/{len(CASES)} ran before this failure stopped the run")
             raise SystemExit(1)
-        except Exception as exc:  # noqa: BLE001
+        except suite_runner.CASE_FAILURES as exc:  # noqa: BLE001
             print(f"FAIL {fn.__name__}\n     {type(exc).__name__}: {exc}")
+            # Stopping is this runner's choice; going quiet is not.
+            print(f"\n{ran}/{len(CASES)} ran before this failure stopped the run")
             raise SystemExit(1)
     tail = f" ({skipped} skipped)" if skipped else ""
     print(f"\n{ran}/{len(CASES)} passed{tail}")

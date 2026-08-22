@@ -52,6 +52,9 @@ MANIFEST = {
     "household.py": "library",
     "privacy_tiers.py": "library",
     "private_egress.py": "library",
+    # Imported by every hand-rolled test runner in analysis/ (issue #209),
+    # so it must import cleanly and do nothing on import.
+    "suite_runner.py": "library",
     "publish.py": "library",
     "report_tokens.py": "library",
     "llm_providers.py": "library",
@@ -524,6 +527,7 @@ SYNTH_END = WINDOW_END + dt.timedelta(days=2)
 # 372-day fixture range. Every transition inside the range gets its 92/100-slot
 # synthetic day, and the tou_audit expectation is derived from these same sets.
 sys.path.insert(0, str(ANALYSIS))
+import suite_runner  # noqa: E402
 import rates as _rates
 
 _transitions = [_rates.dst_transition_sundays(y)
@@ -1205,8 +1209,8 @@ def main():
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
             skipped += 1
-        except AssertionError as e:
-            print(f"FAIL  {case.__name__}: {e}")
+        except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
+            suite_runner.report_case_failure(case, e)
             failures += 1
     tail = f", {skipped} skipped" if skipped else ""
     print(f"\n{ran}/{len(CASES)} passed{tail}")

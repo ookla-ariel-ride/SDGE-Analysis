@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import suite_runner  # noqa: E402
 
 import household as _hh
 _HH_DIR = tempfile.TemporaryDirectory()
@@ -2147,9 +2148,11 @@ def main():
         except SkipCase as e:
             print(f"SKIP  {name}: {e}")
             skipped += 1
-        except Exception as e:
+        except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
             print(f"FAIL  {name}: {e!r}")
             failed += 1
+            # Stopping is this runner's choice; going quiet is not.
+            print(f"\n{passed}/{len(CASES)} ran before this failure stopped the run")
             raise
     print(f"\n{passed} passed, {skipped} skipped, {failed} failed "
          f"(of {len(CASES)} cases)")
