@@ -33,6 +33,7 @@ import tempfile
 
 ANALYSIS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ANALYSIS))
+import suite_runner  # noqa: E402
 import test_scripts_runnable as TSR   # the proven synthetic-fixture machinery
 import numpy as np
 
@@ -260,8 +261,8 @@ def main():
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
             skipped += 1
-        except AssertionError as e:
-            print(f"FAIL  {case.__name__}: {e}")
+        except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
+            suite_runner.report_case_failure(case, e)
             failures += 1
     tail = f", {skipped} skipped" if skipped else ""
     print(f"\n{ran}/{len(CASES)} passed{tail}")

@@ -15,6 +15,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import suite_runner  # noqa: E402
 import household as hh
 
 
@@ -91,8 +92,8 @@ def main():
         try:
             print(f"PASS  {case()}")
             ran += 1
-        except AssertionError as e:
-            print(f"FAIL  {case.__name__}: {e}")
+        except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
+            suite_runner.report_case_failure(case, e)
             failures += 1
         finally:
             hh.PATH, hh._cache = real_path, real_cache

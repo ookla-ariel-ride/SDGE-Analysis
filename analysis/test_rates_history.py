@@ -69,6 +69,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import suite_runner  # noqa: E402
 import rates as R
 import rates_history as H
 
@@ -1445,8 +1446,8 @@ def main():
         try:
             print(f"PASS  {case()}")
             ran += 1
-        except AssertionError as e:
-            print(f"FAIL  {case.__name__}: {e}")
+        except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
+            suite_runner.report_case_failure(case, e)
             failures += 1
     print(f"\n{ran}/{len(CASES)} passed")
     return 1 if failures else 0

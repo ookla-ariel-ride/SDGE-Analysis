@@ -13,6 +13,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import suite_runner  # noqa: E402
 import tou_spread as ts  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -477,7 +478,7 @@ def main():
     for fn in CASES:
         try:
             detail = fn()
-        except Exception as exc:  # noqa: BLE001
+        except suite_runner.CASE_FAILURES as exc:  # noqa: BLE001
             failed += 1
             print(f"FAIL {fn.__name__}\n     {type(exc).__name__}: {exc}")
         else:

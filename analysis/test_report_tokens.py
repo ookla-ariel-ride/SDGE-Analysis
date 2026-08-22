@@ -12939,6 +12939,7 @@ def main():
             skipped += 1
         except AssertionError as e:
             print(f"FAIL {fn.__name__}\n     AssertionError: {e}")
+            print(f"\n{ran}/{len(CASES)} ran before this failure stopped the run")
             raise SystemExit(1)
         except SystemExit as exc:
             # THE ONE FAILURE THIS RUNNER USED TO SWALLOW THE NAME OF.
@@ -12958,9 +12959,11 @@ def main():
             # a handler, not from fn(), so it is not caught here and still
             # exits 1 without being re-reported as a case failure.
             print(f"FAIL {fn.__name__}\n     SystemExit: {exc}")
+            print(f"\n{ran}/{len(CASES)} ran before this failure stopped the run")
             raise SystemExit(1)
         except Exception as exc:  # noqa: BLE001
             print(f"FAIL {fn.__name__}\n     {type(exc).__name__}: {exc}")
+            print(f"\n{ran}/{len(CASES)} ran before this failure stopped the run")
             raise SystemExit(1)
     tail = f" ({skipped} skipped)" if skipped else ""
     print(f"\n{ran}/{len(CASES)} passed{tail}")

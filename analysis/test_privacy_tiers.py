@@ -49,6 +49,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import suite_runner  # noqa: E402
 import privacy_tiers as PT
 
 
@@ -1694,7 +1695,7 @@ def main():
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
-        except Exception as e:                     # noqa: BLE001
+        except suite_runner.CASE_FAILURES as e:                     # noqa: BLE001
             print(f"FAIL  {case.__name__}: {type(e).__name__}: {e}")
             failures += 1
     tail = f", {len(skipped)} skipped" if skipped else ""
