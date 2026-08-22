@@ -92,6 +92,23 @@ imp_b, exp_b, served, thru = run_batt(d, d.Consumption.values.astype(float),
 print(json.dumps({{"imp_b": [float(x) for x in imp_b], "exp_b": [float(x) for x in exp_b]}}))
 """
 
+_SHIFT_PROBE = """
+import json, sys
+sys.path.insert(0, {tmp!r})
+import behavior_rebuild as br, rates as R
+from battery_dispatch_policies import run_batt, CHARGE_KW
+d = br.load().copy()
+d["p"] = [R.period_at(t) for t in d.dt]
+ev, sessions = br.detect_sessions(d)
+sop_idx, sop_ts = br.build_sop_index(d)
+imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
+imp_p, exp_p, _, _ = run_batt(d, imp_sh, d.Generation.values.astype(float), 13.5,
+                              "greedy", charge_kw=CHARGE_KW)
+print(json.dumps({{"imp_p": [float(x) for x in imp_p],
+                   "exp_p": [float(x) for x in exp_p],
+                   "moved": float(moved), "n_sessions": len(sessions)}}))
+"""
+
 
 def _independent_ref_and_dispatch(tmp):
     """Steps shared by every case below: an INDEPENDENTLY computed no-battery
@@ -120,14 +137,46 @@ def _independent_ref_and_dispatch(tmp):
     imp_b, exp_b = np.array(b["imp_b"]), np.array(b["exp_b"])
     with_b5 = _ref_bill("EV-TOU-5", seas, per, imp_b, exp_b)
     exp_battery_value = round(ref["EV-TOU-5"] - with_b5)
-    return ref, with_b5, exp_battery_value
+
+    # Step 1b (issue #200): the mid PACKAGE reference — the same integrated
+    # shift-then-battery series the generator itself builds (behavior_rebuild
+    # scenario a, all sessions, then the 13.5 kWh greedy dispatch), billed with
+    # the SAME independent transcription per plan. The generator's new
+    # mid-package crosscheck also demands a post_behavior.mid block in the
+    # dispatch artifact, so every case's tie-out fixture needs these figures.
+    r3 = subprocess.run([sys.executable, "-c", _SHIFT_PROBE.format(tmp=str(tmp))],
+                        cwd=tmp, capture_output=True, text=True, timeout=300)
+    assert r3.returncode == 0, f"shift probe failed: {r3.stderr[-2000:]}"
+    s = json.loads(r3.stdout)
+    imp_p, exp_p = np.array(s["imp_p"]), np.array(s["exp_p"])
+    pkg_ref = {"moved": s["moved"], "n_sessions": s["n_sessions"], "plans": {}}
+    for p in _PLANS:
+        pb = _ref_bill(p, seas, per, imp_p, exp_p)
+        pkg_ref["plans"][p] = {"package_bill": pb,
+                               "package_save": round(ref[p] - pb)}
+    return ref, with_b5, exp_battery_value, pkg_ref
+
+
+def _dispatch_fixture(ref, exp_battery_value, pkg_ref, offset=0):
+    """The dispatch-artifact tie-out fixture every case promotes: the
+    independently computed battery value AND the post_behavior.mid block the
+    generator's mid-package crosscheck reads. offset shifts every figure to
+    build a deliberately stale/divergent copy."""
+    ev5 = pkg_ref["plans"]["EV-TOU-5"]
+    return json.dumps({
+        "pw3": {"greedy": {"save": exp_battery_value + offset}},
+        "baseline_bill_current_rates": round(ref["EV-TOU-5"]) + offset,
+        "post_behavior": {"mid": {
+            "combined_save": ev5["package_save"] + offset,
+            "bill": round(ev5["package_bill"]) + offset}},
+    })
 
 
 def case_battery_plan_matrix_end_to_end_on_a_synthetic_house():
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         TSR._build_throwaway_root(tmp, synthetic=True)
-        ref, with_b5, exp_battery_value = _independent_ref_and_dispatch(tmp)
+        ref, with_b5, exp_battery_value, pkg_ref = _independent_ref_and_dispatch(tmp)
 
         # Step 2: the canonical-crosscheck tie-out target, from the SAME
         # independently-computed dispatch trace and formula -- this proves
@@ -139,10 +188,8 @@ def case_battery_plan_matrix_end_to_end_on_a_synthetic_house():
         # issue #29's fallback path (no current-run copy -> the committed
         # copy is used, with a NOTICE) -- since this case never runs
         # battery_dispatch_policies.py itself.
-        (tmp / "data" / "battery_dispatch_policies.json").write_text(json.dumps({
-            "pw3": {"greedy": {"save": exp_battery_value}},
-            "baseline_bill_current_rates": round(ref["EV-TOU-5"]),
-        }))
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(
+            _dispatch_fixture(ref, exp_battery_value, pkg_ref))
 
         r3 = subprocess.run([sys.executable, "battery_plan_matrix.py"], cwd=tmp,
                             capture_output=True, text=True, timeout=600)
@@ -177,20 +224,16 @@ def case_disagreeing_current_run_dispatch_artifact_wins_and_is_announced():
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         TSR._build_throwaway_root(tmp, synthetic=True)
-        ref, with_b5, exp_battery_value = _independent_ref_and_dispatch(tmp)
+        ref, with_b5, exp_battery_value, pkg_ref = _independent_ref_and_dispatch(tmp)
 
         # committed copy: a stale, DIFFERENT run
-        (tmp / "data" / "battery_dispatch_policies.json").write_text(json.dumps({
-            "pw3": {"greedy": {"save": exp_battery_value + 500}},
-            "baseline_bill_current_rates": round(ref["EV-TOU-5"]) + 500,
-        }))
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(
+            _dispatch_fixture(ref, exp_battery_value, pkg_ref, offset=500))
         # current-run copy: the correct figures for THIS run, matching what
         # the generator will itself compute, so the crosscheck assertion
         # passes using the (correct) current-run copy
-        (tmp / "battery_dispatch_policies.json").write_text(json.dumps({
-            "pw3": {"greedy": {"save": exp_battery_value}},
-            "baseline_bill_current_rates": round(ref["EV-TOU-5"]),
-        }))
+        (tmp / "battery_dispatch_policies.json").write_text(
+            _dispatch_fixture(ref, exp_battery_value, pkg_ref))
 
         r = subprocess.run([sys.executable, "battery_plan_matrix.py"], cwd=tmp,
                            capture_output=True, text=True, timeout=600)
@@ -218,12 +261,10 @@ def case_malformed_current_run_dispatch_artifact_fails_closed():
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         TSR._build_throwaway_root(tmp, synthetic=True)
-        ref, with_b5, exp_battery_value = _independent_ref_and_dispatch(tmp)
+        ref, with_b5, exp_battery_value, pkg_ref = _independent_ref_and_dispatch(tmp)
 
-        (tmp / "data" / "battery_dispatch_policies.json").write_text(json.dumps({
-            "pw3": {"greedy": {"save": exp_battery_value}},
-            "baseline_bill_current_rates": round(ref["EV-TOU-5"]),
-        }))
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(
+            _dispatch_fixture(ref, exp_battery_value, pkg_ref))
         (tmp / "battery_dispatch_policies.json").write_text("{not valid json")
 
         # _build_throwaway_root already staged the REAL repo's committed
@@ -244,10 +285,96 @@ def case_malformed_current_run_dispatch_artifact_fails_closed():
             "falling back to the committed one")
 
 
+def case_mid_package_on_plans_on_a_synthetic_house():
+    """issue #200: the mid package (EV shift scenario a, then the 13.5 kWh
+    battery) must be priced on EVERY plan by re-billing the one integrated
+    shift-then-dispatch year end-to-end under each plan's own table rates —
+    never by summing deltas. Verified against an independent transcription of
+    the same pipeline (probes emit the shifted+dispatched series; _ref_bill
+    bills it), on the synthetic house, which is guaranteed to have EV
+    sessions (asserted, so this case can never silently degenerate into the
+    no-EV path)."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        TSR._build_throwaway_root(tmp, synthetic=True)
+        ref, with_b5, exp_battery_value, pkg_ref = _independent_ref_and_dispatch(tmp)
+        assert pkg_ref["n_sessions"] > 0, (
+            "synthetic fixture detected no EV sessions -- this case would be "
+            "vacuous (the package row would just equal the battery row)")
+        assert pkg_ref["moved"] > 0, pkg_ref["moved"]
+
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(
+            _dispatch_fixture(ref, exp_battery_value, pkg_ref))
+
+        r = subprocess.run([sys.executable, "battery_plan_matrix.py"], cwd=tmp,
+                           capture_output=True, text=True, timeout=600)
+        assert r.returncode == 0, f"battery_plan_matrix.py failed: {r.stderr[-2000:]}"
+        out = json.loads((tmp / "data" / "battery_plan_matrix.json").read_text())
+
+    mp = out["mid_package_on_plans"]
+    assert mp["kwh_moved"] == round(pkg_ref["moved"]), (
+        mp["kwh_moved"], pkg_ref["moved"])
+    for plan in _PLANS:
+        got, exp = mp["plans"][plan], pkg_ref["plans"][plan]
+        assert abs(got["package_bill"] - round(exp["package_bill"])) <= 1, (
+            plan, got, exp)
+        assert abs(got["package_save"] - exp["package_save"]) <= 2, (
+            plan, got, exp)
+        # internal consistency: save is the delta against the SAME plan's
+        # no-package bill, one pipeline, one rate basis
+        assert abs((out["plans"][plan]["no_battery"] - got["package_bill"])
+                   - got["package_save"]) <= 2, (plan, out["plans"][plan], got)
+    cx = mp["canonical_crosscheck_ev_tou_5"]
+    ev5 = pkg_ref["plans"]["EV-TOU-5"]
+    assert cx["combined_save"] == ev5["package_save"], cx
+    assert cx["bill"] == round(ev5["package_bill"]), cx
+    return ("mid_package_on_plans prices the integrated EV-shift+battery "
+            "package on all 3 plans by re-billing the one shifted+dispatched "
+            "year end-to-end per plan, matching an independent transcription "
+            "within $1-2, with kwh_moved recorded and the canonical "
+            "post_behavior.mid crosscheck block equal to the tie-out target")
+
+
+def case_mid_package_crosscheck_fails_closed_on_divergent_dispatch_artifact():
+    """Mutation-grade negative for the NEW crosscheck: a dispatch artifact
+    whose post_behavior.mid.combined_save disagrees with the table-rate
+    package save beyond the $100 tolerance must ABORT the run (naming the
+    mid-package crosscheck) and write nothing -- proving the guard actually
+    fires on the defect it claims to catch. The battery-value crosscheck's
+    target is kept CORRECT so this failure can only come from the new
+    mid-package assertion."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        TSR._build_throwaway_root(tmp, synthetic=True)
+        ref, with_b5, exp_battery_value, pkg_ref = _independent_ref_and_dispatch(tmp)
+
+        fx = json.loads(_dispatch_fixture(ref, exp_battery_value, pkg_ref))
+        fx["post_behavior"]["mid"]["combined_save"] += 500   # beyond the $100 tolerance
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(json.dumps(fx))
+
+        (tmp / "data" / "battery_plan_matrix.json").unlink(missing_ok=True)
+
+        r = subprocess.run([sys.executable, "battery_plan_matrix.py"], cwd=tmp,
+                           capture_output=True, text=True, timeout=600)
+        assert r.returncode != 0, (
+            "battery_plan_matrix.py did not fail on a divergent "
+            "post_behavior.mid crosscheck target")
+        assert "mid package save diverged from the canonical dispatch" in r.stderr, r.stderr
+        assert not (tmp / "data" / "battery_plan_matrix.json").exists(), (
+            "battery_plan_matrix.json was written despite the failed "
+            "mid-package crosscheck")
+    return ("the mid-package canonical crosscheck fails closed: a dispatch "
+            "artifact whose post_behavior.mid.combined_save is $500 off "
+            "aborts the run naming the mid-package crosscheck, and no "
+            "artifact is written")
+
+
 CASES = [
     case_battery_plan_matrix_end_to_end_on_a_synthetic_house,
     case_disagreeing_current_run_dispatch_artifact_wins_and_is_announced,
     case_malformed_current_run_dispatch_artifact_fails_closed,
+    case_mid_package_on_plans_on_a_synthetic_house,
+    case_mid_package_crosscheck_fails_closed_on_divergent_dispatch_artifact,
 ]
 
 

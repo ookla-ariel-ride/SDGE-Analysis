@@ -1632,8 +1632,6 @@ _tok("EV_FIX_SAVINGS_100", kind="data_json", file="behavior_rebuild.json",
      path=("scenarios", "a", "saved"), fmt="usd0_tilde_signed")
 _tok("EV_FIX_SAVINGS_80", kind="data_json", file="behavior_rebuild.json",
      path=("scenarios", "b", "saved"), fmt="usd0_signed")
-_tok("OVERLAP_DEDUCTION", kind="data_json", file="behavior_rebuild.json",
-     path=("battery", "double_count_avoided"), fmt="usd0_signed")
 
 _tok("BATTERY_SAVINGS_PRICE_AWARE", kind="data_json", file="battery_dispatch_policies.json",
      path=("pw3", "greedy", "save"), fmt="usd0_signed")
@@ -2204,15 +2202,22 @@ _tok("S3_WHY_LEAD", kind="derived", get=_s3_why_lead,
 # and in section 3 by how much, and is then handed three packages priced on the
 # losing tariff with nothing saying the two are on different footings.
 #
-# WHAT THIS TOKEN SAYS AND WHAT IT DELIBERATELY DOES NOT. It states the
-# footing: whose plan the packages hold, whether the ranking beats it, and --
-# when it does -- that switching is not inside any saving below. It does not
-# price the switch. Re-basing the packages onto another plan is a different
-# analysis with its own artifacts and its own unresolved baseline question (the
-# savings below are deltas against ACTUAL BILLS, which were billed on this
-# plan, so re-basing changes what the baseline means -- CLAUDE.md section 1's
-# one-rate-vintage rule), and it is issue #200's, not this one's. No figure
-# either: the gap in dollars is section 3's to state, and S3_VERDICT states it.
+# WHAT THIS TOKEN SAYS. It states the footing: whose plan the packages hold,
+# whether the ranking beats it, and -- when it does -- that switching is not
+# inside any saving below, followed by what the switch IS worth now that an
+# artifact prices it. Issue #200 settled the baseline question this comment
+# used to defer: data/battery_plan_matrix.json:mid_package_on_plans re-bills
+# the MID package (EV shift scenario a first, then the PW3 dispatch, the whole
+# modified year end-to-end) under each matrix plan's own published-table
+# rates, against that same plan's modeled no-package year -- one pipeline, one
+# rate vintage, never a sum of separately modeled deltas. So the beaten branch
+# now quotes that block's package_save for a sole cheapest plan the block
+# prices, naming the basis, and states why the switch is not modeled when the
+# block or the plan row is absent (an older artifact, or a winner outside the
+# matrix's plans) or when several plans tie ahead. Absence is a stated limit,
+# never a refusal: a household whose winner is unpriced still gets a report.
+# The gap between the PLANS themselves stays section 3's to state, and
+# S3_VERDICT states it.
 #
 # WHY A SLOT AFTER THE PLAN NAME RATHER THAN A REWRITTEN CLAUSE IN FRONT OF IT.
 # generate_report.render() HTML-escapes every token value, so no token can emit
@@ -2247,9 +2252,9 @@ def _s7_plan_footing(ctx):
     its card, section 3's verdict, section 3's row and section 3's lead-in all
     branch on, so this sentence cannot tell the reader a different story from
     the four statements above it. A household whose plan is beaten reads "not
-    the cheapest one" here and "a cheaper rate plan exists" in section 0; a
-    household whose plan wins reads neither, because there is nothing to
-    disclose.
+    the cheapest one" here and "a cheaper rate plan exists" in section 0,
+    followed by what the switch is worth (_s7_switch_pricing); a household
+    whose plan wins reads neither, because there is nothing to disclose.
     """
     standing, plan, _plan_total, _cheapest, winners = _plan_standing(
         ctx, "S7_PLAN_FOOTING")
@@ -2272,11 +2277,45 @@ def _s7_plan_footing(ctx):
     switch_to = "any of them" if plural else "it"
     return (" — the plan this house is on, not the cheapest one. "
             f"{_join_plan_names(winners)} {verb} lower in the rate plan comparison "
-            f"above, and none of the savings below includes switching to {switch_to}.")
+            f"above, and none of the savings below includes switching to {switch_to}."
+            + _s7_switch_pricing(winners))
+
+
+def _s7_switch_pricing(winners):
+    """The clause after the beaten branch's disclosure: what switching to the
+    winning plan is worth, off mid_package_on_plans, or why it is not modeled.
+
+    Quotes a figure only when ONE plan is cheapest and the block prices it --
+    package_save is a per-plan number, so a tied set has no single re-based
+    figure to quote, and naming one of a tie would pick a winner the ranking
+    did not. Every other shape (no block in an older artifact, a winner the
+    matrix does not price, a row without a finite package_save) gets the
+    stated-why-not clause, never a refusal: this module twice shipped guards
+    that took a whole report down over its own chrome, and a household whose
+    winner is unpriced is still owed every other figure on the page. Same
+    escaping constraints as the caller: no apostrophe, no markup, section
+    references by prose name only."""
+    if len(winners) > 1:
+        return (" The battery×plan matrix above prices the MID package one plan "
+                "at a time, so no switch to a set of tied plans is modeled here.")
+    best = winners[0]
+    mid = _json("battery_plan_matrix.json").get("mid_package_on_plans")
+    row = (mid or {}).get("plans", {}).get(best)
+    save = row.get("package_save") if isinstance(row, dict) else None
+    if isinstance(save, (int, float)) and _finite(save):
+        return (f" Re-billed end-to-end on {best}, the MID package (the EV fix "
+                f"plus one battery) saves ${save:,.0f}/yr against the no-package "
+                f"year modeled for that same plan at the same published-table "
+                f"rates in the battery×plan matrix above, one rate vintage "
+                f"throughout.")
+    return (f" The battery×plan matrix above does not price the MID package on "
+            f"{best}, so that switch is not modeled here.")
 
 
 _tok("S7_PLAN_FOOTING", kind="derived", get=_s7_plan_footing,
      sources=["data/plan_results.csv (the household provider's total column)",
+              "data/battery_plan_matrix.json:mid_package_on_plans (what the MID "
+              "package saves re-billed on the winning plan, beaten branch only)",
               "private/household.yaml:household.plan",
               "private/household.yaml:household.cca (which provider column ranks)"])
 

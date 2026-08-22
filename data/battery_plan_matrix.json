@@ -24,5 +24,28 @@
   "no_battery": 4904,
   "battery_value": 2328,
   "basis": "battery_dispatch_policies.json (this run's copy, agrees with data/battery_dispatch_policies.json) \u2014 bill-derived rates, rates.bill_nem monthly NEM netting, canonical holiday rule; the published EV-TOU-5 battery economics"
+ },
+ "mid_package_on_plans": {
+  "method": "integrated mid package: EV shift scenario a (all sessions, behavior_rebuild.shift_ev) FIRST, then the price-aware PW3 greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) on the shifted year, and the WHOLE modified year re-billed end-to-end under each plan's own published-table rates \u2014 one pipeline, never a sum of separately modeled deltas. Baseline = the same plan's modeled no-package year (the no_battery column), same published-table rate basis, one rate vintage.",
+  "kwh_moved": 2618,
+  "plans": {
+   "EV-TOU-5": {
+    "package_bill": 1400,
+    "package_save": 3482
+   },
+   "EV-TOU-2": {
+    "package_bill": 3361,
+    "package_save": 2482
+   },
+   "TOU-ELEC": {
+    "package_bill": 4900,
+    "package_save": 1456
+   }
+  },
+  "canonical_crosscheck_ev_tou_5": {
+   "combined_save": 3459,
+   "bill": 1445,
+   "basis": "battery_dispatch_policies.json (this run's copy, agrees with data/battery_dispatch_policies.json) post_behavior.mid \u2014 bill-derived rates, rates.bill_nem monthly NEM netting, the same integrated shift-then-battery pipeline; the table-rate EV-TOU-5 package save is asserted against combined_save within $100 (rate-basis gap)"
+  }
  }
 }

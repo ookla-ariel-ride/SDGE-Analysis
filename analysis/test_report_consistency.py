@@ -14,6 +14,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_report_consistency.py
 import calendar
 import csv
 import datetime as dt
+import hashlib
 import html as htmlmod
 import json
 import pathlib
@@ -5330,6 +5331,514 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
             f"entries match the artifacts and tokens that derive them ({note})")
 
 
+# ---------------------------------------------------------------------------
+# Issue #201: report-template.html's FIXED prose -- the live lines outside any
+# {{TOKEN}} slot or <!-- TODO --> block -- is what a regeneration emits
+# verbatim, so every substantial fixed-prose line in a template section must
+# appear in the SAME section of index.html. Three divergences (#182, #196,
+# #201) were each found by hand while proving byte-identity for something
+# else; nothing compared the two files' fixed prose until this case.
+#
+# The check is ONE-directional: index.html legitimately carries more than the
+# template (LLM-filled blocks, index-only paragraphs), so no index line is
+# ever required to appear in the template. Comments never count as fixed
+# prose: on the template side each <!-- ... --> becomes a wildcard hole (TODO
+# blocks render as generated prose), on the index side they are dropped.
+# {{TOKEN}} slots become non-greedy wildcards, which is what lets the same
+# pattern also catch a token replaced by a WRONG literal: the fixed text
+# around the hole still has to match, and a hand-edited
+# <code>analysis/wrong.py</code> where index.html says
+# <code>analysis/behavior_rebuild.py</code> is fixed text, not a hole.
+#
+# Only lines with at least _FIXED_PROSE_MIN_CHARS of real fixed content
+# (tags, tokens and comment holes stripped) are checked -- below that the
+# line is structural markup shared by construction. 30 was tuned on the fixed
+# repo: 72 template lines qualify across 16 sections, and every known
+# divergence line clears it comfortably. <script>/<style> bodies and the
+# header/meta/day-band region ahead of the first <h2> are out of scope.
+# ---------------------------------------------------------------------------
+_FIXED_PROSE_MIN_CHARS = 30
+_FIXED_PROSE_HOLE_SPLIT_RE = re.compile(r"\s*(?:\{\{[A-Z0-9_]+\}\}|\x00)\s*")
+_FIXED_PROSE_TOKEN_RE = re.compile(r"\{\{[A-Z0-9_]+\}\}")
+_FIXED_PROSE_TAG_RE = re.compile(r"<[^>]*>")
+_FIXED_PROSE_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b.*?</\1>", re.S | re.I)
+_FIXED_PROSE_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+# KNOWN drift, pinned line by line (issue #201). Each entry names one template
+# line -- (section id, a substring unique among that section's checked lines)
+# -- whose fixed prose does NOT appear in index.html today, and maps it to
+# (digest, reason): the first 12 hex chars of sha256 over the NORMALIZED
+# template line exactly as _template_fixed_prose_drift reports it (whitespace
+# collapsed, comments already a \x00 hole -- _fixed_prose_line_digest), plus
+# the reason the line was not resolved in #201's sweep: resolving it needs a
+# new token, a new TODO block, or an index.html edit, all outside that fix's
+# scope. The case fails the moment an entry HEALS (delete the entry), stops
+# matching any checked template line (the line changed -- re-decide it), OR
+# the line drifts FURTHER while keeping its substring (the digest no longer
+# matches -- re-decide the entry), so this list can only shrink truthfully.
+# NEW drift is never allowed in by this list, and neither is a new edit to a
+# line it already covers.
+_FIXED_PROSE_DRIFT_ALLOWED = {
+    ("s1", "Every 15-minute interval of the last"): ("50ada813f528",
+        "index derives whole-home load in prose (29,914 kWh energy balance, CT-meter "
+        "cross-check); no tokens exist for those figures"),
+    ("s2", "kW DC nameplate"): ("f3f0614b3626",
+        "index adds module arithmetic and mount/orientation facts no token renders"),
+    ("s2", "<b>In service since:</b>"): ("848ed58632f5",
+        "index words the NEM grandfathering span (~20 years) with no token for it"),
+    ("s2", "<b>Production:</b>"): ("b2b724534b3c",
+        "index names the concrete sources (CT meter; PVOutput) the template keeps "
+        "monitoring-agnostic per CLAUDE.md section 7"),
+    ("s2", "<b>Where it goes:</b>"): ("715f92125d33",
+        "index adds MWh splits and share-of-production parentheticals with no tokens"),
+    ("s5", "the behaviors behind them"): ("4c9586423c95",
+        "index counts the behaviors (four); the count has no token"),
+    ("s5", "Behaviors driving the current bill"): ("783be563930c",
+        "index counts the behaviors (Four); the count has no token"),
+    ("s6", "Price-aware (all non-super-off-peak imports)"): ("c0c52fc7d519",
+        "index's expansion cell adds cycles/day; no token for pw3x cycles exists"),
+    ("s8", "<b>More panels:"): ("2e409e20b9af",
+        "deliberate divergence (#182): the template refuses to price added capacity "
+        "(pinned by its own case); index still publishes the priced timing paragraph"),
+    ("s9", "degradation trend</h3>"): ("8da8f6ba573b",
+        "index's heading carries the measured span (6-year); no token owns it"),
+    ("s9", "Inverter clipping"): ("f861755778ff",
+        "index's heading bakes this household's verdict (none worth acting on)"),
+    ("s9", "Phantom / always-on load"): ("d47f1f64d6aa",
+        "index's heading bakes this household's verdict (identified, de-prioritized)"),
+    ("s10", "detailed electric statements"): ("6f579ee69931",
+        "index adds the corpus date range and a findings count; neither has a token"),
+    ("s10", "Generation billed at"): ("6d1752357deb",
+        "index names the CCA (CEA) in fixed prose the template keeps provider-neutral"),
+    ("s10", "Model vs. actual"): ("67147baaddde",
+        "index's note lead is a decomposition claim (six measured terms plus a "
+        "residual) that only the filled TODO can truthfully state"),
+    ("s11", "The install invoice shows"): ("1e3efa71c591",
+        "index appends the blended-$/kWh derivation (rate-history scaling, CA State "
+        "Auditor figures) with no tokens"),
+    ("s12", "identical calendar windows in control years"): ("fefee6083c46",
+        "template is deliberately AHEAD here (#212's raw-ratio wording); index also "
+        "counts the control years (four) -- heals when index.html is regenerated"),
+    ("s12", "Post ÷ pre (raw)</th>"): ("bd7fac4233e5",
+        "same #212 template-side change ('(raw)' column header) awaiting an "
+        "index.html regeneration"),
+    ("s12", "How fast do the panels re-soil?"): ("31876a0af4f9",
+        "index's heading adds a verdict clause (The evidence splits)"),
+    ("s13", "Short workups pricing the context"): ("29756b16f69d",
+        "index counts the workups (Six) and dates NEM expiry (2039); no tokens"),
+    ("s13", "Annual rate escalation</th>"): ("be0c211b8e51",
+        "index prefixes the utility name (SDG&E) the template keeps neutral"),
+    ("s13", "Level escalation vs spread escalation"): ("8a43381191aa",
+        "index's heading carries a verdict and an estimated pill reading '4 winter "
+        "rate changes'; the template's SPREAD_OBSERVATION_COUNT token renders a "
+        "different description (priced cells across periods) -- token drift, not "
+        "just prose"),
+    ("s14", "<b>Confidence labels:</b>"): ("df64676a5e46",
+        "index adds report-specific evidence claims (example list, 'Sections 1-10 "
+        "are measured/modeled throughout')"),
+    ("s14", "not advice from any utility"): ("05e7dcb440cc",
+        "index names vendors (SDG&E, CEA, Enphase, Tesla) the template keeps generic"),
+}
+
+
+def _fixed_prose_line_digest(line):
+    """The 12-hex-char pin an allowance carries for its covered line: sha256
+    over the line EXACTLY as _template_fixed_prose_drift reports it -- already
+    whitespace-collapsed by _fixed_prose_lines, comments already \\x00 holes.
+    One normalization, the checker's own; nothing here re-normalizes."""
+    return hashlib.sha256(line.encode()).hexdigest()[:12]
+
+
+def _fixed_prose_sections(doc, comment_replacement):
+    """{section id: that section's text} with <script>/<style> bodies removed
+    and every HTML comment replaced (template: a \\x00 hole; index: a space).
+    Comments go first through re.S so a multi-line TODO block collapses onto
+    one line and its surrounding markup stays a single checkable line."""
+    doc = _FIXED_PROSE_SCRIPT_STYLE_RE.sub("", doc)
+    doc = _FIXED_PROSE_COMMENT_RE.sub(comment_replacement, doc)
+    hits = list(_SECTION_H2_RE_OPEN.finditer(doc))
+    out = {}
+    for i, m in enumerate(hits):
+        end = hits[i + 1].start() if i + 1 < len(hits) else len(doc)
+        out[m.group(1)] = doc[m.start():end]
+    return out
+
+
+_SECTION_H2_RE_OPEN = re.compile(r'<h2 id="([^"]+)"')
+
+
+def _fixed_prose_lines(section_text):
+    return [re.sub(r"\s+", " ", ln).strip() for ln in section_text.splitlines()
+            if ln.strip()]
+
+
+def _fixed_prose_content(line):
+    """The line's checkable fixed prose: comment holes, {{TOKEN}} slots, then
+    tags removed. What is left is text a regeneration must carry verbatim."""
+    return _FIXED_PROSE_TAG_RE.sub(
+        "", _FIXED_PROSE_TOKEN_RE.sub("", line.replace("\x00", ""))).strip()
+
+
+def _fixed_prose_pattern(line):
+    """Regex a template line must fullmatch against some same-section index
+    line: every hole ({{TOKEN}} or comment) becomes a non-greedy wildcard
+    absorbing its neighboring spaces, every fixed fragment is escaped."""
+    parts = _FIXED_PROSE_HOLE_SPLIT_RE.split(line)
+    return re.compile(".*?".join(re.escape(p) for p in parts), re.S)
+
+
+def _template_fixed_prose_drift(template_doc, index_doc):
+    """(checked line count, [(section id, collapsed template line), ...]) --
+    every checked template fixed-prose line that appears in NO line of the
+    same index.html section. Pure function of the two documents so the guard
+    case below can feed it mutated copies."""
+    tmpl = _fixed_prose_sections(template_doc, "\x00")
+    idx = _fixed_prose_sections(index_doc, " ")
+    checked, drifted = 0, []
+    for sid, ttext in tmpl.items():
+        ilines = _fixed_prose_lines(idx.get(sid, ""))
+        for line in _fixed_prose_lines(ttext):
+            if len(_fixed_prose_content(line)) < _FIXED_PROSE_MIN_CHARS:
+                continue
+            checked += 1
+            pat = _fixed_prose_pattern(line)
+            if not any(pat.fullmatch(il) for il in ilines):
+                drifted.append((sid, line))
+    return checked, drifted
+
+
+# THE ONE-PROSE-ELEMENT-PER-SOURCE-LINE CONVENTION, enforced (round-3 review).
+# _template_fixed_prose_drift reads the template LINE BY LINE and skips any
+# line under _FIXED_PROSE_MIN_CHARS of fixed content, so a prose element
+# re-wrapped across short source lines becomes invisible to the whole gate: a
+# duplicate of a covered paragraph split into 5-22-char lines passed with 72
+# checked / 24 used. The line-by-line reading is only sound while the template
+# keeps one prose element per source line, so that assumption is asserted
+# structurally: a checked-prose element type OPENED on a source line without
+# its matching closing tag on the same line fails, naming section, tag, line.
+#
+# THE TAG SET IS DERIVED FROM THE TEMPLATE AS IT IS, not aspirational. The 72
+# checked lines open with b/div/h2/h3/li/p/span/thead/tr (plus one no-tag
+# continuation of the exempted s14 paragraph below). Of those, div is also a
+# structural container that legitimately spans lines (grid2/grid3/cards/pkg/
+# rec wrappers), so divs are held to one-per-line only when a class token
+# carries checked prose: card/note (checked lines open with them) and lbl/big
+# (the prose cells nested inside card lines). <summary> spans lines by design
+# (h2 + teaser inside) and no checked line opens with it, so it is NOT in the
+# set -- its teaser prose rides in <span class="teaser">, and span IS held.
+_FIXED_PROSE_ONE_LINE_TAGS = ("b", "h2", "h3", "li", "p", "span", "thead", "tr")
+_FIXED_PROSE_ONE_LINE_DIV_CLASSES = frozenset({"card", "note", "lbl", "big"})
+
+# The ONE deliberate multi-line prose element in today's template: the s14
+# provenance paragraph (CLAUDE.md section 11) opens here and closes two source
+# lines later. Its continuation lines each carry enough fixed prose to be
+# checked individually, so nothing in it escapes the gate; anything else
+# spanning lines must be listed here deliberately or fail.
+_FIXED_PROSE_MULTILINE_ALLOWED = {
+    ("s14", '<p class="small"><b>Data sources:</b>'):
+        "the provenance paragraph is written across source lines with <br> "
+        "breaks; every continuation line is long enough to be checked itself",
+}
+
+
+def _template_prose_multiline_violations(template_doc):
+    """[(sid, tag, line)] for every checked-prose element type opened on a
+    template source line without its closing tag on that line -- read through
+    the same comment/script/style preprocessing the drift checker applies
+    (_fixed_prose_sections/_fixed_prose_lines), so both see identical lines."""
+    out = []
+    for sid, ttext in _fixed_prose_sections(template_doc, "\x00").items():
+        for line in _fixed_prose_lines(ttext):
+            for tag in _FIXED_PROSE_ONE_LINE_TAGS:
+                if (len(re.findall(rf"<{tag}(?=[\s>])", line))
+                        > line.count(f"</{tag}>")):
+                    out.append((sid, tag, line))
+            div_opens = re.findall(r"<div\b([^>]*)>", line)
+            if div_opens and len(div_opens) != line.count("</div>"):
+                for attrs in div_opens:
+                    m = re.search(r'class="([^"]*)"', attrs)
+                    if m and (_FIXED_PROSE_ONE_LINE_DIV_CLASSES
+                              & set(m.group(1).split())):
+                        out.append((sid, "div", line))
+                        break
+    return out
+
+
+def _fixed_prose_gate(template_doc, index_doc):
+    """The WHOLE public gate as one reusable check: the one-element-per-line
+    structural assumption first, then drift detection, the allowance routing
+    (substring match AND digest pin, exactly one line each), the staleness
+    sweeps. Returns the pass summary or raises AssertionError with the same
+    messages the real case shows -- so the guard case below can prove, on a
+    mutated template, that THIS logic (not a lookalike) rejects each shape."""
+    unexempt, used_exemptions = [], set()
+    for sid, tag, line in _template_prose_multiline_violations(template_doc):
+        keys = [k for k in _FIXED_PROSE_MULTILINE_ALLOWED
+                if k[0] == sid and k[1] in line]
+        if keys:
+            used_exemptions.update(keys)
+        else:
+            unexempt.append((sid, tag, line))
+    assert not unexempt, (
+        "template prose element OPENS on one source line without CLOSING on "
+        "it -- the fixed-prose checker reads the template line by line and "
+        f"skips lines under {_FIXED_PROSE_MIN_CHARS} fixed chars, so prose "
+        "wrapped across short source lines silently leaves the gate's "
+        "coverage entirely; keep one prose element per source line (or list "
+        "a deliberate multi-line element in _FIXED_PROSE_MULTILINE_ALLOWED "
+        "with its reason):\n" + "\n".join(
+            f"  section {sid}: <{tag}> left open on: {line}"
+            for sid, tag, line in unexempt))
+    stale_ex = sorted(k for k in _FIXED_PROSE_MULTILINE_ALLOWED
+                      if k not in used_exemptions)
+    assert not stale_ex, (
+        f"_FIXED_PROSE_MULTILINE_ALLOWED entries matching no open-without-"
+        f"close template line: {stale_ex} -- the element was rejoined onto "
+        "one line or edited away; delete or re-decide the exemption")
+
+    checked, drifted = _template_fixed_prose_drift(template_doc, index_doc)
+    assert checked >= 50, (
+        f"only {checked} template fixed-prose lines qualified for checking -- the "
+        "parser or the threshold probably broke (72 qualified when this was written)")
+
+    # Route each drifted line through the allowance; an allowed line is known
+    # drift, an unmatched one is NEW drift and fails with its own text.
+    def _allowance_for(sid, line):
+        keys = [k for k in _FIXED_PROSE_DRIFT_ALLOWED
+                if k[0] == sid and k[1] in line]
+        assert len(keys) <= 1, (
+            f"ambiguous _FIXED_PROSE_DRIFT_ALLOWED entries for one section-{sid} "
+            f"line: {keys} -- make each substring unique")
+        return keys[0] if keys else None
+
+    matched = {}
+    new_drift = []
+    drifted_further = []
+    for sid, line in drifted:
+        key = _allowance_for(sid, line)
+        if key is None:
+            new_drift.append((sid, line))
+            continue
+        pinned, _reason = _FIXED_PROSE_DRIFT_ALLOWED[key]
+        if _fixed_prose_line_digest(line) != pinned:
+            drifted_further.append((sid, line, key, pinned))
+        else:
+            matched.setdefault(key, []).append((sid, line))
+    used = set(matched)
+    # An allowance blesses EXACTLY ONE line. A second drifted line carrying
+    # the same substring and digest -- a duplicate of the covered line -- is
+    # NEW drift, not something the old allowance ever decided; without this
+    # count a copy of a covered line rode in on the entry silently.
+    multi = {k: v for k, v in matched.items() if len(v) > 1}
+    assert not multi, (
+        "one _FIXED_PROSE_DRIFT_ALLOWED entry matched MORE THAN ONE drifted "
+        "line -- an allowance blesses exactly one line, so the extra copies "
+        "are NEW drift (a duplicated template line) the entry cannot cover:\n"
+        + "\n".join(
+            f"  entry {k} matched {len(v)} lines:\n" + "\n".join(
+                f"    section {sid}: {line}" for sid, line in v)
+            for k, v in sorted(multi.items())))
+    # An entry blesses ONE exact line, pinned by digest -- never future edits
+    # that keep its substring. A covered line whose digest moved is NEW drift.
+    assert not drifted_further, (
+        "an ALLOWLISTED line drifted FURTHER: each line below still carries its "
+        "_FIXED_PROSE_DRIFT_ALLOWED substring, but its content no longer matches "
+        "the digest pinned when the allowance was decided, so the old reason no "
+        "longer covers it -- re-decide the entry (and re-pin its digest via "
+        "_fixed_prose_line_digest) rather than letting the allowance bless a new "
+        "edit:\n" + "\n".join(
+            f"  section {sid} (entry {key}, pinned {pinned}, line now "
+            f"{_fixed_prose_line_digest(line)}): {line}"
+            for sid, line, key, pinned in drifted_further))
+    assert not new_drift, (
+        "template fixed prose that appears nowhere in the same section of "
+        "index.html -- the template is what a regeneration emits, so the published "
+        "page cannot be reproduced from it (adopt the published wording, tokens "
+        "preserved, per issue #201):\n" + "\n".join(
+            f"  section {sid}: {line}" for sid, line in new_drift))
+
+    stale = sorted(k for k in _FIXED_PROSE_DRIFT_ALLOWED if k not in used)
+    # A stale entry is one of two lies: the line now MATCHES index.html
+    # (healed -- delete the entry) or no checked template line carries the
+    # substring any more (the line changed -- re-decide it). Either way the
+    # allowance no longer describes real drift and must go.
+    assert not stale, (
+        f"_FIXED_PROSE_DRIFT_ALLOWED entries matching no drifted line: {stale} -- "
+        "each names known drift; if the line healed or was edited, delete or "
+        "re-decide the entry (the list only shrinks truthfully)")
+
+    return (f"all {checked} substantial template fixed-prose lines appear in the "
+            f"same section of index.html ({len(used)} known-drift lines allowed by "
+            f"_FIXED_PROSE_DRIFT_ALLOWED, {len(_FIXED_PROSE_DRIFT_ALLOWED)} listed)")
+
+
+def case_template_fixed_prose_lines_all_appear_in_the_published_page():
+    return _fixed_prose_gate(TEMPLATE_HTML, HTML)
+
+
+def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
+    """The three defect shapes issue #201 names, plus a fourth (an edit to an
+    ALLOWLISTED line that keeps the entry's substring), reintroduced one at a
+    time into an in-memory copy of the template, must each be caught and NAMED
+    (section id + the offending line) -- a guard trusted on plausibility
+    alone has already shipped silent no-ops here (tests-must-fail memory)."""
+    baseline_checked, baseline_drift = _template_fixed_prose_drift(TEMPLATE_HTML, HTML)
+    mutations = [
+        ("s7 overlap-deduction wording resurrected",
+         "behavior and battery are simulated in ONE integrated pipeline "
+         "(EV shift first, then battery, re-billed end-to-end), so nothing "
+         "is double-counted.",
+         "behavior/battery interaction is modeled so nothing is double-counted "
+         "(overlap: {{OVERLAP_DEDUCTION}}/yr).",
+         "s7", "double-counted"),
+        ("s0 NEM dropped from the netting-model name",
+         "re-billing with the bill-validated NEM netting model",
+         "re-billing with the bill-validated netting model",
+         "s0", "netting model"),
+        ("s7 script token replaced by a wrong literal",
+         "the validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>)",
+         "the validated NEM netting model (<code>analysis/wrong.py</code>)",
+         "s7", "analysis/wrong.py"),
+    ]
+    for name, old, new, want_sid, want_frag in mutations:
+        assert TEMPLATE_HTML.count(old) == 1, (
+            f"mutation {name!r} no longer has a unique anchor in the template "
+            f"({TEMPLATE_HTML.count(old)} occurrences of {old!r}) -- re-anchor it")
+        mutated = TEMPLATE_HTML.replace(old, new)
+        assert mutated != TEMPLATE_HTML, f"mutation {name!r} was a no-op"
+        checked, drifted = _template_fixed_prose_drift(mutated, HTML)
+        introduced = [d for d in drifted if d not in baseline_drift]
+        assert introduced, (
+            f"the guard did NOT catch mutation {name!r}: no new drifted line "
+            f"beyond the {len(baseline_drift)} baseline entries")
+        assert all(sid == want_sid for sid, _ in introduced) and any(
+            want_frag in line for _, line in introduced), (
+            f"mutation {name!r} was caught but misattributed: expected section "
+            f"{want_sid} with a line containing {want_frag!r}, got {introduced}")
+
+    # FOURTH defect shape (the adversarial-review finding): an ALLOWLISTED
+    # line edited while its _FIXED_PROSE_DRIFT_ALLOWED substring stays intact.
+    # The three mutations above introduce drift a substring matches nothing
+    # for; this one hides INSIDE a covered line, so only the digest pin can
+    # see it -- and only the PUBLIC gate applies the pin, which is why this
+    # shape runs _fixed_prose_gate (the exact logic the real case calls),
+    # not the bare drift function.
+    old = "maps when the money leaves"
+    new = "maps where the money leaves"
+    name = "s5 allowlisted line edited around its intact substring"
+    assert TEMPLATE_HTML.count(old) == 1, (
+        f"mutation {name!r} no longer has a unique anchor in the template "
+        f"({TEMPLATE_HTML.count(old)} occurrences of {old!r}) -- re-anchor it")
+    mutated = TEMPLATE_HTML.replace(old, new)
+    assert mutated != TEMPLATE_HTML, f"mutation {name!r} was a no-op"
+    assert ("s5", "the behaviors behind them") in _FIXED_PROSE_DRIFT_ALLOWED, (
+        "the fourth mutation targets the s5 'the behaviors behind them' "
+        "allowance, which no longer exists -- re-anchor the mutation")
+    try:
+        _fixed_prose_gate(mutated, HTML)
+    except AssertionError as e:
+        msg = str(e)
+        assert "ALLOWLISTED line drifted FURTHER" in msg, (
+            f"mutation {name!r} was rejected, but not AS an allowlisted line "
+            f"drifting further -- the developer would hunt a new line instead "
+            f"of re-deciding the entry: {msg}")
+        assert "section s5" in msg and new in msg, (
+            f"mutation {name!r} was caught but the message does not name "
+            f"section s5 and the offending line: {msg}")
+        assert "the behaviors behind them" in msg, (
+            f"mutation {name!r} was caught but the message does not name the "
+            f"allowlist entry to re-decide: {msg}")
+    else:
+        raise AssertionError(
+            f"the gate did NOT catch mutation {name!r}: an edit to an "
+            "allowlisted line that keeps the entry's substring passed the "
+            "public gate -- the digest pin is not being enforced")
+
+    # FIFTH defect shape (review-the-fix finding): the allowlisted line
+    # DUPLICATED whole. Both copies carry the substring AND the pinned
+    # digest, so neither the substring routing nor the digest pin objects --
+    # only the exactly-one count can see that one allowance is now blessing
+    # two lines, the second of which is NEW drift it never decided.
+    dup = ("<p>This section maps when the money leaves: your grid flows by "
+           "hour, season, and month, and the behaviors behind them.</p>")
+    name = "s5 allowlisted line duplicated whole"
+    assert TEMPLATE_HTML.count(dup) == 1, (
+        f"mutation {name!r} no longer has a unique anchor in the template "
+        f"({TEMPLATE_HTML.count(dup)} occurrences of {dup!r}) -- re-anchor it")
+    mutated = TEMPLATE_HTML.replace(dup, dup + "\n" + dup)
+    assert mutated != TEMPLATE_HTML, f"mutation {name!r} was a no-op"
+    assert ("s5", "the behaviors behind them") in _FIXED_PROSE_DRIFT_ALLOWED, (
+        "the fifth mutation targets the s5 'the behaviors behind them' "
+        "allowance, which no longer exists -- re-anchor the mutation")
+    try:
+        _fixed_prose_gate(mutated, HTML)
+    except AssertionError as e:
+        msg = str(e)
+        assert "MORE THAN ONE drifted line" in msg, (
+            f"mutation {name!r} was rejected, but not AS one allowance "
+            f"blessing multiple lines: {msg}")
+        assert ("('s5', 'the behaviors behind them')" in msg
+                and "matched 2 lines" in msg
+                and msg.count("maps when the money leaves") == 2), (
+            f"mutation {name!r} was caught but the message does not name the "
+            f"entry, the count, and both lines: {msg}")
+    else:
+        raise AssertionError(
+            f"the gate did NOT catch mutation {name!r}: a duplicate of an "
+            "allowlisted line passed the public gate -- the exactly-one "
+            "count per allowance is not being enforced")
+
+    # SIXTH defect shape (round-3 review): the allowlisted s5 paragraph
+    # duplicated WRAPPED, every source line under the 30-fixed-char
+    # threshold. Each wrapped line is too short to be checked, so the drift
+    # detector, the digest pin, and the exactly-one count are all blind to
+    # it -- only the one-element-per-source-line structural assert can see
+    # the <p> opened without closing on its line. The rejection must name
+    # the multi-line ELEMENT, not any allowance.
+    wrapped = ("<p>This section\nmaps when the\nmoney leaves: your\n"
+               "grid flows by hour,\nseason, and month,\nand the behaviors\n"
+               "behind them.</p>")
+    name = "s5 allowlisted paragraph duplicated wrapped across short lines"
+    for wline in wrapped.splitlines():
+        content = _fixed_prose_content(re.sub(r"\s+", " ", wline).strip())
+        assert len(content) < _FIXED_PROSE_MIN_CHARS, (
+            f"mutation {name!r} no longer exercises the under-threshold hole: "
+            f"wrapped line {wline!r} has {len(content)} fixed chars, at or "
+            f"over the {_FIXED_PROSE_MIN_CHARS}-char threshold -- re-wrap it")
+    assert TEMPLATE_HTML.count(dup) == 1, (
+        f"mutation {name!r} no longer has a unique anchor in the template "
+        f"({TEMPLATE_HTML.count(dup)} occurrences of {dup!r}) -- re-anchor it")
+    mutated = TEMPLATE_HTML.replace(dup, dup + "\n" + wrapped)
+    assert mutated != TEMPLATE_HTML, f"mutation {name!r} was a no-op"
+    try:
+        _fixed_prose_gate(mutated, HTML)
+    except AssertionError as e:
+        msg = str(e)
+        assert "OPENS on one source line without CLOSING" in msg, (
+            f"mutation {name!r} was rejected, but not AS a multi-line prose "
+            f"element -- the structural assert is not what fired: {msg}")
+        assert ("section s5" in msg and "<p> left open on" in msg
+                and "<p>This section" in msg), (
+            f"mutation {name!r} was caught but the message does not name the "
+            f"section, the tag, and the opening line: {msg}")
+        assert ("drifted FURTHER" not in msg
+                and "MORE THAN ONE drifted line" not in msg), (
+            f"mutation {name!r} must be attributed to the multi-line element, "
+            f"not to an allowance: {msg}")
+    else:
+        raise AssertionError(
+            f"the gate did NOT catch mutation {name!r}: a wrapped duplicate "
+            "whose every source line is under the fixed-char threshold "
+            "passed the public gate -- the one-element-per-line structural "
+            "assert is not being enforced")
+
+    return (f"all {len(mutations)} reintroduced #201 defects plus the "
+            f"allowlisted-line-edited-further, allowlisted-line-duplicated "
+            f"and wrapped-duplication shapes are caught and attributed "
+            f"({baseline_checked} lines checked, {len(baseline_drift)} "
+            f"known-drift baseline)")
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -5403,6 +5912,8 @@ CASES = [
     case_whole_home_load_names_both_derivations_and_states_their_gap,
     case_degradation_naive_band_contains_every_estimator_it_is_built_from,
     case_glossary_figures_match_the_artifacts_that_derive_them,
+    case_template_fixed_prose_lines_all_appear_in_the_published_page,
+    case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch,
 ]
 
 

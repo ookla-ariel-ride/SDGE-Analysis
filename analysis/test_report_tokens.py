@@ -5911,10 +5911,15 @@ def case_section_7s_package_footing_states_the_plan_it_prices_on():
 
     WHAT THE FOOTING MUST SAY, AND WHAT IT MAY NOT. It states which plan the
     packages hold, whether the ranking beats it, and -- when it does -- that
-    switching is in no saving below. It may not price the switch: re-basing the
-    packages onto another plan is a different analysis with its own artifacts
-    and its own baseline question (issue #200), so no dollar figure may appear
-    in this slot at any standing, which is asserted in every state below.
+    switching is in no saving below, then what the switch is worth. Issue #200
+    gave that clause its artifact: battery_plan_matrix.json's
+    mid_package_on_plans re-bills the MID package end-to-end per plan against
+    the same plan's no-package year, so the trails state must quote exactly
+    that block's package_save for the winning plan -- read HERE off the same
+    artifact the token reads, never a hardcoded figure -- and the win and tie
+    states still carry no dollar figure, because there is no switch to price.
+    A winner the block does not price gets a stated why-not, not a number and
+    not a refusal, driven further below.
 
     THE THREE STATES ARE DRIVEN THROUGH THE RENDERED MARKUP, a rival priced $1
     above this household, at exactly its total, and $1 below it -- the same
@@ -5973,13 +5978,41 @@ def case_section_7s_package_footing_states_the_plan_it_prices_on():
             assert ("the rate plan is right" in s0) == wins, (s0, s3)
             assert card.startswith("Best plan in every scenario") == wins, (card, s3)
 
-            # 2. NO FIGURE IN THIS SLOT, IN ANY STATE. The gap in dollars is
-            #    section 3's to state; pricing the switch here would be issue
-            #    #200's analysis smuggled into a sentence with no artifact.
-            assert "$" not in footing, (
-                f"section 7's footing quotes a figure in the {standing} state ({footing!r}) "
-                "-- no committed artifact prices a plan switch, and the gap between plans "
-                "belongs to section 3")
+            # 2. THE FIGURE IS EARNED, STATE BY STATE. Win and tie carry no
+            #    dollar figure -- there is no switch to price, and the gap
+            #    between plans is section 3's. Trails quotes the artifact:
+            #    mid_package_on_plans.plans[<winner>].package_save, formatted
+            #    the way the token formats it, read here off the same
+            #    rt._json the token reads. Asserting the exact figure is what
+            #    makes quoting the block's OTHER dollar cell (package_bill)
+            #    fail by name.
+            if standing == "trails":
+                mid = rt._json("battery_plan_matrix.json")["mid_package_on_plans"]
+                row = mid["plans"].get(rival)
+                assert row is not None, (
+                    f"data/plan_results.csv's nearest rival {rival!r} is no longer a "
+                    f"plan mid_package_on_plans prices ({sorted(mid['plans'])}); the "
+                    "priced branch below needs one, and the unpriced winner is driven "
+                    "separately after this loop")
+                expect = f"${row['package_save']:,.0f}/yr"
+                assert expect in footing, (
+                    f"section 7's footing does not quote mid_package_on_plans' "
+                    f"package_save for {rival} ({expect}) in the trails state: "
+                    f"{footing!r}")
+                assert f"Re-billed end-to-end on {rival}" in footing, (
+                    f"section 7's footing quotes a figure without naming the plan it "
+                    f"is re-billed on: {footing!r}")
+                assert ("no-package year" in footing
+                        and "same plan" in footing
+                        and "one rate vintage" in footing), (
+                    f"section 7's footing quotes a switch figure without stating its "
+                    f"baseline -- same plan, no-package year, one rate vintage: "
+                    f"{footing!r}")
+            else:
+                assert "$" not in footing, (
+                    f"section 7's footing quotes a figure in the {standing} state "
+                    f"({footing!r}) -- there is no switch to price when the plan is "
+                    "not beaten, and the gap between plans belongs to section 3")
 
             # 3. AND EACH STATE SAYS THE PARTICULAR TRUE THING, in the markup a
             #    reader is shown.
@@ -6020,12 +6053,52 @@ def case_section_7s_package_footing_states_the_plan_it_prices_on():
                 f"{standing} state")
             seen[standing] = opening[opening.index("</b>"):][4:].strip() or "(bare stop)"
 
+        # 4. A WINNER THE BLOCK DOES NOT PRICE. mid_package_on_plans prices
+        #    three plans; the CSV ranks more. A household beaten by one the
+        #    block lacks must read WHY the switch is not priced -- no figure,
+        #    and above all no refusal: this module twice shipped chrome guards
+        #    that cost ordinary households their whole report.
+        mid_plans = set(
+            rt._json("battery_plan_matrix.json")["mid_package_on_plans"]["plans"])
+        outside = sorted(r["plan"] for r in priced
+                         if r["plan"] != cheapest and r["plan"] not in mid_plans)
+        assert outside, (
+            f"every plan data/plan_results.csv prices for {provider!r} is also in "
+            f"mid_package_on_plans ({sorted(mid_plans)}); this drive needs a winner "
+            "the block does not price")
+        with _plan_repriced(provider, {cheapest: own, outside[0]: own - 1}):
+            footing = rt.resolve_token("S7_PLAN_FOOTING")
+        assert "$" not in footing, (
+            f"section 7's footing quotes a figure for {outside[0]}, a plan "
+            f"mid_package_on_plans does not price: {footing!r}")
+        assert (f"does not price the MID package on {outside[0]}" in footing
+                and "not modeled here" in footing), (
+            f"section 7's footing does not state why the switch to {outside[0]} "
+            f"is unpriced: {footing!r}")
+        seen["trails, winner unpriced"] = footing.strip()
+
+        # 5. AN OLDER ARTIFACT WITHOUT THE BLOCK -- the committed JSON minus
+        #    mid_package_on_plans, swapped into the cache the way every other
+        #    fixture here substitutes artifacts. Same contract: stated
+        #    why-not, no figure, no refusal.
+        full = rt._json("battery_plan_matrix.json")
+        stripped = {k: v for k, v in full.items() if k != "mid_package_on_plans"}
+        with _plan_repriced(provider, {cheapest: own, rival: own - 1}), \
+                _swapped(rt._json_cache, "battery_plan_matrix.json", stripped):
+            footing = rt.resolve_token("S7_PLAN_FOOTING")
+        assert "$" not in footing and "not modeled here" in footing, (
+            f"an artifact without mid_package_on_plans must leave the footing "
+            f"stating the switch is not modeled, not quoting or refusing: {footing!r}")
+        assert f"does not price the MID package on {rival}" in footing, footing
+        seen["trails, older artifact"] = footing.strip()
+
         assert rt.resolve_token("S7_PLAN_FOOTING") == ".", (
             "the substituted plan total leaked out of this case")
     return ("section 7's opening states the footing its packages are priced on in all "
             "three standings, agrees with section 3's verdict, section 0's headline and "
-            "section 0's card in each, quotes no figure, and renders into index.html "
-            "verbatim on the winning path ("
+            "section 0's card in each, prices the switch off mid_package_on_plans "
+            "exactly when the sole winner is priced there (stated why-not otherwise), "
+            "and renders into index.html verbatim on the winning path ("
             + "; ".join(f"{k}: {v[:70]!r}" for k, v in seen.items()) + ")")
 
 
@@ -6080,6 +6153,18 @@ def case_section_7s_footing_agrees_with_however_many_plans_beat_this_one():
                     f"section 7's footing refers back to {len(winners)} plan(s) as "
                     f"{'a single one' if plural else 'several'}: {footing!r}")
                 assert ("switching to it." in footing) == (not plural), footing
+                # The switch-pricing clause holds the same number: package_save
+                # is per plan, so a TIED set ahead has no single re-based
+                # figure, and the footing must say so rather than pick one of
+                # the tie to quote.
+                assert plural == (
+                    "no switch to a set of tied plans is modeled here" in footing), (
+                    f"section 7's switch-pricing clause disagrees in NUMBER with its "
+                    f"own winners' set {winners}: {footing!r}")
+                if plural:
+                    assert "$" not in footing, (
+                        f"section 7's footing quotes one figure for a tied set of "
+                        f"plans: {footing!r}")
             seen[label] = footing
         # Inside the household stub, which is what makes this assertion (and
         # this whole case) run on a checkout with no private archive.
@@ -10308,10 +10393,15 @@ _SEAM_ALLOWLIST = {
         "occurrences are excused one at a time, so a lost unit at either one "
         "is still reported at the other.",
     ("BILLING_PERIOD_COUNT", "missing-unit",
-     "({{BILLING_PERIOD_COUNT}} billing periods)"):
+     "({{BILLING_PERIOD_COUNT}} billing periods) were parsed"):
         "a COUNT of billing periods. One statement PDF can carry two periods, "
         "which is why this count differs from BILL_COUNT and why neither is a "
         "quantity with a unit.",
+    ("BILLING_PERIOD_COUNT", "missing-unit",
+     "statements ({{BILLING_PERIOD_COUNT}} billing periods):"):
+        "the same billing-period COUNT at its second occurrence, on the bottom "
+        "line's anchoring sentence. A separate entry on purpose: the two "
+        "occurrences are excused one at a time.",
     ("CLEANING_YEAR", "missing-unit", "did the {{CLEANING_YEAR}} cleaning actually work"):
         "a calendar YEAR used as an adjective ('the 2024 cleaning'). A year "
         "has no unit; the token is a date part, not a measurement.",

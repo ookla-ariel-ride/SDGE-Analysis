@@ -1087,6 +1087,30 @@ table-rate column are the rate basis (published tables vs bill-derived) and the 
 convention (§6.5). Run from `private/verify` (repo root found by walking up); writes
 `data/battery_plan_matrix.json` atomically.
 
+**Mid package on every plan (`mid_package_on_plans`, issue #200).** The same artifact also
+prices the report's mid package — EV shift scenario a (all sessions,
+`behavior_rebuild.shift_ev`) first, then the 13.5 kWh greedy dispatch on the shifted
+year — under each of the three plans, so a household whose ranking favors a plan other
+than its current one can read what the package is worth on that plan. One integrated
+pipeline per plan, re-billed end-to-end (`CLAUDE.md` §9's one-pipeline rule): shift, then
+dispatch, then bill the whole modified year under the plan's own table rates — never a sum
+of separately modeled deltas. The shift is plan-independent for the same reason the single
+dispatch trace is: `shift_ev` selects intervals by TOU period label only (on/off → SOP)
+and all three plans share the 2026 three-period windows. **Baseline:** deltas against the
+same plan's modeled no-package year (the `no_battery` column), published-table basis, one
+rate vintage. Results (2,618 kWh moved): EV-TOU-5 $4,882 → $1,400 (package save
+**$3,482/yr**), EV-TOU-2 $5,843 → $3,361 ($2,482), TOU-ELEC $6,356 → $4,900 ($1,456) —
+the package, like the bare battery, is worth the most on EV-TOU-5. A second fail-closed
+crosscheck asserts the table-rate EV-TOU-5 package save against the canonical engine's
+`post_behavior.mid.combined_save` ($3,459, bill-derived rates) within $100 — the observed
+gap is $23, the same rate-basis difference as the battery crosscheck — and a dispatch
+artifact with no `post_behavior.mid` block aborts the run. A household with no EV
+(`household.has_ev` false) degenerates cleanly rather than refusing: `detect_sessions`
+returns an EV-free year, `kwh_moved` records 0, and the package row equals the battery
+row. Guarded end-to-end on the synthetic house by `test_battery_plan_matrix.py`, including
+a mutation-grade negative that plants a divergent `post_behavior.mid` target and asserts
+the generator aborts naming the mid-package crosscheck with nothing written.
+
 ### 3.17 `analysis/carbon_dispatch_tradeoff.py` — does cost-minimizing dispatch fight carbon-minimizing dispatch? (`data/carbon_dispatch_tradeoff.json`)
 
 §3.15 established that the cheapest grid hours are also the dirtiest. This script asks the

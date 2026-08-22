@@ -21,7 +21,24 @@ the same canonical rule the published EV-TOU-5 economics use, so the two bases
 now agree on which days take weekend windows; what still separates this column
 from the canonical figures is the rate basis (published tables here, bill-derived
 there). Both are recorded in the artifact (canonical_crosscheck, asserted against
-the resolved dispatch artifact — see ORDERING CONTRACT below).
+the resolved dispatch artifact — see ORDERING CONTRACT below). The same
+shared-window reasoning covers the mid-package EV shift below:
+behavior_rebuild.shift_ev selects source and destination intervals by TOU period
+LABEL only (on/off -> sop), so one shifted import series serves all three plans
+exactly as the one dispatch trace does.
+
+MID PACKAGE (issue #200): the artifact also prices the report's mid package —
+EV shift scenario a (all sessions) FIRST, then the same 13.5 kWh greedy
+dispatch on the shifted year — under EACH plan, so a household whose ranking
+favors a different plan can read what the package is worth on that plan. This
+is ONE integrated pipeline re-billed end-to-end per plan (shift, then dispatch,
+then bill the whole modified year under the plan's own table rates) — never a
+sum of separately modeled deltas (CLAUDE.md section 9's one-pipeline rule).
+Baseline: the SAME plan's modeled no-package year (the no_battery column), same
+published-table rate basis, one rate vintage. A household with no EV
+(household.has_ev false) degenerates cleanly: detect_sessions returns an
+EV-free year, kwh_moved records 0, and the package row equals the battery row —
+the artifact still generates.
 
 ORDERING CONTRACT (this script runs AFTER the dispatch generator):
   battery_dispatch_policies.py  ->  battery_plan_matrix.py, in the SAME working
@@ -209,21 +226,62 @@ if __name__ == "__main__":
     ref = ref[ref.provider == "CEA"].set_index("plan").total.to_dict()
 
     plans = {}
+    no_b_by_plan = {}
     for plan in PLANS:
         no_b = bill_plan(plan, seas, per, imp0, gen0)
         with_b = bill_plan(plan, seas, per, imp_b, exp_b)
         assert abs(no_b - ref[plan]) < 1.0, \
             f"{plan}: no-battery ${no_b:,.2f} fails tie-out to plan_results.csv ${ref[plan]:,.2f}"
+        no_b_by_plan[plan] = no_b
         plans[plan] = {"no_battery": round(no_b), "with_battery": round(with_b),
                        "battery_value": round(no_b - with_b)}
         print(f"{plan:9s} no-batt ${no_b:8,.0f}  with PW3 ${with_b:8,.0f}  "
               f"battery value ${no_b - with_b:6,.0f}/yr")
+
+    # ---- mid package (EV shift scenario a, then the 13.5 kWh battery), per plan
+    # One integrated pipeline (CLAUDE.md section 9): shift first (exactly as
+    # battery_dispatch_policies.py's post_behavior block does), dispatch on the
+    # shifted year, then re-bill the WHOLE modified year under each plan's own
+    # table rates. Never a sum of separately modeled deltas. The shift is
+    # plan-independent for the same reason the single dispatch trace is: shift_ev
+    # selects intervals by TOU period label only (on/off -> sop) and all three
+    # plans share the 2026 three-period windows. With household.has_ev false,
+    # detect_sessions returns an EV-free year, moved is 0.0, and the package row
+    # degenerates to the battery row — no crash, no refusal.
+    ev, sessions = br.detect_sessions(d)
+    sop_idx, sop_ts = br.build_sop_index(d)
+    imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
+    imp_p, exp_p, _, _ = run_batt(d, imp_sh, gen0, 13.5, "greedy", charge_kw=CHARGE_KW)
+    pkg = {}
+    for plan in PLANS:
+        pkg_bill = bill_plan(plan, seas, per, imp_p, exp_p)
+        pkg[plan] = {"package_bill": round(pkg_bill),
+                     "package_save": round(no_b_by_plan[plan] - pkg_bill)}
+        print(f"{plan:9s} mid package ${pkg_bill:8,.0f}  "
+              f"saves ${no_b_by_plan[plan] - pkg_bill:6,.0f}/yr")
 
     # cross-check the EV-TOU-5 column against the canonical-engine artifact: the
     # table-rate battery value must agree with the published canonical figure to ~$100
     canon, canon_source = _resolve_dispatch_artifact(root)
     assert abs(plans["EV-TOU-5"]["battery_value"] - canon["pw3"]["greedy"]["save"]) < 100, \
         "EV-TOU-5 battery value diverged from the canonical dispatch artifact"
+    # same crosscheck for the mid package: the table-rate EV-TOU-5 package save
+    # must agree with the canonical engine's post_behavior.mid figure to ~$100
+    # (the same rate-basis gap as the battery crosscheck above). Fail-closed:
+    # a dispatch artifact without the block aborts the run.
+    try:
+        canon_mid = canon["post_behavior"]["mid"]
+    except KeyError:
+        raise SystemExit(
+            f"the resolved dispatch artifact ({canon_source}) has no "
+            "post_behavior.mid block for the mid-package crosscheck. Regenerate "
+            "it with battery_dispatch_policies.py first (see the ORDERING "
+            "CONTRACT in the module docstring).")
+    assert abs(pkg["EV-TOU-5"]["package_save"] - canon_mid["combined_save"]) < 100, \
+        (f"EV-TOU-5 mid package save diverged from the canonical dispatch "
+         f"artifact: table-rate ${pkg['EV-TOU-5']['package_save']} vs canonical "
+         f"post_behavior.mid.combined_save ${canon_mid['combined_save']} "
+         "(tolerance $100)")
     out = {
         "method": ("integrated: bill the year with and without the price-aware PW3 "
                    "dispatch (run_batt 'greedy', 13.5 kWh, 11.5 kW discharge / 5 kW charge "
@@ -243,6 +301,26 @@ if __name__ == "__main__":
             "basis": (f"{canon_source} — bill-derived rates, rates.bill_nem monthly "
                       "NEM netting, canonical holiday rule; the published EV-TOU-5 "
                       "battery economics")},
+        "mid_package_on_plans": {
+            "method": ("integrated mid package: EV shift scenario a (all sessions, "
+                       "behavior_rebuild.shift_ev) FIRST, then the price-aware PW3 "
+                       "greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
+                       "on the shifted year, and the WHOLE modified year re-billed "
+                       "end-to-end under each plan's own published-table rates — one "
+                       "pipeline, never a sum of separately modeled deltas. Baseline "
+                       "= the same plan's modeled no-package year (the no_battery "
+                       "column), same published-table rate basis, one rate vintage."),
+            "kwh_moved": round(moved),
+            "plans": pkg,
+            "canonical_crosscheck_ev_tou_5": {
+                "combined_save": canon_mid["combined_save"],
+                "bill": canon_mid["bill"],
+                "basis": (f"{canon_source} post_behavior.mid — bill-derived rates, "
+                          "rates.bill_nem monthly NEM netting, the same integrated "
+                          "shift-then-battery pipeline; the table-rate EV-TOU-5 "
+                          "package save is asserted against combined_save within "
+                          "$100 (rate-basis gap)")},
+        },
     }
     tmp = os.path.join(root, "data", "battery_plan_matrix.json.tmp")
     with open(tmp, "w") as fh:
