@@ -14,6 +14,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_report_consistency.py
 import calendar
 import csv
 import datetime as dt
+import hashlib
 import html as htmlmod
 import json
 import pathlib
@@ -5365,73 +5366,87 @@ _FIXED_PROSE_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 
 # KNOWN drift, pinned line by line (issue #201). Each entry names one template
 # line -- (section id, a substring unique among that section's checked lines)
-# -- whose fixed prose does NOT appear in index.html today, with the reason it
-# was not resolved in #201's sweep: resolving it needs a new token, a new TODO
-# block, or an index.html edit, all outside that fix's scope. The case fails
-# the moment an entry HEALS (delete the entry) or stops matching any checked
-# template line (the line changed -- re-decide it), so this list can only
-# shrink truthfully. NEW drift is never allowed in by this list.
+# -- whose fixed prose does NOT appear in index.html today, and maps it to
+# (digest, reason): the first 12 hex chars of sha256 over the NORMALIZED
+# template line exactly as _template_fixed_prose_drift reports it (whitespace
+# collapsed, comments already a \x00 hole -- _fixed_prose_line_digest), plus
+# the reason the line was not resolved in #201's sweep: resolving it needs a
+# new token, a new TODO block, or an index.html edit, all outside that fix's
+# scope. The case fails the moment an entry HEALS (delete the entry), stops
+# matching any checked template line (the line changed -- re-decide it), OR
+# the line drifts FURTHER while keeping its substring (the digest no longer
+# matches -- re-decide the entry), so this list can only shrink truthfully.
+# NEW drift is never allowed in by this list, and neither is a new edit to a
+# line it already covers.
 _FIXED_PROSE_DRIFT_ALLOWED = {
-    ("s1", "Every 15-minute interval of the last"):
+    ("s1", "Every 15-minute interval of the last"): ("50ada813f528",
         "index derives whole-home load in prose (29,914 kWh energy balance, CT-meter "
-        "cross-check); no tokens exist for those figures",
-    ("s2", "kW DC nameplate"):
-        "index adds module arithmetic and mount/orientation facts no token renders",
-    ("s2", "<b>In service since:</b>"):
-        "index words the NEM grandfathering span (~20 years) with no token for it",
-    ("s2", "<b>Production:</b>"):
+        "cross-check); no tokens exist for those figures"),
+    ("s2", "kW DC nameplate"): ("f3f0614b3626",
+        "index adds module arithmetic and mount/orientation facts no token renders"),
+    ("s2", "<b>In service since:</b>"): ("848ed58632f5",
+        "index words the NEM grandfathering span (~20 years) with no token for it"),
+    ("s2", "<b>Production:</b>"): ("b2b724534b3c",
         "index names the concrete sources (CT meter; PVOutput) the template keeps "
-        "monitoring-agnostic per CLAUDE.md section 7",
-    ("s2", "<b>Where it goes:</b>"):
-        "index adds MWh splits and share-of-production parentheticals with no tokens",
-    ("s5", "the behaviors behind them"):
-        "index counts the behaviors (four); the count has no token",
-    ("s5", "Behaviors driving the current bill"):
-        "index counts the behaviors (Four); the count has no token",
-    ("s6", "Price-aware (all non-super-off-peak imports)"):
-        "index's expansion cell adds cycles/day; no token for pw3x cycles exists",
-    ("s8", "<b>More panels:"):
+        "monitoring-agnostic per CLAUDE.md section 7"),
+    ("s2", "<b>Where it goes:</b>"): ("715f92125d33",
+        "index adds MWh splits and share-of-production parentheticals with no tokens"),
+    ("s5", "the behaviors behind them"): ("4c9586423c95",
+        "index counts the behaviors (four); the count has no token"),
+    ("s5", "Behaviors driving the current bill"): ("783be563930c",
+        "index counts the behaviors (Four); the count has no token"),
+    ("s6", "Price-aware (all non-super-off-peak imports)"): ("c0c52fc7d519",
+        "index's expansion cell adds cycles/day; no token for pw3x cycles exists"),
+    ("s8", "<b>More panels:"): ("2e409e20b9af",
         "deliberate divergence (#182): the template refuses to price added capacity "
-        "(pinned by its own case); index still publishes the priced timing paragraph",
-    ("s9", "degradation trend</h3>"):
-        "index's heading carries the measured span (6-year); no token owns it",
-    ("s9", "Inverter clipping"):
-        "index's heading bakes this household's verdict (none worth acting on)",
-    ("s9", "Phantom / always-on load"):
-        "index's heading bakes this household's verdict (identified, de-prioritized)",
-    ("s10", "detailed electric statements"):
-        "index adds the corpus date range and a findings count; neither has a token",
-    ("s10", "Generation billed at"):
-        "index names the CCA (CEA) in fixed prose the template keeps provider-neutral",
-    ("s10", "Model vs. actual"):
+        "(pinned by its own case); index still publishes the priced timing paragraph"),
+    ("s9", "degradation trend</h3>"): ("8da8f6ba573b",
+        "index's heading carries the measured span (6-year); no token owns it"),
+    ("s9", "Inverter clipping"): ("f861755778ff",
+        "index's heading bakes this household's verdict (none worth acting on)"),
+    ("s9", "Phantom / always-on load"): ("d47f1f64d6aa",
+        "index's heading bakes this household's verdict (identified, de-prioritized)"),
+    ("s10", "detailed electric statements"): ("6f579ee69931",
+        "index adds the corpus date range and a findings count; neither has a token"),
+    ("s10", "Generation billed at"): ("6d1752357deb",
+        "index names the CCA (CEA) in fixed prose the template keeps provider-neutral"),
+    ("s10", "Model vs. actual"): ("67147baaddde",
         "index's note lead is a decomposition claim (six measured terms plus a "
-        "residual) that only the filled TODO can truthfully state",
-    ("s11", "The install invoice shows"):
+        "residual) that only the filled TODO can truthfully state"),
+    ("s11", "The install invoice shows"): ("1e3efa71c591",
         "index appends the blended-$/kWh derivation (rate-history scaling, CA State "
-        "Auditor figures) with no tokens",
-    ("s12", "identical calendar windows in control years"):
+        "Auditor figures) with no tokens"),
+    ("s12", "identical calendar windows in control years"): ("fefee6083c46",
         "template is deliberately AHEAD here (#212's raw-ratio wording); index also "
-        "counts the control years (four) -- heals when index.html is regenerated",
-    ("s12", "Post ÷ pre (raw)</th>"):
+        "counts the control years (four) -- heals when index.html is regenerated"),
+    ("s12", "Post ÷ pre (raw)</th>"): ("bd7fac4233e5",
         "same #212 template-side change ('(raw)' column header) awaiting an "
-        "index.html regeneration",
-    ("s12", "How fast do the panels re-soil?"):
-        "index's heading adds a verdict clause (The evidence splits)",
-    ("s13", "Short workups pricing the context"):
-        "index counts the workups (Six) and dates NEM expiry (2039); no tokens",
-    ("s13", "Annual rate escalation</th>"):
-        "index prefixes the utility name (SDG&E) the template keeps neutral",
-    ("s13", "Level escalation vs spread escalation"):
+        "index.html regeneration"),
+    ("s12", "How fast do the panels re-soil?"): ("31876a0af4f9",
+        "index's heading adds a verdict clause (The evidence splits)"),
+    ("s13", "Short workups pricing the context"): ("29756b16f69d",
+        "index counts the workups (Six) and dates NEM expiry (2039); no tokens"),
+    ("s13", "Annual rate escalation</th>"): ("be0c211b8e51",
+        "index prefixes the utility name (SDG&E) the template keeps neutral"),
+    ("s13", "Level escalation vs spread escalation"): ("8a43381191aa",
         "index's heading carries a verdict and an estimated pill reading '4 winter "
         "rate changes'; the template's SPREAD_OBSERVATION_COUNT token renders a "
         "different description (priced cells across periods) -- token drift, not "
-        "just prose",
-    ("s14", "<b>Confidence labels:</b>"):
+        "just prose"),
+    ("s14", "<b>Confidence labels:</b>"): ("df64676a5e46",
         "index adds report-specific evidence claims (example list, 'Sections 1-10 "
-        "are measured/modeled throughout')",
-    ("s14", "not advice from any utility"):
-        "index names vendors (SDG&E, CEA, Enphase, Tesla) the template keeps generic",
+        "are measured/modeled throughout')"),
+    ("s14", "not advice from any utility"): ("05e7dcb440cc",
+        "index names vendors (SDG&E, CEA, Enphase, Tesla) the template keeps generic"),
 }
+
+
+def _fixed_prose_line_digest(line):
+    """The 12-hex-char pin an allowance carries for its covered line: sha256
+    over the line EXACTLY as _template_fixed_prose_drift reports it -- already
+    whitespace-collapsed by _fixed_prose_lines, comments already \\x00 holes.
+    One normalization, the checker's own; nothing here re-normalizes."""
+    return hashlib.sha256(line.encode()).hexdigest()[:12]
 
 
 def _fixed_prose_sections(doc, comment_replacement):
@@ -5492,8 +5507,13 @@ def _template_fixed_prose_drift(template_doc, index_doc):
     return checked, drifted
 
 
-def case_template_fixed_prose_lines_all_appear_in_the_published_page():
-    checked, drifted = _template_fixed_prose_drift(TEMPLATE_HTML, HTML)
+def _fixed_prose_gate(template_doc, index_doc):
+    """The WHOLE public gate as one reusable check: drift detection, the
+    allowance routing (substring match AND digest pin), the staleness sweep.
+    Returns the pass summary or raises AssertionError with the same messages
+    the real case shows -- so the guard case below can prove, on a mutated
+    template, that THIS logic (not a lookalike) rejects each defect shape."""
+    checked, drifted = _template_fixed_prose_drift(template_doc, index_doc)
     assert checked >= 50, (
         f"only {checked} template fixed-prose lines qualified for checking -- the "
         "parser or the threshold probably broke (72 qualified when this was written)")
@@ -5510,12 +5530,29 @@ def case_template_fixed_prose_lines_all_appear_in_the_published_page():
 
     used = set()
     new_drift = []
+    drifted_further = []
     for sid, line in drifted:
         key = _allowance_for(sid, line)
         if key is None:
             new_drift.append((sid, line))
+            continue
+        pinned, _reason = _FIXED_PROSE_DRIFT_ALLOWED[key]
+        if _fixed_prose_line_digest(line) != pinned:
+            drifted_further.append((sid, line, key, pinned))
         else:
             used.add(key)
+    # An entry blesses ONE exact line, pinned by digest -- never future edits
+    # that keep its substring. A covered line whose digest moved is NEW drift.
+    assert not drifted_further, (
+        "an ALLOWLISTED line drifted FURTHER: each line below still carries its "
+        "_FIXED_PROSE_DRIFT_ALLOWED substring, but its content no longer matches "
+        "the digest pinned when the allowance was decided, so the old reason no "
+        "longer covers it -- re-decide the entry (and re-pin its digest via "
+        "_fixed_prose_line_digest) rather than letting the allowance bless a new "
+        "edit:\n" + "\n".join(
+            f"  section {sid} (entry {key}, pinned {pinned}, line now "
+            f"{_fixed_prose_line_digest(line)}): {line}"
+            for sid, line, key, pinned in drifted_further))
     assert not new_drift, (
         "template fixed prose that appears nowhere in the same section of "
         "index.html -- the template is what a regeneration emits, so the published "
@@ -5538,9 +5575,14 @@ def case_template_fixed_prose_lines_all_appear_in_the_published_page():
             f"_FIXED_PROSE_DRIFT_ALLOWED, {len(_FIXED_PROSE_DRIFT_ALLOWED)} listed)")
 
 
+def case_template_fixed_prose_lines_all_appear_in_the_published_page():
+    return _fixed_prose_gate(TEMPLATE_HTML, HTML)
+
+
 def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
-    """The three defect shapes issue #201 names, reintroduced one at a time
-    into an in-memory copy of the template, must each be caught and NAMED
+    """The three defect shapes issue #201 names, plus a fourth (an edit to an
+    ALLOWLISTED line that keeps the entry's substring), reintroduced one at a
+    time into an in-memory copy of the template, must each be caught and NAMED
     (section id + the offending line) -- a guard trusted on plausibility
     alone has already shipped silent no-ops here (tests-must-fail memory)."""
     baseline_checked, baseline_drift = _template_fixed_prose_drift(TEMPLATE_HTML, HTML)
@@ -5576,8 +5618,48 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
             want_frag in line for _, line in introduced), (
             f"mutation {name!r} was caught but misattributed: expected section "
             f"{want_sid} with a line containing {want_frag!r}, got {introduced}")
-    return (f"all {len(mutations)} reintroduced #201 defects are caught and "
-            f"attributed to their section ({baseline_checked} lines checked, "
+
+    # FOURTH defect shape (the adversarial-review finding): an ALLOWLISTED
+    # line edited while its _FIXED_PROSE_DRIFT_ALLOWED substring stays intact.
+    # The three mutations above introduce drift a substring matches nothing
+    # for; this one hides INSIDE a covered line, so only the digest pin can
+    # see it -- and only the PUBLIC gate applies the pin, which is why this
+    # shape runs _fixed_prose_gate (the exact logic the real case calls),
+    # not the bare drift function.
+    old = "maps when the money leaves"
+    new = "maps where the money leaves"
+    name = "s5 allowlisted line edited around its intact substring"
+    assert TEMPLATE_HTML.count(old) == 1, (
+        f"mutation {name!r} no longer has a unique anchor in the template "
+        f"({TEMPLATE_HTML.count(old)} occurrences of {old!r}) -- re-anchor it")
+    mutated = TEMPLATE_HTML.replace(old, new)
+    assert mutated != TEMPLATE_HTML, f"mutation {name!r} was a no-op"
+    assert ("s5", "the behaviors behind them") in _FIXED_PROSE_DRIFT_ALLOWED, (
+        "the fourth mutation targets the s5 'the behaviors behind them' "
+        "allowance, which no longer exists -- re-anchor the mutation")
+    try:
+        _fixed_prose_gate(mutated, HTML)
+    except AssertionError as e:
+        msg = str(e)
+        assert "ALLOWLISTED line drifted FURTHER" in msg, (
+            f"mutation {name!r} was rejected, but not AS an allowlisted line "
+            f"drifting further -- the developer would hunt a new line instead "
+            f"of re-deciding the entry: {msg}")
+        assert "section s5" in msg and new in msg, (
+            f"mutation {name!r} was caught but the message does not name "
+            f"section s5 and the offending line: {msg}")
+        assert "the behaviors behind them" in msg, (
+            f"mutation {name!r} was caught but the message does not name the "
+            f"allowlist entry to re-decide: {msg}")
+    else:
+        raise AssertionError(
+            f"the gate did NOT catch mutation {name!r}: an edit to an "
+            "allowlisted line that keeps the entry's substring passed the "
+            "public gate -- the digest pin is not being enforced")
+
+    return (f"all {len(mutations)} reintroduced #201 defects plus the "
+            f"allowlisted-line-edited-further shape are caught and attributed "
+            f"to their section ({baseline_checked} lines checked, "
             f"{len(baseline_drift)} known-drift baseline)")
 
 

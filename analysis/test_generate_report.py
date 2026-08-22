@@ -19,6 +19,7 @@ installed.
 Run from the repo root:  ./.venv/bin/python analysis/test_generate_report.py
 """
 import ast
+import csv
 import json
 import pathlib
 import re
@@ -1193,14 +1194,22 @@ def case_a_second_ranked_household_renders_packages_and_plans_on_one_stated_foot
     the way out). That is the household issue #196 chromed and issue #200
     prices for.
 
-    THE COMMON FOOTING is the thing asserted, in the one paragraph a reader
-    meets it: section 7's opening states the packages hold the losing plan,
-    points at the rate plan comparison, and then quotes what the MID package
-    saves RE-BILLED ON THE WINNING PLAN -- the figure read HERE off
-    mid_package_on_plans (never hardcoded) with its baseline named in the
-    same sentence: the same plan's no-package year, one rate vintage. And
-    sections 0 and 3 of the same rendered file state the same standing, so
-    the plan comparison and the package figures cannot tell two stories."""
+    THE COMMON FOOTING is asserted MECHANICALLY, not as words alone: the
+    ranking (data/plan_results.csv, analyze_norelief.py's published-table
+    rate engine) and the switch pricing (battery_plan_matrix.json, its own
+    published-table engine) are ONE basis family, tied out by the matrix
+    generator's own fail-closed assert (each plan's no_battery within $1.00
+    of the CSV's CEA total, then rounded). This case re-asserts that tie-out
+    on the winner's row, checks the arithmetic identity behind "baseline =
+    the same plan's no-package year" (package_save = no_battery -
+    package_bill, up to independent roundings), and then requires the
+    rendered section-7 sentence to NAME that basis where the figure is
+    quoted: "published-table rates" and "battery×plan matrix". The figure
+    itself is read HERE off mid_package_on_plans (never hardcoded) with its
+    baseline named in the same sentence: the same plan's no-package year,
+    one rate vintage. And sections 0 and 3 of the same rendered file state
+    the same standing, so the plan comparison and the package figures
+    cannot tell two stories."""
     _require_gitleaks()
     _require_household()
     provider, cheapest, priced = trt._plan_ranking_inputs()
@@ -1213,6 +1222,38 @@ def case_a_second_ranked_household_renders_packages_and_plans_on_one_stated_foot
         f"mid_package_on_plans ({sorted(mid['plans'])}); this case needs one to "
         "put a priced winner ahead of the household")
     save = mid["plans"][rival]["package_save"]
+
+    # (0) THE ARTIFACT RELATIONSHIP THE SENTENCE RESTS ON, asserted before a
+    # single line is rendered. battery_plan_matrix.py fail-closed asserts each
+    # plan's no_battery within $1.00 of plan_results.csv's CEA total (its ref
+    # reads the provider == "CEA" rows) and stores round(no_b), so the two
+    # artifacts are mechanically reconciled, not merely labeled alike; mirror
+    # test_report_consistency's margin case and allow $3.00, past which the two
+    # generators actually disagree. Read the COMMITTED csv, not trt's parsed
+    # rows: the repricing fixture below edits rt's PARSED rows only, and the
+    # matrix was built against the committed totals -- the committed file is
+    # the side the tie-out actually ran against.
+    committed = list(csv.DictReader(
+        (rt.ROOT / "data" / "plan_results.csv").read_text().splitlines()))
+    csv_total = float(next(r["total"] for r in committed
+                           if r["provider"] == "CEA" and r["plan"] == rival))
+    no_batt = rt._json("battery_plan_matrix.json")["plans"][rival]["no_battery"]
+    assert abs(no_batt - csv_total) <= 3.0, (
+        f"the ranking and the switch pricing are NOT on one footing: "
+        f"battery_plan_matrix.json plans[{rival!r}].no_battery (${no_batt:,}) is "
+        f"${abs(no_batt - csv_total):,.2f} from plan_results.csv's CEA total "
+        f"(${csv_total:,.2f}) -- past the generator's own $1.00 tie-out plus "
+        "roundings, so the two artifacts no longer reconcile")
+    # ... and the identity that makes "baseline = the same plan's no-package
+    # year" checkable: package_save = no_battery - package_bill, up to $1
+    # because the three fields are rounded independently by the generator.
+    pkg_bill = mid["plans"][rival]["package_bill"]
+    assert abs(save - (no_batt - pkg_bill)) <= 1, (
+        f"mid_package_on_plans.plans[{rival!r}].package_save (${save:,}) is not "
+        f"plans[{rival!r}].no_battery - package_bill (${no_batt:,} - ${pkg_bill:,} "
+        f"= ${no_batt - pkg_bill:,}) -- the quoted save is not measured against "
+        "the same plan's no-package year")
+
     with tempfile.TemporaryDirectory() as td:
         cache_dir = pathlib.Path(td) / "cache"
         dest_dir = pathlib.Path(td) / "dest"
@@ -1243,6 +1284,16 @@ def case_a_second_ranked_household_renders_packages_and_plans_on_one_stated_foot
     # year, one rate vintage. That is the stated common footing.
     assert ("no-package" in para and "same plan" in para
             and "one rate vintage" in para), para
+    # ... and the footing's PROVENANCE stated where the figure is quoted, not
+    # implied: the sentence (_s7_switch_pricing) must name the basis family
+    # ("published-table rates" -- the same family plan_results.csv is priced
+    # on) and the artifact ("battery×plan matrix") the reader can check it in.
+    assert "published-table rates" in para, (
+        f"section 7 quotes the switch figure without naming its rate basis "
+        f"(expected 'published-table rates'): {para!r}")
+    assert "battery×plan matrix" in para, (
+        f"section 7 quotes the switch figure without naming the battery×plan "
+        f"matrix it is read from: {para!r}")
 
     # (3) Sections 0 and 3 of the same file state the same standing.
     assert "a cheaper rate plan exists" in html, (
