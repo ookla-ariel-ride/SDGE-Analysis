@@ -5507,12 +5507,95 @@ def _template_fixed_prose_drift(template_doc, index_doc):
     return checked, drifted
 
 
+# THE ONE-PROSE-ELEMENT-PER-SOURCE-LINE CONVENTION, enforced (round-3 review).
+# _template_fixed_prose_drift reads the template LINE BY LINE and skips any
+# line under _FIXED_PROSE_MIN_CHARS of fixed content, so a prose element
+# re-wrapped across short source lines becomes invisible to the whole gate: a
+# duplicate of a covered paragraph split into 5-22-char lines passed with 72
+# checked / 24 used. The line-by-line reading is only sound while the template
+# keeps one prose element per source line, so that assumption is asserted
+# structurally: a checked-prose element type OPENED on a source line without
+# its matching closing tag on the same line fails, naming section, tag, line.
+#
+# THE TAG SET IS DERIVED FROM THE TEMPLATE AS IT IS, not aspirational. The 72
+# checked lines open with b/div/h2/h3/li/p/span/thead/tr (plus one no-tag
+# continuation of the exempted s14 paragraph below). Of those, div is also a
+# structural container that legitimately spans lines (grid2/grid3/cards/pkg/
+# rec wrappers), so divs are held to one-per-line only when a class token
+# carries checked prose: card/note (checked lines open with them) and lbl/big
+# (the prose cells nested inside card lines). <summary> spans lines by design
+# (h2 + teaser inside) and no checked line opens with it, so it is NOT in the
+# set -- its teaser prose rides in <span class="teaser">, and span IS held.
+_FIXED_PROSE_ONE_LINE_TAGS = ("b", "h2", "h3", "li", "p", "span", "thead", "tr")
+_FIXED_PROSE_ONE_LINE_DIV_CLASSES = frozenset({"card", "note", "lbl", "big"})
+
+# The ONE deliberate multi-line prose element in today's template: the s14
+# provenance paragraph (CLAUDE.md section 11) opens here and closes two source
+# lines later. Its continuation lines each carry enough fixed prose to be
+# checked individually, so nothing in it escapes the gate; anything else
+# spanning lines must be listed here deliberately or fail.
+_FIXED_PROSE_MULTILINE_ALLOWED = {
+    ("s14", '<p class="small"><b>Data sources:</b>'):
+        "the provenance paragraph is written across source lines with <br> "
+        "breaks; every continuation line is long enough to be checked itself",
+}
+
+
+def _template_prose_multiline_violations(template_doc):
+    """[(sid, tag, line)] for every checked-prose element type opened on a
+    template source line without its closing tag on that line -- read through
+    the same comment/script/style preprocessing the drift checker applies
+    (_fixed_prose_sections/_fixed_prose_lines), so both see identical lines."""
+    out = []
+    for sid, ttext in _fixed_prose_sections(template_doc, "\x00").items():
+        for line in _fixed_prose_lines(ttext):
+            for tag in _FIXED_PROSE_ONE_LINE_TAGS:
+                if (len(re.findall(rf"<{tag}(?=[\s>])", line))
+                        > line.count(f"</{tag}>")):
+                    out.append((sid, tag, line))
+            div_opens = re.findall(r"<div\b([^>]*)>", line)
+            if div_opens and len(div_opens) != line.count("</div>"):
+                for attrs in div_opens:
+                    m = re.search(r'class="([^"]*)"', attrs)
+                    if m and (_FIXED_PROSE_ONE_LINE_DIV_CLASSES
+                              & set(m.group(1).split())):
+                        out.append((sid, "div", line))
+                        break
+    return out
+
+
 def _fixed_prose_gate(template_doc, index_doc):
-    """The WHOLE public gate as one reusable check: drift detection, the
-    allowance routing (substring match AND digest pin), the staleness sweep.
-    Returns the pass summary or raises AssertionError with the same messages
-    the real case shows -- so the guard case below can prove, on a mutated
-    template, that THIS logic (not a lookalike) rejects each defect shape."""
+    """The WHOLE public gate as one reusable check: the one-element-per-line
+    structural assumption first, then drift detection, the allowance routing
+    (substring match AND digest pin, exactly one line each), the staleness
+    sweeps. Returns the pass summary or raises AssertionError with the same
+    messages the real case shows -- so the guard case below can prove, on a
+    mutated template, that THIS logic (not a lookalike) rejects each shape."""
+    unexempt, used_exemptions = [], set()
+    for sid, tag, line in _template_prose_multiline_violations(template_doc):
+        keys = [k for k in _FIXED_PROSE_MULTILINE_ALLOWED
+                if k[0] == sid and k[1] in line]
+        if keys:
+            used_exemptions.update(keys)
+        else:
+            unexempt.append((sid, tag, line))
+    assert not unexempt, (
+        "template prose element OPENS on one source line without CLOSING on "
+        "it -- the fixed-prose checker reads the template line by line and "
+        f"skips lines under {_FIXED_PROSE_MIN_CHARS} fixed chars, so prose "
+        "wrapped across short source lines silently leaves the gate's "
+        "coverage entirely; keep one prose element per source line (or list "
+        "a deliberate multi-line element in _FIXED_PROSE_MULTILINE_ALLOWED "
+        "with its reason):\n" + "\n".join(
+            f"  section {sid}: <{tag}> left open on: {line}"
+            for sid, tag, line in unexempt))
+    stale_ex = sorted(k for k in _FIXED_PROSE_MULTILINE_ALLOWED
+                      if k not in used_exemptions)
+    assert not stale_ex, (
+        f"_FIXED_PROSE_MULTILINE_ALLOWED entries matching no open-without-"
+        f"close template line: {stale_ex} -- the element was rejoined onto "
+        "one line or edited away; delete or re-decide the exemption")
+
     checked, drifted = _template_fixed_prose_drift(template_doc, index_doc)
     assert checked >= 50, (
         f"only {checked} template fixed-prose lines qualified for checking -- the "
@@ -5705,10 +5788,55 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
             "allowlisted line passed the public gate -- the exactly-one "
             "count per allowance is not being enforced")
 
+    # SIXTH defect shape (round-3 review): the allowlisted s5 paragraph
+    # duplicated WRAPPED, every source line under the 30-fixed-char
+    # threshold. Each wrapped line is too short to be checked, so the drift
+    # detector, the digest pin, and the exactly-one count are all blind to
+    # it -- only the one-element-per-source-line structural assert can see
+    # the <p> opened without closing on its line. The rejection must name
+    # the multi-line ELEMENT, not any allowance.
+    wrapped = ("<p>This section\nmaps when the\nmoney leaves: your\n"
+               "grid flows by hour,\nseason, and month,\nand the behaviors\n"
+               "behind them.</p>")
+    name = "s5 allowlisted paragraph duplicated wrapped across short lines"
+    for wline in wrapped.splitlines():
+        content = _fixed_prose_content(re.sub(r"\s+", " ", wline).strip())
+        assert len(content) < _FIXED_PROSE_MIN_CHARS, (
+            f"mutation {name!r} no longer exercises the under-threshold hole: "
+            f"wrapped line {wline!r} has {len(content)} fixed chars, at or "
+            f"over the {_FIXED_PROSE_MIN_CHARS}-char threshold -- re-wrap it")
+    assert TEMPLATE_HTML.count(dup) == 1, (
+        f"mutation {name!r} no longer has a unique anchor in the template "
+        f"({TEMPLATE_HTML.count(dup)} occurrences of {dup!r}) -- re-anchor it")
+    mutated = TEMPLATE_HTML.replace(dup, dup + "\n" + wrapped)
+    assert mutated != TEMPLATE_HTML, f"mutation {name!r} was a no-op"
+    try:
+        _fixed_prose_gate(mutated, HTML)
+    except AssertionError as e:
+        msg = str(e)
+        assert "OPENS on one source line without CLOSING" in msg, (
+            f"mutation {name!r} was rejected, but not AS a multi-line prose "
+            f"element -- the structural assert is not what fired: {msg}")
+        assert ("section s5" in msg and "<p> left open on" in msg
+                and "<p>This section" in msg), (
+            f"mutation {name!r} was caught but the message does not name the "
+            f"section, the tag, and the opening line: {msg}")
+        assert ("drifted FURTHER" not in msg
+                and "MORE THAN ONE drifted line" not in msg), (
+            f"mutation {name!r} must be attributed to the multi-line element, "
+            f"not to an allowance: {msg}")
+    else:
+        raise AssertionError(
+            f"the gate did NOT catch mutation {name!r}: a wrapped duplicate "
+            "whose every source line is under the fixed-char threshold "
+            "passed the public gate -- the one-element-per-line structural "
+            "assert is not being enforced")
+
     return (f"all {len(mutations)} reintroduced #201 defects plus the "
-            f"allowlisted-line-edited-further and allowlisted-line-duplicated "
-            f"shapes are caught and attributed ({baseline_checked} lines "
-            f"checked, {len(baseline_drift)} known-drift baseline)")
+            f"allowlisted-line-edited-further, allowlisted-line-duplicated "
+            f"and wrapped-duplication shapes are caught and attributed "
+            f"({baseline_checked} lines checked, {len(baseline_drift)} "
+            f"known-drift baseline)")
 
 
 CASES = [
