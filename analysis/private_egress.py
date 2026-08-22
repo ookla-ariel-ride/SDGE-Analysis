@@ -102,8 +102,11 @@ Run directly for a one-path verdict:
 import fnmatch
 import os
 import pathlib
+import re
+import shutil
 import subprocess
 import sys
+import unicodedata
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -627,12 +630,16 @@ DESTINATION_CONFIG_SCOPES = ("--worktree", "--local")
 # index entry with no file in the working tree has no on-disk spelling for the
 # walk to find.
 #
-# WHERE THE TWO STILL MISS TOGETHER, said here rather than left to be inferred
-# from "neither subsumes the other": a tracked index entry that has NO
-# working-tree file and differs from the path only in NON-ASCII case is seen by
-# neither probe -- ':(icase)' folds ASCII only, and the walk has nothing to
-# resolve for a leaf that does not exist. Issue #230, open, and a boundary of what
-# the tracked question covers rather than a gap something else catches.
+# WHERE THE TWO USED TO MISS TOGETHER, and what closed it (issue #230). A tracked
+# index entry with NO working-tree file, differing from the path only in NON-ASCII
+# case, was seen by neither probe -- ':(icase)' folds ASCII only, and the walk has
+# nothing to resolve for a leaf that does not exist. A THIRD question now covers
+# it, and it is not a third probe of the same kind: _index_case_aliases()
+# enumerates the destination's index and compares each entry against the candidate
+# component by component, under the generated fold at CASE_FOLD_SED and gated by the
+# per-component fold vector. The pair above still does the work wherever a name
+# exists on disk, where the filesystem itself is the oracle; the enumeration is
+# what answers for a name that does not.
 ALIAS_CONFIG_OVERRIDE = (("core.precomposeUnicode", "true"),)
 # The name the ROOT's half of the case measurement is taken on. `.git` is the one
 # entry every worktree root is guaranteed to have -- a directory in the main
@@ -643,6 +650,439 @@ ALIAS_CONFIG_OVERRIDE = (("core.precomposeUnicode", "true"),)
 # makes the answer follow the path onto a volume mounted under the root.
 CASE_PROBE_NAME = ".git"
 CASE_PROBE_ALIAS = ".GIT"
+
+# ---------------------------------------------------------------------------
+# THE CASE FOLD (issues #230, #233) -- the one comparison in this module that
+# MODELS what a folding filesystem does instead of measuring it, and the reason
+# it has to exist.
+#
+# Everywhere else the filesystem itself answers "are these two names one file":
+# _same_file() stats both and compares device and inode, which needs no Unicode
+# rules and is right for whatever some later volume folds. That instrument needs
+# at least one of the two names to EXIST. For an index entry that is tracked and
+# has no working-tree file, and a candidate leaf that has not been created yet,
+# NEITHER name exists -- and there is no write-free way to ask a filesystem
+# whether it would collide two names that are not there. Measured rather than
+# assumed: stat, lstat and realpath all answer ENOENT for both spellings, and
+# every oracle that does answer (open(O_CREAT|O_EXCL), link, rename) writes
+# inside a destination this module has not yet decided it may write to.
+#
+# So the pair is compared under a fold both implementations perform on the raw
+# bytes, FROM ONE GENERATED TABLE. The table is python's own simple lowercase
+# map -- str.lower() -- emitted as a sed script: CASE_FOLD_SED below, and the
+# byte-identical literal in stage-private-data.sh's _CASE_FOLD_SED. The shell
+# runs that text through `LC_ALL=C sed`; this module PARSES THE SAME TEXT and
+# applies it with one regex. Neither side writes down a fold rule of its own, so
+# there is no second derivation for the two to drift apart. Regenerate with
+#
+#     python3 analysis/private_egress.py --regenerate-case-fold
+#
+# run on the NEWEST interpreter available, which rewrites the marked block in
+# BOTH files.
+#
+# THE DOMAIN IS PINNED, NOT RE-DERIVED PER RUN (issue #234). str.lower() is a
+# property of the interpreter's Unicode version, not a constant: this table is
+# 1392 pairs under Unicode 13 (python 3.9), 1432 under 15 (3.12) and 1459 under
+# 16 (3.14), all measured. A committed table asserted EQUAL to what the running
+# interpreter generates is therefore asserted against whichever python happens
+# to run the suite -- it passed locally on 3.9 and failed on the 3.12 CI pins in
+# the same commit, which is how this was found. So:
+#
+#   * the table is generated under the newest interpreter to hand, making it the
+#     WIDEST fold available rather than the local one;
+#   * CASE_FOLD_UNICODE below records the Unicode version it came from, written
+#     by the generator rather than typed;
+#   * the guard case asserts the committed table is a SUPERSET of the running
+#     interpreter's str.lower(), and byte-equal only when that interpreter's
+#     unicodedata.unidata_version is the recorded one.
+#
+# SUPERSET IS THE FAIL-CLOSED DIRECTION HERE, which is what lets the assertion
+# be relaxed to it. A pair the table joins that the running python does not know
+# is a pair some later Unicode assigned: the guard sees an alias the local
+# interpreter cannot name, and the worst it costs is an over-refusal of a
+# destination that is genuinely two files. A pair the running python knows and
+# the table lacks is an alias NOBODY sees, which is the fail-open condition
+# issue #230 exists to close -- so that is the direction that fails the suite,
+# loudly, naming the missing pairs.
+#
+# WHAT HAPPENS ON ANOTHER INTERPRETER, both directions, because both happen:
+#   * NEWER (a Unicode this table predates). The suite passes as long as every
+#     pair that python knows is in the table, and fails the moment one is not --
+#     which is a real staleness and not a version quarrel. The remedy is to
+#     regenerate on that interpreter, which widens the table and moves
+#     CASE_FOLD_UNICODE forward.
+#   * OLDER. Regeneration REFUSES: regenerate_case_fold() compares the table it
+#     would write against the committed one and will not drop a pair, so running
+#     the command on 3.9 today reports what it would lose and writes nothing.
+#     An older interpreter can still RUN the guard -- the superset holds
+#     trivially -- it just cannot narrow the domain by regenerating.
+#
+# WHAT IT FOLDS, EXACTLY: every code point whose str.lower() is a SINGLE
+# different code point, and nothing else. ASCII A-Z, the whole of the 2-byte
+# UTF-8 range (Latin-1 supplement, Latin Extended-A and -B, IPA, Greek and
+# Coptic, Cyrillic, Armenian), and the 3- and 4-byte code points str.lower()
+# maps one-to-one (Georgian, Cherokee, Glagolitic, Greek Extended, the
+# fullwidth Latin forms, Warang Citi, Medefaidrin, Adlam, Deseret). It does NOT
+# fold two unrelated accents: 'í' and 'å' are not a case pair and stay apart.
+#
+# IT IS NOT A SUPERSET OF WHAT A FOLDING VOLUME DOES, and the table it replaces
+# was described here as one. That claim was wrong in both directions, measured
+# rather than argued (issue #233):
+#
+#   UNDER-MATCHING, which is the defect. The old table was three BYTE ranges
+#   (A-Z, \200-\237, \300-\337, each with 0x20 set), so it folded a pair only
+#   where the UTF-8 differs in the 0x20 bit of the FINAL byte. Of the 380 cased
+#   pairs in the five blocks a filename realistically uses it folded 61 and
+#   MISSED 319 -- all of Latin Extended-A and -B, most of Greek, most of
+#   Cyrillic. A tracked-but-absent `private/РИСК.yaml` beside a candidate
+#   `private/риск.yaml` therefore matched nothing and the guard ACCEPTED, which
+#   is issue #230 still open across the majority of its own space. On this
+#   checkout's APFS volume those two spellings really are one file (measured:
+#   equal st_dev and st_ino after writing one of them), so the direction of that
+#   residue was FAIL-OPEN. The word "fail-closed" is what made it invisible.
+#
+#   OVER-MATCHING, which was the claimed price and is not one worth paying. The
+#   old table folded U+2010 and U+2030 together; they are not a case pair and
+#   APFS keeps them apart (measured). The generated table folds neither more nor
+#   less than str.lower() does.
+#
+# WHAT IT STILL DOES NOT FOLD, and the direction each residue errs. All three
+# err FAIL-OPEN -- a pair this table does not join is an alias the guard does
+# not see -- and the first two were MEASURED to fold on this checkout's APFS
+# volume, so neither is theoretical:
+#
+#   * FULL-CASEFOLD equivalences simple lowercasing does not reach: the 297 code
+#     points whose str.casefold() differs from their str.lower(), among them
+#     U+03C2 final sigma / U+03C3 sigma, U+017F long s / 's', U+00B5 micro sign
+#     / U+03BC. That count is SOURCE CODE POINTS, one per code point cp for
+#     which chr(cp).casefold() != chr(cp).lower(), and it is the whole residue
+#     rather than the reachable part of it: 194 of the 297 casefold to a single
+#     code point and 103 to more than one (the 297 land on 178 distinct
+#     casefolded strings). Counting only the single-code-point 194 understates
+#     what simple lowercasing misses, and this residue is fail-open, so the
+#     understating direction is the dangerous one. str.casefold() does not build
+#     the table because it is many-to-one on LENGTH -- 'ß' casefolds to 'ss' --
+#     and a per-code-point substitution cannot express that without changing
+#     what a name's components are. All four counts are asserted against the
+#     running interpreter by the guard case, not restated from memory; they are
+#     identical under Unicode 13, 14, 15 and 16 (measured).
+#   * U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE, whose str.lower() is two
+#     code points, excluded for the same reason. This is the one residue that
+#     is NOT reachable here: APFS was measured to keep U+0130 and 'i' apart.
+#   * NORMALIZATION, which is a different axis and not this table's. NFC and NFD
+#     spellings of one name are joined where git can do it -- core.
+#     precomposeUnicode, forced true for the alias pathspec, see
+#     ALIAS_CONFIG_OVERRIDE -- and are NOT joined for the tracked-but-absent
+#     entry this table exists for.
+#
+# THE TABLE DOES NOT PRESERVE BYTE LENGTH, for 26 of its pairs: U+023A 'Ⱥ' ->
+# U+2C65 'ⱥ' grows from two UTF-8 bytes to three, U+212A KELVIN SIGN -> 'k'
+# shrinks from three to one. Nothing in this module ever depended on that;
+# stage-private-data.sh's cheap pre-filter did, and no longer does -- see "A
+# CHEAP GATE FIRST" there.
+#
+# Where either name DOES exist the filesystem is asked instead, by
+# _ondisk_relpath(), and none of the above applies.
+# --- BEGIN GENERATED CASE FOLD (private_egress.py --regenerate-case-fold) ---
+CASE_FOLD_UNICODE = "16.0.0"
+CASE_FOLD_SED = """\
+s/A/a/g;s/B/b/g;s/C/c/g;s/D/d/g;s/E/e/g;s/F/f/g;s/G/g/g;s/H/h/g
+s/I/i/g;s/J/j/g;s/K/k/g;s/L/l/g;s/M/m/g;s/N/n/g;s/O/o/g;s/P/p/g
+s/Q/q/g;s/R/r/g;s/S/s/g;s/T/t/g;s/U/u/g;s/V/v/g;s/W/w/g;s/X/x/g
+s/Y/y/g;s/Z/z/g;s/À/à/g;s/Á/á/g;s/Â/â/g;s/Ã/ã/g;s/Ä/ä/g;s/Å/å/g
+s/Æ/æ/g;s/Ç/ç/g;s/È/è/g;s/É/é/g;s/Ê/ê/g;s/Ë/ë/g;s/Ì/ì/g;s/Í/í/g
+s/Î/î/g;s/Ï/ï/g;s/Ð/ð/g;s/Ñ/ñ/g;s/Ò/ò/g;s/Ó/ó/g;s/Ô/ô/g;s/Õ/õ/g
+s/Ö/ö/g;s/Ø/ø/g;s/Ù/ù/g;s/Ú/ú/g;s/Û/û/g;s/Ü/ü/g;s/Ý/ý/g;s/Þ/þ/g
+s/Ā/ā/g;s/Ă/ă/g;s/Ą/ą/g;s/Ć/ć/g;s/Ĉ/ĉ/g;s/Ċ/ċ/g;s/Č/č/g;s/Ď/ď/g
+s/Đ/đ/g;s/Ē/ē/g;s/Ĕ/ĕ/g;s/Ė/ė/g;s/Ę/ę/g;s/Ě/ě/g;s/Ĝ/ĝ/g;s/Ğ/ğ/g
+s/Ġ/ġ/g;s/Ģ/ģ/g;s/Ĥ/ĥ/g;s/Ħ/ħ/g;s/Ĩ/ĩ/g;s/Ī/ī/g;s/Ĭ/ĭ/g;s/Į/į/g
+s/Ĳ/ĳ/g;s/Ĵ/ĵ/g;s/Ķ/ķ/g;s/Ĺ/ĺ/g;s/Ļ/ļ/g;s/Ľ/ľ/g;s/Ŀ/ŀ/g;s/Ł/ł/g
+s/Ń/ń/g;s/Ņ/ņ/g;s/Ň/ň/g;s/Ŋ/ŋ/g;s/Ō/ō/g;s/Ŏ/ŏ/g;s/Ő/ő/g;s/Œ/œ/g
+s/Ŕ/ŕ/g;s/Ŗ/ŗ/g;s/Ř/ř/g;s/Ś/ś/g;s/Ŝ/ŝ/g;s/Ş/ş/g;s/Š/š/g;s/Ţ/ţ/g
+s/Ť/ť/g;s/Ŧ/ŧ/g;s/Ũ/ũ/g;s/Ū/ū/g;s/Ŭ/ŭ/g;s/Ů/ů/g;s/Ű/ű/g;s/Ų/ų/g
+s/Ŵ/ŵ/g;s/Ŷ/ŷ/g;s/Ÿ/ÿ/g;s/Ź/ź/g;s/Ż/ż/g;s/Ž/ž/g;s/Ɓ/ɓ/g;s/Ƃ/ƃ/g
+s/Ƅ/ƅ/g;s/Ɔ/ɔ/g;s/Ƈ/ƈ/g;s/Ɖ/ɖ/g;s/Ɗ/ɗ/g;s/Ƌ/ƌ/g;s/Ǝ/ǝ/g;s/Ə/ə/g
+s/Ɛ/ɛ/g;s/Ƒ/ƒ/g;s/Ɠ/ɠ/g;s/Ɣ/ɣ/g;s/Ɩ/ɩ/g;s/Ɨ/ɨ/g;s/Ƙ/ƙ/g;s/Ɯ/ɯ/g
+s/Ɲ/ɲ/g;s/Ɵ/ɵ/g;s/Ơ/ơ/g;s/Ƣ/ƣ/g;s/Ƥ/ƥ/g;s/Ʀ/ʀ/g;s/Ƨ/ƨ/g;s/Ʃ/ʃ/g
+s/Ƭ/ƭ/g;s/Ʈ/ʈ/g;s/Ư/ư/g;s/Ʊ/ʊ/g;s/Ʋ/ʋ/g;s/Ƴ/ƴ/g;s/Ƶ/ƶ/g;s/Ʒ/ʒ/g
+s/Ƹ/ƹ/g;s/Ƽ/ƽ/g;s/Ǆ/ǆ/g;s/ǅ/ǆ/g;s/Ǉ/ǉ/g;s/ǈ/ǉ/g;s/Ǌ/ǌ/g;s/ǋ/ǌ/g
+s/Ǎ/ǎ/g;s/Ǐ/ǐ/g;s/Ǒ/ǒ/g;s/Ǔ/ǔ/g;s/Ǖ/ǖ/g;s/Ǘ/ǘ/g;s/Ǚ/ǚ/g;s/Ǜ/ǜ/g
+s/Ǟ/ǟ/g;s/Ǡ/ǡ/g;s/Ǣ/ǣ/g;s/Ǥ/ǥ/g;s/Ǧ/ǧ/g;s/Ǩ/ǩ/g;s/Ǫ/ǫ/g;s/Ǭ/ǭ/g
+s/Ǯ/ǯ/g;s/Ǳ/ǳ/g;s/ǲ/ǳ/g;s/Ǵ/ǵ/g;s/Ƕ/ƕ/g;s/Ƿ/ƿ/g;s/Ǹ/ǹ/g;s/Ǻ/ǻ/g
+s/Ǽ/ǽ/g;s/Ǿ/ǿ/g;s/Ȁ/ȁ/g;s/Ȃ/ȃ/g;s/Ȅ/ȅ/g;s/Ȇ/ȇ/g;s/Ȉ/ȉ/g;s/Ȋ/ȋ/g
+s/Ȍ/ȍ/g;s/Ȏ/ȏ/g;s/Ȑ/ȑ/g;s/Ȓ/ȓ/g;s/Ȕ/ȕ/g;s/Ȗ/ȗ/g;s/Ș/ș/g;s/Ț/ț/g
+s/Ȝ/ȝ/g;s/Ȟ/ȟ/g;s/Ƞ/ƞ/g;s/Ȣ/ȣ/g;s/Ȥ/ȥ/g;s/Ȧ/ȧ/g;s/Ȩ/ȩ/g;s/Ȫ/ȫ/g
+s/Ȭ/ȭ/g;s/Ȯ/ȯ/g;s/Ȱ/ȱ/g;s/Ȳ/ȳ/g;s/Ⱥ/ⱥ/g;s/Ȼ/ȼ/g;s/Ƚ/ƚ/g;s/Ⱦ/ⱦ/g
+s/Ɂ/ɂ/g;s/Ƀ/ƀ/g;s/Ʉ/ʉ/g;s/Ʌ/ʌ/g;s/Ɇ/ɇ/g;s/Ɉ/ɉ/g;s/Ɋ/ɋ/g;s/Ɍ/ɍ/g
+s/Ɏ/ɏ/g;s/Ͱ/ͱ/g;s/Ͳ/ͳ/g;s/Ͷ/ͷ/g;s/Ϳ/ϳ/g;s/Ά/ά/g;s/Έ/έ/g;s/Ή/ή/g
+s/Ί/ί/g;s/Ό/ό/g;s/Ύ/ύ/g;s/Ώ/ώ/g;s/Α/α/g;s/Β/β/g;s/Γ/γ/g;s/Δ/δ/g
+s/Ε/ε/g;s/Ζ/ζ/g;s/Η/η/g;s/Θ/θ/g;s/Ι/ι/g;s/Κ/κ/g;s/Λ/λ/g;s/Μ/μ/g
+s/Ν/ν/g;s/Ξ/ξ/g;s/Ο/ο/g;s/Π/π/g;s/Ρ/ρ/g;s/Σ/σ/g;s/Τ/τ/g;s/Υ/υ/g
+s/Φ/φ/g;s/Χ/χ/g;s/Ψ/ψ/g;s/Ω/ω/g;s/Ϊ/ϊ/g;s/Ϋ/ϋ/g;s/Ϗ/ϗ/g;s/Ϙ/ϙ/g
+s/Ϛ/ϛ/g;s/Ϝ/ϝ/g;s/Ϟ/ϟ/g;s/Ϡ/ϡ/g;s/Ϣ/ϣ/g;s/Ϥ/ϥ/g;s/Ϧ/ϧ/g;s/Ϩ/ϩ/g
+s/Ϫ/ϫ/g;s/Ϭ/ϭ/g;s/Ϯ/ϯ/g;s/ϴ/θ/g;s/Ϸ/ϸ/g;s/Ϲ/ϲ/g;s/Ϻ/ϻ/g;s/Ͻ/ͻ/g
+s/Ͼ/ͼ/g;s/Ͽ/ͽ/g;s/Ѐ/ѐ/g;s/Ё/ё/g;s/Ђ/ђ/g;s/Ѓ/ѓ/g;s/Є/є/g;s/Ѕ/ѕ/g
+s/І/і/g;s/Ї/ї/g;s/Ј/ј/g;s/Љ/љ/g;s/Њ/њ/g;s/Ћ/ћ/g;s/Ќ/ќ/g;s/Ѝ/ѝ/g
+s/Ў/ў/g;s/Џ/џ/g;s/А/а/g;s/Б/б/g;s/В/в/g;s/Г/г/g;s/Д/д/g;s/Е/е/g
+s/Ж/ж/g;s/З/з/g;s/И/и/g;s/Й/й/g;s/К/к/g;s/Л/л/g;s/М/м/g;s/Н/н/g
+s/О/о/g;s/П/п/g;s/Р/р/g;s/С/с/g;s/Т/т/g;s/У/у/g;s/Ф/ф/g;s/Х/х/g
+s/Ц/ц/g;s/Ч/ч/g;s/Ш/ш/g;s/Щ/щ/g;s/Ъ/ъ/g;s/Ы/ы/g;s/Ь/ь/g;s/Э/э/g
+s/Ю/ю/g;s/Я/я/g;s/Ѡ/ѡ/g;s/Ѣ/ѣ/g;s/Ѥ/ѥ/g;s/Ѧ/ѧ/g;s/Ѩ/ѩ/g;s/Ѫ/ѫ/g
+s/Ѭ/ѭ/g;s/Ѯ/ѯ/g;s/Ѱ/ѱ/g;s/Ѳ/ѳ/g;s/Ѵ/ѵ/g;s/Ѷ/ѷ/g;s/Ѹ/ѹ/g;s/Ѻ/ѻ/g
+s/Ѽ/ѽ/g;s/Ѿ/ѿ/g;s/Ҁ/ҁ/g;s/Ҋ/ҋ/g;s/Ҍ/ҍ/g;s/Ҏ/ҏ/g;s/Ґ/ґ/g;s/Ғ/ғ/g
+s/Ҕ/ҕ/g;s/Җ/җ/g;s/Ҙ/ҙ/g;s/Қ/қ/g;s/Ҝ/ҝ/g;s/Ҟ/ҟ/g;s/Ҡ/ҡ/g;s/Ң/ң/g
+s/Ҥ/ҥ/g;s/Ҧ/ҧ/g;s/Ҩ/ҩ/g;s/Ҫ/ҫ/g;s/Ҭ/ҭ/g;s/Ү/ү/g;s/Ұ/ұ/g;s/Ҳ/ҳ/g
+s/Ҵ/ҵ/g;s/Ҷ/ҷ/g;s/Ҹ/ҹ/g;s/Һ/һ/g;s/Ҽ/ҽ/g;s/Ҿ/ҿ/g;s/Ӏ/ӏ/g;s/Ӂ/ӂ/g
+s/Ӄ/ӄ/g;s/Ӆ/ӆ/g;s/Ӈ/ӈ/g;s/Ӊ/ӊ/g;s/Ӌ/ӌ/g;s/Ӎ/ӎ/g;s/Ӑ/ӑ/g;s/Ӓ/ӓ/g
+s/Ӕ/ӕ/g;s/Ӗ/ӗ/g;s/Ә/ә/g;s/Ӛ/ӛ/g;s/Ӝ/ӝ/g;s/Ӟ/ӟ/g;s/Ӡ/ӡ/g;s/Ӣ/ӣ/g
+s/Ӥ/ӥ/g;s/Ӧ/ӧ/g;s/Ө/ө/g;s/Ӫ/ӫ/g;s/Ӭ/ӭ/g;s/Ӯ/ӯ/g;s/Ӱ/ӱ/g;s/Ӳ/ӳ/g
+s/Ӵ/ӵ/g;s/Ӷ/ӷ/g;s/Ӹ/ӹ/g;s/Ӻ/ӻ/g;s/Ӽ/ӽ/g;s/Ӿ/ӿ/g;s/Ԁ/ԁ/g;s/Ԃ/ԃ/g
+s/Ԅ/ԅ/g;s/Ԇ/ԇ/g;s/Ԉ/ԉ/g;s/Ԋ/ԋ/g;s/Ԍ/ԍ/g;s/Ԏ/ԏ/g;s/Ԑ/ԑ/g;s/Ԓ/ԓ/g
+s/Ԕ/ԕ/g;s/Ԗ/ԗ/g;s/Ԙ/ԙ/g;s/Ԛ/ԛ/g;s/Ԝ/ԝ/g;s/Ԟ/ԟ/g;s/Ԡ/ԡ/g;s/Ԣ/ԣ/g
+s/Ԥ/ԥ/g;s/Ԧ/ԧ/g;s/Ԩ/ԩ/g;s/Ԫ/ԫ/g;s/Ԭ/ԭ/g;s/Ԯ/ԯ/g;s/Ա/ա/g;s/Բ/բ/g
+s/Գ/գ/g;s/Դ/դ/g;s/Ե/ե/g;s/Զ/զ/g;s/Է/է/g;s/Ը/ը/g;s/Թ/թ/g;s/Ժ/ժ/g
+s/Ի/ի/g;s/Լ/լ/g;s/Խ/խ/g;s/Ծ/ծ/g;s/Կ/կ/g;s/Հ/հ/g;s/Ձ/ձ/g;s/Ղ/ղ/g
+s/Ճ/ճ/g;s/Մ/մ/g;s/Յ/յ/g;s/Ն/ն/g;s/Շ/շ/g;s/Ո/ո/g;s/Չ/չ/g;s/Պ/պ/g
+s/Ջ/ջ/g;s/Ռ/ռ/g;s/Ս/ս/g;s/Վ/վ/g;s/Տ/տ/g;s/Ր/ր/g;s/Ց/ց/g;s/Ւ/ւ/g
+s/Փ/փ/g;s/Ք/ք/g;s/Օ/օ/g;s/Ֆ/ֆ/g;s/Ⴀ/ⴀ/g;s/Ⴁ/ⴁ/g;s/Ⴂ/ⴂ/g;s/Ⴃ/ⴃ/g
+s/Ⴄ/ⴄ/g;s/Ⴅ/ⴅ/g;s/Ⴆ/ⴆ/g;s/Ⴇ/ⴇ/g;s/Ⴈ/ⴈ/g;s/Ⴉ/ⴉ/g;s/Ⴊ/ⴊ/g;s/Ⴋ/ⴋ/g
+s/Ⴌ/ⴌ/g;s/Ⴍ/ⴍ/g;s/Ⴎ/ⴎ/g;s/Ⴏ/ⴏ/g;s/Ⴐ/ⴐ/g;s/Ⴑ/ⴑ/g;s/Ⴒ/ⴒ/g;s/Ⴓ/ⴓ/g
+s/Ⴔ/ⴔ/g;s/Ⴕ/ⴕ/g;s/Ⴖ/ⴖ/g;s/Ⴗ/ⴗ/g;s/Ⴘ/ⴘ/g;s/Ⴙ/ⴙ/g;s/Ⴚ/ⴚ/g;s/Ⴛ/ⴛ/g
+s/Ⴜ/ⴜ/g;s/Ⴝ/ⴝ/g;s/Ⴞ/ⴞ/g;s/Ⴟ/ⴟ/g;s/Ⴠ/ⴠ/g;s/Ⴡ/ⴡ/g;s/Ⴢ/ⴢ/g;s/Ⴣ/ⴣ/g
+s/Ⴤ/ⴤ/g;s/Ⴥ/ⴥ/g;s/Ⴧ/ⴧ/g;s/Ⴭ/ⴭ/g;s/Ꭰ/ꭰ/g;s/Ꭱ/ꭱ/g;s/Ꭲ/ꭲ/g;s/Ꭳ/ꭳ/g
+s/Ꭴ/ꭴ/g;s/Ꭵ/ꭵ/g;s/Ꭶ/ꭶ/g;s/Ꭷ/ꭷ/g;s/Ꭸ/ꭸ/g;s/Ꭹ/ꭹ/g;s/Ꭺ/ꭺ/g;s/Ꭻ/ꭻ/g
+s/Ꭼ/ꭼ/g;s/Ꭽ/ꭽ/g;s/Ꭾ/ꭾ/g;s/Ꭿ/ꭿ/g;s/Ꮀ/ꮀ/g;s/Ꮁ/ꮁ/g;s/Ꮂ/ꮂ/g;s/Ꮃ/ꮃ/g
+s/Ꮄ/ꮄ/g;s/Ꮅ/ꮅ/g;s/Ꮆ/ꮆ/g;s/Ꮇ/ꮇ/g;s/Ꮈ/ꮈ/g;s/Ꮉ/ꮉ/g;s/Ꮊ/ꮊ/g;s/Ꮋ/ꮋ/g
+s/Ꮌ/ꮌ/g;s/Ꮍ/ꮍ/g;s/Ꮎ/ꮎ/g;s/Ꮏ/ꮏ/g;s/Ꮐ/ꮐ/g;s/Ꮑ/ꮑ/g;s/Ꮒ/ꮒ/g;s/Ꮓ/ꮓ/g
+s/Ꮔ/ꮔ/g;s/Ꮕ/ꮕ/g;s/Ꮖ/ꮖ/g;s/Ꮗ/ꮗ/g;s/Ꮘ/ꮘ/g;s/Ꮙ/ꮙ/g;s/Ꮚ/ꮚ/g;s/Ꮛ/ꮛ/g
+s/Ꮜ/ꮜ/g;s/Ꮝ/ꮝ/g;s/Ꮞ/ꮞ/g;s/Ꮟ/ꮟ/g;s/Ꮠ/ꮠ/g;s/Ꮡ/ꮡ/g;s/Ꮢ/ꮢ/g;s/Ꮣ/ꮣ/g
+s/Ꮤ/ꮤ/g;s/Ꮥ/ꮥ/g;s/Ꮦ/ꮦ/g;s/Ꮧ/ꮧ/g;s/Ꮨ/ꮨ/g;s/Ꮩ/ꮩ/g;s/Ꮪ/ꮪ/g;s/Ꮫ/ꮫ/g
+s/Ꮬ/ꮬ/g;s/Ꮭ/ꮭ/g;s/Ꮮ/ꮮ/g;s/Ꮯ/ꮯ/g;s/Ꮰ/ꮰ/g;s/Ꮱ/ꮱ/g;s/Ꮲ/ꮲ/g;s/Ꮳ/ꮳ/g
+s/Ꮴ/ꮴ/g;s/Ꮵ/ꮵ/g;s/Ꮶ/ꮶ/g;s/Ꮷ/ꮷ/g;s/Ꮸ/ꮸ/g;s/Ꮹ/ꮹ/g;s/Ꮺ/ꮺ/g;s/Ꮻ/ꮻ/g
+s/Ꮼ/ꮼ/g;s/Ꮽ/ꮽ/g;s/Ꮾ/ꮾ/g;s/Ꮿ/ꮿ/g;s/Ᏸ/ᏸ/g;s/Ᏹ/ᏹ/g;s/Ᏺ/ᏺ/g;s/Ᏻ/ᏻ/g
+s/Ᏼ/ᏼ/g;s/Ᏽ/ᏽ/g;s/Ᲊ/ᲊ/g;s/Ა/ა/g;s/Ბ/ბ/g;s/Გ/გ/g;s/Დ/დ/g;s/Ე/ე/g
+s/Ვ/ვ/g;s/Ზ/ზ/g;s/Თ/თ/g;s/Ი/ი/g;s/Კ/კ/g;s/Ლ/ლ/g;s/Მ/მ/g;s/Ნ/ნ/g
+s/Ო/ო/g;s/Პ/პ/g;s/Ჟ/ჟ/g;s/Რ/რ/g;s/Ს/ს/g;s/Ტ/ტ/g;s/Უ/უ/g;s/Ფ/ფ/g
+s/Ქ/ქ/g;s/Ღ/ღ/g;s/Ყ/ყ/g;s/Შ/შ/g;s/Ჩ/ჩ/g;s/Ც/ც/g;s/Ძ/ძ/g;s/Წ/წ/g
+s/Ჭ/ჭ/g;s/Ხ/ხ/g;s/Ჯ/ჯ/g;s/Ჰ/ჰ/g;s/Ჱ/ჱ/g;s/Ჲ/ჲ/g;s/Ჳ/ჳ/g;s/Ჴ/ჴ/g
+s/Ჵ/ჵ/g;s/Ჶ/ჶ/g;s/Ჷ/ჷ/g;s/Ჸ/ჸ/g;s/Ჹ/ჹ/g;s/Ჺ/ჺ/g;s/Ჽ/ჽ/g;s/Ჾ/ჾ/g
+s/Ჿ/ჿ/g;s/Ḁ/ḁ/g;s/Ḃ/ḃ/g;s/Ḅ/ḅ/g;s/Ḇ/ḇ/g;s/Ḉ/ḉ/g;s/Ḋ/ḋ/g;s/Ḍ/ḍ/g
+s/Ḏ/ḏ/g;s/Ḑ/ḑ/g;s/Ḓ/ḓ/g;s/Ḕ/ḕ/g;s/Ḗ/ḗ/g;s/Ḙ/ḙ/g;s/Ḛ/ḛ/g;s/Ḝ/ḝ/g
+s/Ḟ/ḟ/g;s/Ḡ/ḡ/g;s/Ḣ/ḣ/g;s/Ḥ/ḥ/g;s/Ḧ/ḧ/g;s/Ḩ/ḩ/g;s/Ḫ/ḫ/g;s/Ḭ/ḭ/g
+s/Ḯ/ḯ/g;s/Ḱ/ḱ/g;s/Ḳ/ḳ/g;s/Ḵ/ḵ/g;s/Ḷ/ḷ/g;s/Ḹ/ḹ/g;s/Ḻ/ḻ/g;s/Ḽ/ḽ/g
+s/Ḿ/ḿ/g;s/Ṁ/ṁ/g;s/Ṃ/ṃ/g;s/Ṅ/ṅ/g;s/Ṇ/ṇ/g;s/Ṉ/ṉ/g;s/Ṋ/ṋ/g;s/Ṍ/ṍ/g
+s/Ṏ/ṏ/g;s/Ṑ/ṑ/g;s/Ṓ/ṓ/g;s/Ṕ/ṕ/g;s/Ṗ/ṗ/g;s/Ṙ/ṙ/g;s/Ṛ/ṛ/g;s/Ṝ/ṝ/g
+s/Ṟ/ṟ/g;s/Ṡ/ṡ/g;s/Ṣ/ṣ/g;s/Ṥ/ṥ/g;s/Ṧ/ṧ/g;s/Ṩ/ṩ/g;s/Ṫ/ṫ/g;s/Ṭ/ṭ/g
+s/Ṯ/ṯ/g;s/Ṱ/ṱ/g;s/Ṳ/ṳ/g;s/Ṵ/ṵ/g;s/Ṷ/ṷ/g;s/Ṹ/ṹ/g;s/Ṻ/ṻ/g;s/Ṽ/ṽ/g
+s/Ṿ/ṿ/g;s/Ẁ/ẁ/g;s/Ẃ/ẃ/g;s/Ẅ/ẅ/g;s/Ẇ/ẇ/g;s/Ẉ/ẉ/g;s/Ẋ/ẋ/g;s/Ẍ/ẍ/g
+s/Ẏ/ẏ/g;s/Ẑ/ẑ/g;s/Ẓ/ẓ/g;s/Ẕ/ẕ/g;s/ẞ/ß/g;s/Ạ/ạ/g;s/Ả/ả/g;s/Ấ/ấ/g
+s/Ầ/ầ/g;s/Ẩ/ẩ/g;s/Ẫ/ẫ/g;s/Ậ/ậ/g;s/Ắ/ắ/g;s/Ằ/ằ/g;s/Ẳ/ẳ/g;s/Ẵ/ẵ/g
+s/Ặ/ặ/g;s/Ẹ/ẹ/g;s/Ẻ/ẻ/g;s/Ẽ/ẽ/g;s/Ế/ế/g;s/Ề/ề/g;s/Ể/ể/g;s/Ễ/ễ/g
+s/Ệ/ệ/g;s/Ỉ/ỉ/g;s/Ị/ị/g;s/Ọ/ọ/g;s/Ỏ/ỏ/g;s/Ố/ố/g;s/Ồ/ồ/g;s/Ổ/ổ/g
+s/Ỗ/ỗ/g;s/Ộ/ộ/g;s/Ớ/ớ/g;s/Ờ/ờ/g;s/Ở/ở/g;s/Ỡ/ỡ/g;s/Ợ/ợ/g;s/Ụ/ụ/g
+s/Ủ/ủ/g;s/Ứ/ứ/g;s/Ừ/ừ/g;s/Ử/ử/g;s/Ữ/ữ/g;s/Ự/ự/g;s/Ỳ/ỳ/g;s/Ỵ/ỵ/g
+s/Ỷ/ỷ/g;s/Ỹ/ỹ/g;s/Ỻ/ỻ/g;s/Ỽ/ỽ/g;s/Ỿ/ỿ/g;s/Ἀ/ἀ/g;s/Ἁ/ἁ/g;s/Ἂ/ἂ/g
+s/Ἃ/ἃ/g;s/Ἄ/ἄ/g;s/Ἅ/ἅ/g;s/Ἆ/ἆ/g;s/Ἇ/ἇ/g;s/Ἐ/ἐ/g;s/Ἑ/ἑ/g;s/Ἒ/ἒ/g
+s/Ἓ/ἓ/g;s/Ἔ/ἔ/g;s/Ἕ/ἕ/g;s/Ἠ/ἠ/g;s/Ἡ/ἡ/g;s/Ἢ/ἢ/g;s/Ἣ/ἣ/g;s/Ἤ/ἤ/g
+s/Ἥ/ἥ/g;s/Ἦ/ἦ/g;s/Ἧ/ἧ/g;s/Ἰ/ἰ/g;s/Ἱ/ἱ/g;s/Ἲ/ἲ/g;s/Ἳ/ἳ/g;s/Ἴ/ἴ/g
+s/Ἵ/ἵ/g;s/Ἶ/ἶ/g;s/Ἷ/ἷ/g;s/Ὀ/ὀ/g;s/Ὁ/ὁ/g;s/Ὂ/ὂ/g;s/Ὃ/ὃ/g;s/Ὄ/ὄ/g
+s/Ὅ/ὅ/g;s/Ὑ/ὑ/g;s/Ὓ/ὓ/g;s/Ὕ/ὕ/g;s/Ὗ/ὗ/g;s/Ὠ/ὠ/g;s/Ὡ/ὡ/g;s/Ὢ/ὢ/g
+s/Ὣ/ὣ/g;s/Ὤ/ὤ/g;s/Ὥ/ὥ/g;s/Ὦ/ὦ/g;s/Ὧ/ὧ/g;s/ᾈ/ᾀ/g;s/ᾉ/ᾁ/g;s/ᾊ/ᾂ/g
+s/ᾋ/ᾃ/g;s/ᾌ/ᾄ/g;s/ᾍ/ᾅ/g;s/ᾎ/ᾆ/g;s/ᾏ/ᾇ/g;s/ᾘ/ᾐ/g;s/ᾙ/ᾑ/g;s/ᾚ/ᾒ/g
+s/ᾛ/ᾓ/g;s/ᾜ/ᾔ/g;s/ᾝ/ᾕ/g;s/ᾞ/ᾖ/g;s/ᾟ/ᾗ/g;s/ᾨ/ᾠ/g;s/ᾩ/ᾡ/g;s/ᾪ/ᾢ/g
+s/ᾫ/ᾣ/g;s/ᾬ/ᾤ/g;s/ᾭ/ᾥ/g;s/ᾮ/ᾦ/g;s/ᾯ/ᾧ/g;s/Ᾰ/ᾰ/g;s/Ᾱ/ᾱ/g;s/Ὰ/ὰ/g
+s/Ά/ά/g;s/ᾼ/ᾳ/g;s/Ὲ/ὲ/g;s/Έ/έ/g;s/Ὴ/ὴ/g;s/Ή/ή/g;s/ῌ/ῃ/g;s/Ῐ/ῐ/g
+s/Ῑ/ῑ/g;s/Ὶ/ὶ/g;s/Ί/ί/g;s/Ῠ/ῠ/g;s/Ῡ/ῡ/g;s/Ὺ/ὺ/g;s/Ύ/ύ/g;s/Ῥ/ῥ/g
+s/Ὸ/ὸ/g;s/Ό/ό/g;s/Ὼ/ὼ/g;s/Ώ/ώ/g;s/ῼ/ῳ/g;s/Ω/ω/g;s/K/k/g;s/Å/å/g
+s/Ⅎ/ⅎ/g;s/Ⅰ/ⅰ/g;s/Ⅱ/ⅱ/g;s/Ⅲ/ⅲ/g;s/Ⅳ/ⅳ/g;s/Ⅴ/ⅴ/g;s/Ⅵ/ⅵ/g;s/Ⅶ/ⅶ/g
+s/Ⅷ/ⅷ/g;s/Ⅸ/ⅸ/g;s/Ⅹ/ⅹ/g;s/Ⅺ/ⅺ/g;s/Ⅻ/ⅻ/g;s/Ⅼ/ⅼ/g;s/Ⅽ/ⅽ/g;s/Ⅾ/ⅾ/g
+s/Ⅿ/ⅿ/g;s/Ↄ/ↄ/g;s/Ⓐ/ⓐ/g;s/Ⓑ/ⓑ/g;s/Ⓒ/ⓒ/g;s/Ⓓ/ⓓ/g;s/Ⓔ/ⓔ/g;s/Ⓕ/ⓕ/g
+s/Ⓖ/ⓖ/g;s/Ⓗ/ⓗ/g;s/Ⓘ/ⓘ/g;s/Ⓙ/ⓙ/g;s/Ⓚ/ⓚ/g;s/Ⓛ/ⓛ/g;s/Ⓜ/ⓜ/g;s/Ⓝ/ⓝ/g
+s/Ⓞ/ⓞ/g;s/Ⓟ/ⓟ/g;s/Ⓠ/ⓠ/g;s/Ⓡ/ⓡ/g;s/Ⓢ/ⓢ/g;s/Ⓣ/ⓣ/g;s/Ⓤ/ⓤ/g;s/Ⓥ/ⓥ/g
+s/Ⓦ/ⓦ/g;s/Ⓧ/ⓧ/g;s/Ⓨ/ⓨ/g;s/Ⓩ/ⓩ/g;s/Ⰰ/ⰰ/g;s/Ⰱ/ⰱ/g;s/Ⰲ/ⰲ/g;s/Ⰳ/ⰳ/g
+s/Ⰴ/ⰴ/g;s/Ⰵ/ⰵ/g;s/Ⰶ/ⰶ/g;s/Ⰷ/ⰷ/g;s/Ⰸ/ⰸ/g;s/Ⰹ/ⰹ/g;s/Ⰺ/ⰺ/g;s/Ⰻ/ⰻ/g
+s/Ⰼ/ⰼ/g;s/Ⰽ/ⰽ/g;s/Ⰾ/ⰾ/g;s/Ⰿ/ⰿ/g;s/Ⱀ/ⱀ/g;s/Ⱁ/ⱁ/g;s/Ⱂ/ⱂ/g;s/Ⱃ/ⱃ/g
+s/Ⱄ/ⱄ/g;s/Ⱅ/ⱅ/g;s/Ⱆ/ⱆ/g;s/Ⱇ/ⱇ/g;s/Ⱈ/ⱈ/g;s/Ⱉ/ⱉ/g;s/Ⱊ/ⱊ/g;s/Ⱋ/ⱋ/g
+s/Ⱌ/ⱌ/g;s/Ⱍ/ⱍ/g;s/Ⱎ/ⱎ/g;s/Ⱏ/ⱏ/g;s/Ⱐ/ⱐ/g;s/Ⱑ/ⱑ/g;s/Ⱒ/ⱒ/g;s/Ⱓ/ⱓ/g
+s/Ⱔ/ⱔ/g;s/Ⱕ/ⱕ/g;s/Ⱖ/ⱖ/g;s/Ⱗ/ⱗ/g;s/Ⱘ/ⱘ/g;s/Ⱙ/ⱙ/g;s/Ⱚ/ⱚ/g;s/Ⱛ/ⱛ/g
+s/Ⱜ/ⱜ/g;s/Ⱝ/ⱝ/g;s/Ⱞ/ⱞ/g;s/Ⱟ/ⱟ/g;s/Ⱡ/ⱡ/g;s/Ɫ/ɫ/g;s/Ᵽ/ᵽ/g;s/Ɽ/ɽ/g
+s/Ⱨ/ⱨ/g;s/Ⱪ/ⱪ/g;s/Ⱬ/ⱬ/g;s/Ɑ/ɑ/g;s/Ɱ/ɱ/g;s/Ɐ/ɐ/g;s/Ɒ/ɒ/g;s/Ⱳ/ⱳ/g
+s/Ⱶ/ⱶ/g;s/Ȿ/ȿ/g;s/Ɀ/ɀ/g;s/Ⲁ/ⲁ/g;s/Ⲃ/ⲃ/g;s/Ⲅ/ⲅ/g;s/Ⲇ/ⲇ/g;s/Ⲉ/ⲉ/g
+s/Ⲋ/ⲋ/g;s/Ⲍ/ⲍ/g;s/Ⲏ/ⲏ/g;s/Ⲑ/ⲑ/g;s/Ⲓ/ⲓ/g;s/Ⲕ/ⲕ/g;s/Ⲗ/ⲗ/g;s/Ⲙ/ⲙ/g
+s/Ⲛ/ⲛ/g;s/Ⲝ/ⲝ/g;s/Ⲟ/ⲟ/g;s/Ⲡ/ⲡ/g;s/Ⲣ/ⲣ/g;s/Ⲥ/ⲥ/g;s/Ⲧ/ⲧ/g;s/Ⲩ/ⲩ/g
+s/Ⲫ/ⲫ/g;s/Ⲭ/ⲭ/g;s/Ⲯ/ⲯ/g;s/Ⲱ/ⲱ/g;s/Ⲳ/ⲳ/g;s/Ⲵ/ⲵ/g;s/Ⲷ/ⲷ/g;s/Ⲹ/ⲹ/g
+s/Ⲻ/ⲻ/g;s/Ⲽ/ⲽ/g;s/Ⲿ/ⲿ/g;s/Ⳁ/ⳁ/g;s/Ⳃ/ⳃ/g;s/Ⳅ/ⳅ/g;s/Ⳇ/ⳇ/g;s/Ⳉ/ⳉ/g
+s/Ⳋ/ⳋ/g;s/Ⳍ/ⳍ/g;s/Ⳏ/ⳏ/g;s/Ⳑ/ⳑ/g;s/Ⳓ/ⳓ/g;s/Ⳕ/ⳕ/g;s/Ⳗ/ⳗ/g;s/Ⳙ/ⳙ/g
+s/Ⳛ/ⳛ/g;s/Ⳝ/ⳝ/g;s/Ⳟ/ⳟ/g;s/Ⳡ/ⳡ/g;s/Ⳣ/ⳣ/g;s/Ⳬ/ⳬ/g;s/Ⳮ/ⳮ/g;s/Ⳳ/ⳳ/g
+s/Ꙁ/ꙁ/g;s/Ꙃ/ꙃ/g;s/Ꙅ/ꙅ/g;s/Ꙇ/ꙇ/g;s/Ꙉ/ꙉ/g;s/Ꙋ/ꙋ/g;s/Ꙍ/ꙍ/g;s/Ꙏ/ꙏ/g
+s/Ꙑ/ꙑ/g;s/Ꙓ/ꙓ/g;s/Ꙕ/ꙕ/g;s/Ꙗ/ꙗ/g;s/Ꙙ/ꙙ/g;s/Ꙛ/ꙛ/g;s/Ꙝ/ꙝ/g;s/Ꙟ/ꙟ/g
+s/Ꙡ/ꙡ/g;s/Ꙣ/ꙣ/g;s/Ꙥ/ꙥ/g;s/Ꙧ/ꙧ/g;s/Ꙩ/ꙩ/g;s/Ꙫ/ꙫ/g;s/Ꙭ/ꙭ/g;s/Ꚁ/ꚁ/g
+s/Ꚃ/ꚃ/g;s/Ꚅ/ꚅ/g;s/Ꚇ/ꚇ/g;s/Ꚉ/ꚉ/g;s/Ꚋ/ꚋ/g;s/Ꚍ/ꚍ/g;s/Ꚏ/ꚏ/g;s/Ꚑ/ꚑ/g
+s/Ꚓ/ꚓ/g;s/Ꚕ/ꚕ/g;s/Ꚗ/ꚗ/g;s/Ꚙ/ꚙ/g;s/Ꚛ/ꚛ/g;s/Ꜣ/ꜣ/g;s/Ꜥ/ꜥ/g;s/Ꜧ/ꜧ/g
+s/Ꜩ/ꜩ/g;s/Ꜫ/ꜫ/g;s/Ꜭ/ꜭ/g;s/Ꜯ/ꜯ/g;s/Ꜳ/ꜳ/g;s/Ꜵ/ꜵ/g;s/Ꜷ/ꜷ/g;s/Ꜹ/ꜹ/g
+s/Ꜻ/ꜻ/g;s/Ꜽ/ꜽ/g;s/Ꜿ/ꜿ/g;s/Ꝁ/ꝁ/g;s/Ꝃ/ꝃ/g;s/Ꝅ/ꝅ/g;s/Ꝇ/ꝇ/g;s/Ꝉ/ꝉ/g
+s/Ꝋ/ꝋ/g;s/Ꝍ/ꝍ/g;s/Ꝏ/ꝏ/g;s/Ꝑ/ꝑ/g;s/Ꝓ/ꝓ/g;s/Ꝕ/ꝕ/g;s/Ꝗ/ꝗ/g;s/Ꝙ/ꝙ/g
+s/Ꝛ/ꝛ/g;s/Ꝝ/ꝝ/g;s/Ꝟ/ꝟ/g;s/Ꝡ/ꝡ/g;s/Ꝣ/ꝣ/g;s/Ꝥ/ꝥ/g;s/Ꝧ/ꝧ/g;s/Ꝩ/ꝩ/g
+s/Ꝫ/ꝫ/g;s/Ꝭ/ꝭ/g;s/Ꝯ/ꝯ/g;s/Ꝺ/ꝺ/g;s/Ꝼ/ꝼ/g;s/Ᵹ/ᵹ/g;s/Ꝿ/ꝿ/g;s/Ꞁ/ꞁ/g
+s/Ꞃ/ꞃ/g;s/Ꞅ/ꞅ/g;s/Ꞇ/ꞇ/g;s/Ꞌ/ꞌ/g;s/Ɥ/ɥ/g;s/Ꞑ/ꞑ/g;s/Ꞓ/ꞓ/g;s/Ꞗ/ꞗ/g
+s/Ꞙ/ꞙ/g;s/Ꞛ/ꞛ/g;s/Ꞝ/ꞝ/g;s/Ꞟ/ꞟ/g;s/Ꞡ/ꞡ/g;s/Ꞣ/ꞣ/g;s/Ꞥ/ꞥ/g;s/Ꞧ/ꞧ/g
+s/Ꞩ/ꞩ/g;s/Ɦ/ɦ/g;s/Ɜ/ɜ/g;s/Ɡ/ɡ/g;s/Ɬ/ɬ/g;s/Ɪ/ɪ/g;s/Ʞ/ʞ/g;s/Ʇ/ʇ/g
+s/Ʝ/ʝ/g;s/Ꭓ/ꭓ/g;s/Ꞵ/ꞵ/g;s/Ꞷ/ꞷ/g;s/Ꞹ/ꞹ/g;s/Ꞻ/ꞻ/g;s/Ꞽ/ꞽ/g;s/Ꞿ/ꞿ/g
+s/Ꟁ/ꟁ/g;s/Ꟃ/ꟃ/g;s/Ꞔ/ꞔ/g;s/Ʂ/ʂ/g;s/Ᶎ/ᶎ/g;s/Ꟈ/ꟈ/g;s/Ꟊ/ꟊ/g;s/Ɤ/ɤ/g
+s/Ꟍ/ꟍ/g;s/Ꟑ/ꟑ/g;s/Ꟗ/ꟗ/g;s/Ꟙ/ꟙ/g;s/Ꟛ/ꟛ/g;s/Ƛ/ƛ/g;s/Ꟶ/ꟶ/g;s/Ａ/ａ/g
+s/Ｂ/ｂ/g;s/Ｃ/ｃ/g;s/Ｄ/ｄ/g;s/Ｅ/ｅ/g;s/Ｆ/ｆ/g;s/Ｇ/ｇ/g;s/Ｈ/ｈ/g;s/Ｉ/ｉ/g
+s/Ｊ/ｊ/g;s/Ｋ/ｋ/g;s/Ｌ/ｌ/g;s/Ｍ/ｍ/g;s/Ｎ/ｎ/g;s/Ｏ/ｏ/g;s/Ｐ/ｐ/g;s/Ｑ/ｑ/g
+s/Ｒ/ｒ/g;s/Ｓ/ｓ/g;s/Ｔ/ｔ/g;s/Ｕ/ｕ/g;s/Ｖ/ｖ/g;s/Ｗ/ｗ/g;s/Ｘ/ｘ/g;s/Ｙ/ｙ/g
+s/Ｚ/ｚ/g;s/𐐀/𐐨/g;s/𐐁/𐐩/g;s/𐐂/𐐪/g;s/𐐃/𐐫/g;s/𐐄/𐐬/g;s/𐐅/𐐭/g;s/𐐆/𐐮/g
+s/𐐇/𐐯/g;s/𐐈/𐐰/g;s/𐐉/𐐱/g;s/𐐊/𐐲/g;s/𐐋/𐐳/g;s/𐐌/𐐴/g;s/𐐍/𐐵/g;s/𐐎/𐐶/g
+s/𐐏/𐐷/g;s/𐐐/𐐸/g;s/𐐑/𐐹/g;s/𐐒/𐐺/g;s/𐐓/𐐻/g;s/𐐔/𐐼/g;s/𐐕/𐐽/g;s/𐐖/𐐾/g
+s/𐐗/𐐿/g;s/𐐘/𐑀/g;s/𐐙/𐑁/g;s/𐐚/𐑂/g;s/𐐛/𐑃/g;s/𐐜/𐑄/g;s/𐐝/𐑅/g;s/𐐞/𐑆/g
+s/𐐟/𐑇/g;s/𐐠/𐑈/g;s/𐐡/𐑉/g;s/𐐢/𐑊/g;s/𐐣/𐑋/g;s/𐐤/𐑌/g;s/𐐥/𐑍/g;s/𐐦/𐑎/g
+s/𐐧/𐑏/g;s/𐒰/𐓘/g;s/𐒱/𐓙/g;s/𐒲/𐓚/g;s/𐒳/𐓛/g;s/𐒴/𐓜/g;s/𐒵/𐓝/g;s/𐒶/𐓞/g
+s/𐒷/𐓟/g;s/𐒸/𐓠/g;s/𐒹/𐓡/g;s/𐒺/𐓢/g;s/𐒻/𐓣/g;s/𐒼/𐓤/g;s/𐒽/𐓥/g;s/𐒾/𐓦/g
+s/𐒿/𐓧/g;s/𐓀/𐓨/g;s/𐓁/𐓩/g;s/𐓂/𐓪/g;s/𐓃/𐓫/g;s/𐓄/𐓬/g;s/𐓅/𐓭/g;s/𐓆/𐓮/g
+s/𐓇/𐓯/g;s/𐓈/𐓰/g;s/𐓉/𐓱/g;s/𐓊/𐓲/g;s/𐓋/𐓳/g;s/𐓌/𐓴/g;s/𐓍/𐓵/g;s/𐓎/𐓶/g
+s/𐓏/𐓷/g;s/𐓐/𐓸/g;s/𐓑/𐓹/g;s/𐓒/𐓺/g;s/𐓓/𐓻/g;s/𐕰/𐖗/g;s/𐕱/𐖘/g;s/𐕲/𐖙/g
+s/𐕳/𐖚/g;s/𐕴/𐖛/g;s/𐕵/𐖜/g;s/𐕶/𐖝/g;s/𐕷/𐖞/g;s/𐕸/𐖟/g;s/𐕹/𐖠/g;s/𐕺/𐖡/g
+s/𐕼/𐖣/g;s/𐕽/𐖤/g;s/𐕾/𐖥/g;s/𐕿/𐖦/g;s/𐖀/𐖧/g;s/𐖁/𐖨/g;s/𐖂/𐖩/g;s/𐖃/𐖪/g
+s/𐖄/𐖫/g;s/𐖅/𐖬/g;s/𐖆/𐖭/g;s/𐖇/𐖮/g;s/𐖈/𐖯/g;s/𐖉/𐖰/g;s/𐖊/𐖱/g;s/𐖌/𐖳/g
+s/𐖍/𐖴/g;s/𐖎/𐖵/g;s/𐖏/𐖶/g;s/𐖐/𐖷/g;s/𐖑/𐖸/g;s/𐖒/𐖹/g;s/𐖔/𐖻/g;s/𐖕/𐖼/g
+s/𐲀/𐳀/g;s/𐲁/𐳁/g;s/𐲂/𐳂/g;s/𐲃/𐳃/g;s/𐲄/𐳄/g;s/𐲅/𐳅/g;s/𐲆/𐳆/g;s/𐲇/𐳇/g
+s/𐲈/𐳈/g;s/𐲉/𐳉/g;s/𐲊/𐳊/g;s/𐲋/𐳋/g;s/𐲌/𐳌/g;s/𐲍/𐳍/g;s/𐲎/𐳎/g;s/𐲏/𐳏/g
+s/𐲐/𐳐/g;s/𐲑/𐳑/g;s/𐲒/𐳒/g;s/𐲓/𐳓/g;s/𐲔/𐳔/g;s/𐲕/𐳕/g;s/𐲖/𐳖/g;s/𐲗/𐳗/g
+s/𐲘/𐳘/g;s/𐲙/𐳙/g;s/𐲚/𐳚/g;s/𐲛/𐳛/g;s/𐲜/𐳜/g;s/𐲝/𐳝/g;s/𐲞/𐳞/g;s/𐲟/𐳟/g
+s/𐲠/𐳠/g;s/𐲡/𐳡/g;s/𐲢/𐳢/g;s/𐲣/𐳣/g;s/𐲤/𐳤/g;s/𐲥/𐳥/g;s/𐲦/𐳦/g;s/𐲧/𐳧/g
+s/𐲨/𐳨/g;s/𐲩/𐳩/g;s/𐲪/𐳪/g;s/𐲫/𐳫/g;s/𐲬/𐳬/g;s/𐲭/𐳭/g;s/𐲮/𐳮/g;s/𐲯/𐳯/g
+s/𐲰/𐳰/g;s/𐲱/𐳱/g;s/𐲲/𐳲/g;s/𐵐/𐵰/g;s/𐵑/𐵱/g;s/𐵒/𐵲/g;s/𐵓/𐵳/g;s/𐵔/𐵴/g
+s/𐵕/𐵵/g;s/𐵖/𐵶/g;s/𐵗/𐵷/g;s/𐵘/𐵸/g;s/𐵙/𐵹/g;s/𐵚/𐵺/g;s/𐵛/𐵻/g;s/𐵜/𐵼/g
+s/𐵝/𐵽/g;s/𐵞/𐵾/g;s/𐵟/𐵿/g;s/𐵠/𐶀/g;s/𐵡/𐶁/g;s/𐵢/𐶂/g;s/𐵣/𐶃/g;s/𐵤/𐶄/g
+s/𐵥/𐶅/g;s/𑢠/𑣀/g;s/𑢡/𑣁/g;s/𑢢/𑣂/g;s/𑢣/𑣃/g;s/𑢤/𑣄/g;s/𑢥/𑣅/g;s/𑢦/𑣆/g
+s/𑢧/𑣇/g;s/𑢨/𑣈/g;s/𑢩/𑣉/g;s/𑢪/𑣊/g;s/𑢫/𑣋/g;s/𑢬/𑣌/g;s/𑢭/𑣍/g;s/𑢮/𑣎/g
+s/𑢯/𑣏/g;s/𑢰/𑣐/g;s/𑢱/𑣑/g;s/𑢲/𑣒/g;s/𑢳/𑣓/g;s/𑢴/𑣔/g;s/𑢵/𑣕/g;s/𑢶/𑣖/g
+s/𑢷/𑣗/g;s/𑢸/𑣘/g;s/𑢹/𑣙/g;s/𑢺/𑣚/g;s/𑢻/𑣛/g;s/𑢼/𑣜/g;s/𑢽/𑣝/g;s/𑢾/𑣞/g
+s/𑢿/𑣟/g;s/𖹀/𖹠/g;s/𖹁/𖹡/g;s/𖹂/𖹢/g;s/𖹃/𖹣/g;s/𖹄/𖹤/g;s/𖹅/𖹥/g;s/𖹆/𖹦/g
+s/𖹇/𖹧/g;s/𖹈/𖹨/g;s/𖹉/𖹩/g;s/𖹊/𖹪/g;s/𖹋/𖹫/g;s/𖹌/𖹬/g;s/𖹍/𖹭/g;s/𖹎/𖹮/g
+s/𖹏/𖹯/g;s/𖹐/𖹰/g;s/𖹑/𖹱/g;s/𖹒/𖹲/g;s/𖹓/𖹳/g;s/𖹔/𖹴/g;s/𖹕/𖹵/g;s/𖹖/𖹶/g
+s/𖹗/𖹷/g;s/𖹘/𖹸/g;s/𖹙/𖹹/g;s/𖹚/𖹺/g;s/𖹛/𖹻/g;s/𖹜/𖹼/g;s/𖹝/𖹽/g;s/𖹞/𖹾/g
+s/𖹟/𖹿/g;s/𞤀/𞤢/g;s/𞤁/𞤣/g;s/𞤂/𞤤/g;s/𞤃/𞤥/g;s/𞤄/𞤦/g;s/𞤅/𞤧/g;s/𞤆/𞤨/g
+s/𞤇/𞤩/g;s/𞤈/𞤪/g;s/𞤉/𞤫/g;s/𞤊/𞤬/g;s/𞤋/𞤭/g;s/𞤌/𞤮/g;s/𞤍/𞤯/g;s/𞤎/𞤰/g
+s/𞤏/𞤱/g;s/𞤐/𞤲/g;s/𞤑/𞤳/g;s/𞤒/𞤴/g;s/𞤓/𞤵/g;s/𞤔/𞤶/g;s/𞤕/𞤷/g;s/𞤖/𞤸/g
+s/𞤗/𞤹/g;s/𞤘/𞤺/g;s/𞤙/𞤻/g;s/𞤚/𞤼/g;s/𞤛/𞤽/g;s/𞤜/𞤾/g;s/𞤝/𞤿/g;s/𞤞/𞥀/g
+s/𞤟/𞥁/g;s/𞤠/𞥂/g;s/𞤡/𞥃/g
+"""
+# --- END GENERATED CASE FOLD ---
+CASE_FOLD_MARKERS = ("# --- BEGIN GENERATED CASE FOLD "
+                     "(private_egress.py --regenerate-case-fold) ---",
+                     "# --- END GENERATED CASE FOLD ---")
+# One substitution of the generated table, read back out of a block that is
+# about to be replaced -- deliberately tolerant, because it is asked of text
+# regenerate_case_fold() has not validated yet and its only job is to see which
+# pairs would be LOST. What the table must be, exactly, is _parse_case_fold().
+_CASE_FOLD_RULE = re.compile(r"s/([^/;\n]+)/([^/;\n]+)/g")
+
+
+def case_fold_pairs():
+    """The (upper, lower) code-point pairs the generated table covers, taken
+    from python's own str.lower() -- the DECLARED DOMAIN, in one place.
+
+    A pair is in exactly when str.lower() maps the code point to a single
+    different code point. What that leaves out, and which way each omission
+    errs, is written out above; the point of deriving it here is that the
+    boundary is a two-line rule a reader can check rather than a table somebody
+    typed.
+    """
+    out = []
+    for cp in range(ord("A"), sys.maxunicode + 1):
+        ch = chr(cp)
+        lo = ch.lower()
+        if lo != ch and len(lo) == 1:
+            out.append((ch, lo))
+    return tuple(out)
+
+
+def case_fold_sed_script(pairs=None, per_line=8):
+    """The generated table, as the sed script BOTH implementations use.
+
+    `s/<upper>/<lower>/g`, one command per pair, packed `per_line` to a line
+    with ';' separators so the block is an eighth of the rule count in lines
+    rather than one line per rule. Every source and target is a letter, so
+    nothing in it is a sed metacharacter, a '/', a newline or a "'" -- which is
+    what lets the same text be a shell single-quoted literal, a python
+    triple-quoted literal and a sed script with no escaping anywhere. Asserted,
+    not assumed, by _check_case_fold_pairs().
+
+    `pairs` defaults to case_fold_pairs(), which is the RUNNING interpreter's
+    domain and not necessarily the committed one: what is committed is pinned at
+    CASE_FOLD_UNICODE, so this returns the committed text only on an interpreter
+    carrying that Unicode version. regenerate_case_fold() passes its pairs in
+    for that reason.
+    """
+    rules = [f"s/{a}/{b}/g" for a, b in _check_case_fold_pairs(
+        case_fold_pairs() if pairs is None else pairs)]
+    return "\n".join(";".join(rules[i:i + per_line])
+                     for i in range(0, len(rules), per_line))
+
+
+def _check_case_fold_pairs(pairs):
+    """`pairs` back, having proved the four properties the two implementations'
+    agreement rests on. Cheap, and run at generation time rather than believed.
+
+      1. no source or target carries a character that would have to be escaped
+         in a sed script, a shell single-quoted string or a python string
+      2. no target is also a source, so no rule can rewrite another rule's
+         output. This is what makes sed's rule-at-a-time pass and this module's
+         single leftmost regex pass the same function -- str.lower() is
+         idempotent, so it holds by construction, and it is checked because the
+         equivalence is load-bearing rather than obvious
+      3. no source is a prefix of another source, so no two rules compete for
+         one position. UTF-8 lead bytes are never continuation bytes, which
+         makes this true across lengths as well as within one
+      4. the pairs are sorted by code point, so a regeneration produces the same
+         bytes on any machine
+    """
+    forbidden = set("/;'\"\\\n\r")
+    src = [a for a, _ in pairs]
+    tgt = [b for _, b in pairs]
+    bad = sorted(c for c in set(src) | set(tgt) if forbidden & set(c))
+    assert not bad, f"case-fold pair characters need escaping: {bad!r}"
+    clash = sorted(set(src) & set(tgt))
+    assert not clash, f"case-fold targets that are also sources: {clash!r}"
+    encoded = sorted(a.encode() for a in src)
+    prefix = [(a, b) for a, b in zip(encoded, encoded[1:]) if b.startswith(a)]
+    assert not prefix, f"case-fold sources that prefix another: {prefix!r}"
+    assert src == sorted(src), "case-fold pairs are not in code-point order"
+    return tuple(pairs)
+
+
+def _parse_case_fold(script):
+    """The (source bytes, target bytes) pairs of `script` -- the reader that
+    makes THE SHELL'S OWN TEXT this module's fold rather than a copy of it.
+
+    Deliberately strict: a command that is not exactly `s/<from>/<to>/g` is an
+    assertion failure at import, not a rule quietly skipped. A fold that silently
+    lost a rule would answer "these two names are different" and the guard would
+    ACCEPT, which is the failure direction issue #233 was about.
+    """
+    pairs = []
+    for command in script.replace("\n", ";").split(";"):
+        if not command:
+            continue
+        assert command.startswith("s/") and command.endswith("/g"), \
+            f"CASE_FOLD_SED holds a command that is not a substitution: {command!r}"
+        source, sep, target = command[2:-2].partition("/")
+        assert sep and source and target, \
+            f"CASE_FOLD_SED holds a malformed substitution: {command!r}"
+        pairs.append((source.encode(), target.encode()))
+    assert pairs, "CASE_FOLD_SED is empty: nothing would fold at all"
+    return tuple(pairs)
+
+
+CASE_FOLD_PAIRS = _parse_case_fold(CASE_FOLD_SED)
+_CASE_FOLD_MAP = dict(CASE_FOLD_PAIRS)
+# One leftmost pass over the raw bytes, which is the same function as sed's
+# rule-at-a-time pass for this table -- see _check_case_fold_pairs() properties
+# 2 and 3 for why. Compiled once: the alternation has one branch per table pair.
+_CASE_FOLD_RE = re.compile(b"|".join(re.escape(s) for s, _ in CASE_FOLD_PAIRS))
 
 
 def _unisolated_env(env=None):
@@ -750,8 +1190,15 @@ def _git(args, cwd, env=None, overrides=GIT_CONFIG_OVERRIDES):
             for tok in ("-c", f"{name}={value}")]
 
     def run(extra):
+        # errors="surrogateescape", not the default "strict": `ls-files -z`
+        # prints index paths RAW, and a destination whose history carries a
+        # filename that is not valid UTF-8 would otherwise raise
+        # UnicodeDecodeError out of the guard instead of producing a verdict.
+        # Round-trips through os.fsencode(), which is what _case_fold() folds
+        # with, so such a name is still compared on its real bytes.
         return subprocess.run(["git"] + opts + extra + ["-C", str(cwd)] + list(args),
-                              capture_output=True, text=True, env=sanitized_env(env))
+                              capture_output=True, text=True,
+                              errors="surrogateescape", env=sanitized_env(env))
 
     r = run([])
     if r.returncode != GIT_FATAL:
@@ -858,11 +1305,22 @@ def _dir_folds_case(directory):
     it (an empty directory is the ordinary case). The caller treats that as
     folding -- see _fs_folds_case().
 
-    KNOWN IMPRECISION, stated rather than hidden: a case-sensitive directory
-    holding two HARD LINKS to one inode under case-aliased names ('README' and
-    'readme') measures as folding, because device and inode are what folding
-    looks like. It errs toward folding, which is the additive direction, and it
-    takes a destination built to look like one.
+    KNOWN IMPRECISION, AND WHY IT STAYS (issue #231, AC4). A case-sensitive
+    directory holding two HARD LINKS to one inode under case-aliased names
+    ('README' and 'readme') measures as folding, because device and inode are
+    what folding looks like. It could be told apart -- on a folding filesystem
+    only ONE of the two spellings is an entry of the directory, so seeing both in
+    the listing proves the directory does not fold -- and it is deliberately not,
+    because that same shape is the only instrument a test has: a case-aliased
+    pair sharing an inode is how test_private_egress builds a folding directory
+    on a case-sensitive machine, mounting being something a test suite may not
+    leave behind. Refusing to model it would make the per-directory mechanism
+    untestable everywhere except on a machine that folds anyway.
+
+    It errs toward folding, the additive direction, and it takes a destination
+    built to look like one. What it can no longer do is contaminate the rest of
+    the path: the answer is per component now, so a directory that measures
+    folding for this reason folds only its OWN entries.
     """
     try:
         names = sorted(os.listdir(directory))
@@ -955,17 +1413,17 @@ def _fs_folds_case(worktree, relpath=None, evidence=None):
     significant", every EXISTING directory the path descends into is measured in
     turn with _dir_folds_case(), and the FIRST one that folds decides.
 
-    THAT IS AN OR ALONG THE PATH, not the answer of the directory the write lands
-    in, and the difference is issue #231. The caller applies ':(icase)' to the
-    whole pathspec, so a folding ANCESTOR makes every component below it fold as
-    far as this answer is concerned. The OR is correct wherever case behaviour only
-    ever becomes MORE permissive deeper in -- the ordinary shape, and the one this
-    walk exists for, since the directory that folds `1-raw-data` is `private/` and
-    not the root. It is over-broad for the inverse: a case-SENSITIVE volume mounted
-    under a folding directory, where a destination this measurement used to accept
-    is now refused if the index holds the other case spelling. That IS a new
-    refusal, and the reason it ships anyway is its direction -- the alias probe can
-    only match more index entries, so the error is fail-closed rather than a hole.
+    THAT IS AN OR ALONG THE PATH, deliberately, and it is not the equivalence
+    relation -- it is the CANDIDATE GENERATOR. ':(icase)' is applied to the whole
+    pathspec by git, so this is the only question a pathspec can be asked, and a
+    narrower answer here would leave index entries unfound. Being over-broad is
+    therefore the correct behaviour of THIS function and was, on its own, issue
+    #231: a case-SENSITIVE volume mounted under a folding directory had every
+    component below the folding one folded too, and a destination that should be
+    accepted was refused. What closed it is not a narrower OR but a second
+    measurement kept alongside -- _fold_vector() answers per component, and every
+    entry the pathspec returns is filtered against it in _classify_alias() before
+    it may refuse anything.
 
     AN UNMEASURABLE DIRECTORY COUNTS AS FOLDING, by the same argument the root
     probe already used for an unstattable `.git`: the alias probe is additive, so
@@ -973,7 +1431,9 @@ def _fs_folds_case(worktree, relpath=None, evidence=None):
     unanswered question deserves. It costs a refusal only for a destination that
     ALSO holds a case-aliased entry in its index -- which is the thing being
     guarded against wherever the two spellings really are one file, and a false
-    alarm where they are not (issue #231 again).
+    alarm where they are not. An EMPTY case-sensitive volume is that false alarm
+    and stays one: nothing in it can be measured, so the fold vector reads it as
+    folding too.
 
     NOT a device-change test, though that was the other candidate. Comparing
     st_dev at each component would say WHERE to measure and still not say what
@@ -1017,6 +1477,167 @@ def _fs_folds_case(worktree, relpath=None, evidence=None):
         evidence.append("no   (measured at the worktree root and at every existing "
                         "directory below it on this path)")
     return False
+
+
+def _case_fold(name):
+    """`name`'s bytes under the generated table at CASE_FOLD_SED -- the same
+    text the shell's `_case_fold` runs through one `LC_ALL=C sed`.
+
+    On BYTES, and os.fsencode() rather than str.encode(), because a destination
+    whose history carries a filename that is not valid UTF-8 still has to be
+    compared: _git() reads index paths with errors="surrogateescape", and this
+    round-trips those surrogates back to the original bytes. A rule can only
+    match at a UTF-8 lead byte, so an invalid run folds nowhere and is compared
+    as it stands -- the same thing sed does with it.
+    """
+    return _CASE_FOLD_RE.sub(lambda m: _CASE_FOLD_MAP[m.group(0)],
+                             os.fsencode(name))
+
+
+def _fold_vector(worktree, relpath):
+    """Which of `relpath`'s components may fold case, ONE ANSWER PER COMPONENT
+    (issue #231) -- `folds[i]` is what the directory that CONTAINS component i
+    does, never what some other directory on the path does.
+
+    _fs_folds_case() above answers a different question and keeps answering it:
+    "is a fold possible ANYWHERE on this path", which is the only question git's
+    pathspec can be asked, because ':(icase)' applies path-wide. That OR is the
+    right CANDIDATE GENERATOR -- a narrower one would leave index entries
+    unfound -- and the wrong equivalence relation. This vector is what the
+    candidates are then filtered against, so a folding ANCESTOR no longer makes
+    a component below it fold: with a case-sensitive volume mounted at
+    `private/sensitive/`, an index entry `private/sensitive/FOO` is a genuinely
+    different file from `private/sensitive/foo`, and the pathspec matches it
+    anyway. Reproduced on three real nested mounts before this existed.
+
+    folds[i] is measured at the directory `<worktree>/<parts[0..i-1]>`:
+
+      i == 0                the worktree root, by _root_folds_case()
+      the directory EXISTS  _dir_folds_case(); UNMEASURABLE counts as folding,
+                            by the argument the root probe already uses -- an
+                            unanswered question deserves the refusing answer
+      it does NOT exist     the answer of the nearest existing ancestor, and
+                            that is a deduction rather than a default: a
+                            directory the caller is about to CREATE is created
+                            inside its parent, on its parent's filesystem, and
+                            no volume can be mounted at a path that is not there
+
+    The cost is one listdir per EXISTING directory on the path -- the worktree
+    root, `private/`, and for a glob-expanded leaf `private/1-raw-data`. The
+    walk does not descend past the path it was given.
+    """
+    parts = [p for p in relpath.split("/") if p]
+    out = []
+    cur = worktree
+    here = _root_folds_case(worktree)
+    for part in parts:
+        out.append(here)
+        below = os.path.join(cur, part)
+        if os.path.isdir(below):
+            cur = below
+            measured = _dir_folds_case(cur)
+            here = True if measured is None else measured
+        # else: absent, or a non-directory. Whatever the caller creates there
+        # lands on the filesystem `cur` is already on, so `here` carries over.
+    return tuple(out)
+
+
+ALIAS_CLASSES = ("spurious", "match", "keep")
+
+
+def _classify_alias(relpath, entry, folds):
+    """How an index `entry` relates to `relpath`, judged COMPONENT BY COMPONENT
+    against `folds` -- one of ALIAS_CLASSES, and the shell prints the same three
+    words from the same comparison.
+
+      "spurious"  some component differs ONLY BY CASE where that component's own
+                  parent directory does not fold. git's ':(icase)' is applied
+                  path-wide, so a folding ANCESTOR matched two files that really
+                  are two files. Dropped -- this is issue #231.
+      "match"     every component is equal, or fold-equal in a directory that
+                  folds. A write to `relpath` lands on this entry -- issue #230
+                  when the pathspec could not see it.
+      "keep"      neither: it differs some other way. Unicode composition, which
+                  core.precomposeUnicode folds on an axis of its own, and a glob
+                  match both land here, so nothing about the case axis may drop
+                  them.
+
+    An entry DEEPER than the candidate is judged on the components they share:
+    writing into `private/verify` lands on `private/verify/usage.csv` too. An
+    entry SHORTER than the candidate shares no such relationship, and is kept
+    rather than dropped -- the fail-closed direction for a shape neither probe
+    produces.
+    """
+    cand = [p for p in relpath.split("/") if p]
+    got = [p for p in entry.split("/") if p]
+    if len(got) < len(cand):
+        return "keep"
+    out = "match"
+    for i, (c, e) in enumerate(zip(cand, got)):
+        if c == e:
+            continue
+        if _case_fold(c) == _case_fold(e):
+            if not (i < len(folds) and folds[i]):
+                return "spurious"
+        else:
+            out = "keep"
+    return out
+
+
+def _index_case_aliases(worktree, relpath, folds, overrides, env=None):
+    """Index entries that are this same path under the filesystem's own case
+    folding, found by ENUMERATING THE INDEX rather than by handing git a
+    pathspec (issue #230).
+
+    THE HOLE THIS CLOSES. The two probes that were here fold different things
+    and both stop short of the same combination: ':(icase)' is byte-oriented, so
+    it folds ASCII case pairs and no others, and the on-disk walk folds whatever
+    the filesystem folds but resolves a path only AS FAR AS IT EXISTS. An index
+    entry that is tracked, has no working-tree file, and differs from the
+    candidate only in NON-ASCII case was therefore seen by neither. Reproduced
+    on macOS 15 (APFS, case-insensitive, git 2.50.1) with an index holding
+    `private/HOUSEHÖLD.yaml` written by `update-index --cacheinfo` and no file on
+    disk for it: the guard ACCEPTED `private/househöld.yaml`, the write created
+    the file, and `git add -A` then staged the private bytes under the committed
+    name --
+
+        git status --porcelain   ->  AM "private/HOUSEH\\303\\226LD.yaml"
+        git diff --cached        ->  the private bytes, under the tracked path
+
+    WHY THE ANSWER HAS TO COME FROM THE INDEX. Extending the on-disk walk past
+    the last existing component means asking the filesystem about a name that is
+    not there, and it has no answer to give: for an absent leaf, `lexists` being
+    false IS the statement that the directory holds no entry the filesystem
+    would call the same name. So the directory is enumerated on the side that
+    does hold something -- git's index -- and the candidate is compared against
+    those entries component by component, under the fold vector for the case
+    axis and the generated fold at CASE_FOLD_SED for the names themselves.
+
+    THE FOLD VECTOR IS WHAT KEEPS IT NARROW. A component may fold only where its
+    own parent directory was measured to fold, so on a case-sensitive
+    destination this enumeration matches nothing at all, and on a folding one it
+    matches exactly the entries a write would land on. It is skipped outright
+    where no component folds.
+
+    COST: one `git ls-files -z` per checked path, on top of the two pathspec
+    questions already asked. It reads the index and stats nothing, and the whole
+    index is read rather than a directory prefix so that a fold in a component
+    ABOVE the leaf is covered by the same pass -- the leaf is where issue #230
+    put it, but nothing about the mechanism is special to the last component.
+    """
+    if not any(folds):
+        return []
+    r = _git(["ls-files", "-z"], worktree, env, overrides)
+    if r.returncode != 0:
+        raise DestinationRefused(
+            "tracked_unanswerable",
+            f"'git ls-files' could not list the index of {worktree}, so the "
+            "guard cannot say whether this destination already tracks a path "
+            "its filesystem would treat as this one: "
+            f"{(r.stderr or '').strip()[:200]}",
+            os.path.join(worktree, relpath))
+    return [e for e in r.stdout.split("\0") if e
+            and _classify_alias(relpath, e, folds) == "match"]
 
 
 def _same_file(a, b):
@@ -1086,9 +1707,12 @@ def _ondisk_relpath(worktree, relpath):
     THE PATH USUALLY DOES NOT EXIST YET, which is the point of the module: the
     walk resolves as far as the path really goes and takes the REST exactly as
     asked. `private/1-raw-data` in a tree that holds only `Private/` resolves to
-    `Private/1-raw-data`. An absent LEAF is therefore asked about as typed, which
-    is what leaves the non-ASCII half of issue #230 open -- see
-    _require_uncommittable() for the combination the two alias probes both miss.
+    `Private/1-raw-data`. An absent LEAF is therefore asked about as typed, and
+    that is not a gap so much as the limit of what a filesystem can be asked:
+    `lexists` being false for the leaf IS the statement that the directory holds
+    no entry the filesystem would call the same name. The tracked question for
+    such a leaf is answered from the other side instead, by enumerating the index
+    -- see _index_case_aliases() (issue #230).
 
     HOW A COMPONENT'S REAL SPELLING IS FOUND, and what it costs. The parent is
     listed and the component is looked for BY NAME first; only when it is not
@@ -1852,15 +2476,15 @@ def _alias_pathspec(relpath, fold_case):
     every existing directory the path descends into, so the ':(icase)' magic
     follows the path onto a case-insensitive volume mounted below a case-sensitive
     root rather than being decided at the root alone. It is an OR ALONG THE PATH,
-    and ':(icase)' then applies path-wide, so a folding ANCESTOR turns the magic on
-    for components below it that do not fold themselves (issue #231). Erring that
-    way is fail-closed -- the magic can only make ls-files match MORE index entries
-    -- which is why it ships, but it is a weaker statement than "exactly where the
-    write lands", and on a case-SENSITIVE mount nested under a folding one it can
-    refuse a destination that was correct. Adding it unconditionally would be safe
-    in that same sense and wrong in a larger one: on a case-sensitive filesystem
-    `Private/x` and `private/x` are two files, and refusing a correct destination
-    because the repository tracks the other one is how guards get switched off.
+    and ':(icase)' then applies path-wide, so this pathspec deliberately asks for
+    MORE index entries than the filesystem would really collide. That is what a
+    pathspec can express, and no more: _require_uncommittable() filters what comes
+    back through _classify_alias(), which uses the per-component fold vector, so a
+    folding ANCESTOR no longer makes a case-sensitive descendant fold (issue #231).
+    Adding the magic unconditionally would be a different matter and is still
+    wrong: on a case-sensitive filesystem `Private/x` and `private/x` are two
+    files, and asking git for entries no measurement supports would put the
+    filter's own answer beyond what it can justify.
 
     Off that path this is _pathspec() exactly, so the alias probe still asks
     about the same path with the same magic neutralized -- the unicode half of
@@ -1873,11 +2497,11 @@ def _alias_pathspec(relpath, fold_case):
     that reason -- _require_uncommittable() hands the same call a second
     pathspec, the one _ondisk_relpath() resolved, which folds whatever the
     filesystem folds FOR A PATH THAT EXISTS ON DISK. Where the path does not exist
-    there is nothing to resolve, so the two blind spots OVERLAP in exactly one
-    combination: an index entry that is tracked, has no working-tree file, and
-    differs from the path only in NON-ASCII case is seen by neither probe. Filed
-    as issue #230 and left open deliberately; it is a boundary of this guard, not
-    something covered elsewhere.
+    there is nothing to resolve, and the two blind spots used to OVERLAP in exactly
+    one combination: an index entry that is tracked, has no working-tree file, and
+    differs from the path only in NON-ASCII case. That one is answered by
+    _index_case_aliases(), which enumerates the index instead of handing git a
+    pathspec (issue #230).
     """
     return (":(icase)" if fold_case else "") + _pathspec(relpath)
 
@@ -2025,13 +2649,12 @@ def _require_uncommittable(worktree, relpath, env=None):
     with. What is left is the destination's own .gitignore, its info/exclude and
     its index.
 
-    THREE QUESTIONS, not two (issue #204): the tracked one is asked twice, once
-    by the bytes and once about the aliases the destination's own filesystem
-    resolves to the same file -- as far as the two alias probes below reach, which
-    is not the whole of that equivalence -- because on a case-insensitive or
-    normalizing filesystem a write to `private/household.yaml` lands on a tracked
-    `Private/household.yaml` while the literal question reports it untracked. See
-    ALIAS_CONFIG_OVERRIDE.
+    FOUR QUESTIONS, not two: the tracked one is asked three ways -- by the bytes,
+    by the aliases git's own pathspec folds (issue #204), and by enumerating the
+    index and comparing component by component (issue #230) -- because on a
+    case-insensitive or normalizing filesystem a write to `private/household.yaml`
+    lands on a tracked `Private/household.yaml` while the literal question reports
+    it untracked. See ALIAS_CONFIG_OVERRIDE.
 
     AND EVERY ONE OF THEM IS ASKED ABOUT THE PATH ON DISK (issues #223, #224).
     `relpath` is what the caller typed; _ondisk_relpath() says what the
@@ -2041,8 +2664,8 @@ def _require_uncommittable(worktree, relpath, env=None):
 
       * TRACKED -- the on-disk spelling joins the alias pathspec. This is what
         catches the NON-ASCII fold that `:(icase)` cannot see (#224), FOR A PATH
-        THAT EXISTS ON DISK: the byte fold misses `HOUSEHÖLD.yaml` while the
-        filesystem resolves it.
+        THAT EXISTS ON DISK: git's pathspec fold is ASCII-only and misses
+        `HOUSEHÖLD.yaml` while the filesystem resolves it.
       * IGNORED -- asked of the on-disk spelling FIRST, because that is the path
         the bytes go to. `aliased_not_ignored` when only it is unignored (#223);
         plain `not_ignored` when the spellings are the same, or when the typed
@@ -2056,13 +2679,22 @@ def _require_uncommittable(worktree, relpath, env=None):
     finds it. Neither subsumes the other; asserted in
     test_private_egress.case_the_two_alias_probes_each_catch_what_the_other_misses.
 
-    AND THEIR BLIND SPOTS OVERLAP, which "neither subsumes the other" does not
+    AND THEIR BLIND SPOTS OVERLAPPED, which "neither subsumes the other" does not
     say: an index entry that is BOTH absent from the working tree AND differs from
-    the path only in NON-ASCII case is seen by neither -- `:(icase)` folds ASCII
-    only, and the walk has nothing on disk to resolve for a leaf that does not
-    exist. That combination is issue #230, filed and deliberately not fixed here.
-    It is the stated boundary of the tracked question, not a case some other check
-    picks up.
+    the path only in NON-ASCII case was seen by neither. That combination is issue
+    #230, and it is answered by the third question -- _index_case_aliases()
+    enumerates the destination's index and compares each entry against the
+    candidate component by component, because the side that holds something to
+    compare against is the index rather than the filesystem when the name does not
+    exist yet.
+
+    AND EVERY ENTRY ANY OF THEM RETURNS IS JUDGED PER COMPONENT (issue #231).
+    ':(icase)' is applied path-wide by git, so a folding ANCESTOR would otherwise
+    make a case-SENSITIVE descendant fold as well and the guard would refuse a
+    destination it should accept -- reproduced on three real nested mounts. The
+    fold vector answers for each component's own parent directory, and
+    _classify_alias() drops a match whose only difference sits in a directory that
+    does not fold.
 
     This is the ONLY place in this module where a caller-supplied path becomes a
     git PATHSPEC (everything else hands git a -C directory), so it is the one
@@ -2091,27 +2723,50 @@ def _require_uncommittable(worktree, relpath, env=None):
     # (forcing core.ignoreCase) was measured to change, which is nothing.
     fold_evidence = []
     fold_case = _fs_folds_case(worktree, relpath, fold_evidence)
+    folds = _fold_vector(worktree, relpath)
+    spellings = [relpath] + ([ondisk] if ondisk != relpath else [])
     aliases = [_alias_pathspec(relpath, fold_case)]
     if ondisk != relpath:
         # The spelling the filesystem really holds, which the byte-oriented fold
         # above cannot reach for a non-ASCII cased name (issue #224). One call,
         # two pathspecs: `ls-files` unions them and prints whichever matched.
         aliases.append(_alias_pathspec(ondisk, fold_case))
-    r = _git(["ls-files", "--"] + aliases, worktree, env, _alias_overrides(overrides))
+    r = _git(["ls-files", "-z", "--"] + aliases, worktree, env,
+             _alias_overrides(overrides))
     if r.returncode != 0:
         raise DestinationRefused(
             "tracked_unanswerable",
             f"'git ls-files' could not be asked about the paths {relpath!r} "
             f"aliases in {worktree}: {(r.stderr or '').strip()[:200]}",
             os.path.join(worktree, relpath))
-    if r.stdout.strip():
+    # COMPONENT-LOCAL, which the pathspec cannot be (issue #231). ':(icase)' is
+    # applied path-wide, so a folding ancestor turns the fold on for every
+    # component below it; each entry git returned is kept only if some spelling
+    # it was asked about really does alias it AT EVERY COMPONENT, judged by that
+    # component's own parent directory. -z because these names are split on '/'
+    # here, and git quotes a non-ASCII path in its default output.
+    matched = [e for e in r.stdout.split("\0") if e
+               and any(_classify_alias(s, e, folds) != "spurious" for s in spellings)]
+    # AND THE INDEX ITSELF, for the fold neither pathspec can express (issue
+    # #230): a tracked entry with no working-tree file, differing from the path
+    # only in NON-ASCII case, is invisible to ':(icase)' and has nothing on disk
+    # for the walk to resolve.
+    for spelling in spellings:
+        for hit in _index_case_aliases(worktree, spelling, folds,
+                                       _alias_overrides(overrides), env):
+            if hit not in matched:
+                matched.append(hit)
+    if matched:
         raise DestinationRefused(
             "tracked_path",
             "nothing is tracked under this exact name, but the destination's "
             "filesystem resolves it to a path that is: "
-            f"{' '.join(r.stdout.split())[:200]}. Case folds: "
+            f"{' '.join(matched)[:200]}. Case folds: "
             + (fold_evidence[0] if fold_evidence else str(fold_case))
-            + ", and unicode composition folds wherever git was built to "
+            + " (per component: "
+            + ", ".join(f"{p}={'yes' if f else 'no'}"
+                        for p, f in zip([p for p in relpath.split('/') if p], folds))
+            + "), and unicode composition folds wherever git was built to "
             "precompose"
             + (f"; on disk this path is spelled {ondisk!r}"
                if ondisk != relpath else "")
@@ -2769,7 +3424,249 @@ def refusal(path, *, kind, **kw):
         return e.reason
 
 
+def _backup_beside(path, bak):
+    """A backup a revert can restore EXACTLY, not approximately.
+
+    os.link keeps the ORIGINAL INODE alive under a second name, so putting it
+    back with os.replace() restores the mode, owner, group, flags and extended
+    attributes the file actually had. shutil.copy2 carries the permission bits
+    and little else -- enough for the execute bit that a lost one breaks
+    stage-private-data.sh, not enough to promise the file comes back unchanged.
+    The copy is the fallback for filesystems that refuse hard links, and it is
+    the weaker guarantee of the two, which is why it is second.
+    """
+    try:
+        os.link(str(path), str(bak))
+    except (OSError, AttributeError, NotImplementedError):
+        shutil.copy2(str(path), str(bak))
+
+
+def _revert_published(published):
+    """Put every backed-up file back, INDEPENDENTLY, and report what would not go.
+
+    Each restore is attempted whatever the ones before it did. A rollback that
+    stops at its first failure leaves the rest of the set on the new table,
+    which is the divergence the rollback exists to undo; and a rollback that
+    raises replaces the original failure with its own, so the operator is told
+    about the symptom instead of the cause. Returns the files it could not
+    restore -- their .bak is still on disk as the recovery copy.
+    """
+    unrestored = []
+    for path, bak in reversed(published):
+        try:
+            os.replace(str(bak), str(path))
+        except OSError as exc:
+            unrestored.append(f"{path.name} (from {bak.name}: {exc})")
+            continue
+        # AND THE BACKUP IS GONE AFTERWARDS, which os.replace does NOT
+        # guarantee here. _backup_beside() prefers a hard link, so when the
+        # file's own replace never happened the two names are links to ONE
+        # inode -- and POSIX rename() between two links to the same inode
+        # succeeds while doing nothing at all, leaving the .bak in a directory
+        # the guard walks. Restoring is what the replace is for; removing the
+        # copy afterwards has to be asked for separately.
+        try:
+            os.unlink(str(bak))
+        except OSError:
+            pass                      # already consumed by the replace
+    return unrestored
+
+
+def regenerate_case_fold(root=ROOT):
+    """Rewrite the marked block in BOTH files from python's own str.lower(),
+    and report which of them changed.
+
+    The regeneration path the generated table needs, and the reason the table
+    may be committed at all: nobody edits those lines by hand, and a reader who
+    wants to know what they say runs case_fold_pairs(). The two blocks carry the
+    SAME table text in two quotings -- a python triple-quoted string here, a
+    shell single-quoted string there -- which is safe because
+    _check_case_fold_pairs() has proved no pair needs escaping in either.
+
+    THE WHOLE POINT OF THIS ENTRY POINT IS THAT THE TWO FILES STAY IDENTICAL,
+    so it may not leave them divergent (issue #234). Reading, validating and
+    writing each file in turn did exactly that: this file's block was rewritten
+    before the shell's markers were so much as looked at, so a shell script with
+    a mangled or missing marker got the python half updated and an assertion --
+    the two folds different, from the command that exists to keep them the same.
+    Both files are now read and validated and both replacement texts built
+    BEFORE either is written, and each write goes to a temporary in the target's
+    own directory and lands with os.replace(), so a file is never observed
+    half-written and a failure part-way through leaves the file it has not
+    reached untouched. Two replaces are still two syscalls, so a file that has
+    already landed is kept as a .bak and PUT BACK if a later replace fails: the
+    set advances or reverts together, and an exception part-way through
+    publication can no longer leave the python guard folding pairs the shell
+    guard does not -- the narrower side being the fail-open one.
+    carbon_fullyear.py and parse_bills.py publish their artifact sets the same
+    way. Three details carry that promise, each of them a way it was not kept:
+
+      * the backup is REGISTERED before its replace is attempted, not after,
+        because an asynchronous KeyboardInterrupt between the replace returning
+        and the bookkeeping would leave a landed file with no rollback record;
+      * every restore is attempted INDEPENDENTLY and the original failure is
+        preserved, because a rollback that stops at its first problem leaves the
+        rest of the set on the new table, and one that raises tells the operator
+        about the symptom instead of the cause;
+      * the backup is a HARD LINK where the filesystem allows one, so putting it
+        back restores the file's real mode, owner and attributes rather than the
+        subset a copy carries.
+
+    A hard kill still lands between two syscalls. What it leaves is the .bak
+    beside the file as the recovery copy -- and the NEXT run refuses while that
+    copy is there, rather than quietly overwriting the only remaining evidence
+    of what the file held. The guard case asserting both files record ONE
+    Unicode version fails throughout, so the state is loud.
+
+    NEVER NARROWS THE DOMAIN. str.lower() grows with the interpreter's Unicode
+    version, so regenerating on an older python than the table was built with
+    would silently DELETE pairs -- aliases the guard would stop seeing, which is
+    fail-open. A run that would drop any committed pair refuses and writes
+    nothing, naming what it would have lost. See the domain note at
+    CASE_FOLD_UNICODE.
+
+    The checks here raise AssertionError rather than using `assert`, because
+    `python -O` strips the statement and this function writes files.
+    """
+    begin, end = CASE_FOLD_MARKERS
+    version = unicodedata.unidata_version
+    pairs = case_fold_pairs()
+    body = case_fold_sed_script(pairs)
+
+    fresh = set(pairs)
+
+    # PHASE 1 -- read and validate BOTH files, and build BOTH outputs. Nothing
+    # is written while anything here can still fail.
+    planned = []
+    for path, opening, closing in (
+            (root / "analysis" / "private_egress.py",
+             f'CASE_FOLD_UNICODE = "{version}"\nCASE_FOLD_SED = """\\', '"""'),
+            (root / "stage-private-data.sh",
+             f"# generated from python's str.lower() under Unicode {version}\n"
+             "_CASE_FOLD_SED='", "'")):
+        # A RECOVERY COPY FROM AN INTERRUPTED RUN STOPS THIS ONE. Asked in
+        # phase 1, so a refusal writes nothing, and asked of EVERY planned file
+        # rather than only the ones whose text moved -- the file that kept a
+        # .bak is the one whose rollback could not put it back, which is
+        # precisely the file a later run would find already carrying the new
+        # table and skip as a no-op. Matched by glob and not by name: the
+        # interrupted run had a different pid, so its copy is never the one this
+        # run would have created.
+        stale = sorted(q.name for q in path.parent.glob(f"{path.name}.bak*"))
+        if stale:
+            raise AssertionError(
+                f"{', '.join(stale)} is beside {path.name}, which is the "
+                f"recovery copy an interrupted regeneration leaves behind. "
+                f"Nothing was written. The two implementations may be carrying "
+                f"different fold tables right now. Compare the copy against "
+                f"{path.name}, keep whichever is right, and remove it by hand "
+                f"-- a run that deletes a recovery copy to get past it is how "
+                f"the interrupted state stops being recoverable.")
+        text = path.read_text()
+        head, mark, rest = text.partition(begin + "\n")
+        if not mark:
+            raise AssertionError(
+                f"{path} has no generated-case-fold block to rewrite, so "
+                f"nothing was written to either file")
+        was, mark, tail = rest.partition(end + "\n")
+        if not mark:
+            raise AssertionError(
+                f"{path}'s generated-case-fold block has no end marker, so "
+                f"nothing was written to either file")
+        # The table THIS FILE already carries, read out of the block about to be
+        # replaced rather than off this module's own import, so the answer is
+        # about the file being rewritten.
+        held = set(_CASE_FOLD_RULE.findall(was))
+        dropped = sorted(held - fresh)
+        if dropped:
+            raise AssertionError(
+                f"this interpreter's str.lower() (Unicode {version}) would drop "
+                f"{len(dropped)} of the {len(held)} pairs {path.name} already "
+                f"carries, so nothing was written to either file: {dropped[:5]}. "
+                f"Regenerate on an interpreter whose Unicode is at least the one "
+                f"that block records, since a narrower fold is an alias the "
+                f"guard stops seeing (fail-open).")
+        block = f"{begin}\n{opening}\n{body}\n{closing}\n{end}\n"
+        planned.append((path, text, head + block + tail))
+
+    # PHASE 2 -- publish. Only files whose text really moved are touched, so a
+    # no-op run leaves both mtimes alone.
+    #
+    # AND PUBLISH THEM AS A SET. Building both texts before writing either closes
+    # a VALIDATION failure splitting the pair, but two os.replace calls are two
+    # syscalls, and an exception, a full disk or a permission change on the
+    # second one would still leave this file on the new table and the shell on
+    # the old. That is the divergence the whole entry point exists to prevent,
+    # and it is fail-open in the shell's direction: the stale side folds fewer
+    # pairs, so it sees fewer aliases. Each file that has already landed is
+    # copied aside first and restored if a later one fails.
+    changed = []
+    published = []                    # (path, bak) for every backup TAKEN
+    try:
+        for path, old, new in planned:
+            if new == old:
+                continue
+            tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
+            bak = path.with_name(f"{path.name}.bak{os.getpid()}")
+            try:
+                tmp.write_text(new)
+                # os.replace hands the DESTINATION the temporary's inode, and with
+                # it the temporary's mode: without this, stage-private-data.sh comes
+                # back without its execute bit.
+                os.chmod(str(tmp), os.stat(str(path)).st_mode & 0o7777)
+                _backup_beside(path, bak)
+            except BaseException:
+                for leftover in (tmp, bak):
+                    try:
+                        os.unlink(str(leftover))
+                    except OSError:
+                        pass          # nothing to clean up is not a failure
+                raise
+            # REGISTERED BEFORE THE REPLACE, NOT AFTER. Between the replace
+            # returning and this line, python can still deliver an asynchronous
+            # KeyboardInterrupt -- and a file that has landed with no rollback
+            # record is exactly the split this block exists to prevent. The
+            # other order is safe because reverting a file whose replace never
+            # happened restores identical bytes: a wasted syscall, not a wrong
+            # one.
+            published.append((path, bak))
+            try:
+                os.replace(str(tmp), str(path))
+            except BaseException:
+                try:
+                    os.unlink(str(tmp))
+                except OSError:
+                    pass              # nothing to clean up is not a failure
+                raise
+            changed.append(path.name)
+    except BaseException as cause:
+        # Back to the pair we started with. os.replace consumes the .bak, and
+        # reversed() puts the files back in the order they were taken.
+        unrestored = _revert_published(published)
+        if unrestored:
+            raise AssertionError(
+                f"publication failed AND the rollback could not put "
+                f"{len(unrestored)} file(s) back: {'; '.join(unrestored)}. The "
+                f"two implementations may now carry DIFFERENT fold tables, and "
+                f"the shell's would be the narrower, fail-open one. The .bak "
+                f"files named are the recovery copies -- reconcile them by hand "
+                f"before staging anything. Original failure: {cause!r}") from cause
+        raise
+    for _, bak in published:
+        os.unlink(str(bak))
+    return changed
+
+
 if __name__ == "__main__":   # pragma: no cover - manual smoke check
+    if sys.argv[1:2] == ["--regenerate-case-fold"]:
+        try:
+            moved = regenerate_case_fold()
+        except AssertionError as exc:      # a refusal, not a crash: it is the
+            raise SystemExit(f"case fold: {exc}")   # answer the operator asked for
+        print(f"case fold: {len(case_fold_pairs())} pairs from Unicode "
+              f"{unicodedata.unidata_version}; "
+              + (f"rewrote {', '.join(moved)}" if moved else "both copies were current"))
+        raise SystemExit(0)
     if len(sys.argv) != 3 or sys.argv[1] not in KINDS:
         raise SystemExit(f"usage: private_egress.py <{'|'.join(KINDS)}> <destination path>")
     try:

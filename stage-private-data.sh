@@ -536,11 +536,16 @@ _GIT_DEST_CONFIG=()
 # file in the working tree has no on-disk spelling for that walk to find, so only
 # the pathspec fold sees it.
 #
-# AND THE TWO MISS TOGETHER in one combination, stated rather than left to be
-# inferred: a tracked index entry with NO working-tree file that differs from the
-# path only in NON-ASCII case is seen by neither -- ':(icase)' folds ASCII only,
-# and the walk has nothing to resolve for a leaf that does not exist. Issue #230,
-# open, and a boundary of the tracked question rather than a gap covered later.
+# AND THE TWO USED TO MISS TOGETHER in one combination: a tracked index entry
+# with NO working-tree file that differs from the path only in NON-ASCII case --
+# ':(icase)' folds ASCII only, and the walk has nothing to resolve for a leaf
+# that does not exist. That one is answered by a THIRD question rather than by
+# either of these (issue #230): _require_uncommittable enumerates the
+# destination's index with `ls-files -z` and compares each entry against the
+# candidate component by component, under the generated fold of _case_fold and the
+# per-component answers in _FOLDS_VEC. The pair above still does the work
+# wherever a name EXISTS on disk, where the filesystem itself is the oracle;
+# the enumeration is what answers for a name that does not.
 _GIT_ALIAS_OVERRIDE=(-c core.precomposeUnicode=true)
 
 # EMPTY except while an alias question is being asked. _git splices it after
@@ -1339,17 +1344,16 @@ _require_isolation_proven() {
 # answer is the additive one and no directory is listed at all. Where it does
 # not, the first directory below it that folds decides.
 #
-# THAT IS AN OR ALONG THE PATH, not the answer of the directory the write lands
-# in, and the difference is issue #231. ':(icase)' is applied to the whole
-# pathspec, so a folding ANCESTOR makes every component below it fold as far as
-# this answer goes. The OR is correct wherever case behaviour only ever becomes
-# MORE permissive deeper in -- the ordinary shape, and what this walk exists for,
-# since the directory that folds `1-raw-data` is `private/` and not the root. It
-# is over-broad for the inverse, a case-SENSITIVE volume mounted under a folding
-# directory, where a destination this measurement used to accept is now REFUSED if
-# the index holds the other case spelling. That is a new refusal, not none; it
-# ships because its direction is fail-closed -- the alias probe can only match
-# more index entries.
+# THAT IS AN OR ALONG THE PATH, deliberately, and it is not the equivalence
+# relation -- it is the CANDIDATE GENERATOR. ':(icase)' is applied to the whole
+# pathspec by git, so this is the only question a pathspec can be asked, and a
+# narrower answer here would leave index entries unfound. Being over-broad was,
+# on its own, issue #231: a case-SENSITIVE volume mounted under a folding
+# directory had every component below the folding one folded too, and a
+# destination that should be accepted was refused. What closed it is not a
+# narrower OR but a second measurement kept alongside -- _dest_folds_vector
+# answers per component, and every entry the pathspec returns is filtered through
+# _classify_alias before it may refuse anything.
 #
 # NOTHING IS WRITTEN, which is what settles the ordering this measurement would
 # otherwise pose. The reliable way to detect case behaviour is usually to create
@@ -1376,7 +1380,9 @@ _require_isolation_proven() {
 # answer because the alias probe is additive -- it can only make this script
 # refuse more, and only for a destination that also holds a case-aliased entry in
 # its index: the thing being guarded against wherever the two spellings really are
-# one file, and a false alarm where they are not (issue #231 again).
+# one file, and a false alarm where they are not. An EMPTY case-sensitive volume
+# is that false alarm and stays one -- nothing in it can be measured, so
+# _dest_folds_vector reads it as folding too.
 #
 # Sets _FOLDS_WHERE, in the same words private_egress._fs_folds_case() records,
 # so the refusal below names the directory the answer was taken from.
@@ -1396,6 +1402,19 @@ _ascii_case_flip() {   # $1 = a name
 # "does not fold": `-ef` is false for both spellings there, which is not a
 # measurement. `unknown` is an unlistable directory or one with no ASCII letter
 # in any entry -- an empty directory being the ordinary case.
+#
+# KNOWN IMPRECISION, AND WHY IT STAYS (issue #231, AC4). A case-sensitive
+# directory holding two HARD LINKS to one inode under case-aliased names
+# ('README' and 'readme') measures as folding, because device and inode are what
+# folding looks like. It could be told apart -- on a folding filesystem only ONE
+# of the two spellings is an entry of the directory, so seeing both in the glob
+# proves it does not fold -- and it deliberately is not, because that same shape
+# is the only instrument a test has: a case-aliased pair sharing an inode is how
+# analysis/test_private_egress.py builds a folding directory on a case-sensitive
+# machine, mounting being something a test suite may not leave behind. It errs
+# toward folding, the additive direction, and it can no longer contaminate the
+# rest of the path -- the answer is per component now (_dest_folds_vector), so a
+# directory measuring folding for this reason folds only its OWN entries.
 _dir_folds_case() {   # $1 = an existing directory
   local d=$1 entry name flip
   local LC_ALL=C
@@ -1456,6 +1475,434 @@ _dest_folds_case() {   # $1 = a path this script writes, relative to $DST_REAL
 }
 
 # ---------------------------------------------------------------------------
+# PER-COMPONENT CASE BEHAVIOUR (issue #231), and THE BYTE FOLD (issue #230).
+#
+# _dest_folds_case above answers "is a fold possible ANYWHERE on this path",
+# because that is the only question git's pathspec can be asked: ':(icase)' is
+# applied path-wide. That OR is the right CANDIDATE GENERATOR and the wrong
+# equivalence relation -- with a case-sensitive volume mounted at
+# private/sensitive/ under a case-insensitive private/, an index entry
+# private/sensitive/FOO is a genuinely DIFFERENT file from private/sensitive/foo
+# and the pathspec matches it anyway. Reproduced on three real nested mounts (a
+# case-sensitive APFS image holding the worktree, a case-insensitive one mounted
+# at <root>/private, a case-sensitive one at <root>/private/sensitive) before
+# this existed: the guard refused a destination it should accept.
+#
+# So the answer is kept PER COMPONENT in _FOLDS_VEC, and every index entry git
+# returns is filtered against it -- a component may fold only where its OWN
+# parent directory folds. _FOLDS_VEC[i] is measured at the directory containing
+# component i:
+#
+#   i = 0                  the worktree root, the same .git/.GIT pair
+#   the directory EXISTS   _dir_folds_case; UNMEASURABLE counts as folding, by
+#                          the argument the root probe already uses
+#   it does NOT exist      the answer of the nearest existing ancestor, which is
+#                          a deduction and not a default: a directory the copies
+#                          are about to CREATE is created inside its parent, on
+#                          its parent's filesystem, and nothing can be mounted at
+#                          a path that is not there
+#
+# THE CASE FOLD is the other half, and it is the one comparison here that MODELS
+# what a folding filesystem does instead of measuring it. Everywhere else `-ef`
+# asks the filesystem itself, and that needs one of the two names to EXIST. For
+# a tracked index entry with no working-tree file, compared against a leaf the
+# copies have not created yet, NEITHER name exists, and there is no write-free
+# way to ask a filesystem whether it would collide two names that are not there
+# (issue #230). So the two are folded on the raw bytes instead, FROM ONE
+# GENERATED TABLE: _CASE_FOLD_SED below is python's own simple lowercase map,
+# str.lower(), emitted as a sed script. private_egress.py carries the
+# byte-identical text as CASE_FOLD_SED and PARSES IT to build its own fold, so
+# neither side writes down a rule of its own and there is no second derivation
+# for the two to drift apart. Regenerate BOTH copies with
+#
+#   python3 analysis/private_egress.py --regenerate-case-fold
+#
+# run on the NEWEST interpreter available. str.lower() is a property of that
+# interpreter's Unicode version rather than a constant -- 1392 pairs under
+# Unicode 13, 1432 under 15, 1459 under 16, measured -- so the table is PINNED
+# at the version named in the generated block below, and generated from the
+# widest fold to hand rather than from whichever python is installed where the
+# tests run (issue #234). The guard case asks that the committed table be a
+# SUPERSET of the running interpreter's str.lower(), not equal to it: a pair
+# the table joins that this python does not know costs at most an over-refusal,
+# while a pair this python knows and the table lacks is an alias nobody sees,
+# which is the fail-open condition issue #230 exists to close. Regeneration on
+# an OLDER interpreter refuses rather than narrowing the table.
+#
+# WHAT IT FOLDS, EXACTLY: every code point whose str.lower() is a SINGLE
+# different code point, and nothing else -- ASCII A-Z, the whole of the 2-byte
+# UTF-8 range (Latin-1 supplement, Latin Extended-A and -B, IPA, Greek and
+# Coptic, Cyrillic, Armenian) and the 3- and 4-byte code points str.lower()
+# maps one-to-one (Georgian, Cherokee, Glagolitic, Greek Extended, the
+# fullwidth Latin forms, Warang Citi, Medefaidrin, Adlam, Deseret). Two
+# unrelated accents stay apart: 'i-acute' and 'a-ring' are not a case pair.
+#
+# IT IS NOT A SUPERSET of what a folding volume does, and the table it replaces
+# was called one here. That was wrong in both directions, measured (issue #233).
+# The old table was three BYTE ranges (A-Z, \200-\237, \300-\337, each with 0x20
+# set), so it folded a pair only where the UTF-8 differs in the 0x20 bit of the
+# FINAL byte: of the 380 cased pairs in the five blocks a filename realistically
+# uses it folded 61 and MISSED 319, including all of Latin Extended-A and -B and
+# most of Greek and Cyrillic. A tracked-but-absent private/<Cyrillic RISK>.yaml
+# beside a candidate spelled in lower case matched nothing and the copies were
+# ALLOWED -- fail-OPEN, on a volume measured to resolve the two to one file. In
+# the other direction it folded U+2010 and U+2030, which are not a case pair and
+# which APFS keeps apart. The generated table does neither.
+#
+# WHAT IT STILL DOES NOT FOLD, all erring FAIL-OPEN and stated rather than
+# implied: the 297 code points whose full casefolding differs from their simple
+# lowercasing (final sigma vs sigma, long s vs 's', micro sign vs mu), which a
+# per-code-point substitution cannot carry because 'sharp s' casefolds to two
+# letters -- that is a count of SOURCE code points, 194 of which casefold to a
+# single code point and 103 to more than one; U+0130 (capital I with dot
+# above), whose lowercase is two code points; and NFC/NFD normalization, which
+# is a different axis, is joined by git's core.precomposeUnicode for the
+# pathspec questions above, and is NOT joined for the tracked-but-absent entry
+# this table exists for.
+#
+# The trailing '.' is not decoration: `$( )` strips TRAILING newlines, so a name
+# ending in one would come back shorter than it is and two different names could
+# fold alike. It is a constant on both sides of every comparison, so it cancels.
+#
+# COST: one `sed` per fold, the same process count the `tr` it replaces had, at
+# roughly 5ms rather than 2ms on this machine because the script carries one
+# substitution per table pair. The gate in the alias loop below is what keeps
+# the call count down.
+# --- BEGIN GENERATED CASE FOLD (private_egress.py --regenerate-case-fold) ---
+# generated from python's str.lower() under Unicode 16.0.0
+_CASE_FOLD_SED='
+s/A/a/g;s/B/b/g;s/C/c/g;s/D/d/g;s/E/e/g;s/F/f/g;s/G/g/g;s/H/h/g
+s/I/i/g;s/J/j/g;s/K/k/g;s/L/l/g;s/M/m/g;s/N/n/g;s/O/o/g;s/P/p/g
+s/Q/q/g;s/R/r/g;s/S/s/g;s/T/t/g;s/U/u/g;s/V/v/g;s/W/w/g;s/X/x/g
+s/Y/y/g;s/Z/z/g;s/À/à/g;s/Á/á/g;s/Â/â/g;s/Ã/ã/g;s/Ä/ä/g;s/Å/å/g
+s/Æ/æ/g;s/Ç/ç/g;s/È/è/g;s/É/é/g;s/Ê/ê/g;s/Ë/ë/g;s/Ì/ì/g;s/Í/í/g
+s/Î/î/g;s/Ï/ï/g;s/Ð/ð/g;s/Ñ/ñ/g;s/Ò/ò/g;s/Ó/ó/g;s/Ô/ô/g;s/Õ/õ/g
+s/Ö/ö/g;s/Ø/ø/g;s/Ù/ù/g;s/Ú/ú/g;s/Û/û/g;s/Ü/ü/g;s/Ý/ý/g;s/Þ/þ/g
+s/Ā/ā/g;s/Ă/ă/g;s/Ą/ą/g;s/Ć/ć/g;s/Ĉ/ĉ/g;s/Ċ/ċ/g;s/Č/č/g;s/Ď/ď/g
+s/Đ/đ/g;s/Ē/ē/g;s/Ĕ/ĕ/g;s/Ė/ė/g;s/Ę/ę/g;s/Ě/ě/g;s/Ĝ/ĝ/g;s/Ğ/ğ/g
+s/Ġ/ġ/g;s/Ģ/ģ/g;s/Ĥ/ĥ/g;s/Ħ/ħ/g;s/Ĩ/ĩ/g;s/Ī/ī/g;s/Ĭ/ĭ/g;s/Į/į/g
+s/Ĳ/ĳ/g;s/Ĵ/ĵ/g;s/Ķ/ķ/g;s/Ĺ/ĺ/g;s/Ļ/ļ/g;s/Ľ/ľ/g;s/Ŀ/ŀ/g;s/Ł/ł/g
+s/Ń/ń/g;s/Ņ/ņ/g;s/Ň/ň/g;s/Ŋ/ŋ/g;s/Ō/ō/g;s/Ŏ/ŏ/g;s/Ő/ő/g;s/Œ/œ/g
+s/Ŕ/ŕ/g;s/Ŗ/ŗ/g;s/Ř/ř/g;s/Ś/ś/g;s/Ŝ/ŝ/g;s/Ş/ş/g;s/Š/š/g;s/Ţ/ţ/g
+s/Ť/ť/g;s/Ŧ/ŧ/g;s/Ũ/ũ/g;s/Ū/ū/g;s/Ŭ/ŭ/g;s/Ů/ů/g;s/Ű/ű/g;s/Ų/ų/g
+s/Ŵ/ŵ/g;s/Ŷ/ŷ/g;s/Ÿ/ÿ/g;s/Ź/ź/g;s/Ż/ż/g;s/Ž/ž/g;s/Ɓ/ɓ/g;s/Ƃ/ƃ/g
+s/Ƅ/ƅ/g;s/Ɔ/ɔ/g;s/Ƈ/ƈ/g;s/Ɖ/ɖ/g;s/Ɗ/ɗ/g;s/Ƌ/ƌ/g;s/Ǝ/ǝ/g;s/Ə/ə/g
+s/Ɛ/ɛ/g;s/Ƒ/ƒ/g;s/Ɠ/ɠ/g;s/Ɣ/ɣ/g;s/Ɩ/ɩ/g;s/Ɨ/ɨ/g;s/Ƙ/ƙ/g;s/Ɯ/ɯ/g
+s/Ɲ/ɲ/g;s/Ɵ/ɵ/g;s/Ơ/ơ/g;s/Ƣ/ƣ/g;s/Ƥ/ƥ/g;s/Ʀ/ʀ/g;s/Ƨ/ƨ/g;s/Ʃ/ʃ/g
+s/Ƭ/ƭ/g;s/Ʈ/ʈ/g;s/Ư/ư/g;s/Ʊ/ʊ/g;s/Ʋ/ʋ/g;s/Ƴ/ƴ/g;s/Ƶ/ƶ/g;s/Ʒ/ʒ/g
+s/Ƹ/ƹ/g;s/Ƽ/ƽ/g;s/Ǆ/ǆ/g;s/ǅ/ǆ/g;s/Ǉ/ǉ/g;s/ǈ/ǉ/g;s/Ǌ/ǌ/g;s/ǋ/ǌ/g
+s/Ǎ/ǎ/g;s/Ǐ/ǐ/g;s/Ǒ/ǒ/g;s/Ǔ/ǔ/g;s/Ǖ/ǖ/g;s/Ǘ/ǘ/g;s/Ǚ/ǚ/g;s/Ǜ/ǜ/g
+s/Ǟ/ǟ/g;s/Ǡ/ǡ/g;s/Ǣ/ǣ/g;s/Ǥ/ǥ/g;s/Ǧ/ǧ/g;s/Ǩ/ǩ/g;s/Ǫ/ǫ/g;s/Ǭ/ǭ/g
+s/Ǯ/ǯ/g;s/Ǳ/ǳ/g;s/ǲ/ǳ/g;s/Ǵ/ǵ/g;s/Ƕ/ƕ/g;s/Ƿ/ƿ/g;s/Ǹ/ǹ/g;s/Ǻ/ǻ/g
+s/Ǽ/ǽ/g;s/Ǿ/ǿ/g;s/Ȁ/ȁ/g;s/Ȃ/ȃ/g;s/Ȅ/ȅ/g;s/Ȇ/ȇ/g;s/Ȉ/ȉ/g;s/Ȋ/ȋ/g
+s/Ȍ/ȍ/g;s/Ȏ/ȏ/g;s/Ȑ/ȑ/g;s/Ȓ/ȓ/g;s/Ȕ/ȕ/g;s/Ȗ/ȗ/g;s/Ș/ș/g;s/Ț/ț/g
+s/Ȝ/ȝ/g;s/Ȟ/ȟ/g;s/Ƞ/ƞ/g;s/Ȣ/ȣ/g;s/Ȥ/ȥ/g;s/Ȧ/ȧ/g;s/Ȩ/ȩ/g;s/Ȫ/ȫ/g
+s/Ȭ/ȭ/g;s/Ȯ/ȯ/g;s/Ȱ/ȱ/g;s/Ȳ/ȳ/g;s/Ⱥ/ⱥ/g;s/Ȼ/ȼ/g;s/Ƚ/ƚ/g;s/Ⱦ/ⱦ/g
+s/Ɂ/ɂ/g;s/Ƀ/ƀ/g;s/Ʉ/ʉ/g;s/Ʌ/ʌ/g;s/Ɇ/ɇ/g;s/Ɉ/ɉ/g;s/Ɋ/ɋ/g;s/Ɍ/ɍ/g
+s/Ɏ/ɏ/g;s/Ͱ/ͱ/g;s/Ͳ/ͳ/g;s/Ͷ/ͷ/g;s/Ϳ/ϳ/g;s/Ά/ά/g;s/Έ/έ/g;s/Ή/ή/g
+s/Ί/ί/g;s/Ό/ό/g;s/Ύ/ύ/g;s/Ώ/ώ/g;s/Α/α/g;s/Β/β/g;s/Γ/γ/g;s/Δ/δ/g
+s/Ε/ε/g;s/Ζ/ζ/g;s/Η/η/g;s/Θ/θ/g;s/Ι/ι/g;s/Κ/κ/g;s/Λ/λ/g;s/Μ/μ/g
+s/Ν/ν/g;s/Ξ/ξ/g;s/Ο/ο/g;s/Π/π/g;s/Ρ/ρ/g;s/Σ/σ/g;s/Τ/τ/g;s/Υ/υ/g
+s/Φ/φ/g;s/Χ/χ/g;s/Ψ/ψ/g;s/Ω/ω/g;s/Ϊ/ϊ/g;s/Ϋ/ϋ/g;s/Ϗ/ϗ/g;s/Ϙ/ϙ/g
+s/Ϛ/ϛ/g;s/Ϝ/ϝ/g;s/Ϟ/ϟ/g;s/Ϡ/ϡ/g;s/Ϣ/ϣ/g;s/Ϥ/ϥ/g;s/Ϧ/ϧ/g;s/Ϩ/ϩ/g
+s/Ϫ/ϫ/g;s/Ϭ/ϭ/g;s/Ϯ/ϯ/g;s/ϴ/θ/g;s/Ϸ/ϸ/g;s/Ϲ/ϲ/g;s/Ϻ/ϻ/g;s/Ͻ/ͻ/g
+s/Ͼ/ͼ/g;s/Ͽ/ͽ/g;s/Ѐ/ѐ/g;s/Ё/ё/g;s/Ђ/ђ/g;s/Ѓ/ѓ/g;s/Є/є/g;s/Ѕ/ѕ/g
+s/І/і/g;s/Ї/ї/g;s/Ј/ј/g;s/Љ/љ/g;s/Њ/њ/g;s/Ћ/ћ/g;s/Ќ/ќ/g;s/Ѝ/ѝ/g
+s/Ў/ў/g;s/Џ/џ/g;s/А/а/g;s/Б/б/g;s/В/в/g;s/Г/г/g;s/Д/д/g;s/Е/е/g
+s/Ж/ж/g;s/З/з/g;s/И/и/g;s/Й/й/g;s/К/к/g;s/Л/л/g;s/М/м/g;s/Н/н/g
+s/О/о/g;s/П/п/g;s/Р/р/g;s/С/с/g;s/Т/т/g;s/У/у/g;s/Ф/ф/g;s/Х/х/g
+s/Ц/ц/g;s/Ч/ч/g;s/Ш/ш/g;s/Щ/щ/g;s/Ъ/ъ/g;s/Ы/ы/g;s/Ь/ь/g;s/Э/э/g
+s/Ю/ю/g;s/Я/я/g;s/Ѡ/ѡ/g;s/Ѣ/ѣ/g;s/Ѥ/ѥ/g;s/Ѧ/ѧ/g;s/Ѩ/ѩ/g;s/Ѫ/ѫ/g
+s/Ѭ/ѭ/g;s/Ѯ/ѯ/g;s/Ѱ/ѱ/g;s/Ѳ/ѳ/g;s/Ѵ/ѵ/g;s/Ѷ/ѷ/g;s/Ѹ/ѹ/g;s/Ѻ/ѻ/g
+s/Ѽ/ѽ/g;s/Ѿ/ѿ/g;s/Ҁ/ҁ/g;s/Ҋ/ҋ/g;s/Ҍ/ҍ/g;s/Ҏ/ҏ/g;s/Ґ/ґ/g;s/Ғ/ғ/g
+s/Ҕ/ҕ/g;s/Җ/җ/g;s/Ҙ/ҙ/g;s/Қ/қ/g;s/Ҝ/ҝ/g;s/Ҟ/ҟ/g;s/Ҡ/ҡ/g;s/Ң/ң/g
+s/Ҥ/ҥ/g;s/Ҧ/ҧ/g;s/Ҩ/ҩ/g;s/Ҫ/ҫ/g;s/Ҭ/ҭ/g;s/Ү/ү/g;s/Ұ/ұ/g;s/Ҳ/ҳ/g
+s/Ҵ/ҵ/g;s/Ҷ/ҷ/g;s/Ҹ/ҹ/g;s/Һ/һ/g;s/Ҽ/ҽ/g;s/Ҿ/ҿ/g;s/Ӏ/ӏ/g;s/Ӂ/ӂ/g
+s/Ӄ/ӄ/g;s/Ӆ/ӆ/g;s/Ӈ/ӈ/g;s/Ӊ/ӊ/g;s/Ӌ/ӌ/g;s/Ӎ/ӎ/g;s/Ӑ/ӑ/g;s/Ӓ/ӓ/g
+s/Ӕ/ӕ/g;s/Ӗ/ӗ/g;s/Ә/ә/g;s/Ӛ/ӛ/g;s/Ӝ/ӝ/g;s/Ӟ/ӟ/g;s/Ӡ/ӡ/g;s/Ӣ/ӣ/g
+s/Ӥ/ӥ/g;s/Ӧ/ӧ/g;s/Ө/ө/g;s/Ӫ/ӫ/g;s/Ӭ/ӭ/g;s/Ӯ/ӯ/g;s/Ӱ/ӱ/g;s/Ӳ/ӳ/g
+s/Ӵ/ӵ/g;s/Ӷ/ӷ/g;s/Ӹ/ӹ/g;s/Ӻ/ӻ/g;s/Ӽ/ӽ/g;s/Ӿ/ӿ/g;s/Ԁ/ԁ/g;s/Ԃ/ԃ/g
+s/Ԅ/ԅ/g;s/Ԇ/ԇ/g;s/Ԉ/ԉ/g;s/Ԋ/ԋ/g;s/Ԍ/ԍ/g;s/Ԏ/ԏ/g;s/Ԑ/ԑ/g;s/Ԓ/ԓ/g
+s/Ԕ/ԕ/g;s/Ԗ/ԗ/g;s/Ԙ/ԙ/g;s/Ԛ/ԛ/g;s/Ԝ/ԝ/g;s/Ԟ/ԟ/g;s/Ԡ/ԡ/g;s/Ԣ/ԣ/g
+s/Ԥ/ԥ/g;s/Ԧ/ԧ/g;s/Ԩ/ԩ/g;s/Ԫ/ԫ/g;s/Ԭ/ԭ/g;s/Ԯ/ԯ/g;s/Ա/ա/g;s/Բ/բ/g
+s/Գ/գ/g;s/Դ/դ/g;s/Ե/ե/g;s/Զ/զ/g;s/Է/է/g;s/Ը/ը/g;s/Թ/թ/g;s/Ժ/ժ/g
+s/Ի/ի/g;s/Լ/լ/g;s/Խ/խ/g;s/Ծ/ծ/g;s/Կ/կ/g;s/Հ/հ/g;s/Ձ/ձ/g;s/Ղ/ղ/g
+s/Ճ/ճ/g;s/Մ/մ/g;s/Յ/յ/g;s/Ն/ն/g;s/Շ/շ/g;s/Ո/ո/g;s/Չ/չ/g;s/Պ/պ/g
+s/Ջ/ջ/g;s/Ռ/ռ/g;s/Ս/ս/g;s/Վ/վ/g;s/Տ/տ/g;s/Ր/ր/g;s/Ց/ց/g;s/Ւ/ւ/g
+s/Փ/փ/g;s/Ք/ք/g;s/Օ/օ/g;s/Ֆ/ֆ/g;s/Ⴀ/ⴀ/g;s/Ⴁ/ⴁ/g;s/Ⴂ/ⴂ/g;s/Ⴃ/ⴃ/g
+s/Ⴄ/ⴄ/g;s/Ⴅ/ⴅ/g;s/Ⴆ/ⴆ/g;s/Ⴇ/ⴇ/g;s/Ⴈ/ⴈ/g;s/Ⴉ/ⴉ/g;s/Ⴊ/ⴊ/g;s/Ⴋ/ⴋ/g
+s/Ⴌ/ⴌ/g;s/Ⴍ/ⴍ/g;s/Ⴎ/ⴎ/g;s/Ⴏ/ⴏ/g;s/Ⴐ/ⴐ/g;s/Ⴑ/ⴑ/g;s/Ⴒ/ⴒ/g;s/Ⴓ/ⴓ/g
+s/Ⴔ/ⴔ/g;s/Ⴕ/ⴕ/g;s/Ⴖ/ⴖ/g;s/Ⴗ/ⴗ/g;s/Ⴘ/ⴘ/g;s/Ⴙ/ⴙ/g;s/Ⴚ/ⴚ/g;s/Ⴛ/ⴛ/g
+s/Ⴜ/ⴜ/g;s/Ⴝ/ⴝ/g;s/Ⴞ/ⴞ/g;s/Ⴟ/ⴟ/g;s/Ⴠ/ⴠ/g;s/Ⴡ/ⴡ/g;s/Ⴢ/ⴢ/g;s/Ⴣ/ⴣ/g
+s/Ⴤ/ⴤ/g;s/Ⴥ/ⴥ/g;s/Ⴧ/ⴧ/g;s/Ⴭ/ⴭ/g;s/Ꭰ/ꭰ/g;s/Ꭱ/ꭱ/g;s/Ꭲ/ꭲ/g;s/Ꭳ/ꭳ/g
+s/Ꭴ/ꭴ/g;s/Ꭵ/ꭵ/g;s/Ꭶ/ꭶ/g;s/Ꭷ/ꭷ/g;s/Ꭸ/ꭸ/g;s/Ꭹ/ꭹ/g;s/Ꭺ/ꭺ/g;s/Ꭻ/ꭻ/g
+s/Ꭼ/ꭼ/g;s/Ꭽ/ꭽ/g;s/Ꭾ/ꭾ/g;s/Ꭿ/ꭿ/g;s/Ꮀ/ꮀ/g;s/Ꮁ/ꮁ/g;s/Ꮂ/ꮂ/g;s/Ꮃ/ꮃ/g
+s/Ꮄ/ꮄ/g;s/Ꮅ/ꮅ/g;s/Ꮆ/ꮆ/g;s/Ꮇ/ꮇ/g;s/Ꮈ/ꮈ/g;s/Ꮉ/ꮉ/g;s/Ꮊ/ꮊ/g;s/Ꮋ/ꮋ/g
+s/Ꮌ/ꮌ/g;s/Ꮍ/ꮍ/g;s/Ꮎ/ꮎ/g;s/Ꮏ/ꮏ/g;s/Ꮐ/ꮐ/g;s/Ꮑ/ꮑ/g;s/Ꮒ/ꮒ/g;s/Ꮓ/ꮓ/g
+s/Ꮔ/ꮔ/g;s/Ꮕ/ꮕ/g;s/Ꮖ/ꮖ/g;s/Ꮗ/ꮗ/g;s/Ꮘ/ꮘ/g;s/Ꮙ/ꮙ/g;s/Ꮚ/ꮚ/g;s/Ꮛ/ꮛ/g
+s/Ꮜ/ꮜ/g;s/Ꮝ/ꮝ/g;s/Ꮞ/ꮞ/g;s/Ꮟ/ꮟ/g;s/Ꮠ/ꮠ/g;s/Ꮡ/ꮡ/g;s/Ꮢ/ꮢ/g;s/Ꮣ/ꮣ/g
+s/Ꮤ/ꮤ/g;s/Ꮥ/ꮥ/g;s/Ꮦ/ꮦ/g;s/Ꮧ/ꮧ/g;s/Ꮨ/ꮨ/g;s/Ꮩ/ꮩ/g;s/Ꮪ/ꮪ/g;s/Ꮫ/ꮫ/g
+s/Ꮬ/ꮬ/g;s/Ꮭ/ꮭ/g;s/Ꮮ/ꮮ/g;s/Ꮯ/ꮯ/g;s/Ꮰ/ꮰ/g;s/Ꮱ/ꮱ/g;s/Ꮲ/ꮲ/g;s/Ꮳ/ꮳ/g
+s/Ꮴ/ꮴ/g;s/Ꮵ/ꮵ/g;s/Ꮶ/ꮶ/g;s/Ꮷ/ꮷ/g;s/Ꮸ/ꮸ/g;s/Ꮹ/ꮹ/g;s/Ꮺ/ꮺ/g;s/Ꮻ/ꮻ/g
+s/Ꮼ/ꮼ/g;s/Ꮽ/ꮽ/g;s/Ꮾ/ꮾ/g;s/Ꮿ/ꮿ/g;s/Ᏸ/ᏸ/g;s/Ᏹ/ᏹ/g;s/Ᏺ/ᏺ/g;s/Ᏻ/ᏻ/g
+s/Ᏼ/ᏼ/g;s/Ᏽ/ᏽ/g;s/Ᲊ/ᲊ/g;s/Ა/ა/g;s/Ბ/ბ/g;s/Გ/გ/g;s/Დ/დ/g;s/Ე/ე/g
+s/Ვ/ვ/g;s/Ზ/ზ/g;s/Თ/თ/g;s/Ი/ი/g;s/Კ/კ/g;s/Ლ/ლ/g;s/Მ/მ/g;s/Ნ/ნ/g
+s/Ო/ო/g;s/Პ/პ/g;s/Ჟ/ჟ/g;s/Რ/რ/g;s/Ს/ს/g;s/Ტ/ტ/g;s/Უ/უ/g;s/Ფ/ფ/g
+s/Ქ/ქ/g;s/Ღ/ღ/g;s/Ყ/ყ/g;s/Შ/შ/g;s/Ჩ/ჩ/g;s/Ც/ც/g;s/Ძ/ძ/g;s/Წ/წ/g
+s/Ჭ/ჭ/g;s/Ხ/ხ/g;s/Ჯ/ჯ/g;s/Ჰ/ჰ/g;s/Ჱ/ჱ/g;s/Ჲ/ჲ/g;s/Ჳ/ჳ/g;s/Ჴ/ჴ/g
+s/Ჵ/ჵ/g;s/Ჶ/ჶ/g;s/Ჷ/ჷ/g;s/Ჸ/ჸ/g;s/Ჹ/ჹ/g;s/Ჺ/ჺ/g;s/Ჽ/ჽ/g;s/Ჾ/ჾ/g
+s/Ჿ/ჿ/g;s/Ḁ/ḁ/g;s/Ḃ/ḃ/g;s/Ḅ/ḅ/g;s/Ḇ/ḇ/g;s/Ḉ/ḉ/g;s/Ḋ/ḋ/g;s/Ḍ/ḍ/g
+s/Ḏ/ḏ/g;s/Ḑ/ḑ/g;s/Ḓ/ḓ/g;s/Ḕ/ḕ/g;s/Ḗ/ḗ/g;s/Ḙ/ḙ/g;s/Ḛ/ḛ/g;s/Ḝ/ḝ/g
+s/Ḟ/ḟ/g;s/Ḡ/ḡ/g;s/Ḣ/ḣ/g;s/Ḥ/ḥ/g;s/Ḧ/ḧ/g;s/Ḩ/ḩ/g;s/Ḫ/ḫ/g;s/Ḭ/ḭ/g
+s/Ḯ/ḯ/g;s/Ḱ/ḱ/g;s/Ḳ/ḳ/g;s/Ḵ/ḵ/g;s/Ḷ/ḷ/g;s/Ḹ/ḹ/g;s/Ḻ/ḻ/g;s/Ḽ/ḽ/g
+s/Ḿ/ḿ/g;s/Ṁ/ṁ/g;s/Ṃ/ṃ/g;s/Ṅ/ṅ/g;s/Ṇ/ṇ/g;s/Ṉ/ṉ/g;s/Ṋ/ṋ/g;s/Ṍ/ṍ/g
+s/Ṏ/ṏ/g;s/Ṑ/ṑ/g;s/Ṓ/ṓ/g;s/Ṕ/ṕ/g;s/Ṗ/ṗ/g;s/Ṙ/ṙ/g;s/Ṛ/ṛ/g;s/Ṝ/ṝ/g
+s/Ṟ/ṟ/g;s/Ṡ/ṡ/g;s/Ṣ/ṣ/g;s/Ṥ/ṥ/g;s/Ṧ/ṧ/g;s/Ṩ/ṩ/g;s/Ṫ/ṫ/g;s/Ṭ/ṭ/g
+s/Ṯ/ṯ/g;s/Ṱ/ṱ/g;s/Ṳ/ṳ/g;s/Ṵ/ṵ/g;s/Ṷ/ṷ/g;s/Ṹ/ṹ/g;s/Ṻ/ṻ/g;s/Ṽ/ṽ/g
+s/Ṿ/ṿ/g;s/Ẁ/ẁ/g;s/Ẃ/ẃ/g;s/Ẅ/ẅ/g;s/Ẇ/ẇ/g;s/Ẉ/ẉ/g;s/Ẋ/ẋ/g;s/Ẍ/ẍ/g
+s/Ẏ/ẏ/g;s/Ẑ/ẑ/g;s/Ẓ/ẓ/g;s/Ẕ/ẕ/g;s/ẞ/ß/g;s/Ạ/ạ/g;s/Ả/ả/g;s/Ấ/ấ/g
+s/Ầ/ầ/g;s/Ẩ/ẩ/g;s/Ẫ/ẫ/g;s/Ậ/ậ/g;s/Ắ/ắ/g;s/Ằ/ằ/g;s/Ẳ/ẳ/g;s/Ẵ/ẵ/g
+s/Ặ/ặ/g;s/Ẹ/ẹ/g;s/Ẻ/ẻ/g;s/Ẽ/ẽ/g;s/Ế/ế/g;s/Ề/ề/g;s/Ể/ể/g;s/Ễ/ễ/g
+s/Ệ/ệ/g;s/Ỉ/ỉ/g;s/Ị/ị/g;s/Ọ/ọ/g;s/Ỏ/ỏ/g;s/Ố/ố/g;s/Ồ/ồ/g;s/Ổ/ổ/g
+s/Ỗ/ỗ/g;s/Ộ/ộ/g;s/Ớ/ớ/g;s/Ờ/ờ/g;s/Ở/ở/g;s/Ỡ/ỡ/g;s/Ợ/ợ/g;s/Ụ/ụ/g
+s/Ủ/ủ/g;s/Ứ/ứ/g;s/Ừ/ừ/g;s/Ử/ử/g;s/Ữ/ữ/g;s/Ự/ự/g;s/Ỳ/ỳ/g;s/Ỵ/ỵ/g
+s/Ỷ/ỷ/g;s/Ỹ/ỹ/g;s/Ỻ/ỻ/g;s/Ỽ/ỽ/g;s/Ỿ/ỿ/g;s/Ἀ/ἀ/g;s/Ἁ/ἁ/g;s/Ἂ/ἂ/g
+s/Ἃ/ἃ/g;s/Ἄ/ἄ/g;s/Ἅ/ἅ/g;s/Ἆ/ἆ/g;s/Ἇ/ἇ/g;s/Ἐ/ἐ/g;s/Ἑ/ἑ/g;s/Ἒ/ἒ/g
+s/Ἓ/ἓ/g;s/Ἔ/ἔ/g;s/Ἕ/ἕ/g;s/Ἠ/ἠ/g;s/Ἡ/ἡ/g;s/Ἢ/ἢ/g;s/Ἣ/ἣ/g;s/Ἤ/ἤ/g
+s/Ἥ/ἥ/g;s/Ἦ/ἦ/g;s/Ἧ/ἧ/g;s/Ἰ/ἰ/g;s/Ἱ/ἱ/g;s/Ἲ/ἲ/g;s/Ἳ/ἳ/g;s/Ἴ/ἴ/g
+s/Ἵ/ἵ/g;s/Ἶ/ἶ/g;s/Ἷ/ἷ/g;s/Ὀ/ὀ/g;s/Ὁ/ὁ/g;s/Ὂ/ὂ/g;s/Ὃ/ὃ/g;s/Ὄ/ὄ/g
+s/Ὅ/ὅ/g;s/Ὑ/ὑ/g;s/Ὓ/ὓ/g;s/Ὕ/ὕ/g;s/Ὗ/ὗ/g;s/Ὠ/ὠ/g;s/Ὡ/ὡ/g;s/Ὢ/ὢ/g
+s/Ὣ/ὣ/g;s/Ὤ/ὤ/g;s/Ὥ/ὥ/g;s/Ὦ/ὦ/g;s/Ὧ/ὧ/g;s/ᾈ/ᾀ/g;s/ᾉ/ᾁ/g;s/ᾊ/ᾂ/g
+s/ᾋ/ᾃ/g;s/ᾌ/ᾄ/g;s/ᾍ/ᾅ/g;s/ᾎ/ᾆ/g;s/ᾏ/ᾇ/g;s/ᾘ/ᾐ/g;s/ᾙ/ᾑ/g;s/ᾚ/ᾒ/g
+s/ᾛ/ᾓ/g;s/ᾜ/ᾔ/g;s/ᾝ/ᾕ/g;s/ᾞ/ᾖ/g;s/ᾟ/ᾗ/g;s/ᾨ/ᾠ/g;s/ᾩ/ᾡ/g;s/ᾪ/ᾢ/g
+s/ᾫ/ᾣ/g;s/ᾬ/ᾤ/g;s/ᾭ/ᾥ/g;s/ᾮ/ᾦ/g;s/ᾯ/ᾧ/g;s/Ᾰ/ᾰ/g;s/Ᾱ/ᾱ/g;s/Ὰ/ὰ/g
+s/Ά/ά/g;s/ᾼ/ᾳ/g;s/Ὲ/ὲ/g;s/Έ/έ/g;s/Ὴ/ὴ/g;s/Ή/ή/g;s/ῌ/ῃ/g;s/Ῐ/ῐ/g
+s/Ῑ/ῑ/g;s/Ὶ/ὶ/g;s/Ί/ί/g;s/Ῠ/ῠ/g;s/Ῡ/ῡ/g;s/Ὺ/ὺ/g;s/Ύ/ύ/g;s/Ῥ/ῥ/g
+s/Ὸ/ὸ/g;s/Ό/ό/g;s/Ὼ/ὼ/g;s/Ώ/ώ/g;s/ῼ/ῳ/g;s/Ω/ω/g;s/K/k/g;s/Å/å/g
+s/Ⅎ/ⅎ/g;s/Ⅰ/ⅰ/g;s/Ⅱ/ⅱ/g;s/Ⅲ/ⅲ/g;s/Ⅳ/ⅳ/g;s/Ⅴ/ⅴ/g;s/Ⅵ/ⅵ/g;s/Ⅶ/ⅶ/g
+s/Ⅷ/ⅷ/g;s/Ⅸ/ⅸ/g;s/Ⅹ/ⅹ/g;s/Ⅺ/ⅺ/g;s/Ⅻ/ⅻ/g;s/Ⅼ/ⅼ/g;s/Ⅽ/ⅽ/g;s/Ⅾ/ⅾ/g
+s/Ⅿ/ⅿ/g;s/Ↄ/ↄ/g;s/Ⓐ/ⓐ/g;s/Ⓑ/ⓑ/g;s/Ⓒ/ⓒ/g;s/Ⓓ/ⓓ/g;s/Ⓔ/ⓔ/g;s/Ⓕ/ⓕ/g
+s/Ⓖ/ⓖ/g;s/Ⓗ/ⓗ/g;s/Ⓘ/ⓘ/g;s/Ⓙ/ⓙ/g;s/Ⓚ/ⓚ/g;s/Ⓛ/ⓛ/g;s/Ⓜ/ⓜ/g;s/Ⓝ/ⓝ/g
+s/Ⓞ/ⓞ/g;s/Ⓟ/ⓟ/g;s/Ⓠ/ⓠ/g;s/Ⓡ/ⓡ/g;s/Ⓢ/ⓢ/g;s/Ⓣ/ⓣ/g;s/Ⓤ/ⓤ/g;s/Ⓥ/ⓥ/g
+s/Ⓦ/ⓦ/g;s/Ⓧ/ⓧ/g;s/Ⓨ/ⓨ/g;s/Ⓩ/ⓩ/g;s/Ⰰ/ⰰ/g;s/Ⰱ/ⰱ/g;s/Ⰲ/ⰲ/g;s/Ⰳ/ⰳ/g
+s/Ⰴ/ⰴ/g;s/Ⰵ/ⰵ/g;s/Ⰶ/ⰶ/g;s/Ⰷ/ⰷ/g;s/Ⰸ/ⰸ/g;s/Ⰹ/ⰹ/g;s/Ⰺ/ⰺ/g;s/Ⰻ/ⰻ/g
+s/Ⰼ/ⰼ/g;s/Ⰽ/ⰽ/g;s/Ⰾ/ⰾ/g;s/Ⰿ/ⰿ/g;s/Ⱀ/ⱀ/g;s/Ⱁ/ⱁ/g;s/Ⱂ/ⱂ/g;s/Ⱃ/ⱃ/g
+s/Ⱄ/ⱄ/g;s/Ⱅ/ⱅ/g;s/Ⱆ/ⱆ/g;s/Ⱇ/ⱇ/g;s/Ⱈ/ⱈ/g;s/Ⱉ/ⱉ/g;s/Ⱊ/ⱊ/g;s/Ⱋ/ⱋ/g
+s/Ⱌ/ⱌ/g;s/Ⱍ/ⱍ/g;s/Ⱎ/ⱎ/g;s/Ⱏ/ⱏ/g;s/Ⱐ/ⱐ/g;s/Ⱑ/ⱑ/g;s/Ⱒ/ⱒ/g;s/Ⱓ/ⱓ/g
+s/Ⱔ/ⱔ/g;s/Ⱕ/ⱕ/g;s/Ⱖ/ⱖ/g;s/Ⱗ/ⱗ/g;s/Ⱘ/ⱘ/g;s/Ⱙ/ⱙ/g;s/Ⱚ/ⱚ/g;s/Ⱛ/ⱛ/g
+s/Ⱜ/ⱜ/g;s/Ⱝ/ⱝ/g;s/Ⱞ/ⱞ/g;s/Ⱟ/ⱟ/g;s/Ⱡ/ⱡ/g;s/Ɫ/ɫ/g;s/Ᵽ/ᵽ/g;s/Ɽ/ɽ/g
+s/Ⱨ/ⱨ/g;s/Ⱪ/ⱪ/g;s/Ⱬ/ⱬ/g;s/Ɑ/ɑ/g;s/Ɱ/ɱ/g;s/Ɐ/ɐ/g;s/Ɒ/ɒ/g;s/Ⱳ/ⱳ/g
+s/Ⱶ/ⱶ/g;s/Ȿ/ȿ/g;s/Ɀ/ɀ/g;s/Ⲁ/ⲁ/g;s/Ⲃ/ⲃ/g;s/Ⲅ/ⲅ/g;s/Ⲇ/ⲇ/g;s/Ⲉ/ⲉ/g
+s/Ⲋ/ⲋ/g;s/Ⲍ/ⲍ/g;s/Ⲏ/ⲏ/g;s/Ⲑ/ⲑ/g;s/Ⲓ/ⲓ/g;s/Ⲕ/ⲕ/g;s/Ⲗ/ⲗ/g;s/Ⲙ/ⲙ/g
+s/Ⲛ/ⲛ/g;s/Ⲝ/ⲝ/g;s/Ⲟ/ⲟ/g;s/Ⲡ/ⲡ/g;s/Ⲣ/ⲣ/g;s/Ⲥ/ⲥ/g;s/Ⲧ/ⲧ/g;s/Ⲩ/ⲩ/g
+s/Ⲫ/ⲫ/g;s/Ⲭ/ⲭ/g;s/Ⲯ/ⲯ/g;s/Ⲱ/ⲱ/g;s/Ⲳ/ⲳ/g;s/Ⲵ/ⲵ/g;s/Ⲷ/ⲷ/g;s/Ⲹ/ⲹ/g
+s/Ⲻ/ⲻ/g;s/Ⲽ/ⲽ/g;s/Ⲿ/ⲿ/g;s/Ⳁ/ⳁ/g;s/Ⳃ/ⳃ/g;s/Ⳅ/ⳅ/g;s/Ⳇ/ⳇ/g;s/Ⳉ/ⳉ/g
+s/Ⳋ/ⳋ/g;s/Ⳍ/ⳍ/g;s/Ⳏ/ⳏ/g;s/Ⳑ/ⳑ/g;s/Ⳓ/ⳓ/g;s/Ⳕ/ⳕ/g;s/Ⳗ/ⳗ/g;s/Ⳙ/ⳙ/g
+s/Ⳛ/ⳛ/g;s/Ⳝ/ⳝ/g;s/Ⳟ/ⳟ/g;s/Ⳡ/ⳡ/g;s/Ⳣ/ⳣ/g;s/Ⳬ/ⳬ/g;s/Ⳮ/ⳮ/g;s/Ⳳ/ⳳ/g
+s/Ꙁ/ꙁ/g;s/Ꙃ/ꙃ/g;s/Ꙅ/ꙅ/g;s/Ꙇ/ꙇ/g;s/Ꙉ/ꙉ/g;s/Ꙋ/ꙋ/g;s/Ꙍ/ꙍ/g;s/Ꙏ/ꙏ/g
+s/Ꙑ/ꙑ/g;s/Ꙓ/ꙓ/g;s/Ꙕ/ꙕ/g;s/Ꙗ/ꙗ/g;s/Ꙙ/ꙙ/g;s/Ꙛ/ꙛ/g;s/Ꙝ/ꙝ/g;s/Ꙟ/ꙟ/g
+s/Ꙡ/ꙡ/g;s/Ꙣ/ꙣ/g;s/Ꙥ/ꙥ/g;s/Ꙧ/ꙧ/g;s/Ꙩ/ꙩ/g;s/Ꙫ/ꙫ/g;s/Ꙭ/ꙭ/g;s/Ꚁ/ꚁ/g
+s/Ꚃ/ꚃ/g;s/Ꚅ/ꚅ/g;s/Ꚇ/ꚇ/g;s/Ꚉ/ꚉ/g;s/Ꚋ/ꚋ/g;s/Ꚍ/ꚍ/g;s/Ꚏ/ꚏ/g;s/Ꚑ/ꚑ/g
+s/Ꚓ/ꚓ/g;s/Ꚕ/ꚕ/g;s/Ꚗ/ꚗ/g;s/Ꚙ/ꚙ/g;s/Ꚛ/ꚛ/g;s/Ꜣ/ꜣ/g;s/Ꜥ/ꜥ/g;s/Ꜧ/ꜧ/g
+s/Ꜩ/ꜩ/g;s/Ꜫ/ꜫ/g;s/Ꜭ/ꜭ/g;s/Ꜯ/ꜯ/g;s/Ꜳ/ꜳ/g;s/Ꜵ/ꜵ/g;s/Ꜷ/ꜷ/g;s/Ꜹ/ꜹ/g
+s/Ꜻ/ꜻ/g;s/Ꜽ/ꜽ/g;s/Ꜿ/ꜿ/g;s/Ꝁ/ꝁ/g;s/Ꝃ/ꝃ/g;s/Ꝅ/ꝅ/g;s/Ꝇ/ꝇ/g;s/Ꝉ/ꝉ/g
+s/Ꝋ/ꝋ/g;s/Ꝍ/ꝍ/g;s/Ꝏ/ꝏ/g;s/Ꝑ/ꝑ/g;s/Ꝓ/ꝓ/g;s/Ꝕ/ꝕ/g;s/Ꝗ/ꝗ/g;s/Ꝙ/ꝙ/g
+s/Ꝛ/ꝛ/g;s/Ꝝ/ꝝ/g;s/Ꝟ/ꝟ/g;s/Ꝡ/ꝡ/g;s/Ꝣ/ꝣ/g;s/Ꝥ/ꝥ/g;s/Ꝧ/ꝧ/g;s/Ꝩ/ꝩ/g
+s/Ꝫ/ꝫ/g;s/Ꝭ/ꝭ/g;s/Ꝯ/ꝯ/g;s/Ꝺ/ꝺ/g;s/Ꝼ/ꝼ/g;s/Ᵹ/ᵹ/g;s/Ꝿ/ꝿ/g;s/Ꞁ/ꞁ/g
+s/Ꞃ/ꞃ/g;s/Ꞅ/ꞅ/g;s/Ꞇ/ꞇ/g;s/Ꞌ/ꞌ/g;s/Ɥ/ɥ/g;s/Ꞑ/ꞑ/g;s/Ꞓ/ꞓ/g;s/Ꞗ/ꞗ/g
+s/Ꞙ/ꞙ/g;s/Ꞛ/ꞛ/g;s/Ꞝ/ꞝ/g;s/Ꞟ/ꞟ/g;s/Ꞡ/ꞡ/g;s/Ꞣ/ꞣ/g;s/Ꞥ/ꞥ/g;s/Ꞧ/ꞧ/g
+s/Ꞩ/ꞩ/g;s/Ɦ/ɦ/g;s/Ɜ/ɜ/g;s/Ɡ/ɡ/g;s/Ɬ/ɬ/g;s/Ɪ/ɪ/g;s/Ʞ/ʞ/g;s/Ʇ/ʇ/g
+s/Ʝ/ʝ/g;s/Ꭓ/ꭓ/g;s/Ꞵ/ꞵ/g;s/Ꞷ/ꞷ/g;s/Ꞹ/ꞹ/g;s/Ꞻ/ꞻ/g;s/Ꞽ/ꞽ/g;s/Ꞿ/ꞿ/g
+s/Ꟁ/ꟁ/g;s/Ꟃ/ꟃ/g;s/Ꞔ/ꞔ/g;s/Ʂ/ʂ/g;s/Ᶎ/ᶎ/g;s/Ꟈ/ꟈ/g;s/Ꟊ/ꟊ/g;s/Ɤ/ɤ/g
+s/Ꟍ/ꟍ/g;s/Ꟑ/ꟑ/g;s/Ꟗ/ꟗ/g;s/Ꟙ/ꟙ/g;s/Ꟛ/ꟛ/g;s/Ƛ/ƛ/g;s/Ꟶ/ꟶ/g;s/Ａ/ａ/g
+s/Ｂ/ｂ/g;s/Ｃ/ｃ/g;s/Ｄ/ｄ/g;s/Ｅ/ｅ/g;s/Ｆ/ｆ/g;s/Ｇ/ｇ/g;s/Ｈ/ｈ/g;s/Ｉ/ｉ/g
+s/Ｊ/ｊ/g;s/Ｋ/ｋ/g;s/Ｌ/ｌ/g;s/Ｍ/ｍ/g;s/Ｎ/ｎ/g;s/Ｏ/ｏ/g;s/Ｐ/ｐ/g;s/Ｑ/ｑ/g
+s/Ｒ/ｒ/g;s/Ｓ/ｓ/g;s/Ｔ/ｔ/g;s/Ｕ/ｕ/g;s/Ｖ/ｖ/g;s/Ｗ/ｗ/g;s/Ｘ/ｘ/g;s/Ｙ/ｙ/g
+s/Ｚ/ｚ/g;s/𐐀/𐐨/g;s/𐐁/𐐩/g;s/𐐂/𐐪/g;s/𐐃/𐐫/g;s/𐐄/𐐬/g;s/𐐅/𐐭/g;s/𐐆/𐐮/g
+s/𐐇/𐐯/g;s/𐐈/𐐰/g;s/𐐉/𐐱/g;s/𐐊/𐐲/g;s/𐐋/𐐳/g;s/𐐌/𐐴/g;s/𐐍/𐐵/g;s/𐐎/𐐶/g
+s/𐐏/𐐷/g;s/𐐐/𐐸/g;s/𐐑/𐐹/g;s/𐐒/𐐺/g;s/𐐓/𐐻/g;s/𐐔/𐐼/g;s/𐐕/𐐽/g;s/𐐖/𐐾/g
+s/𐐗/𐐿/g;s/𐐘/𐑀/g;s/𐐙/𐑁/g;s/𐐚/𐑂/g;s/𐐛/𐑃/g;s/𐐜/𐑄/g;s/𐐝/𐑅/g;s/𐐞/𐑆/g
+s/𐐟/𐑇/g;s/𐐠/𐑈/g;s/𐐡/𐑉/g;s/𐐢/𐑊/g;s/𐐣/𐑋/g;s/𐐤/𐑌/g;s/𐐥/𐑍/g;s/𐐦/𐑎/g
+s/𐐧/𐑏/g;s/𐒰/𐓘/g;s/𐒱/𐓙/g;s/𐒲/𐓚/g;s/𐒳/𐓛/g;s/𐒴/𐓜/g;s/𐒵/𐓝/g;s/𐒶/𐓞/g
+s/𐒷/𐓟/g;s/𐒸/𐓠/g;s/𐒹/𐓡/g;s/𐒺/𐓢/g;s/𐒻/𐓣/g;s/𐒼/𐓤/g;s/𐒽/𐓥/g;s/𐒾/𐓦/g
+s/𐒿/𐓧/g;s/𐓀/𐓨/g;s/𐓁/𐓩/g;s/𐓂/𐓪/g;s/𐓃/𐓫/g;s/𐓄/𐓬/g;s/𐓅/𐓭/g;s/𐓆/𐓮/g
+s/𐓇/𐓯/g;s/𐓈/𐓰/g;s/𐓉/𐓱/g;s/𐓊/𐓲/g;s/𐓋/𐓳/g;s/𐓌/𐓴/g;s/𐓍/𐓵/g;s/𐓎/𐓶/g
+s/𐓏/𐓷/g;s/𐓐/𐓸/g;s/𐓑/𐓹/g;s/𐓒/𐓺/g;s/𐓓/𐓻/g;s/𐕰/𐖗/g;s/𐕱/𐖘/g;s/𐕲/𐖙/g
+s/𐕳/𐖚/g;s/𐕴/𐖛/g;s/𐕵/𐖜/g;s/𐕶/𐖝/g;s/𐕷/𐖞/g;s/𐕸/𐖟/g;s/𐕹/𐖠/g;s/𐕺/𐖡/g
+s/𐕼/𐖣/g;s/𐕽/𐖤/g;s/𐕾/𐖥/g;s/𐕿/𐖦/g;s/𐖀/𐖧/g;s/𐖁/𐖨/g;s/𐖂/𐖩/g;s/𐖃/𐖪/g
+s/𐖄/𐖫/g;s/𐖅/𐖬/g;s/𐖆/𐖭/g;s/𐖇/𐖮/g;s/𐖈/𐖯/g;s/𐖉/𐖰/g;s/𐖊/𐖱/g;s/𐖌/𐖳/g
+s/𐖍/𐖴/g;s/𐖎/𐖵/g;s/𐖏/𐖶/g;s/𐖐/𐖷/g;s/𐖑/𐖸/g;s/𐖒/𐖹/g;s/𐖔/𐖻/g;s/𐖕/𐖼/g
+s/𐲀/𐳀/g;s/𐲁/𐳁/g;s/𐲂/𐳂/g;s/𐲃/𐳃/g;s/𐲄/𐳄/g;s/𐲅/𐳅/g;s/𐲆/𐳆/g;s/𐲇/𐳇/g
+s/𐲈/𐳈/g;s/𐲉/𐳉/g;s/𐲊/𐳊/g;s/𐲋/𐳋/g;s/𐲌/𐳌/g;s/𐲍/𐳍/g;s/𐲎/𐳎/g;s/𐲏/𐳏/g
+s/𐲐/𐳐/g;s/𐲑/𐳑/g;s/𐲒/𐳒/g;s/𐲓/𐳓/g;s/𐲔/𐳔/g;s/𐲕/𐳕/g;s/𐲖/𐳖/g;s/𐲗/𐳗/g
+s/𐲘/𐳘/g;s/𐲙/𐳙/g;s/𐲚/𐳚/g;s/𐲛/𐳛/g;s/𐲜/𐳜/g;s/𐲝/𐳝/g;s/𐲞/𐳞/g;s/𐲟/𐳟/g
+s/𐲠/𐳠/g;s/𐲡/𐳡/g;s/𐲢/𐳢/g;s/𐲣/𐳣/g;s/𐲤/𐳤/g;s/𐲥/𐳥/g;s/𐲦/𐳦/g;s/𐲧/𐳧/g
+s/𐲨/𐳨/g;s/𐲩/𐳩/g;s/𐲪/𐳪/g;s/𐲫/𐳫/g;s/𐲬/𐳬/g;s/𐲭/𐳭/g;s/𐲮/𐳮/g;s/𐲯/𐳯/g
+s/𐲰/𐳰/g;s/𐲱/𐳱/g;s/𐲲/𐳲/g;s/𐵐/𐵰/g;s/𐵑/𐵱/g;s/𐵒/𐵲/g;s/𐵓/𐵳/g;s/𐵔/𐵴/g
+s/𐵕/𐵵/g;s/𐵖/𐵶/g;s/𐵗/𐵷/g;s/𐵘/𐵸/g;s/𐵙/𐵹/g;s/𐵚/𐵺/g;s/𐵛/𐵻/g;s/𐵜/𐵼/g
+s/𐵝/𐵽/g;s/𐵞/𐵾/g;s/𐵟/𐵿/g;s/𐵠/𐶀/g;s/𐵡/𐶁/g;s/𐵢/𐶂/g;s/𐵣/𐶃/g;s/𐵤/𐶄/g
+s/𐵥/𐶅/g;s/𑢠/𑣀/g;s/𑢡/𑣁/g;s/𑢢/𑣂/g;s/𑢣/𑣃/g;s/𑢤/𑣄/g;s/𑢥/𑣅/g;s/𑢦/𑣆/g
+s/𑢧/𑣇/g;s/𑢨/𑣈/g;s/𑢩/𑣉/g;s/𑢪/𑣊/g;s/𑢫/𑣋/g;s/𑢬/𑣌/g;s/𑢭/𑣍/g;s/𑢮/𑣎/g
+s/𑢯/𑣏/g;s/𑢰/𑣐/g;s/𑢱/𑣑/g;s/𑢲/𑣒/g;s/𑢳/𑣓/g;s/𑢴/𑣔/g;s/𑢵/𑣕/g;s/𑢶/𑣖/g
+s/𑢷/𑣗/g;s/𑢸/𑣘/g;s/𑢹/𑣙/g;s/𑢺/𑣚/g;s/𑢻/𑣛/g;s/𑢼/𑣜/g;s/𑢽/𑣝/g;s/𑢾/𑣞/g
+s/𑢿/𑣟/g;s/𖹀/𖹠/g;s/𖹁/𖹡/g;s/𖹂/𖹢/g;s/𖹃/𖹣/g;s/𖹄/𖹤/g;s/𖹅/𖹥/g;s/𖹆/𖹦/g
+s/𖹇/𖹧/g;s/𖹈/𖹨/g;s/𖹉/𖹩/g;s/𖹊/𖹪/g;s/𖹋/𖹫/g;s/𖹌/𖹬/g;s/𖹍/𖹭/g;s/𖹎/𖹮/g
+s/𖹏/𖹯/g;s/𖹐/𖹰/g;s/𖹑/𖹱/g;s/𖹒/𖹲/g;s/𖹓/𖹳/g;s/𖹔/𖹴/g;s/𖹕/𖹵/g;s/𖹖/𖹶/g
+s/𖹗/𖹷/g;s/𖹘/𖹸/g;s/𖹙/𖹹/g;s/𖹚/𖹺/g;s/𖹛/𖹻/g;s/𖹜/𖹼/g;s/𖹝/𖹽/g;s/𖹞/𖹾/g
+s/𖹟/𖹿/g;s/𞤀/𞤢/g;s/𞤁/𞤣/g;s/𞤂/𞤤/g;s/𞤃/𞤥/g;s/𞤄/𞤦/g;s/𞤅/𞤧/g;s/𞤆/𞤨/g
+s/𞤇/𞤩/g;s/𞤈/𞤪/g;s/𞤉/𞤫/g;s/𞤊/𞤬/g;s/𞤋/𞤭/g;s/𞤌/𞤮/g;s/𞤍/𞤯/g;s/𞤎/𞤰/g
+s/𞤏/𞤱/g;s/𞤐/𞤲/g;s/𞤑/𞤳/g;s/𞤒/𞤴/g;s/𞤓/𞤵/g;s/𞤔/𞤶/g;s/𞤕/𞤷/g;s/𞤖/𞤸/g
+s/𞤗/𞤹/g;s/𞤘/𞤺/g;s/𞤙/𞤻/g;s/𞤚/𞤼/g;s/𞤛/𞤽/g;s/𞤜/𞤾/g;s/𞤝/𞤿/g;s/𞤞/𞥀/g
+s/𞤟/𞥁/g;s/𞤠/𞥂/g;s/𞤡/𞥃/g
+'
+# --- END GENERATED CASE FOLD ---
+_case_fold() {   # $1 = a name
+  printf '%s.' "$1" | LC_ALL=C sed -e "$_CASE_FOLD_SED"
+}
+
+# $1 split on '/' into the array named by $2. One splitter for both sides of
+# every comparison below, so a candidate and an index entry are cut up the same
+# way.
+#
+# The accumulator is `_sc_parts` and not `parts`, and the name is load-bearing:
+# `local` is DYNAMICALLY scoped, so a local here whose name matches the array
+# the caller asked to be filled shadows the caller's -- the eval writes to this
+# function's own copy, the caller reads an empty array, and every component then
+# defaults to "folds". Which is silent: the guard goes back to the path-wide
+# answer and refuses exactly what it did before, so no test of the VERDICT can
+# see it. Caught by the agreement table, which compares the vector itself.
+_split_components() {   # $1 = a relative path   $2 = the array name to set
+  local r=$1 _sc_comp
+  local -a _sc_parts
+  _sc_parts=()
+  while [ -n "$r" ]; do
+    _sc_comp=${r%%/*}
+    if [ "$_sc_comp" = "$r" ]; then r=; else r=${r#*/}; fi
+    if [ -n "$_sc_comp" ]; then _sc_parts+=("$_sc_comp"); fi
+  done
+  eval "$2=(\${_sc_parts[@]+\"\${_sc_parts[@]}\"})"
+}
+
+_FOLDS_VEC=()
+_dest_folds_vector() {   # $1 = a path this script writes, relative to $DST_REAL
+  local rel=${1:-} cur=$DST_REAL comp r here ans i n
+  local LC_ALL=C
+  local -a parts
+  _FOLDS_VEC=()
+  here=no
+  if [ ! -e "$DST_REAL/.git" ] || [ "$DST_REAL/.git" -ef "$DST_REAL/.GIT" ]; then
+    here=yes
+  fi
+  _split_components "$rel" parts
+  n=${#parts[@]}
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    _FOLDS_VEC+=("$here")
+    comp=${parts[$i]}
+    if [ -d "$cur/$comp" ]; then
+      cur=$cur/$comp
+      ans=$(_dir_folds_case "$cur")
+      case "$ans" in
+        yes|unknown) here=yes ;;
+        *)           here=no ;;
+      esac
+    fi
+    # else: absent, or not a directory. Whatever the copies create there lands
+    # on the filesystem $cur is already on, so $here carries over.
+    i=$((i+1))
+  done
+}
+
+# How an index entry ($2) relates to a path this script writes ($1), judged
+# component by component against _FOLDS_VEC. Prints exactly one of:
+#
+#   spurious   some component differs ONLY by case where that component's own
+#              parent does NOT fold -- git's path-wide ':(icase)' matched two
+#              files that are two files (issue #231). Dropped.
+#   match      every component is equal, or fold-equal in a directory that
+#              folds -- the write lands on this entry (issue #230). Refused.
+#   keep       neither: it differs some other way (unicode composition, which
+#              core.precomposeUnicode folds on an axis of its own, or a glob),
+#              so nothing here may drop it.
+#
+# An entry DEEPER than the candidate is judged on the components they share --
+# writing into private/verify lands on private/verify/usage.csv too. An entry
+# SHORTER than the candidate shares no such relationship and is kept.
+# May the alias loop skip index entry $2 without calling _classify_alias on it?
+# True (exit 0) = skip. The loop below runs over the WHOLE index of the
+# destination and _classify_alias costs two forks per entry (`$( )` around it,
+# `$( )` around each _case_fold), so this is what keeps that arithmetic down --
+# fine for a repository this size, and the thing to look at first for a large
+# one. Both skips are pure parameter expansion, and NEITHER MAY DROP AN ENTRY
+# _classify_alias WOULD HAVE CALLED A MATCH, which is the whole contract:
+#
+#   DEPTH   a "match" needs the entry to be at least as deep as the path. The
+#           fold never touches '/', so this holds whatever the table says.
+#   LENGTH  fold-equal components have the same BYTE LENGTH -- but only while
+#           every pair in the table encodes to the same length on both sides,
+#           and the generated table has 26 pairs that do not (issue #233:
+#           U+023A grows from two UTF-8 bytes to three, U+212A shrinks from
+#           three to one). So the length skip is taken only where it is SOUND,
+#           which is where BOTH first components are pure ASCII: no ASCII byte
+#           appears in any multi-byte pair, so an all-ASCII component's folded
+#           length is its own length. A component carrying any byte >= \200
+#           falls through to the full comparison and pays the forks. In this
+#           repository's own index that is no entries at all.
+#
+# A function rather than two `if`s inline so it can be lifted and exercised the
+# way _classify_alias and _case_fold are -- the unsound version of the length
+# skip is invisible to every fixture whose paths are ASCII, which is all of
+# them. Called for its EXIT STATUS, so it costs no fork.
+_gate_skips_entry() {   # $1 = a path relative to $DST_REAL   $2 = an index entry
+  local rel=$1 entry=$2 reldepth entdepth relfirst entfirst
+  # LC_ALL=C, because ${#var} counts CHARACTERS in a UTF-8 locale and BYTES in
+  # this one, and the caller (_require_uncommittable) sets neither. The length
+  # skip was sound under UTF-8 for a reason nobody wrote down -- one code point
+  # folds to one code point, so a character count is fold-invariant -- and
+  # unsound under C, where the 26 length-changing pairs move the count. Pinned
+  # so the skip has ONE meaning and one argument for it, rather than two that
+  # depend on the environment the staging happens to run in.
+  local LC_ALL=C
+  reldepth=${rel//[!\/]/}
+  entdepth=${entry//[!\/]/}
+  [ "${#entdepth}" -ge "${#reldepth}" ] || return 0
+  relfirst=${rel%%/*}
+  entfirst=${entry%%/*}
+  if [ "${#entfirst}" -ne "${#relfirst}" ]; then
+    case "$relfirst$entfirst" in
+      *[$'\200'-$'\377']*) ;;
+      *) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
+_classify_alias() {   # $1 = a path relative to $DST_REAL   $2 = an index entry
+  local i=0 n c e cf ef out=match
+  local LC_ALL=C
+  local -a cp ep
+  _split_components "$1" cp
+  _split_components "$2" ep
+  n=${#cp[@]}
+  if [ "${#ep[@]}" -lt "$n" ]; then printf 'keep'; return 0; fi
+  while [ "$i" -lt "$n" ]; do
+    c=${cp[$i]}
+    e=${ep[$i]}
+    if [ "$c" != "$e" ]; then
+      cf=$(_case_fold "$c")
+      ef=$(_case_fold "$e")
+      if [ "$cf" = "$ef" ]; then
+        if [ "${_FOLDS_VEC[$i]:-yes}" != yes ]; then printf 'spurious'; return 0; fi
+      else
+        out=keep
+      fi
+    fi
+    i=$((i+1))
+  done
+  printf '%s' "$out"
+}
+
+# ---------------------------------------------------------------------------
 # THE ON-DISK SPELLING (issues #223, #224) -- which path a write to $1 actually
 # reaches, resolved against the destination's filesystem instead of assumed from
 # the bytes this script typed.
@@ -1504,9 +1951,12 @@ _dest_folds_case() {   # $1 = a path this script writes, relative to $DST_REAL
 # THE PATH USUALLY DOES NOT EXIST YET, which is the point: the walk resolves as
 # far as the path really goes and takes the REST exactly as asked, so
 # `private/1-raw-data` in a tree holding only `Private/` resolves to
-# `Private/1-raw-data`. An absent LEAF is asked about as typed, which is what
-# leaves the non-ASCII half of issue #230 open -- see the alias block above for
-# the combination both alias probes miss.
+# `Private/1-raw-data`. An absent LEAF is asked about as typed, and that is the
+# limit of what a filesystem can be asked rather than a gap: `[ -e ]` being false
+# for the leaf IS the statement that the directory holds no entry this filesystem
+# would call the same name. The tracked question for such a leaf is answered from
+# the other side, by enumerating the index -- see the alias block above (issue
+# #230).
 #
 # A COMPONENT'S REAL SPELLING is looked for BY NAME first and only then by
 # `-ef` -- same device and inode, the shell's own stat comparison. By name first
@@ -1607,7 +2057,11 @@ _ondisk_spelling() {   # $1 = a path this script writes, relative to $DST_REAL
 }
 
 _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_REAL
-  local rel=$1 rc=0 arc=0 orc=0 tracked aliased aliasspec ondiskspec folds ondisk
+  local rel=$1 rc=0 arc=0 orc=0 irc=0 tracked aliased aliasspec ondiskspec folds ondisk
+  local entry vecfolds
+  local -a raw idx
+  raw=()
+  idx=()
   _require_isolation_proven
   # WHICH PATH THE WRITE ACTUALLY REACHES, before any of the three questions is
   # asked about it (issues #223, #224). Identical to $rel on every ordinary
@@ -1641,10 +2095,11 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
     "             straight into the next commit's diff."
   # AND AGAIN UNDER THE FILESYSTEM'S OWN EQUIVALENCE (issue #204). The question
   # above is answered BY THE BYTES; this one asks which index entries the
-  # filesystem holding the destination resolves to this same file -- as far as the
-  # two pathspecs below reach, which is ASCII case, unicode composition, and any
-  # fold the on-disk walk could resolve, but not a non-ASCII case alias with no
-  # file on disk (issue #230). ':(icase)'
+  # filesystem holding the destination resolves to this same file: ASCII case
+  # and unicode composition through the two pathspecs below, whatever the
+  # filesystem folds for a name that EXISTS through the on-disk walk, and -- for
+  # a name that does not exist under either spelling -- the index enumeration
+  # further down (issue #230). ':(icase)'
   # only where case really folds there -- see _dest_folds_case, and see
   # _GIT_ALIAS_OVERRIDE for the measurement and for what forcing core.ignoreCase
   # was measured to change, which is nothing. ADDITIVE, and asked second, so a
@@ -1661,15 +2116,34 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
   fi
   _GIT_ALIAS_CONFIG=(${_GIT_ALIAS_OVERRIDE[@]+"${_GIT_ALIAS_OVERRIDE[@]}"})
   arc=0
+  # AND THE ANSWER PER COMPONENT (issue #231), which the pathspec cannot carry:
+  # ':(icase)' is applied path-wide, so a folding ANCESTOR turns the fold on for
+  # every component below it. Each entry git returns is filtered against
+  # _FOLDS_VEC before it is allowed to refuse anything.
+  _dest_folds_vector "$rel"
   # TWO PATHSPECS where the filesystem spells this path differently (issue
   # #224), because ':(icase)' folds ASCII case and the filesystem folds more
   # than that: the on-disk name is asked about literally, which is what catches
   # a tracked entry whose name carries a non-ASCII cased character. One call --
-  # `ls-files` unions the pathspecs and prints whichever matched.
+  # `ls-files` unions the pathspecs and prints whichever matched. -z, because
+  # these names are split on '/' below and git QUOTES a non-ASCII path in its
+  # default output; the rc is carried back through the same stream, since `$( )`
+  # drops NUL bytes and a pipeline would run the loop in a subshell where
+  # _refuse could not exit the script.
+  raw=()
   if [ -z "$ondiskspec" ]; then
-    aliased=$(_git -C "$DST_REAL" ls-files -- "$aliasspec") || arc=$?
+    while IFS= read -r -d '' entry; do raw+=("$entry"); done \
+      < <(_git -C "$DST_REAL" ls-files -z -- "$aliasspec"; printf 'rc=%s\0' "$?")
   else
-    aliased=$(_git -C "$DST_REAL" ls-files -- "$aliasspec" "$ondiskspec") || arc=$?
+    while IFS= read -r -d '' entry; do raw+=("$entry"); done \
+      < <(_git -C "$DST_REAL" ls-files -z -- "$aliasspec" "$ondiskspec"; printf 'rc=%s\0' "$?")
+  fi
+  # The trailer is always written, so an EMPTY array means the redirection
+  # itself never ran -- unanswered, which is refused rather than read as "the
+  # index holds nothing".
+  if [ "${#raw[@]}" -eq 0 ]; then arc=127; else
+    arc=${raw[$((${#raw[@]}-1))]#rc=}
+    unset "raw[$((${#raw[@]}-1))]"
   fi
   _GIT_ALIAS_CONFIG=()
   if [ "$arc" -ne 0 ]; then
@@ -1681,6 +2155,62 @@ _require_uncommittable() {   # $1 = a path this script writes, relative to $DST_
       "expected:    a listing, so a path already COMMITTED there under a" \
       "             spelling this filesystem treats as the same file can be" \
       "             told from one that is genuinely absent"
+  fi
+  # KEEP an entry only where some spelling this script asked about really does
+  # alias it AT EVERY COMPONENT (issue #231) ...
+  aliased=
+  for entry in ${raw[@]+"${raw[@]}"}; do
+    if [ "$(_classify_alias "$rel" "$entry")" != spurious ]; then
+      aliased=${aliased:+$aliased }$entry
+      continue
+    fi
+    if [ -n "$ondiskspec" ] && [ "$(_classify_alias "$ondisk" "$entry")" != spurious ]; then
+      aliased=${aliased:+$aliased }$entry
+    fi
+  done
+  # ... AND ASK THE INDEX ITSELF for the fold neither pathspec can express
+  # (issue #230): a tracked entry with no working-tree file, differing from the
+  # path only in NON-ASCII case, is invisible to ':(icase)' -- which folds ASCII
+  # bytes -- and has nothing on disk for _ondisk_spelling to resolve. The index
+  # is the one side that does hold something to compare against, so it is
+  # enumerated and compared under the generated fold, gated per component. Skipped
+  # outright where no component of this path can fold at all.
+  vecfolds=no
+  for entry in ${_FOLDS_VEC[@]+"${_FOLDS_VEC[@]}"}; do
+    if [ "$entry" = yes ]; then vecfolds=yes; fi
+  done
+  if [ "$vecfolds" = yes ]; then
+    irc=0
+    idx=()
+    while IFS= read -r -d '' entry; do idx+=("$entry"); done \
+      < <(_git -C "$DST_REAL" ls-files -z; printf 'rc=%s\0' "$?")
+    if [ "${#idx[@]}" -eq 0 ]; then irc=127; else
+      irc=${idx[$((${#idx[@]}-1))]#rc=}
+      unset "idx[$((${#idx[@]}-1))]"
+    fi
+    if [ "$irc" -ne 0 ]; then
+      _refuse "the destination could not be asked which paths it tracks" \
+        "destination: $DST  (resolved: $DST_REAL)" \
+        "path:        $rel" \
+        "found:       'git ls-files' could not list the index" \
+        "expected:    a listing, so a path already COMMITTED there under a name" \
+        "             this filesystem folds to the one about to be created can" \
+        "             be told from one that is genuinely absent"
+    fi
+    # A CHEAP GATE FIRST -- see _gate_skips_entry above for what it may skip
+    # and why each skip is sound.
+    for entry in ${idx[@]+"${idx[@]}"}; do
+      if _gate_skips_entry "$rel" "$entry"; then continue; fi
+      # Bounded on BOTH sides, so an entry that is a suffix of one already
+      # listed ('README.md' beside 'private/README.md') is not read as a
+      # duplicate and dropped from the refusal's evidence.
+      case " $aliased " in *" $entry "*) continue ;; esac
+      if [ "$(_classify_alias "$rel" "$entry")" = match ]; then
+        aliased=${aliased:+$aliased }$entry
+      elif [ -n "$ondiskspec" ] && [ "$(_classify_alias "$ondisk" "$entry")" = match ]; then
+        aliased=${aliased:+$aliased }$entry
+      fi
+    done
   fi
   [ -z "$aliased" ] || _refuse "the destination TRACKS a path this script writes" \
     "destination: $DST  (resolved: $DST_REAL)" \
