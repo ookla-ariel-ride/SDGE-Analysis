@@ -3424,6 +3424,54 @@ def refusal(path, *, kind, **kw):
         return e.reason
 
 
+def _backup_beside(path, bak):
+    """A backup a revert can restore EXACTLY, not approximately.
+
+    os.link keeps the ORIGINAL INODE alive under a second name, so putting it
+    back with os.replace() restores the mode, owner, group, flags and extended
+    attributes the file actually had. shutil.copy2 carries the permission bits
+    and little else -- enough for the execute bit that a lost one breaks
+    stage-private-data.sh, not enough to promise the file comes back unchanged.
+    The copy is the fallback for filesystems that refuse hard links, and it is
+    the weaker guarantee of the two, which is why it is second.
+    """
+    try:
+        os.link(str(path), str(bak))
+    except (OSError, AttributeError, NotImplementedError):
+        shutil.copy2(str(path), str(bak))
+
+
+def _revert_published(published):
+    """Put every backed-up file back, INDEPENDENTLY, and report what would not go.
+
+    Each restore is attempted whatever the ones before it did. A rollback that
+    stops at its first failure leaves the rest of the set on the new table,
+    which is the divergence the rollback exists to undo; and a rollback that
+    raises replaces the original failure with its own, so the operator is told
+    about the symptom instead of the cause. Returns the files it could not
+    restore -- their .bak is still on disk as the recovery copy.
+    """
+    unrestored = []
+    for path, bak in reversed(published):
+        try:
+            os.replace(str(bak), str(path))
+        except OSError as exc:
+            unrestored.append(f"{path.name} (from {bak.name}: {exc})")
+            continue
+        # AND THE BACKUP IS GONE AFTERWARDS, which os.replace does NOT
+        # guarantee here. _backup_beside() prefers a hard link, so when the
+        # file's own replace never happened the two names are links to ONE
+        # inode -- and POSIX rename() between two links to the same inode
+        # succeeds while doing nothing at all, leaving the .bak in a directory
+        # the guard walks. Restoring is what the replace is for; removing the
+        # copy afterwards has to be asked for separately.
+        try:
+            os.unlink(str(bak))
+        except OSError:
+            pass                      # already consumed by the replace
+    return unrestored
+
+
 def regenerate_case_fold(root=ROOT):
     """Rewrite the marked block in BOTH files from python's own str.lower(),
     and report which of them changed.
@@ -3449,11 +3497,26 @@ def regenerate_case_fold(root=ROOT):
     already landed is kept as a .bak and PUT BACK if a later replace fails: the
     set advances or reverts together, and an exception part-way through
     publication can no longer leave the python guard folding pairs the shell
-    guard does not -- the narrower side being the fail-open one. A hard kill
-    still lands between two syscalls; what it leaves is the .bak beside the
-    file as the recovery copy, and the guard case that asserts both files record
-    ONE Unicode version fails until it is used. carbon_fullyear.py and
-    parse_bills.py publish their artifact sets the same way.
+    guard does not -- the narrower side being the fail-open one.
+    carbon_fullyear.py and parse_bills.py publish their artifact sets the same
+    way. Three details carry that promise, each of them a way it was not kept:
+
+      * the backup is REGISTERED before its replace is attempted, not after,
+        because an asynchronous KeyboardInterrupt between the replace returning
+        and the bookkeeping would leave a landed file with no rollback record;
+      * every restore is attempted INDEPENDENTLY and the original failure is
+        preserved, because a rollback that stops at its first problem leaves the
+        rest of the set on the new table, and one that raises tells the operator
+        about the symptom instead of the cause;
+      * the backup is a HARD LINK where the filesystem allows one, so putting it
+        back restores the file's real mode, owner and attributes rather than the
+        subset a copy carries.
+
+    A hard kill still lands between two syscalls. What it leaves is the .bak
+    beside the file as the recovery copy -- and the NEXT run refuses while that
+    copy is there, rather than quietly overwriting the only remaining evidence
+    of what the file held. The guard case asserting both files record ONE
+    Unicode version fails throughout, so the state is loud.
 
     NEVER NARROWS THE DOMAIN. str.lower() grows with the interpreter's Unicode
     version, so regenerating on an older python than the table was built with
@@ -3481,6 +3544,24 @@ def regenerate_case_fold(root=ROOT):
             (root / "stage-private-data.sh",
              f"# generated from python's str.lower() under Unicode {version}\n"
              "_CASE_FOLD_SED='", "'")):
+        # A RECOVERY COPY FROM AN INTERRUPTED RUN STOPS THIS ONE. Asked in
+        # phase 1, so a refusal writes nothing, and asked of EVERY planned file
+        # rather than only the ones whose text moved -- the file that kept a
+        # .bak is the one whose rollback could not put it back, which is
+        # precisely the file a later run would find already carrying the new
+        # table and skip as a no-op. Matched by glob and not by name: the
+        # interrupted run had a different pid, so its copy is never the one this
+        # run would have created.
+        stale = sorted(q.name for q in path.parent.glob(f"{path.name}.bak*"))
+        if stale:
+            raise AssertionError(
+                f"{', '.join(stale)} is beside {path.name}, which is the "
+                f"recovery copy an interrupted regeneration leaves behind. "
+                f"Nothing was written. The two implementations may be carrying "
+                f"different fold tables right now. Compare the copy against "
+                f"{path.name}, keep whichever is right, and remove it by hand "
+                f"-- a run that deletes a recovery copy to get past it is how "
+                f"the interrupted state stops being recoverable.")
         text = path.read_text()
         head, mark, rest = text.partition(begin + "\n")
         if not mark:
@@ -3520,7 +3601,7 @@ def regenerate_case_fold(root=ROOT):
     # pairs, so it sees fewer aliases. Each file that has already landed is
     # copied aside first and restored if a later one fails.
     changed = []
-    published = []                    # (path, bak) for files already replaced
+    published = []                    # (path, bak) for every backup TAKEN
     try:
         for path, old, new in planned:
             if new == old:
@@ -3533,11 +3614,7 @@ def regenerate_case_fold(root=ROOT):
                 # it the temporary's mode: without this, stage-private-data.sh comes
                 # back without its execute bit.
                 os.chmod(str(tmp), os.stat(str(path)).st_mode & 0o7777)
-                # copy2 rather than a rename: the ORIGINAL must stay in place
-                # until its replacement lands, and copy2 carries the mode, so a
-                # revert restores the execute bit too.
-                shutil.copy2(str(path), str(bak))
-                os.replace(str(tmp), str(path))
+                _backup_beside(path, bak)
             except BaseException:
                 for leftover in (tmp, bak):
                     try:
@@ -3545,13 +3622,35 @@ def regenerate_case_fold(root=ROOT):
                     except OSError:
                         pass          # nothing to clean up is not a failure
                 raise
+            # REGISTERED BEFORE THE REPLACE, NOT AFTER. Between the replace
+            # returning and this line, python can still deliver an asynchronous
+            # KeyboardInterrupt -- and a file that has landed with no rollback
+            # record is exactly the split this block exists to prevent. The
+            # other order is safe because reverting a file whose replace never
+            # happened restores identical bytes: a wasted syscall, not a wrong
+            # one.
             published.append((path, bak))
+            try:
+                os.replace(str(tmp), str(path))
+            except BaseException:
+                try:
+                    os.unlink(str(tmp))
+                except OSError:
+                    pass              # nothing to clean up is not a failure
+                raise
             changed.append(path.name)
-    except BaseException:
+    except BaseException as cause:
         # Back to the pair we started with. os.replace consumes the .bak, and
         # reversed() puts the files back in the order they were taken.
-        for path, bak in reversed(published):
-            os.replace(str(bak), str(path))
+        unrestored = _revert_published(published)
+        if unrestored:
+            raise AssertionError(
+                f"publication failed AND the rollback could not put "
+                f"{len(unrestored)} file(s) back: {'; '.join(unrestored)}. The "
+                f"two implementations may now carry DIFFERENT fold tables, and "
+                f"the shell's would be the narrower, fail-open one. The .bak "
+                f"files named are the recovery copies -- reconcile them by hand "
+                f"before staging anything. Original failure: {cause!r}") from cause
         raise
     for _, bak in published:
         os.unlink(str(bak))

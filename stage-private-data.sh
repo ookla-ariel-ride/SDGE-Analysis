@@ -1840,7 +1840,7 @@ _dest_folds_vector() {   # $1 = a path this script writes, relative to $DST_REAL
 #           fold never touches '/', so this holds whatever the table says.
 #   LENGTH  fold-equal components have the same BYTE LENGTH -- but only while
 #           every pair in the table encodes to the same length on both sides,
-#           and the generated table has 24 pairs that do not (issue #233:
+#           and the generated table has 26 pairs that do not (issue #233:
 #           U+023A grows from two UTF-8 bytes to three, U+212A shrinks from
 #           three to one). So the length skip is taken only where it is SOUND,
 #           which is where BOTH first components are pure ASCII: no ASCII byte

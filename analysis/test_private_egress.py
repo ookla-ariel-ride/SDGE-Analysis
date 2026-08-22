@@ -4541,13 +4541,6 @@ def case_the_case_fold_table_is_generated_from_pythons_own_fold():
         ("length-changing pairs of the COMMITTED table, private_egress.py",
          module, r"DOES NOT PRESERVE BYTE LENGTH, for (\d+) of its pairs",
          sum(1 for a, b in pairs if len(a.encode()) != len(b.encode()))),
-        # The shell states this one too, and was the ONLY stated count checked
-        # in just one file: widening the table moved it from 24 to 26, the
-        # python copy was updated and this one was not. Every other row here
-        # comes in both spellings, which is why only this figure went stale.
-        ("length-changing pairs of the COMMITTED table, stage-private-data.sh",
-         flat_script, r"the (\d+) length-changing pairs",
-         sum(1 for a, b in pairs if len(a.encode()) != len(b.encode()))),
     )
     for label, haystack, pattern, measured in stated:
         found = re.search(pattern, haystack)
@@ -4560,6 +4553,35 @@ def case_the_case_fold_table_is_generated_from_pythons_own_fold():
             f"{PE.CASE_FOLD_UNICODE}) gives {measured}. The residue is "
             f"fail-open, so a stated number that is too small is the defect "
             f"itself rather than a typo")
+
+    # 6b. AND THE SHELL STATES THE LENGTH-CHANGING COUNT TWICE, so BOTH are
+    # measured and the NUMBER of statements is pinned too.
+    #
+    # This is the one figure that went stale when the table was widened from
+    # 1392 to 1459 pairs: 24 became 26, private_egress.py was updated and
+    # stage-private-data.sh was not. The first repair pinned only the sentence
+    # it had noticed -- the LC_ALL=C note -- while the contract paragraph nine
+    # lines above kept saying 24 and the suite passed. Pinning one spelling of a
+    # figure stated twice is not pinning the figure. Every occurrence is matched
+    # here, and the COUNT of occurrences is asserted, so a third statement
+    # cannot be added without being measured either.
+    changing_n = sum(1 for a, b in pairs if len(a.encode()) != len(b.encode()))
+    shell_counts = re.findall(
+        r"(?:table has (\d+) pairs that do not|the (\d+) length-changing pairs)",
+        flat_script)
+    found = [int(a or b) for a, b in shell_counts]
+    assert len(found) == 2, (
+        f"stage-private-data.sh states the length-changing count {len(found)} "
+        f"times, not the 2 this case knows about. A statement that was added or "
+        f"reworded is a statement nothing measures -- which is exactly how the "
+        f"24 survived the widening. Re-read the paragraphs around "
+        f"_gate_skips_entry and pin every one of them.")
+    assert all(n == changing_n for n in found), (
+        f"stage-private-data.sh states the length-changing count as {found} and "
+        f"the measurement here (committed table Unicode {PE.CASE_FOLD_UNICODE}) "
+        f"gives {changing_n}. That count is the argument for a skip which drops "
+        f"index entries before the classifier is forked for them, so a stale "
+        f"one is a stale argument for a silent skip -- fail-open.")
 
     # 7. AND THE SHELL'S CHEAP GATE SURVIVED THE WIDENING. It skips index
     # entries before _classify_alias is forked for them, and one of its two
@@ -4939,15 +4961,90 @@ def case_regenerating_the_case_fold_writes_both_files_or_neither():
             "fail-open one")
         assert script.read_bytes() == before[1], (
             "stage-private-data.sh moved despite its replace failing")
-        assert len(calls) == 3, (
+        assert len(calls) == 4, (
             f"publication made {len(calls)} replace calls, not the two writes "
-            "plus one revert this case is about -- the shape changed and the "
-            "injection may no longer be hitting the second FILE")
+            "plus two reverts this case is about -- the shape changed and the "
+            "injection may no longer be hitting the second FILE. Both files are "
+            "reverted, not just the one that landed: the backup is registered "
+            "BEFORE its replace is attempted, so the file whose replace failed "
+            "is restored too. That restore writes identical bytes -- a wasted "
+            "syscall rather than a wrong one, and the price of not having a "
+            "window where a landed file has no rollback record")
         assert stat.S_IMODE(script.stat().st_mode) == mode_before, (
             "the reverted files came back with a different mode")
         assert sorted(p.name for p in root.rglob("*")) == leftovers_before, (
             "the rolled-back run left a .tmp or .bak behind in a directory the "
             "guard walks")
+
+        # AND WHEN THE ROLLBACK ITSELF CANNOT RUN. A revert is os.replace too,
+        # so a read-only remount or a permission change can stop it. Failing
+        # quietly there would leave a SPLIT table under a message about the
+        # original error; failing on the first one would abandon the rest of
+        # the set. The injection below fails the shell's replace (call 2) and
+        # then the python file's REVERT (call 4), which is the ordering that
+        # actually leaves the two implementations on different tables.
+        root, module, script = _case_fold_fixture(td, "rollback-fails")
+        before = (module.read_bytes(), script.read_bytes())
+        calls = []
+
+        def fail_on_second_and_fourth(src, dst):
+            calls.append(dst)
+            if len(calls) in (2, 4):
+                raise OSError(30, "injected: read-only file system")
+            return real_replace(src, dst)
+
+        os.replace = fail_on_second_and_fourth
+        try:
+            PE.regenerate_case_fold(root=root)
+        except AssertionError as e:
+            assert "rollback could not put" in str(e), (
+                f"a failed rollback did not report itself as one: {e}")
+            assert "private_egress.py" in str(e), (
+                f"the failed rollback does not name the file it could not "
+                f"restore: {e}")
+            assert "fail-open" in str(e), (
+                f"the failed rollback does not say which direction the split "
+                f"errs in, which is the only thing that tells the operator how "
+                f"urgent it is: {e}")
+            assert "injected" in str(e), (
+                f"the rollback failure MASKED the original error instead of "
+                f"carrying it: {e}")
+        except OSError as e:
+            raise AssertionError(
+                f"the rollback failure was reported as a plain OSError, so the "
+                f"operator is told about the symptom and not the split: {e}")
+        else:
+            raise AssertionError(
+                "a regeneration whose rollback could not run reported success")
+        finally:
+            os.replace = real_replace
+        assert len(calls) == 4, (
+            f"the rollback made {len(calls)} calls, so the second revert was "
+            "abandoned after the first one failed -- every restore must be "
+            "attempted independently")
+        # The recovery copy must SURVIVE. It is the only remaining record of
+        # what the file held before the run.
+        baks = sorted(p.name for p in root.rglob("*.bak*"))
+        assert baks, (
+            "the run whose rollback failed deleted its .bak files, so the "
+            "state it left behind is not recoverable from the tree")
+        assert script.read_bytes() == before[1], (
+            "stage-private-data.sh moved despite its replace failing")
+
+        # AND A LEFTOVER RECOVERY COPY BLOCKS THE NEXT RUN rather than being
+        # silently overwritten -- that copy is evidence, and the second run
+        # would otherwise destroy it while reporting success.
+        os.replace = real_replace
+        try:
+            PE.regenerate_case_fold(root=root)
+        except AssertionError as e:
+            assert "recovery copy" in str(e) and "Nothing was written" in str(e), (
+                f"a leftover .bak did not stop the next run for that reason: {e}")
+        else:
+            raise AssertionError(
+                "a regeneration ran straight over the recovery copy left by an "
+                "interrupted one, which is how the interrupted state stops "
+                "being recoverable")
     return ("a malformed second block leaves the first file byte-identical (the "
             "retired shape rewrote it), so do a missing begin marker, a block "
             "this interpreter would narrow, and a write that cannot happen; a "
