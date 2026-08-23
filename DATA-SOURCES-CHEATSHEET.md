@@ -1104,6 +1104,43 @@ privacy: public-ok
 
 ---
 
+## I. Report provenance ✍️ (how YOUR report was produced — asked last, answered after the run)
+
+The report's methodology section ends by naming who produced and reviewed it. Those names are
+published verbatim, so they are a claim about your own process. They live in
+`private/household.yaml`'s `provenance` block and reach the page through the
+`GENERATION_TOOL` / `REVIEW_TOOL_1` / `REVIEW_TOOL_2` tokens.
+
+Answer the review questions **after** the analysis, not during intake — "nobody reviewed it"
+is the normal answer, and is the one this pipeline is built to state honestly.
+
+```yaml
+id: provenance.generation_tool
+question: "What produced this analysis? Name the tool and model you actually ran."
+type: string
+required_if: always
+where: "Whatever you ran, e.g. 'Claude Code (Opus 5)'. Not this repo's answer — yours."
+privacy: public-ok
+```
+
+```yaml
+id: provenance.review_tool_independent
+question: "Did anything INDEPENDENTLY review the data, methodology and conclusions? Name it, or leave null."
+type: string_or_null
+required_if: always
+where: "null unless a real second pass happened. analysis/generate_report.py then states that no review was performed; it never invents one. Filling report-template.html by hand? Rewrite that sentence yourself."
+privacy: public-ok
+```
+
+```yaml
+id: provenance.review_tool_adversarial
+question: "Did anything ADVERSARIALLY review it — actively trying to break the findings? Name it, or leave null."
+type: string_or_null
+required_if: always
+where: "null unless it happened. Same rule as the independent review above."
+privacy: public-ok
+```
+
 ## Minimum to get started
 **B** (electric interval CSV) + **A** (your basics). Claude can do a plan comparison from just those.
 

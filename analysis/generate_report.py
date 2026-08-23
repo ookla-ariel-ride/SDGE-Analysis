@@ -211,6 +211,11 @@ def resolve_tokens_with_gaps():
     return resolved, gaps, resolve_failures
 
 
+# The three tokens apply_provenance_overrides ALWAYS replaces. Named once so the
+# override and the egress label below cannot drift apart.
+PROVENANCE_OVERRIDDEN = ("GENERATION_TOOL", "REVIEW_TOOL_1", "REVIEW_TOOL_2")
+
+
 def apply_provenance_overrides(resolved, provider, model):
     out = dict(resolved)
     out["GENERATION_TOOL"] = f"{provider} ({model})"
@@ -607,6 +612,17 @@ def _is_household_sourced(name):
     all rather than being labelled and then withheld -- the question "is this
     household-sourced" stays a fact about the token, and whether it travels
     stays one decision, made upstream."""
+    # The provenance three are household-sourced in report_tokens.py (issue
+    # #135 moved them out of hard-coded constants), but this module overrides
+    # all three before anything leaves it: GENERATION_TOOL becomes the run's
+    # ACTUAL provider/model and the review names become a non-claiming
+    # disclaimer. Labelling them household_token would send the egress guard to
+    # re-resolve them against household.yaml and refuse the override as a
+    # tampered value -- checking the wrong claim. Their in-run value is this
+    # run's own fact, not a household one, so they travel as caller-asserted
+    # literal text, which is exactly what they are.
+    if name in PROVENANCE_OVERRIDDEN:
+        return False
     spec = rt.TOKENS.get(name, {})
     if spec.get("kind") == "household_yaml":
         return True

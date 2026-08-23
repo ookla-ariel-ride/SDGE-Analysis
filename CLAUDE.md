@@ -445,6 +445,21 @@ incorporate the findings of both reviews."
 README.md carries the equivalent blockquote immediately before the report-description
 paragraph. Never drop or reword these when regenerating either file.
 
+THE THREE TOOL NAMES ARE THIS HOUSEHOLD'S ANSWERS, NOT PART OF THE RULE. They come from
+`private/household.yaml`'s `provenance` block (public-ok) and reach the page through
+GENERATION_TOOL / REVIEW_TOOL_1 / REVIEW_TOOL_2. What is required above is the SENTENCE
+STRUCTURE, so a reader always learns how the document in front of them was produced. Anyone
+reproducing this analysis states their own tools and their own reviews. Publishing these three
+names for a run that did not use them is a false provenance claim, and CLAUDE.md §0 forbids it
+as squarely as it forbids an unsupported figure (issue #135).
+
+If NO independent or adversarial review happened — the normal case for a reproduction — do not
+fill the review fields. `analysis/generate_report.py` replaces the whole sentence with "no
+independent or adversarial review of this specific run has been performed", and never emits
+review-claim text under any circumstance. Filling the template by hand instead? Replace that
+sentence yourself; `report_tokens.py` refuses to render an empty review name rather than
+publishing "reviewed with None".
+
 ## Repo map (what's public vs private)
 - Public: `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `CLAUDE.md`,
   `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md`, `household.example.yaml` (placeholders

@@ -7823,6 +7823,13 @@ _DECLINED_HOUSEHOLD_PATHS = {
     "private/household.yaml:household.plan": _DECLINE_NO_NUMBER,
     "private/household.yaml:household.pto_date": _DECLINE_NO_NUMBER,
     "private/household.yaml:household.utility": _DECLINE_NO_NUMBER,
+    # The provenance three (issue #135): tool names. "Claude Code (Opus 5)"
+    # carries digits, but they are part of a product name, not a quantity --
+    # there is no non-finite form of a model number and nothing downstream does
+    # arithmetic on it.
+    "private/household.yaml:provenance.generation_tool": _DECLINE_NO_NUMBER,
+    "private/household.yaml:provenance.review_tool_adversarial": _DECLINE_NO_NUMBER,
+    "private/household.yaml:provenance.review_tool_independent": _DECLINE_NO_NUMBER,
     "private/household.yaml:monitoring[].measures": _DECLINE_NO_NUMBER,
     "private/household.yaml:monitoring[].resolution": _DECLINE_NO_NUMBER,
     "private/household.yaml:monitoring[].source": _DECLINE_NO_NUMBER,
@@ -7838,6 +7845,13 @@ _TOKENS_WITH_NO_POISONABLE_FIELD = {
     "GENERATION_PROVIDER", "GENERATION_PROVIDER_SHORT", "INSTALL_PAYMENT_DATE",
     "NEM_EXPIRY_YEAR", "NEM_STATUS", "PTO_DATE", "RATE_SOURCES_DETAIL",
     "SIZE_VERIFICATION_SOURCE", "UTILITY_NAME",
+    # The provenance three (issue #135). They were cited_constant tokens, which
+    # this sweep excludes by KIND; moving them onto private/household.yaml made
+    # them derived, so they now need naming here for the same reason the twelve
+    # above do. Their only field is a tool name, whose digits are part of a
+    # product name rather than a quantity -- see the matching entries in
+    # _DECLINED_HOUSEHOLD_PATHS.
+    "GENERATION_TOOL", "REVIEW_TOOL_1", "REVIEW_TOOL_2",
 }
 
 # Tokens that read no committed artifact at all. Every one resolves out of
@@ -10822,6 +10836,18 @@ class _seam_stand_in_household:
             "data/cleaning_study_daily.csv spans fewer than 60 days, so no stand-in "
             "cleaning date has a 30-day window on both sides of it")
         node["cleaning_history"] = [{"date": days[len(days) // 2], "cost_usd": 150}]
+        # The provenance answers (issue #135). household.example.yaml leaves the
+        # two review fields null ON PURPOSE -- "nobody reviewed this" is the
+        # honest default for a reproduction, and REVIEW_TOOL_1/2 refuse to
+        # render a name that would claim otherwise. That refusal is correct and
+        # is tested elsewhere; here it would stop the seam guard before it
+        # checked a single seam. This path exercises RENDERING, not provenance
+        # policy, so it answers as a household that did have both reviews.
+        node["provenance"] = {
+            "generation_tool": "Stand-In Generator (v0)",
+            "review_tool_independent": "Stand-In Independent Reviewer (v0)",
+            "review_tool_adversarial": "Stand-In Adversarial Reviewer (v0)",
+        }
         self.old_cache, self.old_path = rt.hh._cache, rt.hh.PATH
         self.old_provider = rt._generation_provider_short
         rt.hh._cache = node

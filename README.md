@@ -167,7 +167,17 @@ published as a complete result. These gates have actually been run end-to-end: f
 clone of this repo, with staged private inputs and a new venv, the pipeline regenerated every
 committed artifact byte-identically.
 
-**5 · Publish (optional).** Follow the GitHub Pages section below, after reading the
+**5 · State your own provenance.** The report's methodology section ends by naming who
+produced and reviewed it. Those names are this household's answers, not part of the template:
+they come from `provenance` in your `private/household.yaml`. Set `generation_tool` to what
+you actually ran. Leave both review fields `null` unless a real independent or adversarial
+review happened — `analysis/generate_report.py` then writes "no independent or adversarial
+review of this specific run has been performed" instead, and never emits review-claim text.
+Filling `report-template.html` by hand instead? Replace that sentence yourself. Publishing
+this repo's three tool names for a run that did not use them is a false claim about how your
+document was checked.
+
+**6 · Publish (optional).** Follow the GitHub Pages section below, after reading the
 privacy note.
 
 ## Publish with GitHub Pages
