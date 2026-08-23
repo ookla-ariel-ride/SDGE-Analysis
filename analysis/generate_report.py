@@ -51,15 +51,20 @@ PIPELINE
      data/*.json. index.html is never touched.
 
 PROVENANCE OVERRIDES (CLAUDE.md section 11 / issue #39's own explicit design)
-  report_tokens.py's GENERATION_TOOL/REVIEW_TOOL_1/REVIEW_TOOL_2 are
-  cited_constant tokens hardcoded to "Claude Cowork (Fable 5)" / "Claude Code
-  (Fable 5)" / "Codex (GPT-5.6 Sol)" -- the literal values CLAUDE.md section
-  11 requires for THIS repo's own hand-curated index.html. Using them
-  verbatim in a FORK's generated report would be false on two counts: it
-  would claim a tool this run never used, and it would assert an
-  independent + adversarial review that never happened. This module
-  overrides all three, always, for its own output only (report_tokens.py
-  itself is untouched, so index.html's provenance sentence is unaffected):
+  report_tokens.py's GENERATION_TOOL/REVIEW_TOOL_1/REVIEW_TOOL_2 resolve from
+  private/household.yaml's `provenance` block (issue #135 moved them out of
+  hardcoded cited_constant values, which had made every reproduction publish
+  THIS household's process). They are household data, not repository
+  literals -- which matters for the egress trust model below, where they are
+  deliberately NOT labelled household_token.
+
+  This module does not use them at all. resolve_tokens_with_gaps() SKIPS all
+  three rather than resolving them, because a household that recorded no
+  review leaves the fields null and report_tokens.py refuses to render a name
+  that would claim one -- resolving them would turn the documented default
+  into a blocking failure. They are then overridden unconditionally, for this
+  module's output only (report_tokens.py itself is untouched, so index.html's
+  own provenance sentence is unaffected):
     - GENERATION_TOOL -> "{provider} ({model})", the ACTUAL provider/model
       this run used.
     - REVIEW_TOOL_1 and REVIEW_TOOL_2 -> REVIEW_DISCLAIMER, a fixed,

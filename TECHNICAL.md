@@ -4936,12 +4936,16 @@ into a finished report with a paid LLM API key and no agentic coding tool at all
   block(s) whose scope named it — both are asserted by call-count in
   `test_generate_report.py`, not by inspection.
 - **Provenance overrides.** `report_tokens.py`'s `GENERATION_TOOL` / `REVIEW_TOOL_1` /
-  `REVIEW_TOOL_2` are hardcoded to the values `CLAUDE.md` §11 requires for THIS repo's own
-  hand-curated `index.html` ("Claude Cowork (Fable 5)", "Claude Code (Fable 5)", "Codex
-  (GPT-5.6 Sol)"). Using them verbatim in a fork's generated report would be false on two
-  counts — it would name a tool that run never used, and assert an independent and
-  adversarial review that never happened — so `generate_report.py` overrides all three for
-  its own output only: `GENERATION_TOOL` becomes `"{provider} ({model})"`, the actual
+  `REVIEW_TOOL_2` resolve from `private/household.yaml`'s `provenance` block (issue #135;
+  they were hardcoded constants before, which made every reproduction publish THIS
+  household's process). They are household DATA, not repository literals — which is why
+  `_is_household_sourced` deliberately excludes them from the `household_token` egress
+  label: this module replaces all three, so re-resolving them against `household.yaml`
+  would check a value that never travels. `resolve_tokens_with_gaps()` does not resolve
+  them at all, because a household with no review recorded leaves those fields null and
+  `report_tokens.py` refuses to render a name that would claim one — resolving them would
+  turn the documented default into a blocking failure. They are then overridden for this
+  module's output only: `GENERATION_TOOL` becomes `"{provider} ({model})"`, the actual
   provider/model that run used; `REVIEW_TOOL_1`/`REVIEW_TOOL_2` become a fixed, digit-free
   disclaimer that no review is recorded for the run, which is NEVER overridable — not by
   `--human-answers`, not under any circumstance — because a script cannot verify a review

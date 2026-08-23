@@ -169,8 +169,12 @@ committed artifact byte-identically.
 
 **5 · State your own provenance.** The report's methodology section ends by naming who
 produced and reviewed it. Those names are this household's answers, not part of the template:
-they come from `provenance` in your `private/household.yaml`. Set `generation_tool` to what
-you actually ran. Leave both review fields `null` unless an independent review, an adversarial review,
+they come from `provenance` in your `private/household.yaml`. Which route you took decides
+what reads them. `analysis/generate_report.py` ignores all three and writes its own
+provenance — the actual provider and model of that run, and an explicit statement that no
+review happened — so on the AI route these fields are for the record, not for the page.
+Filling `report-template.html` by hand is the route that publishes them. Set
+`generation_tool` to what you actually ran. Leave both review fields `null` unless an independent review, an adversarial review,
 **and** a re-work incorporating their findings all really happened — the published
 sentence asserts all three — `analysis/generate_report.py` then writes "no independent or adversarial
 review of this specific run has been performed" instead, and never emits review-claim text.

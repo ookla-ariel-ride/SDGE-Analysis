@@ -370,6 +370,13 @@ adversarially reviewed with [third tool], then re-worked to incorporate the find
 reviews* — substituting whatever tools/models were actually used. Never drop or reword it
 away when regenerating either file.
 
+**If no independent or adversarial review happened, that structure is the WRONG sentence** —
+it asserts two reviews and a rework, and keeping it with substituted names still claims all
+three. Write instead: *generated with [tool], filling this template from the committed data
+artifacts; no independent or adversarial review of this specific run has been performed.*
+`analysis/generate_report.py` does exactly this on its own, and never emits review-claim text
+under any circumstance.
+
 **README.md** — clickable live-report link, GitHub-Pages publish steps, a **"What the report
 covers"** table (section → the question it answers), and a privacy note.
 
