@@ -6019,8 +6019,15 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
     if savings > 0:
         for doc in _HIGH_CARD_DOCS:
             lowered = (ROOT / doc).read_text().lower()
+            # PACKAGE-REFERENT phrasings only. The bare "endurance, not
+            # savings" is deliberately NOT here: if marginal_vs_mid_yr ever goes
+            # negative that sentence becomes TRUE of the expansion, and a guard
+            # that rejected it would be forcing wrong wording again. While the
+            # marginal is positive it is still caught, by the denials list in
+            # the positive branch below.
             for phrase in ("package buys outage endurance, not savings",
-                           "endurance, not savings"):
+                           "package saves nothing", "package has no savings",
+                           "this package buys endurance, not savings"):
                 assert phrase not in lowered, (
                     f"{doc} says {phrase!r} of a package whose artifact reports "
                     f"savings_yr of ${savings:,.0f}/yr. That denial is about the "
