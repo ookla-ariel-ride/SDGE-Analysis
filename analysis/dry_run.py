@@ -1232,9 +1232,19 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
             # try: a baseline rmtree that raised would then skip dispose() and
             # strand exactly that copy.
             sandbox_path = sb.path
-            for extra in (str(sandbox_path) + s for s in COMPARISON_SUFFIXES):
+            # sandbox_path is None when build() never produced a sandbox at all
+            # (mkdtemp failed, the temp dir was refused as entangled with the
+            # checkout, the marker could not be locked). str(None) + "-baseline"
+            # is the RELATIVE path "None-baseline", which resolves against the
+            # PROCESS CWD -- removing that would delete a directory belonging to
+            # whoever invoked us that merely shares the name. Every other removal
+            # in this module is gated by _safe_to_dispose(); this one is too, so
+            # the guard does not rest on remembering to check for None here.
+            for extra in ((sandbox_path.parent / (sandbox_path.name + s)
+                           for s in COMPARISON_SUFFIXES)
+                          if sandbox_path is not None else ()):
                 try:
-                    if pathlib.Path(extra).is_dir():
+                    if extra.is_dir() and sb._safe_to_dispose(extra):
                         shutil.rmtree(extra)
                 except OSError as e:
                     print(f"[baseline copy not removed: {extra}: {e}]", file=sys.stderr)

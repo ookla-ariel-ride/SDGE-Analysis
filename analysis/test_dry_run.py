@@ -1593,38 +1593,54 @@ def case_the_head_baseline_still_answers_against_head_alone():
 
 @case
 def case_an_unresolvable_candidate_does_not_end_the_sweep():
-    """A prefix-matching symlink loop in $TMPDIR must not stop every dry run
-    from building. resolve() raises on one -- RuntimeError on 3.9, OSError
-    (ELOOP) on newer interpreters -- and that exception used to escape
-    _sweep_stale() entirely, which contradicts its own contract: an entry left
-    by a PRIOR run must never fail the CURRENT one.
+    """A prefix-matching symlink loop must not stop every dry run from
+    building. resolve() raises on one -- RuntimeError on 3.9, OSError (ELOOP)
+    on newer interpreters -- and that used to escape _sweep_stale() entirely,
+    which contradicts its own contract: an entry left by a PRIOR run must never
+    fail the CURRENT one.
 
-    The positive control is the point of the case. A genuinely abandoned
-    sandbox is planted alongside the loop, and the sweep must still reach and
-    remove it, so this cannot pass by a sweep that simply gave up quietly."""
-    tmpdir = pathlib.Path(tempfile.gettempdir()).resolve()
-    loop_a = tmpdir / (DR.SANDBOX_PREFIX + "LOOP-a")
-    loop_b = tmpdir / (DR.SANDBOX_PREFIX + "LOOP-b")
-    for stale in (loop_a, loop_b):
-        if stale.is_symlink() or stale.exists():
-            stale.unlink()
+    The sweep is pointed at an ISOLATED temp root rather than the real one. A
+    symlink loop is exactly the litter the sweep can never clear (resolve()
+    raises on it, so it is reported forever), so planting one in the shared
+    $TMPDIR would strand it on this machine for good if the case were killed,
+    and would collide with a sibling worktree running this same suite --
+    CLAUDE.md section 8 has issue work running from several at once.
+
+    The positive control is the point of the case: a genuinely abandoned
+    sandbox is planted BEHIND the loop, and the sweep must still reach and
+    remove it, so this cannot pass by way of a sweep that quietly gave up."""
+    fake_tmp = pathlib.Path(tempfile.mkdtemp(prefix="dryrun-sweep-root-")).resolve()
+    real_gettempdir = tempfile.gettempdir
+    loop_a = fake_tmp / (DR.SANDBOX_PREFIX + "LOOP-a")
+    loop_b = fake_tmp / (DR.SANDBOX_PREFIX + "LOOP-b")
     loop_a.symlink_to(loop_b)
     loop_b.symlink_to(loop_a)
     # Self-verifying fixture: if this platform resolves the loop without
-    # raising, the case is forcing nothing and must not claim a pass.
+    # raising, the case forces nothing and must not claim a pass.
     try:
         loop_a.resolve()
         raised = False
     except (OSError, RuntimeError):
         raised = True
 
-    dead = _plant_abandoned_sandbox("SWEEP-PAST-LOOP")
+    dead = fake_tmp / (DR.SANDBOX_PREFIX + "SWEEP-PAST-LOOP")
+    dead.mkdir()
+    marker = dead / DR.SANDBOX_MARKER
+    marker.touch()
+    probe = DR.Sandbox._lock_marker(dead, create=False)
+    assert probe is not None, (
+        "the planted abandoned sandbox's marker is not actually lockable, so "
+        "the sweep would spare it for the wrong reason and the positive "
+        "control would prove nothing")
+    probe.close()
+
+    tempfile.gettempdir = lambda: str(fake_tmp)
     try:
         if not raised:
             raise SkipCase("this interpreter resolves a symlink loop without "
                            "raising, so the case would force nothing")
         sb = DR.Sandbox(ROOT)
-        sb.path = tmpdir / (DR.SANDBOX_PREFIX + "SWEEPER")
+        sb.path = fake_tmp / (DR.SANDBOX_PREFIX + "SWEEPER")
         sb._marker_fd = None
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
@@ -1636,12 +1652,64 @@ def case_an_unresolvable_candidate_does_not_end_the_sweep():
             "the sweep did not get past the unresolvable entry to the "
             f"abandoned sandbox behind it: {dead}")
     finally:
+        tempfile.gettempdir = real_gettempdir
         for stale in (loop_a, loop_b):
-            if stale.is_symlink() or stale.exists():
+            if stale.is_symlink():
                 stale.unlink()
-        shutil.rmtree(dead, ignore_errors=True)
+        shutil.rmtree(fake_tmp, ignore_errors=True)
     return ("a prefix-matching symlink loop is reported and stepped over "
             "rather than ending the sweep and blocking every dry run")
+
+
+@case
+def case_a_failed_build_never_removes_a_lookalike_in_the_callers_cwd():
+    """--keep-sandbox with a build() that failed before any sandbox existed
+    leaves sb.path None. The teardown's comparison-copy cleanup builds its
+    targets from that path, and str(None) + "-baseline" is the RELATIVE path
+    "None-baseline" -- resolved against the PROCESS CWD, not the temp dir. An
+    unguarded rmtree there deletes a directory belonging to whoever invoked us
+    that merely shares the name.
+
+    This is the one removal in dry_run.py that was not gated by
+    _safe_to_dispose(); the case pins that it is, by planting exactly that
+    lookalike in the CWD and requiring it to survive intact."""
+    gen = ROOT / "analysis" / "tou_spread.py"
+    if not gen.is_file():
+        raise SkipCase("analysis/tou_spread.py is missing from this checkout")
+
+    real_build = DR.Sandbox.build
+    fired = {"build": False}
+
+    def _failing_build(self, *a, **kw):
+        fired["build"] = True
+        raise DR.DryRunError("injected: setup failed before any sandbox existed")
+
+    cwd = pathlib.Path(tempfile.mkdtemp(prefix="dryrun-caller-cwd-")).resolve()
+    bait = [cwd / ("None" + suffix) for suffix in DR.COMPARISON_SUFFIXES]
+    for b in bait:
+        b.mkdir()
+        (b / "precious.txt").write_text("the caller's own directory\n")
+    here = pathlib.Path.cwd()
+    DR.Sandbox.build = _failing_build
+    try:
+        os.chdir(cwd)
+        try:
+            DR.dry_run(gen, keep_sandbox=True)
+            raise AssertionError("expected the injected setup failure to propagate")
+        except DR.DryRunError:
+            pass
+    finally:
+        os.chdir(here)
+        DR.Sandbox.build = real_build
+
+    assert fired["build"], "the injected build failure never fired"
+    for b in bait:
+        assert b.is_dir() and (b / "precious.txt").is_file(), (
+            f"a failed build removed {b.name} from the caller's working "
+            "directory -- the comparison-copy cleanup used a relative path")
+    shutil.rmtree(cwd, ignore_errors=True)
+    return ("a build that fails before any sandbox exists never removes a "
+            "same-named directory from the caller's working directory")
 
 
 @case

@@ -249,9 +249,26 @@ def _locked_sandbox(prefix):
     try:
         yield td_obj.name
     finally:
+        # Hold the marker lock THROUGH cleanup(), releasing only after: closing
+        # it first would let a sibling's sweep lock the now-unlocked marker and
+        # treat this sandbox as abandoned while we still hold it.
         try:
             del _ACTIVE_SANDBOX_MARKERS[td_obj.name]
-            td_obj.cleanup()
+            try:
+                td_obj.cleanup()
+            except OSError as e:
+                # A removal failure is raised loudly rather than left to surface
+                # as a bare OSError attributed to whichever case happened to be
+                # running. This sandbox stages the real bill PDFs, so a leftover
+                # is a stranded copy of the private archive, and it must be
+                # reported as that -- matching dry_run.py's contract that a
+                # sandbox which cannot be deleted is a FAILURE, never a quiet
+                # success (issue #187 AC3).
+                raise RuntimeError(
+                    f"the sandbox could not be removed: {td_obj.name} -- it "
+                    "holds a full copy of the private archive (household.yaml, "
+                    "the real bill PDFs, the billing-history export). Delete it "
+                    f"by hand. Cause: {e}") from e
         finally:
             marker_fd.close()
 
@@ -876,6 +893,66 @@ def case_build_cleanup_survives_mid_copy_failure():
         f"sandbox holding real bill PDFs survived a mid-_build failure: {sandbox_path['p']}"
     return "exception mid-_build -> sandbox cleaned up, no stranded PDF copy"
 
+
+def case_a_sandbox_that_cannot_be_removed_fails_loudly():
+    """Issue #187 AC3: when this suite's sandbox cannot be removed, it must say
+    so loudly and name what is still on disk, matching dry_run.py's contract
+    that an undeletable sandbox is a FAILURE and never a quiet success. This is
+    the site that stages the real bill PDFs, so a leftover here is a stranded
+    copy of the private archive; a bare OSError attributed to whichever case
+    happened to be running names neither the sandbox nor the PDFs.
+
+    Forcing a real cleanup() failure genuinely strands the sandbox, so this
+    case removes it itself afterwards and asserts it succeeded -- a case about
+    not stranding directories must not strand one."""
+    real_tempdir_cls = tempfile.TemporaryDirectory
+    captured = []
+    fired = {"cleanup": False}
+
+    class _UnremovableTempDir(real_tempdir_cls):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            captured.append(self.name)
+
+        def cleanup(self):
+            if not fired["cleanup"]:
+                fired["cleanup"] = True
+                raise OSError(
+                    "injected: simulated undeletable sandbox (issue #187 AC3)")
+            return super().cleanup()
+
+    tempfile.TemporaryDirectory = _UnremovableTempDir
+    try:
+        try:
+            with _locked_sandbox(SANDBOX_PREFIX):
+                pass
+            raise AssertionError(
+                "expected the injected cleanup failure to propagate out of "
+                "_locked_sandbox, but the block exited cleanly")
+        except RuntimeError as e:
+            message = str(e)
+    finally:
+        tempfile.TemporaryDirectory = real_tempdir_cls
+
+    assert fired["cleanup"], (
+        "the injected cleanup failure never fired, so this case proves "
+        "nothing about the undeletable-sandbox path")
+    assert "could not be removed" in message, (
+        f"the failure never named the removal problem: {message!r}")
+    assert "private archive" in message and "bill PDFs" in message, (
+        f"the failure never named what is still on disk: {message!r}")
+    assert not _ACTIVE_SANDBOX_MARKERS, (
+        "the sandbox stayed in the active-marker registry after its block "
+        f"ended, so a later sweep would treat it as live: {_ACTIVE_SANDBOX_MARKERS}")
+
+    assert captured, "the recording TemporaryDirectory was never constructed"
+    stranded = pathlib.Path(captured[-1])
+    shutil.rmtree(stranded, ignore_errors=True)
+    assert not stranded.exists(), (
+        "this case could not remove the sandbox it deliberately stranded, so "
+        f"it has left one behind: {stranded}")
+    return ("a sandbox that cannot be removed fails loudly, naming the bill "
+            "PDFs still on disk")
 
 def case_the_sweep_never_removes_a_sandbox_a_live_process_still_holds():
     """A prefix-matching directory alone is not proof of abandonment: two
@@ -2653,7 +2730,8 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
 # publication, rollback and concurrency guards live here, so they must run in a clean
 # checkout and in CI — skipping the whole suite when the private corpus is absent would
 # let a broken lock or a lost rollback pass the documented command with exit code 0.
-STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
+STANDALONE_CASES = [case_a_sandbox_that_cannot_be_removed_fails_loudly,
+                    case_write_rollback, case_rollback_after_partial_swap,
                     case_build_cleanup_survives_mid_copy_failure,
                     case_the_sweep_never_removes_a_sandbox_a_live_process_still_holds,
                     case_an_abandoned_sandbox_carrying_a_free_marker_is_swept,

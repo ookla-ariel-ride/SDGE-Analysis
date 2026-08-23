@@ -103,8 +103,15 @@ def _discard_marker_temp(tmp_name):
         pass
 
 
-# Top-level private/1-raw-data subdirectories with zero readers among the
-# generators this suite runs with cwd=tmp (scouted by grepping analysis/*.py
+# private/1-raw-data subdirectories with zero readers among the generators this
+# suite runs with cwd=tmp. NAME PATTERNS, NOT PATHS: shutil.ignore_patterns is
+# applied by copytree to EVERY directory it walks, so these drop any entry with
+# one of these names at ANY depth, not only the top level. Nothing nested
+# carries these names today, so the two readings coincide -- but a future
+# nested `panel/` would vanish from the throwaway copy silently, and the
+# symptom would be a generator failing inside this suite alone with a
+# missing-file error pointing nowhere near this list. (Scouted by grepping
+# analysis/*.py
 # for a path constant into each): sdge_nbt_export_rates/ (76MB) is read only
 # by nem3_grandfathering.py, and only under its --build-rates flag, which
 # neither this suite nor CI ever passes; panel/ and superseded/ have no path
