@@ -1664,7 +1664,7 @@ _tok("CYCLES_PER_DAY", kind="data_json", file="battery_dispatch_policies.json",
 # phenomenon: the run charges 335 kWh from midday super-off-peak surplus at 11.7c
 # and another 369 kWh from OFF-PEAK and ON-PEAK surplus -- the 6-10h and 14-16h
 # shoulders, and summer evenings when the sun is still up inside the 16-21h window
-# -- whose forgone exports are worth 53.9c and 79.5c delivered. This token is the
+# -- whose forgone exports are worth 53.5c and 79.5c delivered. This token is the
 # surplus-WEIGHTED average over every kWh the run charged from solar, which is the
 # only figure entitled to be called the price of stored solar; quoting the midday
 # cell for it would be the same one-end-of-the-range error one level up. A sentence
@@ -1687,8 +1687,14 @@ _tok("STORED_KWH_COST_SOLAR_MIDDAY", kind="data_json", file="battery_dispatch_po
 # FRACTION (0.4758) and pct1 formats a number already in percent -- pointing the
 # formatter straight at the fraction would publish "0.5%".
 _tok("STORED_KWH_MIDDAY_SHARE", kind="derived", fmt="pct1",
-     get=lambda ctx: 100 * _json("battery_dispatch_policies.json")["stored_kwh_cost"]
-                     ["solar_surplus"]["by_period"]["sop"]["share_of_surplus_kwh"],
+     # Through _dig(), not raw subscripts: solar_surplus.by_period deliberately
+     # omits any period the dispatch never charged in, so a household whose
+     # battery stores no super-off-peak surplus would get a bare KeyError here
+     # while the two sibling tokens on this same path get _dig()'s named refusal.
+     get=lambda ctx: 100 * _dig(
+         _json("battery_dispatch_policies.json"),
+         ("stored_kwh_cost", "solar_surplus", "by_period", "sop",
+          "share_of_surplus_kwh")),
      sources=["data/battery_dispatch_policies.json:stored_kwh_cost.solar_surplus."
               "by_period.sop.share_of_surplus_kwh (a fraction; rendered as percent)"])
 

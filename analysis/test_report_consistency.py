@@ -106,7 +106,6 @@ RETIRED_FIGURES = [
     # evening-only battery payback and must stay in the document.
     "~8.4¢",                   # pre-correction stored-kWh cost from solar
     "8.4¢",                    # same figure, untilded form
-    "13.9¢",                   # pre-correction grid top-up cost (now 14.0¢)
     # RETIRED BY REGENERATION (can recur -- see the note above).
     # The §3 "vs. current" column and the §4 conclusion sentence, on the
     # plan_results.csv / battery_plan_matrix.json generation that preceded
@@ -124,6 +123,13 @@ RETIRED_FIGURES = [
     "$1,609",                  # EV-TOU-2 margin, with battery (now $1,612)
     "$2,782",                  # TOU-ELEC margin, with battery (now $2,785)
     "8.5 yr",                  # evening-only battery payback (now 8.4 yr)
+    # Issue #189. The grid top-up cost stopped being an asserted constant and
+    # became a DERIVED figure, currently 14.023¢. It belongs in this group and
+    # not the one above: the method that produces it is the current one, and it
+    # sits one regeneration or one small rate change away from rounding back to
+    # 13.9¢. If that happens the report is right and this entry is wrong --
+    # delete it, per the group note above, rather than re-basing prose to dodge it.
+    "13.9¢",                   # superseded grid top-up cost (now 14.0¢)
 ]
 
 # THIS LIST IS SCOPED TO index.html ON PURPOSE, and the reason is measured

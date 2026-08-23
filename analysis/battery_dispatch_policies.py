@@ -251,10 +251,26 @@ def _recon(priced, rebilled, counterfactual):
     ~35k intervals two different ways, so the artifact stays byte-stable across
     platforms while still showing a real disagreement if one ever appears.
     """
+    residual = round(priced - rebilled, 6) + 0.0
+    # FAIL CLOSED, like every other reconciliation in this repo
+    # (bill_decomposition.py, irreducible_bill.py). index.html section 6 tells the
+    # reader each per-kWh cost "reconciles to the penny against a re-bill of its
+    # own counterfactual". Publishing the residual without asserting it left that
+    # claim unenforced: a later edit to _span_value or to the reference frame
+    # would still regenerate a valid artifact, and no test would notice, because
+    # the only consumer compares the COSTS to the prose and both sides move
+    # together (Codex/review, issue #189).
+    if abs(residual) > 0.01:
+        raise SystemExit(
+            f"battery_dispatch_policies: {counterfactual} -- priced {priced:.6f} "
+            f"against an exact re-bill of {rebilled:.6f}, a residual of "
+            f"{residual:.6f}. The published per-kWh costs claim to reconcile to "
+            "the penny, so this is a pricing error, not a rounding one; refusing "
+            "to write an artifact that would make that claim falsely.")
     block = {"priced_usd": round(priced, 2),
              "counterfactual_rebill_usd": round(rebilled, 2),
              # + 0.0 normalises the -0.0 that rounding a tiny negative produces.
-             "residual_usd": round(priced - rebilled, 6) + 0.0,
+             "residual_usd": residual,
              "counterfactual": counterfactual}
     if rebilled:
         block["residual_pct"] = round(100 * (priced - rebilled) / rebilled, 6) + 0.0
@@ -402,7 +418,13 @@ def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw):
             value, at_credit = _span_value(q, net - q, seas, per)
             if stream == "grid_topup":
                 value += q * R.NBC
-                if at_credit > 0:
+                # Same 1e-12 guard the census below uses. With a bare `> 0`,
+                # a bucket sitting within float dust of zero could publish
+                # every_bucket_priced_at_allin: false beside a census reporting
+                # surplus_credit.kwh: 0.0 -- two fields of one artifact
+                # disagreeing, with no way to tell which is the artifact of
+                # rounding (Codex/review, issue #189).
+                if at_credit > 1e-12:
                     grid_is_allin = False
             tot[stream][0] += q
             tot[stream][1] += value
