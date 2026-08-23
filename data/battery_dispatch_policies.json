@@ -163,6 +163,7 @@
      "cost_per_kwh_ac_input": 0.71575,
      "cost_per_kwh_delivered": 0.79528,
      "share_of_surplus_kwh": 0.0242,
+     "share_inside_midday_window": 0.0,
      "reconciliation": {
       "priced_usd": 12.19,
       "counterfactual_rebill_usd": 12.19,
@@ -177,6 +178,7 @@
      "cost_per_kwh_ac_input": 0.48183,
      "cost_per_kwh_delivered": 0.53537,
      "share_of_surplus_kwh": 0.5,
+     "share_inside_midday_window": 0.0,
      "reconciliation": {
       "priced_usd": 169.73,
       "counterfactual_rebill_usd": 169.73,
@@ -191,6 +193,7 @@
      "cost_per_kwh_ac_input": 0.10519,
      "cost_per_kwh_delivered": 0.11688,
      "share_of_surplus_kwh": 0.4758,
+     "share_inside_midday_window": 1.0,
      "reconciliation": {
       "priced_usd": 35.26,
       "counterfactual_rebill_usd": 35.26,

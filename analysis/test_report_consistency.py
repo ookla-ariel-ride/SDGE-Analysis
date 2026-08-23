@@ -5952,6 +5952,19 @@ def case_stored_kwh_costs_match_the_dispatch_artifact():
             f"the {what} reads {printed} in index.html but "
             f"data/battery_dispatch_policies.json derives {expected}")
 
+    # Section 6 calls this cell "midday", but rates.period_at() puts every
+    # WEEKEND hour before 14:00 in sop, so that label is a claim about this
+    # household's charging, not about the TOU window. The generator measures it;
+    # this refuses the wording if the measurement ever stops supporting it.
+    if "midday solar surplus" in HTML:
+        inside = sop["share_inside_midday_window"]
+        assert inside == 1.0, (
+            f"index.html calls the super-off-peak stored-kWh cost a MIDDAY figure, but "
+            f"only {inside * 100:.1f}% of the surplus charged in that period falls "
+            "inside 10:00-14:00 -- the rest is weekend morning charging, which sop "
+            "also covers. Either say super-off-peak, or compute the figure from the "
+            "10:00-14:00 mask")
+
     share = sop["share_of_surplus_kwh"]
     assert f"{share * 100:.1f}%" in HTML, (
         f"the midday share of stored surplus is {share * 100:.1f}% in the artifact but "

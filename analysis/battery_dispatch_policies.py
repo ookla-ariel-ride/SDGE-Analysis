@@ -482,10 +482,23 @@ def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw):
     # cell on its own and a reader of that one number is entitled to its own bound
     # rather than the whole stream's.
     per_of = d.p.values
+    hour_of = d.hour.values
     solar["by_period"] = {
         p: dict(_cost(by_period[p]["kwh"], by_period[p]["value"]),
                 share_of_surplus_kwh=round(
                     by_period[p]["kwh"] / tot["solar_surplus"][0], 4),
+                # Section 6 calls the super-off-peak cell "midday", and on a
+                # WEEKEND rates.period_at() calls everything before 14:00 sop --
+                # so that label is a claim about this household's data, not
+                # about the TOU classification. Measure it rather than assume
+                # it: the share of this period's surplus charging that falls in
+                # 10:00-14:00. It is 1.0 here (there is no surplus to store at
+                # 07:00, weekend or not), and a consistency test refuses the
+                # "midday" wording if it ever stops being 1.0 (Codex review,
+                # issue #189).
+                share_inside_midday_window=round(float(
+                    surplus[(per_of == p) & (hour_of >= 10) & (hour_of < 14)].sum()
+                    / by_period[p]["kwh"]), 4),
                 reconciliation=_recon(
                     by_period[p]["value"],
                     dispatch_bill - billed(d, imp2, exp2 + surplus * (per_of == p)),
