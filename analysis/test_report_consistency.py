@@ -6068,9 +6068,26 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
                 "does not apply because a denial would now be true")
 
     printed = f"~${marginal:,.0f}/yr more than MID"
-    assert printed in HTML, (
+    # SCOPED TO THE CARD, not to the document. Presence anywhere in index.html
+    # passes with a stale card as long as the expected text appears in some
+    # other section or an HTML comment -- reproduced by setting the card to
+    # $999 and adding the expected string in a comment. This is the same
+    # presence-anywhere weakness a guard in this file already had once, so it
+    # is pinned to the container that makes the claim.
+    card = re.search(r'<div class="pkg">\s*<h3>HIGH\b.*?</div>', HTML, re.S)
+    assert card, ("the HIGH package card is not in index.html in the form this case "
+                  "pins (<div class=\"pkg\"> then <h3>HIGH); re-anchor it rather "
+                  "than deleting it")
+    assert printed in card.group(0), (
         f"the HIGH card does not state its own artifact's marginal saving "
         f"({printed!r} from packages.HIGH.marginal_vs_mid_yr)")
+
+    # TECHNICAL.md hard-codes the same figure in its package_results schema
+    # note; it was never checked, so the two could drift apart silently.
+    tech = (ROOT / "TECHNICAL.md").read_text()
+    assert f"`marginal_vs_mid_yr` **{marginal:,.0f}**" in tech, (
+        f"TECHNICAL.md does not carry marginal_vs_mid_yr as {marginal:,.0f}; the "
+        "schema note has drifted from data/package_results.json")
 
     # Phrasings that assert the saving is ABSENT rather than too small. Checked
     # across every document that publishes this claim, because the same
