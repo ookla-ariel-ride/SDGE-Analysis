@@ -141,5 +141,81 @@
   "charge_kw_with_expansion": 8.0,
   "charge_kw_note": "13.5 kWh pw3/mid configs use the bare-unit charge rate; 27 kWh pw3x/high configs use the with-expansion rate -- see CHARGE_KW/CHARGE_KW_WITH_EXPANSION in this module",
   "requires": "multi-window time-based control"
+ },
+ "stored_kwh_cost": {
+  "config": {
+   "name": "pw3",
+   "capacity_kwh": 13.5,
+   "policy": "greedy",
+   "charge_kw": 5.0,
+   "power_kw": 11.5,
+   "round_trip": 0.9
+  },
+  "solar_surplus": {
+   "kwh": 704.51,
+   "value_usd": 218.24,
+   "cost_per_kwh_stored": 0.30977,
+   "cost_per_kwh_delivered": 0.34419,
+   "by_period": {
+    "on": {
+     "kwh": 17.04,
+     "value_usd": 12.19,
+     "cost_per_kwh_stored": 0.71575,
+     "cost_per_kwh_delivered": 0.79528,
+     "share_of_surplus_kwh": 0.0242
+    },
+    "off": {
+     "kwh": 352.26,
+     "value_usd": 170.78,
+     "cost_per_kwh_stored": 0.48481,
+     "cost_per_kwh_delivered": 0.53868,
+     "share_of_surplus_kwh": 0.5
+    },
+    "sop": {
+     "kwh": 335.21,
+     "value_usd": 35.26,
+     "cost_per_kwh_stored": 0.10519,
+     "cost_per_kwh_delivered": 0.11688,
+     "share_of_surplus_kwh": 0.4758
+    }
+   },
+   "census": {
+    "netting_energy": {
+     "buckets": 26,
+     "kwh": 568.79
+    },
+    "surplus_credit": {
+     "buckets": 10,
+     "kwh": 135.72
+    }
+   }
+  },
+  "grid_topup": {
+   "kwh": 4532.64,
+   "value_usd": 572.05,
+   "cost_per_kwh_stored": 0.12621,
+   "cost_per_kwh_delivered": 0.14023,
+   "census": {
+    "netting_energy": {
+     "buckets": 13,
+     "kwh": 4532.64
+    },
+    "surplus_credit": {
+     "buckets": 0,
+     "kwh": 0.0
+    }
+   },
+   "every_bucket_priced_at_allin": true
+  },
+  "buckets_whose_sign_the_battery_flipped": 9,
+  "reconciliation": {
+   "discharge_value_usd": 3089.28,
+   "charge_cost_usd": 790.29,
+   "saving_from_marginal_prices_usd": 2298.99,
+   "saving_billed_by_rates_bill_nem_usd": 2328.31,
+   "note": "the residual is the cost of pricing each bucket's whole displaced block at that bucket's marginal rate; nothing here should be read to finer precision than it allows",
+   "residual_pct": -1.26
+  },
+  "method": "charging intervals of the price-aware run itself: solar surplus is the reduction in the export series against the same run's pre-battery baseline, grid top-up the rise in the import series. Each forgone exported kWh is priced at rates.energy() where its (month, season, TOU period) bucket is net >= 0 in the frame rates.bill_nem() prices and at rates.credit() where it is net < 0 -- the same test bill_nem_monthly() applies; each grid-charged kWh additionally pays NBC, because it is a gross import and an avoided export is not. Divided by the round trip to give the cost of a kWh DELIVERED, which is what section 6 quotes."
  }
 }

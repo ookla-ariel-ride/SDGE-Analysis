@@ -1645,12 +1645,52 @@ _tok("KWH_SERVED_EXP", kind="data_json", file="battery_dispatch_policies.json",
      path=("pw3x", "greedy", "kwh_served"), fmt="num0")
 _tok("CYCLES_PER_DAY", kind="data_json", file="battery_dispatch_policies.json",
      path=("pw3", "greedy", "cycles_per_day"), fmt="num2")
-_tok("STORED_KWH_COST_SOLAR", kind="cited_constant", value="~8.4¢",
-     source="analysis/battery_dispatch_policies.py module docstring: 'a stored kWh "
-            "costs ~8.4c (midday surplus: forgone super-off-peak export credit / RTE)'")
-_tok("STORED_KWH_COST_GRID", kind="cited_constant", value="~13.9¢",
-     source="analysis/battery_dispatch_policies.py module docstring: '~13.9c "
-            "(super-off-peak grid top-up / RTE)'")
+# WHAT A STORED kWh COSTS IS MEASURED OFF THE DISPATCH, NOT CITED (issue #189).
+#
+# These three read battery_dispatch_policies.py's stored_kwh_cost block, which
+# prices the price-aware run's OWN charging intervals -- the reduction in its
+# export series and the rise in its import series -- through the settlement test
+# rates.bill_nem_monthly() applies. They were cited constants until #189, and the
+# constant was wrong in the way this repo keeps getting wrong: it priced a forgone
+# export at rates.credit(), the SURPLUS end of the export bracket, when every one
+# of this window's super-off-peak buckets is net-IMPORT and a super-off-peak export
+# therefore cancels an import and settles at rates.energy(), the NETTING end. Same
+# bracket as EXPORT_VALUE_SURPLUS_BOUND / EXPORT_VALUE_NETTING_BOUND above, and the
+# netting end is energy() and NOT allin() for the reason stated there: an export
+# does not reduce the gross imports NBC is charged on.
+#
+# WHAT STORED_KWH_COST_SOLAR IS AVERAGED OVER, because the name invites a narrower
+# reading than the figure. Solar surplus on this tariff is not a super-off-peak
+# phenomenon: the run charges 335 kWh from midday super-off-peak surplus at 11.7c
+# and another 369 kWh from OFF-PEAK and ON-PEAK surplus -- the 6-10h and 14-16h
+# shoulders, and summer evenings when the sun is still up inside the 16-21h window
+# -- whose forgone exports are worth 53.9c and 79.5c delivered. This token is the
+# surplus-WEIGHTED average over every kWh the run charged from solar, which is the
+# only figure entitled to be called the price of stored solar; quoting the midday
+# cell for it would be the same one-end-of-the-range error one level up. A sentence
+# that means the midday cell alone must say so and cite it, and the cell is
+# published at stored_kwh_cost.solar_surplus.by_period.sop.cost_per_kwh_delivered.
+_tok("STORED_KWH_COST_SOLAR", kind="data_json", file="battery_dispatch_policies.json",
+     path=("stored_kwh_cost", "solar_surplus", "cost_per_kwh_delivered"), fmt="cents1")
+_tok("STORED_KWH_COST_GRID", kind="data_json", file="battery_dispatch_policies.json",
+     path=("stored_kwh_cost", "grid_topup", "cost_per_kwh_delivered"), fmt="cents1")
+# The MIDDAY cell alone, which is what section 6's own sentence is about ("when it
+# comes from midday solar surplus"). It is 47.6% of the surplus this dispatch
+# stores, so it is NOT interchangeable with STORED_KWH_COST_SOLAR above: quoting
+# this one as the cost of stored solar is the same one-end-of-the-range error
+# issue #189 exists to close, one level up. Section 6 uses both, and says which
+# is which.
+_tok("STORED_KWH_COST_SOLAR_MIDDAY", kind="data_json", file="battery_dispatch_policies.json",
+     path=("stored_kwh_cost", "solar_surplus", "by_period", "sop",
+           "cost_per_kwh_delivered"), fmt="cents1")
+# Derived rather than data_json because the artifact stores the share as a
+# FRACTION (0.4758) and pct1 formats a number already in percent -- pointing the
+# formatter straight at the fraction would publish "0.5%".
+_tok("STORED_KWH_MIDDAY_SHARE", kind="derived", fmt="pct1",
+     get=lambda ctx: 100 * _json("battery_dispatch_policies.json")["stored_kwh_cost"]
+                     ["solar_surplus"]["by_period"]["sop"]["share_of_surplus_kwh"],
+     sources=["data/battery_dispatch_policies.json:stored_kwh_cost.solar_surplus."
+              "by_period.sop.share_of_surplus_kwh (a fraction; rendered as percent)"])
 
 _tok("BATTERY_COST", kind="data_json", file="package_results.json",
      path=("packages", "MID", "cost"), fmt="usd0_tilde")
