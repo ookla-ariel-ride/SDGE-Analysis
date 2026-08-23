@@ -39,6 +39,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_dry_run.py
 """
 import ast
 import contextlib
+import errno
 import hashlib
 import io
 import json
@@ -550,19 +551,30 @@ def case_the_sweep_never_removes_a_sandbox_a_live_process_still_holds():
     held_fd = DR.Sandbox._lock_marker(live)
     assert held_fd is not None, "setup failed: could not lock the simulated sibling's marker"
     sb = None
+    err = io.StringIO()
     try:
-        sb = DR.Sandbox(ROOT).build()
+        with contextlib.redirect_stderr(err):
+            sb = DR.Sandbox(ROOT).build()
         assert live.is_dir(), \
             f"the sweep removed a sandbox whose marker was still locked (a live sibling): {live}"
         assert (live / "household.yaml").is_file(), \
             "the sweep touched the contents of a still-in-use sibling sandbox"
+        # The positive control for the unreadable-marker case below: genuine
+        # contention (EWOULDBLOCK/EAGAIN) is the one liveness answer the sweep
+        # has actually established, so it stays SILENT. Without this assert,
+        # making every skip noisy would pass both cases.
+        assert str(live) not in err.getvalue(), (
+            "a live sibling holding its own lock is the normal, healthy path "
+            "and must be skipped silently, but the sweep reported it: "
+            f"{err.getvalue()!r}")
     finally:
         if sb is not None:
             sb.dispose()
         held_fd.close()
         shutil.rmtree(live, ignore_errors=True)
     return ("a SANDBOX_PREFIX directory whose marker is still locked -- a live sibling "
-            "run -- survives the startup sweep untouched")
+            "run -- survives the startup sweep untouched, and silently: real lock "
+            "contention is the one liveness answer the sweep may act on without a word")
 
 
 @case
@@ -737,6 +749,132 @@ def case_a_markerless_candidate_survives_the_sweep_and_is_reported():
     return ("a SANDBOX_PREFIX directory with no marker -- a live run between "
             "mkdtemp() and its own lock -- survives the startup sweep unmarked "
             "and untouched, and is reported to stderr instead of removed")
+
+
+def _plant_unopenable_marker_sandbox(tag):
+    """A stale sandbox whose marker EXISTS but cannot be OPENED (mode 0o000).
+
+    This is the liveness outcome that is neither of the other two: not "we won
+    the lock" and not "a live sibling holds it", but "we could not establish
+    liveness at all". Before the fix _lock_marker collapsed it into the same
+    None a live sibling returns, so the sweep skipped such a candidate in
+    SILENCE -- on that run and every future one -- while it held a copy of
+    private/. Neither removed nor reported is the one outcome issue #187 AC2
+    forbids.
+
+    Not removed by the fixed sweep either, and deliberately so: an unreadable
+    marker is no more proof of death than a missing one. The required behaviour
+    is a REPORT.
+
+    chmod 0o000 does not stop the file's owner from opening it when the process
+    runs as root, and some filesystems ignore the mode outright, so the forcing
+    is VERIFIED rather than assumed: if the open still succeeds this raises
+    SkipCase instead of letting the case pass vacuously. Returns
+    (sandbox, marker); the caller MUST restore the mode in a `finally`, so no
+    case leaves an unreadable file behind."""
+    stale = pathlib.Path(tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + tag)).resolve()
+    (stale / "private").mkdir()
+    (stale / "private" / "household.yaml").write_text("stranded private data\n")
+    marker = stale / DR.SANDBOX_MARKER
+    marker.touch()
+    os.chmod(marker, 0o000)
+    try:
+        open(marker, "r+").close()
+    except OSError:
+        pass
+    else:
+        os.chmod(marker, 0o600)
+        shutil.rmtree(stale, ignore_errors=True)
+        raise SkipCase(
+            "chmod 0o000 does not make a file unopenable here (running as "
+            "root, or a filesystem that ignores the mode), so this case "
+            "cannot force the unreadable-marker state it exists to test")
+    return stale, marker
+
+
+@case
+def case_an_unreadable_marker_is_reported_not_silently_skipped():
+    """A candidate whose marker cannot be opened has told us NOTHING about
+    whether its owner is alive, so treating that failure as "a sibling holds
+    it" is a guess dressed as evidence -- and a silent one. Plant a sandbox
+    holding a copy of private/ whose marker is mode 0o000, then run a real
+    Sandbox.build() and prove its startup sweep names the candidate on stderr
+    with the cause, rather than skipping it without a word (issue #187 AC2:
+    removed OR reported, never neither).
+
+    It must also SURVIVE: an unreadable marker is not proof of death, so
+    deleting it would be the sibling-destroying race the marker exists to
+    prevent, with a worse excuse."""
+    stale, marker = _plant_unopenable_marker_sandbox("unreadable-marker-")
+    sb = None
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            sb = DR.Sandbox(ROOT).build()
+        assert stale.is_dir(), (
+            "the sweep deleted a candidate whose marker it could not even read "
+            f"-- an unreadable marker is not proof the owner is dead: {stale}")
+        assert (stale / "private" / "household.yaml").is_file(), (
+            "the sweep destroyed the contents of a candidate it could not "
+            "read, including its copy of private/")
+        assert str(stale) in err.getvalue(), (
+            "a candidate whose marker cannot be read was skipped in SILENCE, "
+            "which is indistinguishable from 'nothing to do', while it holds a "
+            f"copy of private/: stderr was {err.getvalue()!r}")
+        assert "could not be read" in err.getvalue(), (
+            "the report must name the CAUSE as well as the path, or the reader "
+            f"cannot tell it from the markerless case: {err.getvalue()!r}")
+    finally:
+        if sb is not None:
+            sb.dispose()
+        os.chmod(marker, 0o600)
+        shutil.rmtree(stale, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory whose marker cannot be opened is "
+            "reported to stderr by name and cause, and left in place -- never "
+            "skipped in silence as though a live sibling held it")
+
+
+@case
+def case_lock_marker_separates_contention_from_an_unreadable_marker():
+    """The unit-level statement the two sweep cases rest on, so a regression
+    lands here first with a message that names the mechanism rather than
+    showing up only as a silent sweep.
+
+    Genuine contention -> None (EWOULDBLOCK/EAGAIN, the one healthy answer).
+    A marker that cannot be opened -> MarkerUnreadable. Collapsing the second
+    into the first is issue #187 AC2's defect, and it is invisible at the sweep
+    unless something checks the distinction directly."""
+    live = pathlib.Path(
+        tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "contention-")).resolve()
+    held_fd = DR.Sandbox._lock_marker(live)
+    assert held_fd is not None, \
+        "setup failed: could not lock the simulated sibling's own marker"
+    stale, marker = _plant_unopenable_marker_sandbox("unreadable-unit-")
+    try:
+        assert DR.Sandbox._lock_marker(live, create=False) is None, (
+            "real lock contention must be reported as None -- the sweep reads "
+            "that, and only that, as 'a live sibling holds it'")
+        try:
+            DR.Sandbox._lock_marker(stale, create=False)
+        except DR.MarkerUnreadable:
+            pass
+        else:
+            raise AssertionError(
+                "an unopenable marker returned a lock verdict instead of "
+                "raising MarkerUnreadable -- the sweep will read it as a live "
+                "sibling and skip an abandoned copy of private/ in silence")
+        assert errno.EWOULDBLOCK in DR._LOCK_CONTENTION_ERRNOS \
+            and errno.EAGAIN in DR._LOCK_CONTENTION_ERRNOS, (
+            "both contention errnos must be accepted: they are equal on Linux "
+            "and macOS but nothing requires that everywhere")
+    finally:
+        held_fd.close()
+        os.chmod(marker, 0o600)
+        shutil.rmtree(stale, ignore_errors=True)
+        shutil.rmtree(live, ignore_errors=True)
+    return ("_lock_marker returns None for real flock contention and raises "
+            "MarkerUnreadable for a marker it cannot open -- the distinction "
+            "the sweep needs to avoid a silent skip")
 
 
 @case

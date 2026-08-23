@@ -4426,7 +4426,13 @@ prefixed-but-unmarked between `mkdtemp` and its own lock, and a `dry_run.py` pre
 mechanism never marked itself at all, so an absent marker is indistinguishable from a live
 run and the sweep must not create one to test with. Those candidates are reported to stderr
 and left exactly as found — AC2 asks that leftovers be removed *or reported*, and reporting
-is the only honest answer when liveness is unknowable. The lock is held through the `rmtree` rather than released before it, and `run_generator`
+is the only honest answer when liveness is unknowable. A marker that exists but cannot be
+READ — permissions, an I/O error — is the same answer for the same reason, so the lock helper
+distinguishes genuine contention (`EWOULDBLOCK`/`EAGAIN`, a live sibling, the one healthy case
+and the only silent one) from every other failure, which is reported with its cause. Silence
+would otherwise be indistinguishable from "nothing to do" in exactly the case where a copy of
+`private/` persists on every future run. Four outcomes, then: one removes, one is silent, two
+report. The lock is held through the `rmtree` rather than released before it, and `run_generator`
 passes the marker fd to each child (`pass_fds`), since a `flock` belongs to the open file
 description — an orphaned generator outliving a killed parent keeps the sandbox looking in use,
 which is the crash shape the sweep exists to survive. A stale sandbox that cannot be removed is

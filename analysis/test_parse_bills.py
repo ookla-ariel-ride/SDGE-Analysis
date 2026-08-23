@@ -18,6 +18,7 @@ pass in a clean checkout or in CI.
 import contextlib
 import csv
 import datetime as dt
+import errno
 import fcntl
 import io
 import json
@@ -53,32 +54,71 @@ SANDBOX_PREFIX = "sdge-parse-bills-"
 # sibling between TemporaryDirectory() and its own lock, so the sweep reports
 # it and leaves it alone rather than creating the marker itself.
 SANDBOX_MARKER = ".sandbox.lock"
+# The ONLY errnos that mean "a live sibling really does hold this lock". flock
+# with LOCK_NB reports contention as EWOULDBLOCK/EAGAIN (Python raises
+# BlockingIOError, an OSError subclass, for those) -- and ONLY as those. Every
+# other OSError, from the open() or from the flock(), means we could not
+# establish liveness at all, which is a different verdict and must not be read
+# as "someone else is using it". Tested as a SET because EWOULDBLOCK == EAGAIN
+# on Linux and macOS but is not required to be equal everywhere.
+_LOCK_CONTENTION_ERRNOS = frozenset((errno.EWOULDBLOCK, errno.EAGAIN))
+
+
+class MarkerUnreadable(Exception):
+    """_lock_marker() could not establish liveness AT ALL: the marker would not
+    open (permissions, an I/O error), or flock() failed for a reason other than
+    contention. Deliberately NOT the same signal as the None return, which
+    means one specific, healthy thing -- a live sibling holds the lock.
+
+    Collapsing the two is the defect this class exists to prevent (issue #187
+    AC2). A sweep reading "unreadable" as "in use" skips an abandoned sandbox
+    SILENTLY, on this run and every future one, while it holds a full copy of
+    the real bill PDFs -- neither removed nor reported, which is the one
+    outcome AC2 forbids. Callers must decide: an owner locking its OWN fresh
+    marker treats this as a hard error, a sweep reports the candidate and moves
+    on. Mirrors dry_run.py's MarkerUnreadable."""
 
 
 def _lock_marker(sandbox_dir, create=True):
-    """Non-blocking-exclusive-lock the marker inside `sandbox_dir`. Returns the
-    open file object holding the lock, or None if it could not be acquired --
-    the caller decides what that means (our own fresh sandbox: a real error; a
-    sweep candidate: still in use by someone else, leave it alone).
+    """Non-blocking-exclusive-lock the marker inside `sandbox_dir`. Three
+    outcomes, and the caller MUST be able to tell them apart:
+
+      * the open file object holding the lock -- we won it;
+      * None -- CONTENTION, and only contention: flock refused with
+        EWOULDBLOCK/EAGAIN, which means a live sibling holds the lock. This is
+        the normal, expected, healthy answer for a sweep, and the one case it
+        may act on silently;
+      * MarkerUnreadable -- liveness could not be established at all: the
+        open() failed (permissions, I/O error, or a marker that vanished under
+        create=False), or flock() failed with some other errno.
+
+    Returning None for that third case is the issue #187 AC2 defect: a
+    genuinely abandoned sandbox whose marker cannot be opened would be read as
+    "a sibling has it" and skipped in silence, forever, while holding a copy of
+    private data -- neither removed nor reported.
 
     `create` decides whether a MISSING marker is brought into existence. True
     (the default) is for a sandbox we own. False is mandatory for
     _sweep_stale_sandboxes(), which inspects directories it does NOT own:
     creating a marker there and then locking the file we just made is a
     trivially-won lock that proves nothing about the owner, and it leaves our
-    litter behind. With create=False a missing marker fails the open and
-    returns None just as an unlockable one does, so a caller that must tell
-    those apart tests for the file itself, before calling.
+    litter behind. With create=False a missing marker fails the open, which is
+    now a MarkerUnreadable rather than a None -- callers that expect a
+    markerless candidate test for the file itself, before calling, and the
+    raise covers only the narrow race where it disappears in between.
     Mirrors dry_run.py's Sandbox._lock_marker."""
+    path = pathlib.Path(sandbox_dir) / SANDBOX_MARKER
     try:
-        fd = open(sandbox_dir / SANDBOX_MARKER, "a+" if create else "r+")
-    except OSError:
-        return None
+        fd = open(path, "a+" if create else "r+")
+    except OSError as e:
+        raise MarkerUnreadable(f"could not open {path}: {e}") from e
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except OSError as e:
         fd.close()
-        return None
+        if e.errno in _LOCK_CONTENTION_ERRNOS:
+            return None      # a live sibling holds it -- the healthy path
+        raise MarkerUnreadable(f"could not lock {path}: {e}") from e
     return fd
 
 
@@ -107,7 +147,19 @@ def _locked_sandbox(prefix):
     completes)."""
     td_obj = tempfile.TemporaryDirectory(prefix=prefix)
     p = pathlib.Path(td_obj.name)
-    marker_fd = _lock_marker(p)
+    # An owner has no use for the contention/unreadable distinction: BOTH mean
+    # this run cannot hold its own marker, and both must fail exactly as loudly
+    # as before. Only the sweep, which judges directories it does not own,
+    # needs to tell them apart.
+    try:
+        marker_fd = _lock_marker(p)
+    except MarkerUnreadable as e:
+        td_obj.cleanup()
+        raise RuntimeError(
+            f"could not lock the sandbox's own marker file: {p} -- a "
+            "freshly created, uniquely-named sandbox should never fail "
+            f"this; refusing rather than running unmarked and sweepable. "
+            f"Cause: {e}")
     if marker_fd is None:
         td_obj.cleanup()
         raise RuntimeError(
@@ -245,12 +297,20 @@ def _sweep_stale_sandboxes():
     removal failure is reported and the sweep moves on; someone else's leftover being
     unremovable is not a reason to fail THIS run before it has done anything.
 
-    LIVENESS CHECK, before touching anything -- three outcomes, only one of
-    which removes anything:
+    LIVENESS CHECK, before touching anything -- four outcomes, only one of
+    which removes anything, and only one of which is silent:
       * marker present and WE CAN LOCK IT -> the owner's flock is gone, so the
         owner is gone: provably abandoned, remove it.
-      * marker present and we CANNOT lock it -> a live sibling holds it (see
-        _locked_sandbox): leave it alone, silently.
+      * marker present but UNREADABLE (it will not open, or flock fails for any
+        reason other than contention) -> liveness was never established. Not
+        removed -- we cannot prove it is dead -- but reported to stderr naming
+        the path and the cause. Silence here was the issue #187 AC2 defect: an
+        abandoned copy of the real bill PDFs that is neither removed nor reported is
+        indistinguishable from "nothing to do".
+      * marker present and flock refuses with EWOULDBLOCK/EAGAIN -> a live
+        sibling really does hold it (see _locked_sandbox): leave it alone,
+        silently. This is the ONLY silent skip, because it is the only one
+        that has actually established liveness.
       * NO marker at all -> unknowable, and never removed. A sibling caught
         between its own TemporaryDirectory(prefix=...) and its own
         _lock_marker() looks exactly like this, as does a pre-marker version of
@@ -272,9 +332,23 @@ def _sweep_stale_sandboxes():
                   "copy of the real bill PDFs, and you should delete it by "
                   "hand]", file=sys.stderr)
             continue
-        marker_fd = _lock_marker(stale, create=False)
+        # A marker we cannot even READ is not a live sibling. Skipping it
+        # silently -- which is what collapsing every OSError into None used to
+        # do -- leaves an abandoned copy of the real bill PDFs neither removed
+        # nor reported, on this run and every future one (issue #187 AC2).
+        # Report it in the same voice as the markerless case above; do NOT
+        # remove it, since an unreadable marker is no proof of death either.
+        try:
+            marker_fd = _lock_marker(stale, create=False)
+        except MarkerUnreadable as e:
+            print(f"[stale sandbox candidate left in place: {stale} -- "
+                  f"its {SANDBOX_MARKER} could not be read, so this run cannot "
+                  "tell a live sibling from a prior run's leftover holding a "
+                  f"copy of the real bill PDFs; fix the permissions or delete it by "
+                  f"hand once no run is in progress. Cause: {e}]", file=sys.stderr)
+            continue
         if marker_fd is None:
-            continue  # still in use (or unlockable) -- not our leftover to take
+            continue  # a live sibling holds the lock -- not our leftover to take
         # Hold the lock THROUGH the removal: releasing it first would let a
         # process that is about to legitimately create a sandbox at this
         # exact path acquire the now-unlocked marker and start using it a
@@ -737,18 +811,29 @@ def case_the_sweep_never_removes_a_sandbox_a_live_process_still_holds():
     (live / "household.yaml").write_text("a live sibling's private data\n")
     held_fd = _lock_marker(live)
     assert held_fd is not None, "setup failed: could not lock the simulated sibling's marker"
+    err = io.StringIO()
     try:
-        _sweep_stale_sandboxes()
+        with contextlib.redirect_stderr(err):
+            _sweep_stale_sandboxes()
         assert live.is_dir(), (
             f"the sweep removed a sandbox whose marker was still locked "
             f"(a live sibling): {live}")
         assert (live / "household.yaml").is_file(), \
             "the sweep touched the contents of a still-in-use sibling sandbox"
+        # The positive control for the unreadable-marker case below: genuine
+        # contention (EWOULDBLOCK/EAGAIN) is the one liveness answer the sweep
+        # has actually established, so it stays SILENT. Without this assert,
+        # making every skip noisy would pass both cases.
+        assert str(live) not in err.getvalue(), (
+            "a live sibling holding its own lock is the normal, healthy path "
+            "and must be skipped silently, but the sweep reported it: "
+            f"{err.getvalue()!r}")
     finally:
         held_fd.close()
         shutil.rmtree(live, ignore_errors=True)
     return ("a SANDBOX_PREFIX directory whose marker is still locked -- a live sibling "
-            "run -- survives _sweep_stale_sandboxes untouched")
+            "run -- survives _sweep_stale_sandboxes untouched, and silently: real lock "
+            "contention is the one liveness answer the sweep may act on without a word")
 
 
 def _plant_abandoned_sandbox(tag):
@@ -828,6 +913,82 @@ def case_a_markerless_candidate_survives_the_sweep_and_is_reported():
     return ("a SANDBOX_PREFIX directory with no marker -- a live run between "
             "TemporaryDirectory() and its own lock -- survives the sweep unmarked "
             "and untouched, and is reported to stderr instead of removed")
+
+
+def _plant_unopenable_marker_sandbox(tag):
+    """A stale sandbox whose marker EXISTS but cannot be OPENED (mode 0o000).
+
+    This is the liveness outcome that is neither of the other two: not "we won
+    the lock" and not "a live sibling holds it", but "we could not establish
+    liveness at all". Before the fix _lock_marker collapsed it into the same
+    None a live sibling returns, so the sweep skipped such a candidate in
+    SILENCE -- on that run and every future one -- while it held a copy of
+    the real bill PDFs. Neither removed nor reported is the one outcome issue #187 AC2
+    forbids.
+
+    Not removed by the fixed sweep either, and deliberately so: an unreadable
+    marker is no more proof of death than a missing one. The required behaviour
+    is a REPORT.
+
+    chmod 0o000 does not stop the file's owner from opening it when the process
+    runs as root, and some filesystems ignore the mode outright, so the forcing
+    is VERIFIED rather than assumed: if the open still succeeds this raises
+    SkipCase instead of letting the case pass vacuously. Returns
+    (sandbox, marker); the caller MUST restore the mode in a `finally`, so no
+    case leaves an unreadable file behind."""
+    stale = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + tag))
+    (stale / "a-bill.pdf").write_text("stranded statement copy\n")
+    marker = stale / SANDBOX_MARKER
+    marker.touch()
+    os.chmod(marker, 0o000)
+    try:
+        open(marker, "r+").close()
+    except OSError:
+        pass
+    else:
+        os.chmod(marker, 0o600)
+        shutil.rmtree(stale, ignore_errors=True)
+        raise SkipCase(
+            "chmod 0o000 does not make a file unopenable here (running as "
+            "root, or a filesystem that ignores the mode), so this case "
+            "cannot force the unreadable-marker state it exists to test")
+    return stale, marker
+
+
+def case_an_unreadable_marker_is_reported_not_silently_skipped():
+    """A candidate whose marker cannot be opened has told us NOTHING about
+    whether its owner is alive, so treating that failure as "a sibling holds
+    it" is a guess dressed as evidence -- and a silent one. Plant a sandbox
+    holding a copy of the real bill PDFs whose marker is mode 0o000, and prove the sweep
+    names it on stderr with the cause, rather than skipping it without a word
+    (issue #187 AC2: removed OR reported, never neither).
+
+    It must also SURVIVE: an unreadable marker is not proof of death, so
+    deleting it would be the sibling-destroying race the marker exists to
+    prevent, with a worse excuse."""
+    stale, marker = _plant_unopenable_marker_sandbox("unreadable-marker-")
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            _sweep_stale_sandboxes()
+        assert stale.is_dir(), (
+            "the sweep deleted a candidate whose marker it could not even read "
+            f"-- an unreadable marker is not proof the owner is dead: {stale}")
+        assert (stale / "a-bill.pdf").is_file(), \
+            "the sweep destroyed the contents of a candidate it could not read"
+        assert str(stale) in err.getvalue(), (
+            "a candidate whose marker cannot be read was skipped in SILENCE, "
+            "which is indistinguishable from 'nothing to do', while it holds a "
+            f"copy of the real bill PDFs: stderr was {err.getvalue()!r}")
+        assert "could not be read" in err.getvalue(), (
+            "the report must name the CAUSE as well as the path, or the reader "
+            f"cannot tell it from the markerless case: {err.getvalue()!r}")
+    finally:
+        os.chmod(marker, 0o600)
+        shutil.rmtree(stale, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory whose marker cannot be opened is "
+            "reported to stderr by name and cause, and left in place -- never "
+            "skipped in silence as though a live sibling held it")
 
 
 def case_rollback_after_partial_swap():
@@ -2315,6 +2476,7 @@ STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
                     case_the_sweep_never_removes_a_sandbox_a_live_process_still_holds,
                     case_an_abandoned_sandbox_carrying_a_free_marker_is_swept,
                     case_a_markerless_candidate_survives_the_sweep_and_is_reported,
+                    case_an_unreadable_marker_is_reported_not_silently_skipped,
                     case_restore_failure_preserves_backups,
                     case_retry_after_failed_rollback_refuses,
                     case_lock_blocks_second_publisher,

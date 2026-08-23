@@ -84,6 +84,7 @@ EXIT CODES
 """
 import argparse
 import csv
+import errno
 import fcntl
 import filecmp
 import hashlib
@@ -104,7 +105,9 @@ SANDBOX_PREFIX = "sdge-dryrun-"
 # whole lifetime. _sweep_stale() tries a NON-BLOCKING lock on each candidate's
 # marker before removing it: the OS releases a process's flocks the instant it
 # exits, crash or not, so a marker that locks cleanly proves nobody is using
-# that sandbox any more, and one that refuses proves a sibling run still is.
+# that sandbox any more, and one that refuses WITH EWOULDBLOCK/EAGAIN proves a
+# sibling run still is. A marker that fails for any other reason has proved
+# neither, and is reported rather than skipped.
 # Without this, two overlapping dry_run.py invocations could have the later
 # one's sweep delete the earlier one's still-live sandbox out from under it --
 # a race this sweep would introduce, not one it fixes (issue #187 follow-up).
@@ -112,6 +115,14 @@ SANDBOX_PREFIX = "sdge-dryrun-"
 # is equally a sibling between mkdtemp() and its own lock, so the sweep reports
 # it and leaves it alone rather than creating the marker itself.
 SANDBOX_MARKER = ".sandbox.lock"
+# The ONLY errnos that mean "a live sibling really does hold this lock". flock
+# with LOCK_NB reports contention as EWOULDBLOCK/EAGAIN (Python raises
+# BlockingIOError, an OSError subclass, for those) -- and ONLY as those. Every
+# other OSError, from the open() or from the flock(), means we could not
+# establish liveness at all, which is a different verdict and must not be read
+# as "someone else is using it". Tested as a SET because EWOULDBLOCK == EAGAIN
+# on Linux and macOS but is not required to be equal everywhere.
+_LOCK_CONTENTION_ERRNOS = frozenset((errno.EWOULDBLOCK, errno.EAGAIN))
 # dry_run() materialises the two comparison copies of data/ as SIBLINGS of the
 # sandbox, named from the sandbox's own name -- so they inherit SANDBOX_PREFIX
 # and sit in the same temp dir the sweep scans. Nothing holds them open, so
@@ -131,6 +142,21 @@ _MTIME_SENTINEL_AGE = 86400  # seconds; every seeded file is backdated this far
 
 class DryRunError(Exception):
     """The dry run could not be carried out. Never a diff result."""
+
+
+class MarkerUnreadable(Exception):
+    """_lock_marker() could not establish liveness AT ALL: the marker would not
+    open (permissions, an I/O error), or flock() failed for a reason other than
+    contention. Deliberately NOT the same signal as the None return, which
+    means one specific, healthy thing -- a live sibling holds the lock.
+
+    Collapsing the two is the defect this class exists to prevent (issue #187
+    AC2). A sweep reading "unreadable" as "in use" skips an abandoned sandbox
+    SILENTLY, on this run and every future one, while it holds a full copy of
+    private/ -- neither removed nor reported, which is the one
+    outcome AC2 forbids. Callers must decide: an owner locking its OWN fresh
+    marker treats this as a hard error, a sweep reports the candidate and moves
+    on."""
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +345,19 @@ class Sandbox:
         self.path = tmp
         # Lock our own marker BEFORE sweeping: a sweep that ran first could
         # otherwise see this brand-new, still-unmarked directory as unused.
-        self._marker_fd = self._lock_marker(tmp)
+        # An owner has no use for the contention/unreadable distinction: BOTH
+        # mean this run cannot hold its own marker, and both must fail exactly
+        # as loudly as before. Only the sweep, which judges directories it does
+        # not own, needs to tell them apart.
+        try:
+            self._marker_fd = self._lock_marker(tmp)
+        except MarkerUnreadable as e:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise DryRunError(
+                f"could not lock the sandbox's own marker file: {tmp} -- a "
+                "freshly created, uniquely-named sandbox should never fail "
+                f"this; refusing rather than running unmarked and sweepable. "
+                f"Cause: {e}")
         if self._marker_fd is None:
             shutil.rmtree(tmp, ignore_errors=True)
             raise DryRunError(
@@ -511,11 +549,22 @@ class Sandbox:
 
     @staticmethod
     def _lock_marker(sandbox_dir, create=True):
-        """Non-blocking-exclusive-lock the marker inside `sandbox_dir`. Returns
-        the open file object holding the lock, or None if the lock could not be
-        acquired -- the caller decides what that means (our own fresh sandbox: a
-        real error; a sweep candidate: still in use by someone else, leave it
-        alone).
+        """Non-blocking-exclusive-lock the marker inside `sandbox_dir`. Three
+        outcomes, and the caller MUST be able to tell them apart:
+
+          * the open file object holding the lock -- we won it;
+          * None -- CONTENTION, and only contention: flock refused with
+            EWOULDBLOCK/EAGAIN, which means a live sibling holds the lock.
+            This is the normal, expected, healthy answer for a sweep, and the
+            one case it may act on silently;
+          * MarkerUnreadable -- liveness could not be established at all: the
+            open() failed (permissions, I/O error, or a marker that vanished
+            under create=False), or flock() failed with some other errno.
+
+        Returning None for that third case is the issue #187 AC2 defect: a
+        genuinely abandoned sandbox whose marker cannot be opened would be read
+        as "a sibling has it" and skipped in silence, forever, while holding a
+        copy of private/ -- neither removed nor reported.
 
         `create` decides whether a MISSING marker is brought into existence.
         True (the default) is for a sandbox we own: we are the ones who put the
@@ -523,18 +572,22 @@ class Sandbox:
         directories it does NOT own: creating a marker in one and then locking
         the file we just made is a trivially-won lock that proves nothing about
         the owner, and it leaves our litter behind in someone else's directory.
-        With create=False a missing marker simply fails the open and returns
-        None, exactly as an unlockable one does -- so a caller that must tell
-        those two apart tests for the file itself, before calling."""
+        With create=False a missing marker fails the open, which is now a
+        MarkerUnreadable rather than a None -- callers that expect a markerless
+        candidate test for the file itself, before calling, and the raise
+        covers only the narrow race where it disappears in between."""
+        path = sandbox_dir / SANDBOX_MARKER
         try:
-            fd = open(sandbox_dir / SANDBOX_MARKER, "a+" if create else "r+")
-        except OSError:
-            return None
+            fd = open(path, "a+" if create else "r+")
+        except OSError as e:
+            raise MarkerUnreadable(f"could not open {path}: {e}") from e
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        except OSError as e:
             fd.close()
-            return None
+            if e.errno in _LOCK_CONTENTION_ERRNOS:
+                return None      # a live sibling holds it -- the healthy path
+            raise MarkerUnreadable(f"could not lock {path}: {e}") from e
         return fd
 
     def _sweep_stale(self):
@@ -555,12 +608,20 @@ class Sandbox:
         contract belongs to dry_run()'s `finally` block alone, and is
         unchanged here.
 
-        LIVENESS CHECK, before touching anything -- three outcomes, only one of
-        which removes anything:
+        LIVENESS CHECK, before touching anything -- four outcomes, only one of
+        which removes anything, and only one of which is silent:
           * marker present and WE CAN LOCK IT -> the owner's flock is gone, so
             the owner is gone: provably abandoned, remove it.
-          * marker present and we CANNOT lock it -> a live sibling holds it:
-            leave it alone, silently.
+          * marker present and flock refuses with EWOULDBLOCK/EAGAIN -> a live
+            sibling really does hold it: leave it alone, silently. This is the
+            ONLY silent skip, because it is the only one that has actually
+            established liveness.
+          * marker present but UNREADABLE (it will not open, or flock fails for
+            any other reason) -> liveness was never established. Not removed --
+            we cannot prove it is dead -- but reported to stderr naming the path
+            and the cause. Silence here was the issue #187 AC2 defect: an
+            abandoned copy of private/ that is neither removed nor reported is
+            indistinguishable from "nothing to do".
           * NO marker at all -> unknowable, and never removed. A sibling caught
             between its own mkdtemp() and its own _lock_marker() looks exactly
             like this, as does a pre-marker version of this script; the
@@ -614,9 +675,24 @@ class Sandbox:
                       "of private/, and you should delete it by hand]",
                       file=sys.stderr)
                 continue
-            marker_fd = self._lock_marker(p, create=False)
+            # A marker we cannot even READ is not a live sibling. Skipping it
+            # silently -- which is what collapsing every OSError into None used
+            # to do -- leaves an abandoned copy of private/ neither removed nor
+            # reported, on this run and every future one (issue #187 AC2).
+            # Report it in the same voice as the markerless case above; do NOT
+            # remove it, since an unreadable marker is no proof of death either.
+            try:
+                marker_fd = self._lock_marker(p, create=False)
+            except MarkerUnreadable as e:
+                print(f"[stale sandbox candidate left in place: {p} -- its "
+                      f"{SANDBOX_MARKER} could not be read, so this run cannot "
+                      "tell a live sibling from a prior run's leftover holding "
+                      "a copy of private/; fix the permissions or delete it by "
+                      f"hand once no dry run is in progress. Cause: {e}]",
+                      file=sys.stderr)
+                continue
             if marker_fd is None:
-                continue  # still in use (or unlockable) -- not our leftover to take
+                continue  # a live sibling holds the lock -- not our leftover to take
             # Hold the lock THROUGH the removal: releasing it first would let a
             # process that is about to legitimately create a sandbox at this
             # exact path acquire the now-unlocked marker and start using it a
