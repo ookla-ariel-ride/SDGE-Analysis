@@ -98,6 +98,14 @@ RETIRED_FIGURES = [
     "$4,884",                  # pre-correction baseline bill at current rates
     "9.4-yr median",           # pre-correction Monte Carlo payback (now 6.0)
     "median 9.4 yr",           # same retired figure, its other prose form
+    # RETIRED BY METHOD (issue #189). The stored-kWh cost priced the forgone
+    # midday export at credit() (the surplus end) when every super-off-peak
+    # bucket is net-import and so settles at energy(). The current pipeline
+    # derives the figure from the run's own charging intervals and cannot
+    # produce 8.4 again. The CENTS form only: "8.4 yr" is the CURRENT
+    # evening-only battery payback and must stay in the document.
+    "~8.4¢",                   # pre-correction stored-kWh cost from solar
+    "8.4¢",                    # same figure, untilded form
     # RETIRED BY REGENERATION (can recur -- see the note above).
     # The §3 "vs. current" column and the §4 conclusion sentence, on the
     # plan_results.csv / battery_plan_matrix.json generation that preceded
@@ -115,6 +123,13 @@ RETIRED_FIGURES = [
     "$1,609",                  # EV-TOU-2 margin, with battery (now $1,612)
     "$2,782",                  # TOU-ELEC margin, with battery (now $2,785)
     "8.5 yr",                  # evening-only battery payback (now 8.4 yr)
+    # Issue #189. The grid top-up cost stopped being an asserted constant and
+    # became a DERIVED figure, currently 14.023¢. It belongs in this group and
+    # not the one above: the method that produces it is the current one, and it
+    # sits one regeneration or one small rate change away from rounding back to
+    # 13.9¢. If that happens the report is right and this entry is wrong --
+    # delete it, per the group note above, rather than re-basing prose to dodge it.
+    "13.9¢",                   # superseded grid top-up cost (now 14.0¢)
 ]
 
 # THIS LIST IS SCOPED TO index.html ON PURPOSE, and the reason is measured
@@ -5839,6 +5854,135 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
             f"known-drift baseline)")
 
 
+
+# ---------------------------------------------------------------------------
+# Issue #189. An exported kWh is worth a BRACKET, not a figure: rates.credit()
+# if its (month, season, TOU period) bucket settles as surplus, rates.energy()
+# if it cancels an import inside that bucket. Publishing one end as "the" value
+# is the defect #182 closed at section 8 and #189 closed at sections 0/5/6/15.
+# The two cases below are the guard against it coming back, and they are
+# deliberately SHAPE-based rather than string-based: #189 recorded that three
+# consecutive issues here missed a live instance by searching for the text they
+# had just changed.
+# ---------------------------------------------------------------------------
+
+# Wording that tells a reader WHICH treatment a figure is. A published export
+# figure must sit near one of these; that is what makes it readable as one end
+# of the bracket rather than as the value.
+_NETTING_WORDS = ("cancel", "netted rate", "month and period", "nets against")
+# NOT the bare word "surplus": this report uses it for PHYSICAL surplus energy
+# ("solar surplus", "midday surplus") far more often than for the settlement
+# treatment, so accepting it lets "solar surplus that would otherwise export for
+# 7.6c" -- the exact sentence #189 corrected -- pass as if it named its end of
+# the bracket. Verified by mutation: with the bare word in this list, that
+# sentence passes; without it, it fails.
+_SURPLUS_WORDS = ("surplus export", "settles as surplus", "settled as surplus",
+                  "net-negative", "credit()")
+_TREATMENT_WINDOW = 260
+
+
+def _cents(x):
+    """rates.py rate (dollars/kWh) as the one-decimal cents string the report prints."""
+    return f"{x * 100:.1f}¢"
+
+
+def case_every_published_export_figure_names_its_treatment():
+    """Every occurrence of an export-bracket END in index.html sits within
+    reach of wording that says which end it is.
+
+    The values are computed from rates.py, not hard-coded here, so a rate
+    change moves the strings this case looks for and the case keeps meaning
+    what it says. A new passage that quotes 7.6¢ or 10.4¢ as "the" export value
+    fails this, which is the whole point -- the failure mode is a sentence that
+    is arithmetically right and tells the reader the wrong thing."""
+    sys.path.insert(0, str(ROOT / "analysis"))
+    import rates as R
+
+    checks = [
+        (_cents(R.credit("S", "sop")), _SURPLUS_WORDS, "credit() -- the surplus end"),
+        (_cents(R.energy("S", "sop")), _NETTING_WORDS, "energy() -- the netting end"),
+    ]
+    seen = 0
+    for figure, words, label in checks:
+        for m in re.finditer(re.escape(figure), HTML):
+            seen += 1
+            lo = max(0, m.start() - _TREATMENT_WINDOW)
+            window = HTML[lo:m.end() + _TREATMENT_WINDOW].lower()
+            assert any(w in window for w in words), (
+                f"{figure} ({label}) appears at index.html char {m.start()} with none "
+                f"of {words} within {_TREATMENT_WINDOW} characters, so the reader "
+                "cannot tell which end of the export bracket it is. Name the "
+                "treatment or state the bracket.")
+    assert seen >= 4, (
+        f"only {seen} export-bracket figures found in index.html -- the report is "
+        "expected to publish both ends in several places, so this case is probably "
+        "no longer looking at the right strings")
+    return (f"all {seen} published export-bracket figures name their treatment "
+            f"({checks[0][0]} surplus / {checks[1][0]} netting)")
+
+
+def case_stored_kwh_costs_match_the_dispatch_artifact():
+    """Section 6's stored-kWh costs are the artifact's, to the digit.
+
+    These are the figures #189 corrected: the midday cost was published as the
+    forgone SURPLUS credit when every super-off-peak bucket is net-import and
+    so settles at the netted rate. Pinning them here means the prose cannot
+    drift back to a rate-card guess without this failing."""
+    art = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
+    cost = art["stored_kwh_cost"]
+    sop = cost["solar_surplus"]["by_period"]["sop"]
+
+    # Anchored to the SENTENCE that makes each claim, not to mere presence
+    # anywhere in the document. Verified by mutation: a presence-only check
+    # passes when section 6's lead is corrupted, because the same figure also
+    # appears in the caveat below it.
+    for value, pattern, what in (
+        (sop["cost_per_kwh_delivered"],
+         r"A stored kWh costs <b>([\d.]+)¢</b> when it comes from midday solar surplus",
+         "midday solar stored-kWh cost (section 6 lead)"),
+        (cost["grid_topup"]["cost_per_kwh_delivered"],
+         r"or <b>([\d.]+)¢</b> from a super-off-peak grid top-up",
+         "grid top-up stored-kWh cost (section 6 lead)"),
+        (cost["solar_surplus"]["cost_per_kwh_delivered"],
+         r"averaged over everything the dispatch stores from the sun, a stored kWh "
+         r"costs <b>([\d.]+)¢</b>",
+         "blended solar stored-kWh cost (section 6 caveat)"),
+    ):
+        m = re.search(pattern, HTML)
+        assert m, (
+            f"the sentence publishing the {what} is not in index.html in the form this "
+            f"case pins ({pattern!r}) -- either the prose was reworded or the figure was "
+            "dropped; re-anchor this case rather than deleting it")
+        printed, expected = m.group(1) + "¢", f"{value * 100:.1f}¢"
+        assert printed == expected, (
+            f"the {what} reads {printed} in index.html but "
+            f"data/battery_dispatch_policies.json derives {expected}")
+
+    # Section 6 calls this cell "midday", but rates.period_at() puts every
+    # WEEKEND hour before 14:00 in sop, so that label is a claim about this
+    # household's charging, not about the TOU window. The generator measures it;
+    # this refuses the wording if the measurement ever stops supporting it.
+    if "midday solar surplus" in HTML:
+        inside = sop["share_inside_midday_window"]
+        assert inside == 1.0, (
+            f"index.html calls the super-off-peak stored-kWh cost a MIDDAY figure, but "
+            f"only {inside * 100:.1f}% of the surplus charged in that period falls "
+            "inside 10:00-14:00 -- the rest is weekend morning charging, which sop "
+            "also covers. Either say super-off-peak, or compute the figure from the "
+            "10:00-14:00 mask")
+
+    share = sop["share_of_surplus_kwh"]
+    assert f"{share * 100:.1f}%" in HTML, (
+        f"the midday share of stored surplus is {share * 100:.1f}% in the artifact but "
+        "index.html does not print it -- section 6 quotes the midday cost, so it must "
+        "also say how much of the stored surplus that cost covers")
+    assert share < 0.9, (
+        f"midday is {share * 100:.1f}% of stored surplus; if it ever approaches all of "
+        "it, section 6's separate blended figure stops being worth publishing and this "
+        "case should be revisited rather than silenced")
+    return ("section 6's three stored-kWh costs and the midday share all match "
+            "data/battery_dispatch_policies.json")
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -5914,7 +6058,10 @@ CASES = [
     case_glossary_figures_match_the_artifacts_that_derive_them,
     case_template_fixed_prose_lines_all_appear_in_the_published_page,
     case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch,
+    case_every_published_export_figure_names_its_treatment,
+    case_stored_kwh_costs_match_the_dispatch_artifact,
 ]
+
 
 
 def main():

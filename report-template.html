@@ -389,8 +389,8 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </table>
 </div>
 <div>
-<h3>Dispatch policy: serve every import priced above the battery's stored-energy cost <span class="pill y">modeled</span></h3>
-<p><!-- TODO: the stored-kWh cost from solar surplus ({{STORED_KWH_COST_SOLAR}}) vs grid top-up ({{STORED_KWH_COST_GRID}}), the import prices it competes against by window, and why the economically correct policy is price-aware rather than evening-only. --></p>
+<h3>Dispatch policy: price-aware beats evening-only, measured against the bills <span class="pill y">modeled</span></h3>
+<p><!-- TODO: the stored-kWh cost from solar surplus ({{STORED_KWH_COST_SOLAR}}, averaged over ALL the surplus this dispatch stores) vs the midday cell alone ({{STORED_KWH_COST_SOLAR_MIDDAY}}, which is only {{STORED_KWH_MIDDAY_SHARE}} of it -- say which is which, they are not interchangeable) vs grid top-up ({{STORED_KWH_COST_GRID}}), the import prices it competes against by window, and why the economically correct policy is price-aware rather than evening-only. --></p>
 <p><!-- TODO: deliberate exclusions (e.g. EV-spillover intervals the behavior fix moves for free) and why the battery does not serve them. --></p>
 <table>
 <thead><tr><th>Dispatch policy</th><th>1 × {{BATTERY_MODEL}} ({{BATTERY_KWH}} kWh)</th><th>{{BATTERY_EXPANDED_MODEL}} ({{BATTERY_EXPANDED_KWH}} kWh)</th></tr></thead>
