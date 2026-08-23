@@ -1114,6 +1114,12 @@ published verbatim, so they are a claim about your own process. They live in
 Answer the review questions **after** the analysis, not during intake — "nobody reviewed it"
 is the normal answer, and is the one this pipeline is built to state honestly.
 
+**Filling both review fields asserts three things**, because that is what the published
+sentence says: an independent review happened, an adversarial review happened, **and the
+analysis was re-worked to incorporate their findings**. If a review happened but you changed
+nothing as a result, the sentence is the wrong one — leave the fields null and write your own,
+rather than claiming a rework that did not occur.
+
 ```yaml
 id: provenance.generation_tool
 question: "What produced this analysis? Name the tool and model you actually ran."

@@ -437,28 +437,35 @@ Quiet back-to-top button (appears after §1, aria-label). Mobile ≤800px: group
 with JS disabled.
 
 ## 11. Production-provenance note (REQUIRED in every regeneration).
-index.html §Methodology's closing small-print paragraph must end with:
-"How this report was produced: generated with Claude Cowork (Fable 5); the data, methodology,
-and conclusions were then independently reviewed with Claude Code (Fable 5) and adversarially
-reviewed with Codex (GPT-5.6 Sol); the analysis was subsequently re-worked in Claude Cowork to
+index.html §Methodology's closing small-print paragraph must end with a sentence of this
+SHAPE, and README.md must carry the equivalent blockquote immediately before the
+report-description paragraph:
+
+"How this report was produced: generated with {{GENERATION_TOOL}}; the data, methodology, and
+conclusions were then independently reviewed with {{REVIEW_TOOL_1}} and adversarially reviewed
+with {{REVIEW_TOOL_2}}; the analysis was subsequently re-worked in {{GENERATION_TOOL}} to
 incorporate the findings of both reviews."
-README.md carries the equivalent blockquote immediately before the report-description
-paragraph. Never drop or reword these when regenerating either file.
 
-THE THREE TOOL NAMES ARE THIS HOUSEHOLD'S ANSWERS, NOT PART OF THE RULE. They come from
-`private/household.yaml`'s `provenance` block (public-ok) and reach the page through
-GENERATION_TOOL / REVIEW_TOOL_1 / REVIEW_TOOL_2. What is required above is the SENTENCE
-STRUCTURE, so a reader always learns how the document in front of them was produced. Anyone
-reproducing this analysis states their own tools and their own reviews. Publishing these three
-names for a run that did not use them is a false provenance claim, and CLAUDE.md §0 forbids it
-as squarely as it forbids an unsupported figure (issue #135).
+THE SHAPE IS THE RULE. THE NAMES ARE DATA. The three tokens resolve from
+`private/household.yaml`'s `provenance` block (public-ok). In THIS repo they currently answer
+"Claude Cowork (Fable 5)" / "Claude Code (Fable 5)" / "Codex (GPT-5.6 Sol)", which is why
+index.html reads as it does — that is this household's answer, not part of the requirement.
+Anyone reproducing this analysis states their own tools. Publishing these three names for a run
+that did not use them is a false provenance claim, and §0 forbids it as squarely as it forbids
+an unsupported figure (issue #135). Never drop the sentence, and never reword it into
+something that says less about how the document was produced.
 
-If NO independent or adversarial review happened — the normal case for a reproduction — do not
-fill the review fields. `analysis/generate_report.py` replaces the whole sentence with "no
+NOTE WHAT THE FULL SENTENCE ASSERTS: two reviews happened AND the analysis was re-worked to
+incorporate their findings. Fill both review fields only when all three are true. If any part
+is not, the sentence is the wrong one — see below.
+
+If NO independent or adversarial review happened — the normal case for a reproduction — leave
+the review fields null. `analysis/generate_report.py` then replaces the whole sentence with "no
 independent or adversarial review of this specific run has been performed", and never emits
-review-claim text under any circumstance. Filling the template by hand instead? Replace that
-sentence yourself; `report_tokens.py` refuses to render an empty review name rather than
-publishing "reviewed with None".
+review-claim text under any circumstance. Filling report-template.html by hand instead? Replace
+that sentence yourself with one that states what really happened; `report_tokens.py` refuses to
+render an absent or non-string review name rather than publishing "reviewed with None" or
+"reviewed with False".
 
 ## Repo map (what's public vs private)
 - Public: `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `CLAUDE.md`,

@@ -286,7 +286,9 @@ provenance:                          # HOW THIS REPORT WAS PRODUCED. These three
                                      # never emits review-claim text, and writes an explicit
                                      # "no independent or adversarial review of this specific
                                      # run has been performed" instead. Fill them in only
-                                     # after a review has genuinely happened.
+                                     # once BOTH reviews AND the re-work incorporating
+                                     # their findings have genuinely happened -- the
+                                     # published sentence asserts all three.
   generation_tool: "REPLACE ME"      # what produced the analysis, e.g. "Claude Code (Opus 5)"
   review_tool_independent: null      # who independently reviewed it, or null if nobody did
   review_tool_adversarial: null      # who adversarially reviewed it, or null if nobody did
