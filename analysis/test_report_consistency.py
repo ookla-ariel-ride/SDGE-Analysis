@@ -5984,6 +5984,12 @@ def case_stored_kwh_costs_match_the_dispatch_artifact():
             "data/battery_dispatch_policies.json")
 
 
+# Every document that publishes the HIGH package's marginal claim. One list, so
+# the two sign branches below cannot check different sets -- an index.html-only
+# sweep is how the contradiction survived its first correction in #131.
+_HIGH_CARD_DOCS = ("index.html", "report-template.html", "TECHNICAL.md")
+
+
 def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
     """Issue #142. The HIGH package card asserted "$216/yr more than MID" and
     then, in the very next bullet, "this package buys outage endurance, not
@@ -6012,9 +6018,23 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
     # publish false purchase advice. A guard against a misleading claim must
     # not be the reason the next one gets written.
     if marginal <= 0:
-        return (f"packages.HIGH.marginal_vs_mid_yr is {marginal}, not positive, so "
-                "neither the saving claim nor the denial check applies -- a report "
-                "that says the pack saves no more than MID would be correct")
+        # NOT a free pass. Returning here without checking anything was the
+        # mirror image of the bug above: the wording would no longer be
+        # DEMANDED, but a stale "Saves ~$216/yr more than MID" left over from a
+        # previous regeneration would sail through while the artifact said the
+        # pack now saves nothing. Both directions are purchase advice, and only
+        # one of them is checked by the positive branch.
+        for doc in _HIGH_CARD_DOCS:
+            text = (ROOT / doc).read_text()
+            for m in re.finditer(r"\$([\d,]+)/yr more than MID", text):
+                assert False, (
+                    f"{doc} still claims ${m.group(1)}/yr more than MID, but "
+                    f"packages.HIGH.marginal_vs_mid_yr is now {marginal}. The prose is "
+                    "stale: a regeneration moved the artifact and left the purchase "
+                    "advice behind")
+        return (f"packages.HIGH.marginal_vs_mid_yr is {marginal}, not positive; no "
+                "document claims a positive marginal saving, and the denial check "
+                "does not apply because a denial would now be true")
 
     printed = f"~${marginal:,.0f}/yr more than MID"
     assert printed in HTML, (
@@ -6027,7 +6047,7 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
     # survived the first correction.
     denials = ("endurance, not savings", "not savings", "no savings",
                "saves nothing", "zero savings", "rather than savings")
-    for doc in ("index.html", "report-template.html", "TECHNICAL.md"):
+    for doc in _HIGH_CARD_DOCS:
         text = (ROOT / doc).read_text()
         for phrase in denials:
             assert phrase not in text.lower(), (
