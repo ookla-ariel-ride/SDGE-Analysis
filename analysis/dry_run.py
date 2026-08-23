@@ -656,8 +656,22 @@ class Sandbox:
                 continue
             if p.name.endswith(COMPARISON_SUFFIXES):
                 continue  # a sandbox's comparison copy -- swept with its owner, never alone
-            p = p.resolve()
-            if p == self.path or not p.is_dir() or not self._safe_to_dispose(p):
+            # resolve() is the first thing here that touches the filesystem,
+            # and a prefix-matching symlink loop makes it raise -- RuntimeError
+            # on Python 3.9, OSError(ELOOP) on newer ones, so both are caught.
+            # An entry belonging to a PRIOR run must never fail the CURRENT
+            # one: that is this sweep's stated contract, and letting this
+            # escape would stop every dry run from building until someone
+            # cleared $TMPDIR by hand. Report the entry and move to the next.
+            try:
+                p = p.resolve()
+                skip = p == self.path or not p.is_dir() or not self._safe_to_dispose(p)
+            except (OSError, RuntimeError) as e:
+                print(f"[stale sandbox candidate left in place: {p} -- it could "
+                      f"not be resolved, so this run cannot tell what it is. "
+                      f"Cause: {e}]", file=sys.stderr)
+                continue
+            if skip:
                 continue
             # A candidate with NO marker is UNKNOWABLE, never abandoned: it is
             # equally a sibling caught between its own mkdtemp() and its own
@@ -1093,7 +1107,12 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
         rep.cwd_outputs = _cwd_output_diffs(sb, base_dir, rep.result.wrote)
         return rep
     finally:
-        if keep_sandbox:
+        # `sb.path` is None when build() never got far enough to make one --
+        # mkdtemp failing, the temp dir refused as entangled with the checkout,
+        # the marker unlockable. keep() would then raise over the top of that
+        # real setup error and hide it, so there is nothing to keep and nothing
+        # to say: let the original exception out unchanged.
+        if keep_sandbox and sb.path is not None:
             kept_path = sb.keep()
             rep.sandbox_path = kept_path  # the pre-rename path no longer exists
             print(f"[sandbox kept] {kept_path}", file=sys.stderr)

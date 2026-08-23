@@ -1590,6 +1590,94 @@ def case_the_head_baseline_still_answers_against_head_alone():
             "working-tree file under data/ appears on neither side of it")
 
 
+@case
+def case_an_unresolvable_candidate_does_not_end_the_sweep():
+    """A prefix-matching symlink loop in $TMPDIR must not stop every dry run
+    from building. resolve() raises on one -- RuntimeError on 3.9, OSError
+    (ELOOP) on newer interpreters -- and that exception used to escape
+    _sweep_stale() entirely, which contradicts its own contract: an entry left
+    by a PRIOR run must never fail the CURRENT one.
+
+    The positive control is the point of the case. A genuinely abandoned
+    sandbox is planted alongside the loop, and the sweep must still reach and
+    remove it, so this cannot pass by a sweep that simply gave up quietly."""
+    tmpdir = pathlib.Path(tempfile.gettempdir()).resolve()
+    loop_a = tmpdir / (DR.SANDBOX_PREFIX + "LOOP-a")
+    loop_b = tmpdir / (DR.SANDBOX_PREFIX + "LOOP-b")
+    for stale in (loop_a, loop_b):
+        if stale.is_symlink() or stale.exists():
+            stale.unlink()
+    loop_a.symlink_to(loop_b)
+    loop_b.symlink_to(loop_a)
+    # Self-verifying fixture: if this platform resolves the loop without
+    # raising, the case is forcing nothing and must not claim a pass.
+    try:
+        loop_a.resolve()
+        raised = False
+    except (OSError, RuntimeError):
+        raised = True
+
+    dead = _plant_abandoned_sandbox("SWEEP-PAST-LOOP")
+    try:
+        if not raised:
+            raise SkipCase("this interpreter resolves a symlink loop without "
+                           "raising, so the case would force nothing")
+        sb = DR.Sandbox(ROOT)
+        sb.path = tmpdir / (DR.SANDBOX_PREFIX + "SWEEPER")
+        sb._marker_fd = None
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            sb._sweep_stale()          # must not raise
+        out = err.getvalue()
+        assert loop_a.name in out or loop_b.name in out, (
+            f"the unresolvable candidate was not reported: {out!r}")
+        assert not dead.exists(), (
+            "the sweep did not get past the unresolvable entry to the "
+            f"abandoned sandbox behind it: {dead}")
+    finally:
+        for stale in (loop_a, loop_b):
+            if stale.is_symlink() or stale.exists():
+                stale.unlink()
+        shutil.rmtree(dead, ignore_errors=True)
+    return ("a prefix-matching symlink loop is reported and stepped over "
+            "rather than ending the sweep and blocking every dry run")
+
+
+@case
+def case_a_setup_failure_is_not_masked_by_keep_sandbox():
+    """--keep-sandbox must not raise over the top of a real setup error. When
+    build() fails before a sandbox path exists -- mkdtemp failing, the temp
+    dir refused as entangled, the marker unlockable -- sb.path is None, and
+    calling keep() there raises its own DryRunError, hiding the failure the
+    operator actually needs to read."""
+    gen = ROOT / "analysis" / "tou_spread.py"
+    if not gen.is_file():
+        raise SkipCase("analysis/tou_spread.py is missing from this checkout")
+
+    real_build = DR.Sandbox.build
+    fired = {"build": False}
+
+    def _failing_build(self, *a, **kw):
+        fired["build"] = True
+        raise DR.DryRunError("injected: setup failed before any sandbox existed")
+
+    DR.Sandbox.build = _failing_build
+    try:
+        try:
+            DR.dry_run(gen, keep_sandbox=True)
+            raise AssertionError("expected the injected setup failure to propagate")
+        except DR.DryRunError as e:
+            message = str(e)
+    finally:
+        DR.Sandbox.build = real_build
+
+    assert fired["build"], "the injected build failure never fired"
+    assert "injected: setup failed" in message, (
+        "the original setup error was masked by --keep-sandbox's own failure: "
+        f"{message!r}")
+    return ("a setup failure before any sandbox exists surfaces as itself "
+            "under --keep-sandbox, instead of being masked by keep()")
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (
