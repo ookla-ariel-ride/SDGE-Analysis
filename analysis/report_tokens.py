@@ -5461,6 +5461,17 @@ _tok("ENV_SOURCES_DETAIL", kind="derived", get=_env_sources_detail,
 _tok("GENERATION_TOOL", kind="derived",
      get=lambda ctx: _provenance_one("provenance.generation_tool"),
      sources=["private/household.yaml:provenance.generation_tool"])
+# Strings that are somebody declining to answer rather than the name of a tool.
+# Matched casefolded and stripped, on the WHOLE value, so a real product name
+# that merely contains one of these words is unaffected. "REPLACE ME" is the
+# placeholder household.example.yaml ships; a test pins that this set still
+# contains whatever that file currently uses.
+_PROVENANCE_NON_ANSWERS = frozenset({
+    "replace me", "replaceme", "tbd", "todo", "n/a", "na", "none", "null",
+    "nil", "false", "true", "no", "nobody", "unknown", "-", "?", "x",
+})
+
+
 def _provenance_one(path, allow_missing=False):
     """The single value at a provenance path, through the tiered accessor.
 
@@ -5486,6 +5497,19 @@ def _provenance_one(path, allow_missing=False):
                 "tool. If you mean nobody did this, write null (or leave the key "
                 "out) -- false, 0 and [] all render as words and would publish a "
                 "claim that is not true.")
+    # A string that is not a NAME. Two shapes reach here: the placeholder this
+    # repo itself ships in household.example.yaml, which a reproduction that
+    # copied the file and forgot this field would publish as "generated with
+    # REPLACE ME"; and a no-review answer written as a quoted word, which the
+    # type check above cannot see because "false" really is a string. Both are
+    # someone declining to answer, and neither is a tool.
+    for v in raw:
+        if v.strip().casefold() in _PROVENANCE_NON_ANSWERS:
+            raise SystemExit(
+                f"report_tokens: private/household.yaml has {v!r} at {path!r}, "
+                "which is a placeholder rather than the name of a tool. Put what "
+                "actually ran there. If you mean nobody did this, write null "
+                "unquoted -- a quoted word is published verbatim.")
     values = [v for v in raw if v.strip()]
     if not values:
         if allow_missing:

@@ -11155,6 +11155,54 @@ def case_provenance_fields_refuse_anything_that_is_not_a_tool_name():
 
 
 @case
+def case_the_shipped_provenance_placeholder_is_refused():
+    """A reproduction that copies household.example.yaml and forgets this one
+    field must not publish "generated with REPLACE ME".
+
+    The placeholder is READ OFF the example file rather than written here, so
+    changing that file without changing the refusal set fails this case instead
+    of silently reopening the hole. Quoted no-review words are checked with it:
+    "false" is a string, so the type check cannot see it, and it would render
+    as the name of a reviewer."""
+    _require_household()
+    import yaml
+    node = yaml.safe_load((rt.ROOT / "household.example.yaml").read_text())
+    shipped = node["provenance"]["generation_tool"]
+    assert isinstance(shipped, str) and shipped.strip(), (
+        "household.example.yaml's generation_tool is no longer a placeholder string; "
+        "this case assumes the example ships one for a reproducer to replace")
+    assert shipped.strip().casefold() in rt._PROVENANCE_NON_ANSWERS, (
+        f"household.example.yaml ships {shipped!r} but report_tokens.py would accept "
+        "it as a tool name -- a reproduction that copied the file unedited would "
+        "publish it")
+
+    real = rt.hh._cache
+    base = dict(rt.hh._load())
+    try:
+        for bad in (shipped, "false", "None", " tbd ", "n/a", "TODO"):
+            base["provenance"] = {"generation_tool": bad,
+                                  "review_tool_independent": "An Independent Reviewer",
+                                  "review_tool_adversarial": "An Adversarial Reviewer"}
+            rt.hh._cache = base
+            try:
+                rendered = rt.resolve_token("GENERATION_TOOL")
+            except SystemExit:
+                continue
+            raise AssertionError(
+                f"provenance.generation_tool = {bad!r} rendered as {rendered!r} "
+                "instead of refusing")
+        # POSITIVE CONTROL: a real name still renders, so this is rejecting
+        # placeholders rather than refusing everything.
+        base["provenance"]["generation_tool"] = "Claude Code (Opus 5)"
+        rt.hh._cache = base
+        assert rt.resolve_token("GENERATION_TOOL") == "Claude Code (Opus 5)"
+    finally:
+        rt.hh._cache = real
+    return (f"the shipped placeholder {shipped!r} and quoted no-review words are refused, "
+            "while a real tool name renders")
+
+
+@case
 def case_the_seam_guard_checks_the_same_tokens_without_the_private_archive():
     """The case above resolves against private/household.yaml where it is
     staged, and .github/workflows/tests.yml runs this suite where it is not.
