@@ -6024,11 +6024,17 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
         # previous regeneration would sail through while the artifact said the
         # pack now saves nothing. Both directions are purchase advice, and only
         # one of them is checked by the positive branch.
+        # A LIST, not one pattern. The headline claim is not the only sentence
+        # that asserts a positive marginal: the card also says "It does save
+        # money -- the ~$216/yr above". Rejecting only the headline left that
+        # one standing, which is the same enumerate-one-site mistake the whole
+        # issue is about. Mirrors the `denials` list in the positive branch.
+        stale_positive = ("more than mid", "does save money", "saves more than")
         for doc in _HIGH_CARD_DOCS:
-            text = (ROOT / doc).read_text()
-            for m in re.finditer(r"\$([\d,]+)/yr more than MID", text):
-                assert False, (
-                    f"{doc} still claims ${m.group(1)}/yr more than MID, but "
+            lowered = (ROOT / doc).read_text().lower()
+            for phrase in stale_positive:
+                assert phrase not in lowered, (
+                    f"{doc} still says {phrase!r}, but "
                     f"packages.HIGH.marginal_vs_mid_yr is now {marginal}. The prose is "
                     "stale: a regeneration moved the artifact and left the purchase "
                     "advice behind")
