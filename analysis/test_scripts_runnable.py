@@ -27,6 +27,7 @@ generator writes and where, which both drives the byte-diff and forbids two
 generators from claiming the same output file.
 """
 import ast
+import fcntl
 import json
 import datetime as dt
 import math
@@ -42,6 +43,36 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ANALYSIS = ROOT / "analysis"
 SANDBOX = ROOT / "private" / "verify"
+
+# Issue #187: the real-archive sandbox in _run_generators is the only tempdir
+# in this suite that carries a full copy of private/ (household.yaml, the raw
+# Green Button/bill archive). Every other TemporaryDirectory call in this file
+# (the synthetic-only cases, and _archive_free_root) carries no PII and stays
+# on the plain "tmp*" default -- only this one needs a greppable, sweepable
+# name (pattern: dry_run.py's SANDBOX_PREFIX = "sdge-dryrun-").
+SANDBOX_PREFIX = "sdge-scripts-runnable-"
+# A marker file inside the real-archive sandbox, flock'd exclusively for the
+# sandbox's whole lifetime. _sweep_stale_sandboxes() tries a NON-BLOCKING lock
+# on each candidate's marker before removing it: the OS releases a process's
+# flocks the instant it exits, crash or not, so a marker that locks cleanly
+# proves nobody is using that sandbox any more, and one that refuses proves a
+# sibling run still is. Without this, two overlapping real-archive suite runs
+# could have the later one's sweep delete the earlier one's still-live
+# sandbox out from under it -- a race this sweep would introduce, not fix.
+SANDBOX_MARKER = ".sandbox.lock"
+
+# Top-level private/1-raw-data subdirectories with zero readers among the
+# generators this suite runs with cwd=tmp (scouted by grepping analysis/*.py
+# for a path constant into each): sdge_nbt_export_rates/ (76MB) is read only
+# by nem3_grandfathering.py, and only under its --build-rates flag, which
+# neither this suite nor CI ever passes; panel/ and superseded/ have no path
+# constant anywhere in analysis/. electric-bills/ and gas-bills/ are NOT in
+# this set -- both are genuinely read (parse_bills.py needs both;
+# bill_decomposition.py, cca_rate_extraction.py, cca_bundled_counterfactual.py
+# need electric-bills/). If a future generator starts reading one of the three
+# excluded here, case_the_real_archive_copy_excludes_unread_raw_data_subdirs
+# below is the thing that has to change first.
+RAW_DATA_EXCLUDE = ("sdge_nbt_export_rates", "panel", "superseded")
 
 # role: "generator" writes a committed artifact and must run; "library" is imported
 # by others and must import cleanly with no side effects; "retired" is kept for
@@ -666,8 +697,11 @@ def _build_throwaway_root(tmp, synthetic):
     raw = ROOT / "private" / "1-raw-data"
     if raw.exists():
         # a COPY, not a symlink: a generator that ever writes under
-        # private/1-raw-data must corrupt the throwaway copy, not the archive
-        shutil.copytree(raw, tmp / "private" / "1-raw-data")
+        # private/1-raw-data must corrupt the throwaway copy, not the archive.
+        # RAW_DATA_EXCLUDE (see its comment above) drops the subtrees nothing
+        # in this suite reads, so a stranded sandbox (issue #187) carries less.
+        shutil.copytree(raw, tmp / "private" / "1-raw-data",
+                        ignore=shutil.ignore_patterns(*RAW_DATA_EXCLUDE))
     shutil.copy(SANDBOX / "usage.csv", tmp / "usage.csv")
     for extra in ("samA.csv", "samB.csv"):
         if (SANDBOX / extra).exists():
@@ -679,6 +713,61 @@ def _owned_path(tmp, where, fname):
     return (tmp / fname) if where == "cwd" else (tmp / "data" / fname)
 
 
+def _lock_marker(sandbox_dir):
+    """Open (creating if absent) and non-blocking-exclusive-lock the marker
+    inside `sandbox_dir`. Returns the open file object holding the lock, or
+    None if it could not be acquired -- the caller decides what that means
+    (our own fresh sandbox: a real error; a sweep candidate: still in use by
+    someone else, leave it alone). Mirrors dry_run.py's Sandbox._lock_marker."""
+    try:
+        fd = open(sandbox_dir / SANDBOX_MARKER, "a+")
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fd.close()
+        return None
+    return fd
+
+
+def _sweep_stale_sandboxes(exclude=None):
+    """Remove real-archive sandboxes stranded by a run that never reached its
+    own cleanup (issue #187: a SIGKILL, an OOM kill, or a Ctrl-C can all escape
+    tempfile.TemporaryDirectory's __exit__, leaving a full copy of the private
+    archive under SANDBOX_PREFIX). Called only from the real-archive path,
+    right before it creates a new sandbox of its own -- the synthetic path
+    never makes one worth sweeping for, so it must not pay this cost on every
+    synthetic case. A removal failure here is this suite's own convention
+    (see dry_run.py's "[sandbox not removed: ...]"): report to stderr and
+    keep going, rather than crash the whole run over someone else's leftover.
+
+    LIVENESS CHECK, before touching anything: a non-blocking exclusive lock
+    attempt on the candidate's own SANDBOX_MARKER. A directory whose owning
+    process is still alive holds that lock, so the attempt fails and the
+    candidate is left alone -- without this, an overlapping invocation's
+    sweep could delete a SIBLING run's still-in-use sandbox, which is a race
+    this sweep would introduce, not one it fixes."""
+    base = pathlib.Path(tempfile.gettempdir())
+    for stale in base.glob(SANDBOX_PREFIX + "*"):
+        if not stale.is_dir() or stale == exclude:
+            continue
+        marker_fd = _lock_marker(stale)
+        if marker_fd is None:
+            continue  # still in use (or unlockable) -- not our leftover to take
+        # Hold the lock THROUGH the removal: releasing it first would let a
+        # process that is about to legitimately create a sandbox at this
+        # exact path acquire the now-unlocked marker and start using it a
+        # moment before we delete it out from under them (TOCTOU).
+        try:
+            shutil.rmtree(stale)
+        except OSError as e:
+            print(f"[test_scripts_runnable: stale sandbox not removed: "
+                  f"{stale}: {e}]", file=sys.stderr)
+        finally:
+            marker_fd.close()
+
+
 def _run_generators(names, synthetic, inspect=None):
     """Run each generator in a throwaway root; then run `inspect(tmp)` INSIDE the
     tempdir context (it is deleted on exit) and fold its findings into the
@@ -686,8 +775,17 @@ def _run_generators(names, synthetic, inspect=None):
     completion and produce nothing, which is the founding failure of the
     section 9 gate."""
     failures = []
-    with tempfile.TemporaryDirectory() as td:
-        tmp = _build_throwaway_root(pathlib.Path(td), synthetic)
+
+    def _run_in(tmp, marker_fileno=None):
+        tmp = _build_throwaway_root(tmp, synthetic)
+        # Pass our marker fd through to each generator subprocess (issue #187
+        # follow-up): a flock is held by the OPEN FILE DESCRIPTION, not the
+        # process, so a child that inherits this fd keeps the real-archive
+        # sandbox looking "in use" to any sibling's sweep even if THIS
+        # process is SIGKILLed while the generator is still running --
+        # exactly the crash shape #187 exists to survive. None on the
+        # synthetic path, which never has a marker to protect.
+        pass_fds = (marker_fileno,) if marker_fileno is not None else ()
         for name in sorted(names):
             before = {}
             for where, fname in OWNS.get(name, ()):
@@ -695,7 +793,8 @@ def _run_generators(names, synthetic, inspect=None):
                 before[fname] = path.stat().st_mtime_ns if path.exists() else None
             try:
                 r = subprocess.run([sys.executable, name], cwd=tmp,
-                                   capture_output=True, text=True, timeout=900)
+                                   capture_output=True, text=True, timeout=900,
+                                   pass_fds=pass_fds)
             except subprocess.TimeoutExpired:
                 failures.append(f"{name}: timed out after 900s")
                 continue
@@ -718,6 +817,56 @@ def _run_generators(names, synthetic, inspect=None):
                     failures.append(f"{name}: exited 0 without rewriting {fname}")
         if inspect is not None and not failures:
             failures.extend(inspect(tmp))
+
+    if synthetic:
+        # No PII in this sandbox -- the plain default name is fine, and there
+        # is nothing here worth sweeping for on a prior crash.
+        with tempfile.TemporaryDirectory() as td:
+            _run_in(pathlib.Path(td))
+        return failures
+
+    # Real-archive path only, per issue #187: a distinctive, sweepable prefix,
+    # and cleanup made explicit (instead of a bare `with`) so a removal
+    # failure is reported as what it actually is -- a stranded copy of the
+    # private archive -- rather than surfacing as a generic, unattributed
+    # OSError. suite_runner.CASE_FAILURES in main() already catches bare
+    # Exception, so this exception was never silently swallowed; this re-raise
+    # exists to make the message name the sandbox and the risk, not to make
+    # the failure visible in the first place.
+    td_obj = tempfile.TemporaryDirectory(prefix=SANDBOX_PREFIX)
+    sandbox_path = td_obj.name
+    # Lock our own marker BEFORE sweeping: a sweep that ran first (ours or a
+    # sibling's) could otherwise see this brand-new, still-unmarked directory
+    # as unused. _sweep_stale_sandboxes also excludes it by identity as a
+    # belt-and-suspenders check.
+    marker_fd = _lock_marker(pathlib.Path(sandbox_path))
+    if marker_fd is None:
+        td_obj.cleanup()
+        raise RuntimeError(
+            f"could not lock the real-archive sandbox's own marker file: "
+            f"{sandbox_path} -- a freshly created, uniquely-named sandbox "
+            "should never fail this; refusing rather than running unmarked "
+            "and sweepable.")
+    _sweep_stale_sandboxes(exclude=pathlib.Path(sandbox_path))
+    try:
+        _run_in(pathlib.Path(sandbox_path), marker_fileno=marker_fd.fileno())
+    finally:
+        # Hold our own marker lock THROUGH cleanup(), releasing only after:
+        # closing it first would let a sibling's sweep lock the now-unlocked
+        # marker and treat this sandbox as abandoned while we still hold it,
+        # or let another legitimate creation land on the same freed path a
+        # moment before removal completes (TOCTOU).
+        try:
+            try:
+                td_obj.cleanup()
+            except OSError as e:
+                raise RuntimeError(
+                    f"the real-archive sandbox could not be removed: {sandbox_path} "
+                    "-- it holds a full copy of the private archive (household.yaml, "
+                    "private/1-raw-data, private/verify fixtures). Delete it by "
+                    f"hand. Cause: {e}") from e
+        finally:
+            marker_fd.close()
     return failures
 
 
@@ -805,6 +954,217 @@ def case_generators_run_on_the_real_archive():
     n = len(NEEDS_PRIVATE_ARCHIVE) + len(CI_RUNNABLE)
     return (f"all {n} generators execute against the real inputs and every owned "
             "artifact reproduces the committed copy byte-for-byte")
+
+
+def case_the_real_archive_copy_excludes_unread_raw_data_subdirs():
+    """Issue #187 AC6: the real-archive copytree must drop RAW_DATA_EXCLUDE
+    (see its module-level comment for the per-generator evidence) so a
+    stranded sandbox carries less of the private archive.
+
+    Proven directly against the ignore configuration rather than against this
+    checkout's staged private/1-raw-data: that directory legitimately never
+    stages sdge_nbt_export_rates/panel/superseded at all (test_stage_private_
+    data.py's own documented exclusions), so a checkout-dependent assertion
+    here would keep passing even if RAW_DATA_EXCLUDE silently stopped
+    matching anything -- this builds a placeholder tree that HAS all three,
+    plus the two directories that must survive, and copies it with the exact
+    ignore call _build_throwaway_root uses."""
+    with tempfile.TemporaryDirectory() as td:
+        src = pathlib.Path(td) / "src"
+        dst = pathlib.Path(td) / "dst"
+        for name in RAW_DATA_EXCLUDE + ("electric-bills", "gas-bills"):
+            d = src / name
+            d.mkdir(parents=True)
+            (d / "placeholder.txt").write_text("x")
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*RAW_DATA_EXCLUDE))
+        present = {p.name for p in dst.iterdir()}
+        leaked = present & set(RAW_DATA_EXCLUDE)
+        assert not leaked, (
+            f"RAW_DATA_EXCLUDE did not keep {sorted(leaked)} out of the "
+            "real-archive sandbox copy")
+        for kept in ("electric-bills", "gas-bills"):
+            assert (dst / kept).is_dir(), (
+                f"the ignore pattern also dropped {kept}/, which parse_bills.py "
+                "and other generators genuinely read")
+    return ("the real-archive copytree's ignore pattern drops "
+            f"{', '.join(RAW_DATA_EXCLUDE)} and keeps electric-bills/ and gas-bills/")
+
+
+def case_the_real_archive_sandbox_is_removed_even_when_a_generator_run_raises():
+    """Issue #187 AC4: TemporaryDirectory.cleanup() must run when
+    _run_generators's real-archive path dies partway through building its
+    throwaway root, not only when every generator finishes cleanly.
+
+    The injected failure fires at the LAST copy of the real-archive build,
+    by which point private/household.yaml and the whole private/1-raw-data
+    tree are already on disk. That placement is the point of the case: AC4
+    asks for proof that no ARCHIVE COPY survives, and a crash injected
+    BEFORE the archive is copied proves only that an empty directory was
+    removed -- it would pass identically on a tree with no archive staged,
+    and so guards nothing. The case therefore records, at the instant it
+    raises, whether the archive was really present, and asserts it was: a
+    forcing fixture that never verifies its own precondition can pass while
+    forcing nothing. It needs the real archive and skips without one.
+
+    tempfile.TemporaryDirectory is monkeypatched to remember the one path it
+    hands out: that path is otherwise ephemeral, torn down by the very
+    cleanup this case exists to prove ran, so there is no other way to name
+    it for the post-hoc exists() check."""
+    captured = []
+    real_tempdir_cls = tempfile.TemporaryDirectory
+
+    class _RecordingTempDir(real_tempdir_cls):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            captured.append(self.name)
+
+    if not (ROOT / "private" / "1-raw-data").is_dir():
+        raise SkipCase("needs this machine's real private/1-raw-data archive: "
+                       "the whole point of this case is to crash with a real "
+                       "archive copy on disk")
+
+    real_copy = shutil.copy
+    # The final copy of the real-archive build (see _build_throwaway_root):
+    # household.yaml and the 1-raw-data copytree both precede it.
+    trigger = (SANDBOX / "usage.csv").resolve()
+    at_crash = {}
+
+    def _exploding_copy(src, dst, *a, **kw):
+        if pathlib.Path(src).resolve() == trigger:
+            built = pathlib.Path(dst).parent
+            at_crash["raw"] = (built / "private" / "1-raw-data").is_dir()
+            at_crash["household"] = (built / "private" / "household.yaml").is_file()
+            raise RuntimeError("injected: simulated crash mid-copy (issue #187 AC4)")
+        return real_copy(src, dst, *a, **kw)
+
+    tempfile.TemporaryDirectory = _RecordingTempDir
+    shutil.copy = _exploding_copy
+    try:
+        try:
+            _run_generators(set(), synthetic=False)
+            raise AssertionError(
+                "expected the injected copy failure to propagate out of "
+                "_run_generators, but it returned normally")
+        except RuntimeError as e:
+            assert "injected" in str(e), f"wrong exception propagated: {e!r}"
+    finally:
+        tempfile.TemporaryDirectory = real_tempdir_cls
+        shutil.copy = real_copy
+
+    assert captured, "the recording TemporaryDirectory was never constructed"
+    # Self-verification: prove the crash happened where the docstring claims,
+    # with a real archive copy on disk. Without this the case could keep
+    # passing after a refactor moved the trigger ahead of the archive copy,
+    # while silently proving only that an empty directory was cleaned up.
+    assert at_crash, ("the injected failure never fired: the trigger copy "
+                      f"{trigger} was never reached")
+    assert at_crash["raw"] and at_crash["household"], (
+        "the crash fired before the archive was copied, so this case proves "
+        f"nothing about an archive copy surviving: {at_crash}")
+    sandbox_path = captured[-1]
+    assert pathlib.Path(sandbox_path).name.startswith(SANDBOX_PREFIX), (
+        f"sandbox was not created with SANDBOX_PREFIX: {sandbox_path}")
+    assert not pathlib.Path(sandbox_path).exists(), (
+        f"the real-archive sandbox survived a mid-run exception: {sandbox_path} "
+        "-- it may still hold a partial copy of the private archive")
+    return ("_run_generators's real-archive sandbox is removed even when "
+            "building it raises partway through")
+
+
+def case_a_real_archive_sandbox_that_cannot_be_removed_fails_loudly():
+    """Issue #187 AC3: when the real-archive sandbox cannot be removed, the
+    suite says so loudly and names what is still on disk -- matching
+    dry_run.py's contract that an undeletable sandbox is a FAILURE, never a
+    quiet success. The directory holds the private archive, so exiting 0 is
+    the one outcome that must never happen.
+
+    Two injections, both asserted. The copy abort only keeps the case fast
+    (it ends the build long before forty generators run) and is not the
+    behaviour under test; the cleanup failure is. Forcing a real cleanup()
+    failure genuinely strands the sandbox, so this case removes it itself
+    afterwards and asserts it succeeded -- a case about not stranding
+    directories must not strand one."""
+    real_tempdir_cls = tempfile.TemporaryDirectory
+    captured = []
+    fired = {"cleanup": False}
+
+    class _UnremovableTempDir(real_tempdir_cls):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            captured.append(self.name)
+
+        def cleanup(self):
+            if not fired["cleanup"]:
+                fired["cleanup"] = True
+                raise OSError(
+                    "injected: simulated undeletable sandbox (issue #187 AC3)")
+            return super().cleanup()
+
+    real_copy = shutil.copy
+    calls = {"n": 0}
+
+    def _aborting_copy(src, dst, *a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("injected: end the build early (issue #187 AC3)")
+        return real_copy(src, dst, *a, **kw)
+
+    tempfile.TemporaryDirectory = _UnremovableTempDir
+    shutil.copy = _aborting_copy
+    try:
+        try:
+            _run_generators(set(), synthetic=False)
+            raise AssertionError(
+                "expected the injected cleanup failure to propagate out of "
+                "_run_generators, but it returned normally")
+        except RuntimeError as e:
+            message = str(e)
+    finally:
+        tempfile.TemporaryDirectory = real_tempdir_cls
+        shutil.copy = real_copy
+
+    assert fired["cleanup"], (
+        "the injected cleanup failure never fired, so this case proves "
+        "nothing about the undeletable-sandbox path")
+    assert "could not be removed" in message, (
+        f"the failure never named the removal problem: {message!r}")
+    assert "full copy of the private archive" in message, (
+        f"the failure never named what is still on disk: {message!r}")
+
+    assert captured, "the recording TemporaryDirectory was never constructed"
+    stranded = pathlib.Path(captured[-1])
+    shutil.rmtree(stranded, ignore_errors=True)
+    assert not stranded.exists(), (
+        "this case could not remove the sandbox it deliberately stranded, so "
+        f"it has left one behind: {stranded}")
+    return ("a real-archive sandbox that cannot be removed fails loudly, "
+            "naming the private archive still on disk")
+
+def case_the_sweep_never_removes_a_real_archive_sandbox_a_live_process_still_holds():
+    """A prefix-matching directory alone is not proof of abandonment: two
+    overlapping real-archive suite runs both carry SANDBOX_PREFIX while both
+    are legitimately alive. A sweep that removed on name alone could delete a
+    SIBLING run's sandbox out from under it -- a race the sweep would
+    introduce, not fix. Simulate a still-running sibling by holding its
+    marker locked ourselves, exactly as its own process would for its whole
+    lifetime, then prove _sweep_stale_sandboxes leaves it alone. Needs no
+    private data -- the sweep and the marker never touch archive content."""
+    live = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + "still-running-"))
+    (live / "household.yaml").write_text("a live sibling's private data\n")
+    held_fd = _lock_marker(live)
+    assert held_fd is not None, "setup failed: could not lock the simulated sibling's marker"
+    try:
+        _sweep_stale_sandboxes()
+        assert live.is_dir(), (
+            f"the sweep removed a sandbox whose marker was still locked "
+            f"(a live sibling): {live}")
+        assert (live / "household.yaml").is_file(), \
+            "the sweep touched the contents of a still-in-use sibling sandbox"
+    finally:
+        held_fd.close()
+        shutil.rmtree(live, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory whose marker is still locked -- a live sibling "
+            "run -- survives _sweep_stale_sandboxes untouched")
 
 
 _LITERAL_EXPR_RE = re.compile(r"^\$\{\{\s*(true|false)\s*\}\}$")
@@ -1196,6 +1556,10 @@ CASES = [
     case_ci_wired_test_files_ignores_disabled_and_non_gating_steps,
     case_every_check_coverage_suite_is_wired_into_ci,
     case_generators_run_on_the_real_archive,
+    case_the_real_archive_copy_excludes_unread_raw_data_subdirs,
+    case_the_real_archive_sandbox_is_removed_even_when_a_generator_run_raises,
+    case_a_real_archive_sandbox_that_cannot_be_removed_fails_loudly,
+    case_the_sweep_never_removes_a_real_archive_sandbox_a_live_process_still_holds,
 ]
 
 

@@ -46,6 +46,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import time
 import sys
 import tempfile
 
@@ -452,6 +453,346 @@ def case_disposal_refuses_any_path_that_is_not_its_own_temp_sandbox():
     assert (ROOT / "data").is_dir(), "the repo's data/ was removed"
     return ("dispose() refuses any path that is not a prefix-matched sandbox under "
             "the system temp dir -- the repo root and data/ are both rejected")
+
+
+@case
+def case_stale_sandboxes_from_a_prior_run_are_swept_at_build_time():
+    """A hard kill between mkdtemp() and dispose() strands a full copy of
+    private/ under a name that already carries SANDBOX_PREFIX (issue #187) --
+    three such directories, 787 files each, were found stranded on a real
+    machine. Plant one, then prove the NEXT sandbox built removes it via
+    Sandbox.build()'s own startup sweep, and leaves the new sandbox alone."""
+    stale = pathlib.Path(tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "stale-marker-"))
+    (stale / "household.yaml").write_text("stranded private data\n")
+    sb = None
+    try:
+        assert stale.is_dir(), "setup failed: the stale directory was not created"
+        sb = DR.Sandbox(ROOT).build()
+        assert not stale.exists(), \
+            f"a stale sandbox from a prior run was not swept: {stale}"
+        assert sb.path.is_dir(), "the new sandbox was not built"
+        assert sb.path != stale, \
+            "the sweep must not be confused with the sandbox this build() just made"
+    finally:
+        if sb is not None:
+            sb.dispose()
+        if stale.exists():
+            shutil.rmtree(stale, ignore_errors=True)
+    return ("Sandbox.build() sweeps stale SANDBOX_PREFIX-named directories left by "
+            "a prior run's hard kill before seeding its own sandbox -- the planted "
+            "stale directory is gone afterward, and the new sandbox is untouched")
+
+
+@case
+def case_the_sweep_never_touches_a_directory_outside_its_own_prefix():
+    """Safety check: a directory that does not carry SANDBOX_PREFIX -- the
+    default `tmp*` name every other program's scratch space also uses -- must
+    survive the sweep untouched. This proves the sweep reuses dispose()'s own
+    prefix-and-tempdir predicate rather than a second, looser check."""
+    unrelated = pathlib.Path(tempfile.mkdtemp(prefix="tmp-unrelated-"))
+    (unrelated / "marker.txt").write_text("not ours\n")
+    sb = None
+    try:
+        sb = DR.Sandbox(ROOT).build()
+        assert unrelated.is_dir(), \
+            "the sweep removed a directory that does not carry SANDBOX_PREFIX"
+        assert (unrelated / "marker.txt").is_file(), \
+            "the sweep touched the contents of an unrelated directory"
+    finally:
+        if sb is not None:
+            sb.dispose()
+        shutil.rmtree(unrelated, ignore_errors=True)
+    return ("a directory that does not start with SANDBOX_PREFIX survives "
+            "Sandbox.build()'s startup sweep untouched, matching dispose()'s own "
+            "safety predicate")
+
+
+@case
+def case_the_sweep_never_removes_a_sandbox_a_live_process_still_holds():
+    """A prefix-matching directory alone is not proof of abandonment: two
+    overlapping dry_run.py invocations both carry SANDBOX_PREFIX while both
+    are legitimately alive. A sweep that removed on name alone could delete a
+    SIBLING run's sandbox out from under it -- a race the sweep would
+    introduce, not fix (issue #187 follow-up). Simulate a still-running
+    sibling by holding its marker locked ourselves, exactly as its own
+    process would for its whole lifetime, then prove build()'s sweep leaves
+    it alone."""
+    live = pathlib.Path(tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "still-running-"))
+    (live / "household.yaml").write_text("a live sibling's private data\n")
+    held_fd = DR.Sandbox._lock_marker(live)
+    assert held_fd is not None, "setup failed: could not lock the simulated sibling's marker"
+    sb = None
+    try:
+        sb = DR.Sandbox(ROOT).build()
+        assert live.is_dir(), \
+            f"the sweep removed a sandbox whose marker was still locked (a live sibling): {live}"
+        assert (live / "household.yaml").is_file(), \
+            "the sweep touched the contents of a still-in-use sibling sandbox"
+    finally:
+        if sb is not None:
+            sb.dispose()
+        held_fd.close()
+        shutil.rmtree(live, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory whose marker is still locked -- a live sibling "
+            "run -- survives the startup sweep untouched")
+
+
+@case
+def case_a_live_runs_baseline_and_head_copies_survive_the_sweep():
+    """dry_run() builds its two comparison copies of data/ as SIBLINGS of the
+    sandbox, named from the sandbox's own name -- so they inherit
+    SANDBOX_PREFIX, sit in the very temp dir the sweep scans, and can hold no
+    marker of their own, because nothing keeps them open. Judged on name alone
+    they look exactly like abandoned sandboxes, and an overlapping invocation's
+    sweep would rmtree a LIVE run's baseline out from under the diff being
+    computed against it. Simulate that live run by holding its sandbox marker
+    locked, as its own process would, and prove both copies survive a real
+    build()/sweep."""
+    live = pathlib.Path(tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "diffing-")).resolve()
+    copies = [live.parent / (live.name + suffix) for suffix in DR.COMPARISON_SUFFIXES]
+    for copy in copies:
+        copy.mkdir()
+        (copy / "package_results.json").write_text('{"baseline": true}\n')
+    held_fd = DR.Sandbox._lock_marker(live)
+    assert held_fd is not None, \
+        "setup failed: could not lock the simulated live run's marker"
+    # Positive control on the fixture itself: survival has to come from the
+    # sweep's own suffix rule, not from these copies sitting somewhere the
+    # sweep's prefix-and-tempdir predicate could never have reached anyway.
+    for copy in copies:
+        assert DR.Sandbox(ROOT)._safe_to_dispose(copy), (
+            f"setup failed: {copy} is outside the sweep's disposal predicate, so "
+            "this case would pass no matter what the sweep did")
+    sb = None
+    try:
+        sb = DR.Sandbox(ROOT).build()
+        assert live.is_dir(), f"the sweep removed the live run's sandbox itself: {live}"
+        for copy in copies:
+            assert copy.is_dir(), (
+                "the sweep removed a live run's comparison copy of data/ out from "
+                f"under its diff: {copy}")
+            assert (copy / "package_results.json").is_file(), \
+                f"the sweep emptied a live run's comparison copy: {copy}"
+    finally:
+        if sb is not None:
+            sb.dispose()
+        held_fd.close()
+        for copy in copies:
+            shutil.rmtree(copy, ignore_errors=True)
+        shutil.rmtree(live, ignore_errors=True)
+    return ("the -baseline and -head copies of a run whose sandbox marker is still "
+            "locked survive the startup sweep with their contents, even though their "
+            "names carry SANDBOX_PREFIX and they hold no marker of their own")
+
+
+@case
+def case_an_abandoned_sandboxs_baseline_and_head_copies_are_swept_with_it():
+    """The other half of the pair above. A comparison copy carries no marker,
+    so the only liveness signal it can ever have is its OWNING sandbox's -- and
+    once the sweep has won that owner's lock, the run that made all three is
+    proven dead and the copies are its leftovers too. Plant an abandoned
+    sandbox with both copies beside it and prove the next build() takes all
+    three, not just the sandbox."""
+    stale = pathlib.Path(tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "abandoned-")).resolve()
+    (stale / "household.yaml").write_text("stranded private data\n")
+    copies = [stale.parent / (stale.name + suffix) for suffix in DR.COMPARISON_SUFFIXES]
+    for copy in copies:
+        copy.mkdir()
+        (copy / "package_results.json").write_text('{"baseline": true}\n')
+    sb = None
+    try:
+        assert all(c.is_dir() for c in copies), \
+            "setup failed: the comparison copies were not created"
+        sb = DR.Sandbox(ROOT).build()
+        assert not stale.exists(), \
+            f"the abandoned sandbox itself was not swept: {stale}"
+        for copy in copies:
+            assert not copy.exists(), (
+                "an abandoned run's comparison copy of data/ was left behind by the "
+                f"sweep that removed its owning sandbox: {copy}")
+    finally:
+        if sb is not None:
+            sb.dispose()
+        for copy in copies:
+            shutil.rmtree(copy, ignore_errors=True)
+        shutil.rmtree(stale, ignore_errors=True)
+    return ("the -baseline and -head copies of an abandoned sandbox are removed "
+            "together with it, once the sweep has won the owning sandbox's marker "
+            "lock and so proved the run that made all three is dead")
+
+
+@case
+def case_a_stale_sandbox_the_sweep_cannot_remove_keeps_no_marker_of_ours():
+    """The liveness test CREATES the candidate's marker when it is missing, as
+    it is on anything stranded before build() got that far. When the removal
+    then fails, that file is litter the sweep left in a directory it does not
+    own and did not remove. Force the removal to fail and prove the inspection
+    puts the directory back exactly as it found it."""
+    stale = pathlib.Path(tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "unremovable-")).resolve()
+    (stale / "household.yaml").write_text("stranded private data\n")
+    assert not (stale / DR.SANDBOX_MARKER).exists(), \
+        "setup failed: the planted stale sandbox already carries a marker"
+    real_rmtree = DR.shutil.rmtree
+    blocked = []
+
+    def rmtree(path, *a, **kw):
+        if pathlib.Path(path) == stale:
+            blocked.append(str(path))
+            raise OSError("simulated: [Errno 13] Permission denied")
+        return real_rmtree(path, *a, **kw)
+
+    sb = None
+    try:
+        DR.shutil.rmtree = rmtree
+        try:
+            sb = DR.Sandbox(ROOT).build()
+        finally:
+            DR.shutil.rmtree = real_rmtree
+        assert blocked, \
+            "the sweep never tried to remove the planted sandbox, so this case proved nothing"
+        assert stale.is_dir(), "the forced failure did not take: the sandbox is gone"
+        assert not (stale / DR.SANDBOX_MARKER).exists(), (
+            "the sweep left its own marker file behind in a stale sandbox it could "
+            f"not remove: {stale / DR.SANDBOX_MARKER}")
+        assert (stale / "household.yaml").is_file(), \
+            "the failed sweep altered the contents of a directory it does not own"
+    finally:
+        if sb is not None:
+            sb.dispose()
+        real_rmtree(stale, ignore_errors=True)
+    return ("a stale sandbox the sweep cannot remove is left exactly as it was found "
+            "-- the marker file the liveness check had to create is taken back with "
+            "the failed attempt")
+
+
+@case
+def case_a_kept_sandbox_survives_the_next_runs_startup_sweep():
+    """--keep-sandbox promises to leave the sandbox on disk (issue #187
+    follow-up). Its flock releases the instant THIS process exits, same as
+    any other run's, so a kept sandbox left under SANDBOX_PREFIX would look
+    exactly like an abandoned one to the very next invocation's startup
+    sweep -- breaking the CLI's promise the first time anyone actually
+    relies on it. Sandbox.keep() renames it OUT of SANDBOX_PREFIX instead of
+    just leaving the lock unheld; prove a second, real build()/sweep cannot
+    find or remove it, and that rep.sandbox_path points at the surviving
+    (renamed) directory, not the pre-rename one that no longer exists."""
+    gen = ROOT / "analysis" / "tou_spread.py"
+    if not gen.is_file():
+        raise SkipCase("analysis/tou_spread.py is missing from this checkout")
+    rep = DR.dry_run(gen, keep_sandbox=True)
+    kept = pathlib.Path(rep.sandbox_path)
+    sb = None
+    try:
+        assert kept.is_dir(), f"the kept sandbox does not exist at the reported path: {kept}"
+        assert not kept.name.startswith(DR.SANDBOX_PREFIX), (
+            f"a kept sandbox still carries SANDBOX_PREFIX and is therefore "
+            f"sweepable like an abandoned one: {kept}")
+        # A second, real build() -- the exact thing that would run the very
+        # next time anyone invokes dry_run.py -- must not touch it.
+        sb = DR.Sandbox(ROOT).build()
+        assert kept.is_dir(), \
+            f"a kept sandbox was removed by the next run's startup sweep: {kept}"
+        # The comparison copies must travel WITH it, for two reasons that both
+        # bite: a kept tree is only diffable against the baseline it was
+        # actually compared to, and a copy left behind under the pre-rename
+        # name is litter that nothing can ever collect -- _sweep_stale reaches
+        # a comparison copy only through an owning sandbox it has just removed,
+        # and that owner no longer exists under that name.
+        survivors = [kept.parent / (kept.name + suffix)
+                     for suffix in DR.COMPARISON_SUFFIXES]
+        assert any(c.is_dir() for c in survivors), (
+            "no comparison copy travelled with the kept sandbox: expected one "
+            f"of {[c.name for c in survivors]} to exist next to {kept}")
+        for suffix in DR.COMPARISON_SUFFIXES:
+            stray = kept.parent / (kept.name[len("kept-"):] + suffix)
+            assert not stray.exists(), (
+                "--keep-sandbox orphaned a comparison copy under the "
+                f"pre-rename name: {stray} -- nothing will ever collect it, "
+                "since the sweep only reaches one through its owning sandbox")
+    finally:
+        if sb is not None:
+            sb.dispose()
+        shutil.rmtree(kept, ignore_errors=True)
+        # This case's own litter: the renamed copies deliberately outlive the
+        # sweep, so this case collects the ones it created rather than leave a
+        # copy of data/ in the temp dir per run. Committed artifacts, no PII.
+        for suffix in DR.COMPARISON_SUFFIXES:
+            shutil.rmtree(kept.parent / (kept.name + suffix), ignore_errors=True)
+    return ("--keep-sandbox renames the sandbox out of SANDBOX_PREFIX, so the very "
+            "next invocation's startup sweep cannot find or remove it")
+
+
+@case
+def case_a_generators_inherited_marker_lock_survives_the_parents_own_fd_closing():
+    """run_generator() passes the sandbox's marker fd through to its child via
+    pass_fds (issue #187 follow-up): a flock is held by the OPEN FILE
+    DESCRIPTION, not the process, so a child that inherits this fd keeps the
+    lock held even after the PARENT's own fd closes -- exactly what a
+    SIGKILL does to a parent while its generator subprocess keeps running.
+    Without pass_fds, close_fds=True (Python 3's default) would give the
+    child a fresh fd table and the lock would look released the instant the
+    parent's own fd closed, orphaned child or not.
+
+    Simulated without an actual kill, since the observable effect (does the
+    flock survive) does not depend on WHY the parent's fd closed: launch a
+    real generator subprocess with the sandbox's marker inherited via
+    pass_fds, close OUR OWN copy of that fd while the child is still
+    running, and prove a sibling's lock attempt on the same marker still
+    fails -- then prove it succeeds once the child exits, so this is not a
+    permanently stuck lock."""
+    sb = DR.Sandbox(ROOT).build()
+    proc = None
+    try:
+        started = sb.path / "child_started"
+        finish = sb.path / "finish_now"
+        script = sb.path / "sleeper.py"
+        script.write_text(
+            "import pathlib, time\n"
+            f"pathlib.Path({str(started)!r}).write_text('1')\n"
+            f"finish = pathlib.Path({str(finish)!r})\n"
+            "deadline = time.time() + 10\n"
+            "while not finish.exists() and time.time() < deadline:\n"
+            "    time.sleep(0.02)\n"
+        )
+        marker_fd = sb._marker_fd
+        assert marker_fd is not None, "setup failed: the sandbox has no marker fd"
+        proc = subprocess.Popen([sys.executable, str(script)], cwd=str(sb.path),
+                                pass_fds=(marker_fd.fileno(),))
+
+        deadline = time.time() + 10
+        while not started.exists() and time.time() < deadline:
+            time.sleep(0.02)
+        assert started.exists(), "the child generator never signalled that it started"
+
+        # Simulate the parent being SIGKILLed: close OUR OWN copy of the
+        # marker fd. If pass_fds did its job, the child's inherited copy
+        # keeps the underlying flock held regardless.
+        marker_fd.close()
+        sb._marker_fd = None
+
+        probe_fd = DR.Sandbox._lock_marker(sb.path)
+        assert probe_fd is None, (
+            "a sibling's lock attempt succeeded while the generator child was "
+            "still alive -- the marker fd was not actually inherited")
+
+        finish.write_text("1")
+        proc.wait(timeout=10)
+        proc = None
+
+        # Now that the child (the last holder) has exited, the lock must be
+        # free -- proving this was never a permanently-stuck lock.
+        probe_fd2 = DR.Sandbox._lock_marker(sb.path)
+        assert probe_fd2 is not None, \
+            "the marker stayed locked even after the generator child exited"
+        probe_fd2.close()
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        sb.dispose()
+    return ("a generator subprocess inherits the sandbox's marker fd, so the flock "
+            "survives the parent's own fd closing -- e.g. a SIGKILL -- for as long "
+            "as the generator keeps running, and releases once it exits")
 
 
 @case

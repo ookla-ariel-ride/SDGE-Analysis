@@ -84,6 +84,7 @@ EXIT CODES
 """
 import argparse
 import csv
+import fcntl
 import filecmp
 import hashlib
 import io
@@ -99,6 +100,25 @@ import time
 import traceback
 
 SANDBOX_PREFIX = "sdge-dryrun-"
+# A marker file inside every sandbox, flock'd exclusively for the sandbox's
+# whole lifetime. _sweep_stale() tries a NON-BLOCKING lock on each candidate's
+# marker before removing it: the OS releases a process's flocks the instant it
+# exits, crash or not, so a marker that locks cleanly proves nobody is using
+# that sandbox any more, and one that refuses proves a sibling run still is.
+# Without this, two overlapping dry_run.py invocations could have the later
+# one's sweep delete the earlier one's still-live sandbox out from under it --
+# a race this sweep would introduce, not one it fixes (issue #187 follow-up).
+SANDBOX_MARKER = ".sandbox.lock"
+# dry_run() materialises the two comparison copies of data/ as SIBLINGS of the
+# sandbox, named from the sandbox's own name -- so they inherit SANDBOX_PREFIX
+# and sit in the same temp dir the sweep scans. Nothing holds them open, so
+# they can carry no marker of their own, which makes them indistinguishable
+# from an abandoned sandbox by the sweep's own liveness test. They are
+# therefore never standalone sweep candidates: their liveness is inferred from
+# the OWNING sandbox's marker instead, and they are removed only alongside an
+# owner the sweep has already claimed. Kept as one constant so the creator
+# (dry_run()) and the sweep cannot drift apart.
+COMPARISON_SUFFIXES = ("-baseline", "-head")
 # Inputs the documented private/verify sandbox stages next to the scripts; the
 # generators look for them in the CWD, not under data/.
 CWD_FIXTURES = ("usage.csv", "samA.csv", "samB.csv")
@@ -278,6 +298,7 @@ class Sandbox:
     def __init__(self, root, notes=None):
         self.root = pathlib.Path(root).resolve()
         self.path = None
+        self._marker_fd = None
         self.notes = list(notes or [])
         self.n_seeded = 0
         self.sentinel = None
@@ -293,6 +314,16 @@ class Sandbox:
             shutil.rmtree(tmp, ignore_errors=True)
             raise DryRunError(f"refusing a sandbox entangled with the repo: {tmp}")
         self.path = tmp
+        # Lock our own marker BEFORE sweeping: a sweep that ran first could
+        # otherwise see this brand-new, still-unmarked directory as unused.
+        self._marker_fd = self._lock_marker(tmp)
+        if self._marker_fd is None:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise DryRunError(
+                f"could not lock the sandbox's own marker file: {tmp} -- a "
+                "freshly created, uniquely-named sandbox should never fail "
+                "this; refusing rather than running unmarked and sweepable.")
+        self._sweep_stale()
 
         rels = tracked_files(self.root)
         for rel in rels:
@@ -395,6 +426,18 @@ class Sandbox:
                               + ", ".join(staged))
 
     # -- teardown ---------------------------------------------------------
+    def _safe_to_dispose(self, p):
+        """The exact predicate a removal must satisfy: `p` can only ever be a
+        directory this process (or a PRIOR run, for _sweep_stale()) created
+        under the system temp dir with our own prefix -- never the checkout.
+        Shared by dispose() and _sweep_stale() so the sweep can never remove
+        anything dispose() itself would refuse."""
+        tmpdir = pathlib.Path(tempfile.gettempdir()).resolve()
+        return (p.is_absolute() and p.name.startswith(SANDBOX_PREFIX)
+                and (tmpdir == p.parent or tmpdir in p.parents)
+                and p != self.root and self.root not in p.parents
+                and p not in self.root.parents)
+
     def dispose(self):
         """Remove the sandbox. Guarded so this can only ever delete a directory
         this process created under the system temp dir -- never the checkout.
@@ -409,15 +452,184 @@ class Sandbox:
         if self.path is None:
             return
         p = self.path
-        tmpdir = pathlib.Path(tempfile.gettempdir()).resolve()
-        ok = (p.is_absolute() and p.name.startswith(SANDBOX_PREFIX)
-              and (tmpdir == p.parent or tmpdir in p.parents)
-              and p != self.root and self.root not in p.parents
-              and p not in self.root.parents)
-        if not ok:
+        if not self._safe_to_dispose(p):
             raise DryRunError(f"refusing to dispose of an unexpected path: {p}")
-        shutil.rmtree(p, ignore_errors=False)
+        # Hold our own marker lock THROUGH the removal, releasing only after:
+        # closing it first would open exactly the TOCTOU window this marker
+        # exists to close (a sibling's sweep could lock the now-unlocked
+        # marker and start using this path a moment before we delete it).
+        try:
+            shutil.rmtree(p, ignore_errors=False)
+        finally:
+            if self._marker_fd is not None:
+                self._marker_fd.close()
+                self._marker_fd = None
         self.path = None
+
+    def keep(self):
+        """--keep-sandbox: leave this sandbox on disk on purpose, permanently
+        outside the sweep's reach.
+
+        A flock is held only while a process has an open fd to it -- ours
+        releases the instant THIS process exits, keep-sandbox or not, which
+        makes a merely-unlocked directory indistinguishable from an
+        abandoned one. Without this, the very next dry_run.py invocation's
+        startup sweep would find this directory's marker unlocked and
+        recursively delete a sandbox the CLI just promised to leave in
+        place. Renaming it OUT of SANDBOX_PREFIX (never a suffix -- the
+        sweep matches on the START of the name) is a structural fix: no
+        future sweep, here or in any sibling process, can ever match it by
+        name again, so its lock state stops mattering at all. Returns the
+        new path."""
+        if self.path is None:
+            raise DryRunError("keep() called with no sandbox built")
+        p = self.path
+        kept = p.parent / f"kept-{p.name}"
+        p.rename(kept)
+        # The COMPARISON_SUFFIXES copies travel WITH the sandbox, for the same
+        # reason and by the same mechanism. They are the other half of what
+        # --keep-sandbox is for: the kept tree is only diffable against the
+        # baseline it was compared to. Renaming them out of SANDBOX_PREFIX too
+        # is also what keeps them from becoming permanent litter -- _sweep_stale
+        # deliberately never treats a comparison copy as a standalone candidate
+        # (it can hold no marker, so its liveness is unknowable), and it reaches
+        # them only through an owner it has just removed. Left under the old
+        # name, an orphaned `X-baseline` would therefore never be collected by
+        # anything, since its owner `X` no longer exists to lead the sweep to it.
+        for suffix in COMPARISON_SUFFIXES:
+            companion = p.parent / (p.name + suffix)
+            if companion.exists():
+                companion.rename(kept.parent / (kept.name + suffix))
+        if self._marker_fd is not None:
+            self._marker_fd.close()
+            self._marker_fd = None
+        self.path = kept
+        return kept
+
+    @staticmethod
+    def _lock_marker(sandbox_dir):
+        """Open (creating if absent) and non-blocking-exclusive-lock the marker
+        inside `sandbox_dir`. Returns the open file object holding the lock, or
+        None if the lock could not be acquired -- the caller decides what that
+        means (our own fresh sandbox: a real error; a sweep candidate: still in
+        use by someone else, leave it alone)."""
+        try:
+            fd = open(sandbox_dir / SANDBOX_MARKER, "a+")
+        except OSError:
+            return None
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fd.close()
+            return None
+        return fd
+
+    def _sweep_stale(self):
+        """Remove sandboxes from PRIOR runs before this one starts (issue #187):
+        a hard kill (SIGKILL, or an exception path that escapes dry_run()'s
+        `finally`) between mkdtemp() above and dispose() at teardown strands a
+        full copy of private/ under a name that already carries SANDBOX_PREFIX
+        -- findable, but nothing ever looked. This closes that gap by scanning
+        the same temp dir on every subsequent run.
+
+        Reuses _safe_to_dispose() -- the exact predicate dispose() itself is
+        bound by -- rather than a second ad hoc rmtree, so this sweep can never
+        remove anything dispose() would refuse, and the "must start with our
+        prefix and live under the temp dir" safety check is not weakened for
+        it. A stale sandbox that cannot be removed (permissions) is reported to
+        stderr and left in place: this is about a PRIOR run's leftover, never
+        this run's own sandbox, so it must not fail the CURRENT run -- that
+        contract belongs to dry_run()'s `finally` block alone, and is
+        unchanged here.
+
+        LIVENESS CHECK, before touching anything: a non-blocking exclusive
+        lock attempt on the candidate's own SANDBOX_MARKER. A directory whose
+        owning process is still alive holds that lock, so the attempt fails
+        and the candidate is left alone -- without this, an overlapping
+        invocation's sweep could delete a SIBLING run's still-in-use sandbox,
+        which is a race this sweep would introduce, not one it fixes.
+
+        The two COMPARISON_SUFFIXES copies are excluded from candidacy for
+        exactly that reason: they carry SANDBOX_PREFIX (they are named from
+        their sandbox's own name) and live in this same temp dir, but nothing
+        holds them open, so they can hold no marker and the liveness test above
+        would read a LIVE run's -baseline as abandoned. The only sound liveness
+        signal they have is their owner's marker, so they are removed only via
+        _sweep_comparison_copies() below, after the sweep has won that owner's
+        lock. Accepted, deliberate limit: a -baseline whose owning sandbox is
+        already gone is never swept. That is tolerable because a comparison
+        copy holds only committed data/ artifacts -- never private/ -- so it is
+        not the exposure issue #187 exists to close."""
+        tmpdir = pathlib.Path(tempfile.gettempdir()).resolve()
+        try:
+            entries = list(tmpdir.iterdir())
+        except OSError as e:
+            print(f"[stale sandbox sweep skipped: could not list {tmpdir}: {e}]",
+                  file=sys.stderr)
+            return
+        for p in entries:
+            if not p.name.startswith(SANDBOX_PREFIX):
+                continue
+            if p.name.endswith(COMPARISON_SUFFIXES):
+                continue  # a sandbox's comparison copy -- swept with its owner, never alone
+            p = p.resolve()
+            if p == self.path or not p.is_dir() or not self._safe_to_dispose(p):
+                continue
+            # The marker may not exist yet on a candidate stranded before it was
+            # written; _lock_marker() creates it, so remember whether we are the
+            # ones who did, to leave no stray file in a directory we end up not
+            # removing (below).
+            marker_existed = (p / SANDBOX_MARKER).exists()
+            marker_fd = self._lock_marker(p)
+            if marker_fd is None:
+                continue  # still in use (or unlockable) -- not our leftover to take
+            # Hold the lock THROUGH the removal: releasing it first would let a
+            # process that is about to legitimately create a sandbox at this
+            # exact path acquire the now-unlocked marker and start using it a
+            # moment before we delete it out from under them (TOCTOU).
+            try:
+                shutil.rmtree(p, ignore_errors=False)
+            except OSError as e:
+                print(f"[stale sandbox not removed: {p} -- a prior run's "
+                      "leftover holding a copy of private/ (raw bill PDFs, "
+                      "the Green Button export, household.yaml); delete it "
+                      f"by hand. Cause: {e}]", file=sys.stderr)
+                if not marker_existed:
+                    # Inspecting a candidate must not litter it: this directory
+                    # stays on disk and is not ours, so the marker our own lock
+                    # attempt created goes with the attempt. Unlink before the
+                    # close: the flock lives on the open file description, so it
+                    # is still held for the rest of this block either way.
+                    try:
+                        (p / SANDBOX_MARKER).unlink()
+                    except OSError:
+                        pass  # best effort; the same cause that blocked rmtree
+            else:
+                self._sweep_comparison_copies(p)
+            finally:
+                marker_fd.close()
+
+    def _sweep_comparison_copies(self, sandbox_path):
+        """Remove the `-baseline`/`-head` siblings of a stranded sandbox the
+        sweep has just claimed and removed.
+
+        Winning `sandbox_path`'s marker lock proved its owning run is dead, and
+        these copies are named from that sandbox's own name, so they provably
+        belong to that same dead run -- the only liveness signal they can ever
+        have, since nothing holds them open to carry a marker of their own.
+        Guarded by the same _safe_to_dispose() predicate as everything else
+        here, and a copy that cannot be removed is a warning, never a failure of
+        the current run: it holds committed data/ artifacts only."""
+        for suffix in COMPARISON_SUFFIXES:
+            copy = sandbox_path.parent / (sandbox_path.name + suffix)
+            if not copy.is_dir() or not self._safe_to_dispose(copy):
+                continue
+            try:
+                shutil.rmtree(copy, ignore_errors=False)
+            except OSError as e:
+                print(f"[stale baseline copy not removed: {copy} -- a prior "
+                      f"run's leftover copy of data/. Cause: {e}]",
+                      file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -466,10 +678,21 @@ def run_generator(sandbox, generator_rel, args=(), timeout=DEFAULT_TIMEOUT):
     env.pop("PYTHONPATH", None)        # never let the real analysis/ be importable
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     t0 = time.time()
+    # Pass our marker fd through to the child (issue #187 follow-up): a
+    # flock is held by the OPEN FILE DESCRIPTION, not the process, so a
+    # child that inherits this fd keeps the sandbox looking "in use" to any
+    # sibling's sweep even if THIS parent is SIGKILLed while the child is
+    # still running -- exactly the crash shape #187 exists to survive.
+    # close_fds defaults to True in Python 3, so without pass_fds the child
+    # would get a fresh fd table and the lock would look released the
+    # instant the parent's own fd closed, orphaned child or not.
+    marker_fds = ((sandbox._marker_fd.fileno(),)
+                  if sandbox._marker_fd is not None else ())
     try:
         r = subprocess.run([sys.executable, str(script), *args],
                            cwd=str(sandbox.path), env=env,
-                           capture_output=True, text=True, timeout=timeout)
+                           capture_output=True, text=True, timeout=timeout,
+                           pass_fds=marker_fds)
     except subprocess.TimeoutExpired:
         raise DryRunError(f"{generator_rel} timed out after {timeout}s")
     seconds = time.time() - t0
@@ -705,6 +928,8 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
         rep.sandbox_path = sb.path
         rep.notes = list(sb.notes)
 
+        # Named from the sandbox's own name (see COMPARISON_SUFFIXES): the two
+        # suffixes here and the teardown/sweep that clean them up must agree.
         if baseline == "head":
             base_dir = head_data_dir(root, sb.path.parent / (sb.path.name + "-head"))
         else:
@@ -766,7 +991,9 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
         return rep
     finally:
         if keep_sandbox:
-            print(f"[sandbox kept] {sb.path}", file=sys.stderr)
+            kept_path = sb.keep()
+            rep.sandbox_path = kept_path  # the pre-rename path no longer exists
+            print(f"[sandbox kept] {kept_path}", file=sys.stderr)
         else:
             # Two INDEPENDENT cleanups, deliberately asymmetric. The
             # -baseline/-head copies hold nothing but committed data/ artifacts,
@@ -779,7 +1006,7 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
             # try: a baseline rmtree that raised would then skip dispose() and
             # strand exactly that copy.
             sandbox_path = sb.path
-            for extra in (str(sandbox_path) + "-baseline", str(sandbox_path) + "-head"):
+            for extra in (str(sandbox_path) + s for s in COMPARISON_SUFFIXES):
                 try:
                     if pathlib.Path(extra).is_dir():
                         shutil.rmtree(extra)

@@ -15,8 +15,10 @@ corpus is absent. Everything covering publication, rollback and concurrency runs
 (temp files, or the committed data/ artifacts), so a broken lock or a lost rollback cannot
 pass in a clean checkout or in CI.
 """
+import contextlib
 import csv
 import datetime as dt
+import fcntl
 import json
 import os
 import pathlib
@@ -32,6 +34,82 @@ ROOT = HERE.parent
 ELEC = ROOT / "private" / "1-raw-data" / "electric-bills"
 GAS = ROOT / "private" / "1-raw-data" / "gas-bills"
 PY = sys.executable
+# Distinctive prefix for every throwaway repo this suite builds under _build(): a
+# stranded one (killed process, exception that escaped the `with`) is greppable in
+# $TMPDIR instead of looking like any other program's `tmp*` (issue #187 — three such
+# copies, 787 files each, were found with no way to tell whose they were).
+SANDBOX_PREFIX = "sdge-parse-bills-"
+# A marker file inside every sandbox this suite builds, flock'd exclusively
+# for the sandbox's whole lifetime. _sweep_stale_sandboxes() tries a
+# NON-BLOCKING lock on each candidate's marker before removing it: the OS
+# releases a process's flocks the instant it exits, crash or not, so a
+# marker that locks cleanly proves nobody is using that sandbox any more,
+# and one that refuses proves a sibling run still is. Without this, two
+# overlapping invocations of this suite could have the later one's sweep
+# delete the earlier one's still-live sandbox out from under it -- a race
+# this sweep would introduce, not fix (issue #187 follow-up).
+SANDBOX_MARKER = ".sandbox.lock"
+
+
+def _lock_marker(sandbox_dir):
+    """Open (creating if absent) and non-blocking-exclusive-lock the marker
+    inside `sandbox_dir`. Returns the open file object holding the lock, or
+    None if it could not be acquired -- the caller decides what that means
+    (our own fresh sandbox: a real error; a sweep candidate: still in use by
+    someone else, leave it alone). Mirrors dry_run.py's Sandbox._lock_marker."""
+    try:
+        fd = open(sandbox_dir / SANDBOX_MARKER, "a+")
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fd.close()
+        return None
+    return fd
+
+
+# Sandbox path -> its held marker fd, populated only by _locked_sandbox and
+# consulted only by _run(). Lets _run() pass that fd through to the
+# parse_bills.py subprocess it launches (see _run's docstring) without
+# threading a new parameter through this file's ~40 `_run(tmp)` call sites --
+# every sandbox NOT built by _locked_sandbox (everything except the
+# real-archive CORPUS_CASES path) is simply absent from this dict and _run()
+# behaves exactly as before for it.
+_ACTIVE_SANDBOX_MARKERS = {}
+
+
+@contextlib.contextmanager
+def _locked_sandbox(prefix):
+    """A TemporaryDirectory that holds its own SANDBOX_MARKER locked for the
+    whole block, including through its own removal, so a sibling process's
+    _sweep_stale_sandboxes() sees it as still in use rather than deleting it
+    out from under this run.
+
+    Managed by hand rather than `with tempfile.TemporaryDirectory()`: that
+    context manager's own __exit__ (the rmtree) would run AFTER this
+    function's `finally` released the marker, reopening the exact TOCTOU
+    window the marker exists to close (a sibling's sweep could lock the
+    freed marker and start using this path a moment before removal
+    completes)."""
+    td_obj = tempfile.TemporaryDirectory(prefix=prefix)
+    p = pathlib.Path(td_obj.name)
+    marker_fd = _lock_marker(p)
+    if marker_fd is None:
+        td_obj.cleanup()
+        raise RuntimeError(
+            f"could not lock the sandbox's own marker file: {p} -- a "
+            "freshly created, uniquely-named sandbox should never fail "
+            "this; refusing rather than running unmarked and sweepable.")
+    _ACTIVE_SANDBOX_MARKERS[td_obj.name] = marker_fd
+    try:
+        yield td_obj.name
+    finally:
+        try:
+            del _ACTIVE_SANDBOX_MARKERS[td_obj.name]
+            td_obj.cleanup()
+        finally:
+            marker_fd.close()
 
 
 class SkipCase(Exception):
@@ -130,8 +208,53 @@ def _build(tmp):
 
 
 def _run(tmp):
+    # Pass the sandbox's marker fd through to the child, when one exists
+    # (issue #187 follow-up): a flock is held by the OPEN FILE DESCRIPTION,
+    # not the process, so a child that inherits this fd keeps a real-archive
+    # sandbox looking "in use" to any sibling's sweep even if THIS process
+    # is SIGKILLed while parse_bills.py is still running -- exactly the
+    # crash shape #187 exists to survive. Every sandbox not built via
+    # _locked_sandbox is simply absent from the registry, so this is a
+    # no-op for the other ~40 callers of _run().
+    marker_fd = _ACTIVE_SANDBOX_MARKERS.get(str(tmp))
+    pass_fds = (marker_fd.fileno(),) if marker_fd is not None else ()
     return subprocess.run([PY, str(tmp / "analysis" / "parse_bills.py")],
-                          cwd=tmp, capture_output=True, text=True)
+                          cwd=tmp, capture_output=True, text=True,
+                          pass_fds=pass_fds)
+
+
+def _sweep_stale_sandboxes():
+    """Remove any SANDBOX_PREFIX directory left in $TMPDIR by a prior run of this suite
+    that never reached its own `with tempfile.TemporaryDirectory()` cleanup (killed
+    process, an exception that somehow escaped it). Each one can hold a full copy of
+    the real bill PDFs, so letting them accumulate silently is the bug (#187) — this
+    runs once, at the top of main(), before this run creates its own sandbox. A
+    removal failure is reported and the sweep moves on; someone else's leftover being
+    unremovable is not a reason to fail THIS run before it has done anything.
+
+    LIVENESS CHECK, before touching anything: a non-blocking exclusive lock
+    attempt on the candidate's own SANDBOX_MARKER. A directory whose owning
+    process is still alive holds that lock (see _locked_sandbox), so the
+    attempt fails and the candidate is left alone -- without this, an
+    overlapping invocation of this suite could delete a SIBLING run's
+    still-in-use sandbox, which is a race this sweep would introduce, not
+    one it fixes."""
+    for stale in pathlib.Path(tempfile.gettempdir()).glob(f"{SANDBOX_PREFIX}*"):
+        if not stale.is_dir():
+            continue
+        marker_fd = _lock_marker(stale)
+        if marker_fd is None:
+            continue  # still in use (or unlockable) -- not our leftover to take
+        # Hold the lock THROUGH the removal: releasing it first would let a
+        # process that is about to legitimately create a sandbox at this
+        # exact path acquire the now-unlocked marker and start using it a
+        # moment before we delete it out from under them (TOCTOU).
+        try:
+            shutil.rmtree(stale)
+        except OSError as e:
+            print(f"[stale sandbox not removed: {stale} ({e})]", file=sys.stderr)
+        finally:
+            marker_fd.close()
 
 
 # The whole publish set, in one place: every case that asserts "nothing was written"
@@ -526,6 +649,76 @@ def _fail_replace_at(fail_calls):
         return real(src, dst)
 
     return mock.patch("os.replace", flaky), state
+
+
+def _fail_copy2_at(fail_calls):
+    """Return (patcher, counter) making shutil.copy2 raise on the given 1-based calls."""
+    import unittest.mock as mock
+    real = shutil.copy2
+    state = {"n": 0}
+
+    def flaky(src, dst, *a, **kw):
+        state["n"] += 1
+        if state["n"] in fail_calls:
+            raise OSError(f"simulated shutil.copy2 failure #{state['n']}")
+        return real(src, dst, *a, **kw)
+
+    return mock.patch("shutil.copy2", flaky), state
+
+
+def case_build_cleanup_survives_mid_copy_failure():
+    """The sandbox _build() populates with real bill PDFs must not survive a crash
+    partway through copying them in — that stranding is issue #187 itself: a process
+    that dies mid-_build leaves a full PII copy sitting under $TMPDIR forever, because
+    TemporaryDirectory only cleans up on a normal `with`-block exit. This proves the
+    `with` block's cleanup fires on the EXCEPTION path too, not just the happy one, by
+    forcing shutil.copy2 to fail after real PDF copying has already begun (call #4:
+    the first two calls copy parse_bills.py/household.py, the third copies the first
+    real PDF, so failing the fourth guarantees at least one real bill PDF was already
+    on disk in the sandbox at the moment it dies)."""
+    if not (ELEC.is_dir() and any(ELEC.glob("*.pdf"))):
+        raise SkipCase("needs the gitignored bill PDFs; see DATA-SOURCES-CHEATSHEET.md §D")
+    patcher, _ = _fail_copy2_at({4})
+    sandbox_path = {}
+    with patcher:
+        try:
+            with _locked_sandbox(SANDBOX_PREFIX) as td:
+                sandbox_path["p"] = td
+                _build(pathlib.Path(td))
+        except OSError:
+            pass
+        else:
+            raise AssertionError("simulated mid-copy failure did not propagate")
+    assert not os.path.exists(sandbox_path["p"]), \
+        f"sandbox holding real bill PDFs survived a mid-_build failure: {sandbox_path['p']}"
+    return "exception mid-_build -> sandbox cleaned up, no stranded PDF copy"
+
+
+def case_the_sweep_never_removes_a_sandbox_a_live_process_still_holds():
+    """A prefix-matching directory alone is not proof of abandonment: two
+    overlapping invocations of this suite both carry SANDBOX_PREFIX while
+    both are legitimately alive. A sweep that removed on name alone could
+    delete a SIBLING run's sandbox out from under it -- a race the sweep
+    would introduce, not fix. Simulate a still-running sibling by holding its
+    marker locked ourselves, exactly as _locked_sandbox would for its whole
+    lifetime, then prove _sweep_stale_sandboxes leaves it alone. Needs no
+    real bill PDFs -- the sweep and the marker never touch archive content."""
+    live = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + "still-running-"))
+    (live / "household.yaml").write_text("a live sibling's private data\n")
+    held_fd = _lock_marker(live)
+    assert held_fd is not None, "setup failed: could not lock the simulated sibling's marker"
+    try:
+        _sweep_stale_sandboxes()
+        assert live.is_dir(), (
+            f"the sweep removed a sandbox whose marker was still locked "
+            f"(a live sibling): {live}")
+        assert (live / "household.yaml").is_file(), \
+            "the sweep touched the contents of a still-in-use sibling sandbox"
+    finally:
+        held_fd.close()
+        shutil.rmtree(live, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory whose marker is still locked -- a live sibling "
+            "run -- survives _sweep_stale_sandboxes untouched")
 
 
 def case_rollback_after_partial_swap():
@@ -2009,6 +2202,8 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
 # checkout and in CI — skipping the whole suite when the private corpus is absent would
 # let a broken lock or a lost rollback pass the documented command with exit code 0.
 STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
+                    case_build_cleanup_survives_mid_copy_failure,
+                    case_the_sweep_never_removes_a_sandbox_a_live_process_still_holds,
                     case_restore_failure_preserves_backups,
                     case_retry_after_failed_rollback_refuses,
                     case_lock_blocks_second_publisher,
@@ -2055,6 +2250,7 @@ def main():
     # The electric corpus is the hard requirement; gas-dependent cases skip themselves
     # (via SkipCase) when this corpus has no gas statements — a no-gas fork is valid.
     have_corpus = ELEC.is_dir() and any(ELEC.glob("*.pdf"))
+    _sweep_stale_sandboxes()
     failures = skipped = ran = 0
 
     for case in STANDALONE_CASES:
@@ -2075,7 +2271,7 @@ def main():
             skipped += 1
             continue
         try:
-            with tempfile.TemporaryDirectory() as td:
+            with _locked_sandbox(SANDBOX_PREFIX) as td:
                 print(f"PASS  {case(_build(pathlib.Path(td)))}")
             ran += 1
         except SkipCase as e:
