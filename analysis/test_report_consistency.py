@@ -5983,6 +5983,121 @@ def case_stored_kwh_costs_match_the_dispatch_artifact():
     return ("section 6's three stored-kWh costs and the midday share all match "
             "data/battery_dispatch_policies.json")
 
+
+# The HIGH package's claim, in each document that publishes it. SCOPED
+# REGIONS, not whole files: TECHNICAL.md legitimately reports absent savings
+# for panel cleaning, array upgrades and CCA repricing, so scanning it entire
+# for "no savings" fails this case over prose that has nothing to do with the
+# package, with a message blaming the package (Codex /review, issue #142).
+def _high_card_regions():
+    """{document: the passage that makes the HIGH package's claim}."""
+    out = {}
+    card = re.search(r'<div class="pkg">\s*<h3>HIGH\b.*?</div>', HTML, re.S)
+    assert card, ("the HIGH package card is not in index.html in the form this case "
+                  "pins (<div class=\"pkg\"> then <h3>HIGH); re-anchor it rather "
+                  "than deleting it")
+    out["index.html"] = card.group(0)
+
+    tech = (ROOT / "TECHNICAL.md").read_text()
+    bullet = re.search(r"- `packages\.HIGH`.*?(?=\n- `)", tech, re.S)
+    assert bullet, "TECHNICAL.md no longer carries a `packages.HIGH` schema bullet"
+    out["TECHNICAL.md"] = bullet.group(0)
+
+    tpl = (ROOT / "report-template.html").read_text()
+    todo = re.search(r"<li><!-- TODO: what the expansion increment really buys.*?--></li>",
+                     tpl, re.S)
+    assert todo, "report-template.html no longer carries the expansion-increment TODO"
+    out["report-template.html"] = todo.group(0)
+    return out
+
+
+# One vocabulary for "this saves nothing", shared with the sibling guard in
+# test_report_tokens.py (_ABSENT_SAVING_RE). Keeping two lists let the half that
+# sees hand-authored prose drift weaker than the half that sees tokens: this one
+# was missing "nothing", "never repays" and "saves no" entirely.
+_ABSENT_SAVING_RE = re.compile(
+    r"not savings|no savings|nothing|never repays|saves? no\b|zero saving|"
+    r"rather than savings|rather than dollars", re.I)
+
+# Claims that a positive marginal exists, for the branch where it does not.
+_POSITIVE_SAVING_RE = re.compile(
+    r"more than MID|does save money|saves more than", re.I)
+
+
+def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
+    """Issue #142. The HIGH package card asserted "$216/yr more than MID" and
+    then, in the very next bullet, "this package buys outage endurance, not
+    savings". `packages.HIGH.marginal_vs_mid_yr` is positive, so the first
+    bullet was the artifact's and the second contradicted it.
+
+    Not a wording preference. A reader deciding whether to buy the expansion
+    needs "it saves too little to earn back $5,900", not "it saves nothing" --
+    only the second rules the pack out on its own terms, and someone whose own
+    numbers differ would be led the wrong way.
+
+    Two artifact fields, two different claims, checked separately:
+    `savings_yr` is what the PACKAGE saves against the baseline;
+    `marginal_vs_mid_yr` is what the INCREMENT adds over MID. A denial of the
+    first is false whatever the second does.
+
+    #131 added the equivalent guard for the token-owned section 7 verdict;
+    this is the half that sees hand-authored prose."""
+    art = json.loads((ROOT / "data" / "package_results.json").read_text())
+    marginal = art["packages"]["HIGH"]["marginal_vs_mid_yr"]
+    savings = art["packages"]["HIGH"]["savings_yr"]
+    regions = _high_card_regions()
+
+    # UNCONDITIONAL, whatever the sign: TECHNICAL.md hard-codes the figure in
+    # its schema note, so the two can drift apart silently. Bare integer, which
+    # is that document's own convention for these values -- a comma-grouped
+    # pattern would demand **1,216** from a file that writes **1216**.
+    assert f"`marginal_vs_mid_yr` **{marginal:.0f}**" in regions["TECHNICAL.md"], (
+        f"TECHNICAL.md's packages.HIGH bullet does not carry marginal_vs_mid_yr as "
+        f"{marginal:.0f}; the schema note has drifted from data/package_results.json")
+
+    # The PACKAGE claim, independent of the increment: while savings_yr is
+    # positive, no region may say the package saves nothing.
+    if savings > 0:
+        for doc, text in regions.items():
+            m = _ABSENT_SAVING_RE.search(text)
+            assert not (m and "package" in text.lower()[:m.end()].rsplit(".", 1)[-1]), (
+                f"{doc} says {m.group(0)!r} of the PACKAGE, whose artifact reports "
+                f"savings_yr of ${savings:,.0f}/yr. Only a claim scoped to the "
+                "expansion's marginal saving could be true here")
+
+    if marginal <= 0:
+        # Not a free pass: a stale positive claim left by an earlier
+        # regeneration must not survive the artifact moving under it.
+        for doc, text in regions.items():
+            m = _POSITIVE_SAVING_RE.search(text)
+            assert not m, (
+                f"{doc} still says {m.group(0)!r}, but "
+                f"packages.HIGH.marginal_vs_mid_yr is now {marginal}. The prose is "
+                "stale: a regeneration moved the artifact and left the purchase "
+                "advice behind")
+        return (f"packages.HIGH.marginal_vs_mid_yr is {marginal}, not positive; no "
+                f"region claims a positive marginal, and TECHNICAL.md carries "
+                f"{marginal:.0f}")
+
+    printed = f"~${marginal:,.0f}/yr more than MID"
+    assert printed in regions["index.html"], (
+        f"the HIGH card does not state its own artifact's marginal saving "
+        f"({printed!r} from packages.HIGH.marginal_vs_mid_yr)")
+
+    # The INCREMENT claim: with a positive marginal, no region may deny it.
+    # report-template.html is included on purpose -- the defect this issue
+    # exists to fix lived in its TODO, where it instructed every generated
+    # report to write the contradiction.
+    for doc, text in regions.items():
+        m = _ABSENT_SAVING_RE.search(text)
+        assert not m, (
+            f"{doc} says {m.group(0)!r} about an increment whose artifact reports a "
+            f"POSITIVE marginal saving of ${marginal:,.0f}/yr. Say it saves too "
+            "little to earn back the increment; do not say it does not save")
+    return (f"the HIGH card states its artifact's ${marginal:,.0f}/yr marginal saving, "
+            f"TECHNICAL.md carries the same figure, and no region denies it")
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -6060,6 +6175,7 @@ CASES = [
     case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch,
     case_every_published_export_figure_names_its_treatment,
     case_stored_kwh_costs_match_the_dispatch_artifact,
+    case_the_high_card_never_denies_the_saving_its_own_bullet_states,
 ]
 
 
