@@ -27,7 +27,9 @@ generator writes and where, which both drives the byte-diff and forbids two
 generators from claiming the same output file.
 """
 import ast
+import contextlib
 import fcntl
+import io
 import json
 import datetime as dt
 import math
@@ -59,6 +61,9 @@ SANDBOX_PREFIX = "sdge-scripts-runnable-"
 # sibling run still is. Without this, two overlapping real-archive suite runs
 # could have the later one's sweep delete the earlier one's still-live
 # sandbox out from under it -- a race this sweep would introduce, not fix.
+# A candidate carrying NO marker proves nothing either way: it is equally a
+# sibling between TemporaryDirectory() and its own lock, so the sweep reports
+# it and leaves it alone rather than creating the marker itself.
 SANDBOX_MARKER = ".sandbox.lock"
 
 # Top-level private/1-raw-data subdirectories with zero readers among the
@@ -713,14 +718,23 @@ def _owned_path(tmp, where, fname):
     return (tmp / fname) if where == "cwd" else (tmp / "data" / fname)
 
 
-def _lock_marker(sandbox_dir):
-    """Open (creating if absent) and non-blocking-exclusive-lock the marker
-    inside `sandbox_dir`. Returns the open file object holding the lock, or
-    None if it could not be acquired -- the caller decides what that means
-    (our own fresh sandbox: a real error; a sweep candidate: still in use by
-    someone else, leave it alone). Mirrors dry_run.py's Sandbox._lock_marker."""
+def _lock_marker(sandbox_dir, create=True):
+    """Non-blocking-exclusive-lock the marker inside `sandbox_dir`. Returns the
+    open file object holding the lock, or None if it could not be acquired --
+    the caller decides what that means (our own fresh sandbox: a real error; a
+    sweep candidate: still in use by someone else, leave it alone).
+
+    `create` decides whether a MISSING marker is brought into existence. True
+    (the default) is for a sandbox we own. False is mandatory for
+    _sweep_stale_sandboxes(), which inspects directories it does NOT own:
+    creating a marker there and then locking the file we just made is a
+    trivially-won lock that proves nothing about the owner, and it leaves our
+    litter behind. With create=False a missing marker fails the open and
+    returns None just as an unlockable one does, so a caller that must tell
+    those apart tests for the file itself, before calling.
+    Mirrors dry_run.py's Sandbox._lock_marker."""
     try:
-        fd = open(sandbox_dir / SANDBOX_MARKER, "a+")
+        fd = open(sandbox_dir / SANDBOX_MARKER, "a+" if create else "r+")
     except OSError:
         return None
     try:
@@ -742,17 +756,35 @@ def _sweep_stale_sandboxes(exclude=None):
     (see dry_run.py's "[sandbox not removed: ...]"): report to stderr and
     keep going, rather than crash the whole run over someone else's leftover.
 
-    LIVENESS CHECK, before touching anything: a non-blocking exclusive lock
-    attempt on the candidate's own SANDBOX_MARKER. A directory whose owning
-    process is still alive holds that lock, so the attempt fails and the
-    candidate is left alone -- without this, an overlapping invocation's
-    sweep could delete a SIBLING run's still-in-use sandbox, which is a race
-    this sweep would introduce, not one it fixes."""
+    LIVENESS CHECK, before touching anything -- three outcomes, only one of
+    which removes anything:
+      * marker present and WE CAN LOCK IT -> the owner's flock is gone, so the
+        owner is gone: provably abandoned, remove it.
+      * marker present and we CANNOT lock it -> a live sibling holds it: leave
+        it alone, silently.
+      * NO marker at all -> unknowable, and never removed. A sibling caught
+        between its own TemporaryDirectory(prefix=...) and its own
+        _lock_marker() looks exactly like this, as does a pre-marker version of
+        this suite; the candidate is reported to stderr and left in place. The
+        sweep never creates a marker to lock (_lock_marker(create=False)) --
+        locking a file we just made proves nothing about the owner, and it
+        would litter a directory we do not own.
+    Without this, an overlapping invocation's sweep could delete a SIBLING
+    run's still-in-use sandbox, which is a race this sweep would introduce,
+    not one it fixes."""
     base = pathlib.Path(tempfile.gettempdir())
     for stale in base.glob(SANDBOX_PREFIX + "*"):
         if not stale.is_dir() or stale == exclude:
             continue
-        marker_fd = _lock_marker(stale)
+        if not (stale / SANDBOX_MARKER).exists():
+            print(f"[test_scripts_runnable: stale sandbox candidate left in "
+                  f"place: {stale} -- it carries no {SANDBOX_MARKER}, so it is "
+                  "indistinguishable from a live run that has not marked itself "
+                  "yet; if no run is in progress this is a prior run's leftover "
+                  "holding a copy of the private archive, and you should delete "
+                  "it by hand]", file=sys.stderr)
+            continue
+        marker_fd = _lock_marker(stale, create=False)
         if marker_fd is None:
             continue  # still in use (or unlockable) -- not our leftover to take
         # Hold the lock THROUGH the removal: releasing it first would let a
@@ -1167,6 +1199,85 @@ def case_the_sweep_never_removes_a_real_archive_sandbox_a_live_process_still_hol
             "run -- survives _sweep_stale_sandboxes untouched")
 
 
+def _plant_abandoned_sandbox(tag):
+    """A stale sandbox in the ONE state the sweep may act on: prefix-named,
+    carrying a SANDBOX_MARKER whose lock nobody holds -- what a run killed
+    AFTER it marked itself leaves behind. A MARKERLESS directory is
+    deliberately not this shape (see the case below).
+
+    Forcing a precondition means proving the forcing took, so both halves are
+    asserted: the marker is there, and it is genuinely free. Without the second
+    assert a case could pass because the sweep refused a LIVE-looking
+    directory, which is not the behaviour it claims to test."""
+    stale = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + tag))
+    (stale / "household.yaml").write_text("stranded private data\n")
+    (stale / SANDBOX_MARKER).touch()
+    assert (stale / SANDBOX_MARKER).is_file(), \
+        f"setup failed: the planted stale sandbox carries no marker: {stale}"
+    probe = _lock_marker(stale, create=False)
+    assert probe is not None, (
+        f"setup failed: the planted marker at {stale} could not be locked, so "
+        "this fixture would look like a LIVE sibling and the case built on it "
+        "would pass for the wrong reason")
+    probe.close()
+    return stale
+
+
+def case_an_abandoned_real_archive_sandbox_carrying_a_free_marker_is_swept():
+    """The positive half of the pair: a directory whose marker exists and locks
+    cleanly is PROVABLY abandoned -- the OS drops a process's flocks the instant
+    it exits -- so the sweep must still remove it, private copy and all.
+    Without this, the guard below could be satisfied by a sweep that removed
+    nothing at all."""
+    stale = _plant_abandoned_sandbox("abandoned-")
+    try:
+        _sweep_stale_sandboxes()
+        assert not stale.exists(), (
+            "a provably abandoned sandbox -- marker present, lock free -- was "
+            f"not swept: {stale}")
+    finally:
+        shutil.rmtree(stale, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory whose marker exists and locks cleanly is "
+            "proven abandoned and is removed by _sweep_stale_sandboxes")
+
+
+def case_a_markerless_candidate_survives_the_sweep_and_is_reported():
+    """The liveness test may never manufacture its own evidence. A directory
+    carrying SANDBOX_PREFIX but NO marker is exactly what a live sibling looks
+    like between its TemporaryDirectory(prefix=...) and its own _lock_marker()
+    call, and what any pre-marker version of this suite looks like for its
+    whole run. A sweep that CREATES the missing marker wins a lock against
+    nobody, reads "abandoned", and deletes a live run's copy of the private
+    archive. Prove such a candidate survives, is not marked by the sweep, and
+    is reported on stderr instead (issue #187 AC2 accepts removed OR reported;
+    reporting is the only honest verdict when the state is unknowable)."""
+    live = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + "LIVE-mid-creation-"))
+    (live / "household.yaml").write_text("a live run's private data\n")
+    assert not (live / SANDBOX_MARKER).exists(), \
+        "setup failed: the planted directory already carries a marker"
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            _sweep_stale_sandboxes()
+        assert live.is_dir(), (
+            "the sweep deleted a prefixed directory carrying no marker -- which is "
+            f"indistinguishable from a live run mid-creation: {live}")
+        assert (live / "household.yaml").is_file(), \
+            "the sweep destroyed the contents of a live run's sandbox"
+        assert not (live / SANDBOX_MARKER).exists(), (
+            "the sweep created a marker inside a directory it does not own; that "
+            "self-made, trivially-won lock is what makes a live sibling read as "
+            "abandoned")
+        assert str(live) in err.getvalue(), (
+            "an unknowable candidate must be REPORTED, not silently skipped -- "
+            f"stderr never named it: {err.getvalue()!r}")
+    finally:
+        shutil.rmtree(live, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory with no marker -- a live run between "
+            "TemporaryDirectory() and its own lock -- survives the sweep unmarked "
+            "and untouched, and is reported to stderr instead of removed")
+
+
 _LITERAL_EXPR_RE = re.compile(r"^\$\{\{\s*(true|false)\s*\}\}$")
 
 
@@ -1560,6 +1671,8 @@ CASES = [
     case_the_real_archive_sandbox_is_removed_even_when_a_generator_run_raises,
     case_a_real_archive_sandbox_that_cannot_be_removed_fails_loudly,
     case_the_sweep_never_removes_a_real_archive_sandbox_a_live_process_still_holds,
+    case_an_abandoned_real_archive_sandbox_carrying_a_free_marker_is_swept,
+    case_a_markerless_candidate_survives_the_sweep_and_is_reported,
 ]
 
 

@@ -455,15 +455,43 @@ def case_disposal_refuses_any_path_that_is_not_its_own_temp_sandbox():
             "the system temp dir -- the repo root and data/ are both rejected")
 
 
+def _plant_abandoned_sandbox(tag):
+    """Plant a stale sandbox in the ONE state the sweep is allowed to act on:
+    prefix-named, under the temp dir, carrying a SANDBOX_MARKER whose lock
+    nobody holds -- what a run killed AFTER it marked itself leaves behind.
+
+    A MARKERLESS directory is deliberately not this shape. It is
+    indistinguishable from a live sibling caught between mkdtemp() and its own
+    _lock_marker() call, so the sweep must leave it alone; that is its own pair
+    of cases below.
+
+    Forcing a precondition means proving the forcing took, so this asserts both
+    halves: the marker exists, and it is genuinely free. Without the second
+    assert a case built on this fixture could pass because the sweep refused a
+    LIVE-looking directory, which is not the behaviour it claims to test."""
+    stale = pathlib.Path(tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + tag)).resolve()
+    (stale / "household.yaml").write_text("stranded private data\n")
+    (stale / DR.SANDBOX_MARKER).touch()
+    assert (stale / DR.SANDBOX_MARKER).is_file(), \
+        f"setup failed: the planted stale sandbox carries no marker: {stale}"
+    probe = DR.Sandbox._lock_marker(stale, create=False)
+    assert probe is not None, (
+        f"setup failed: the planted marker at {stale} could not be locked, so "
+        "this fixture would look like a LIVE sibling and any case built on it "
+        "would pass for the wrong reason")
+    probe.close()
+    return stale
+
+
 @case
 def case_stale_sandboxes_from_a_prior_run_are_swept_at_build_time():
     """A hard kill between mkdtemp() and dispose() strands a full copy of
     private/ under a name that already carries SANDBOX_PREFIX (issue #187) --
     three such directories, 787 files each, were found stranded on a real
-    machine. Plant one, then prove the NEXT sandbox built removes it via
-    Sandbox.build()'s own startup sweep, and leaves the new sandbox alone."""
-    stale = pathlib.Path(tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "stale-marker-"))
-    (stale / "household.yaml").write_text("stranded private data\n")
+    machine. Plant one in the provably-abandoned shape (marker present, lock
+    free), then prove the NEXT sandbox built removes it via Sandbox.build()'s
+    own startup sweep, and leaves the new sandbox alone."""
+    stale = _plant_abandoned_sandbox("stale-marker-")
     sb = None
     try:
         assert stale.is_dir(), "setup failed: the stale directory was not created"
@@ -593,8 +621,7 @@ def case_an_abandoned_sandboxs_baseline_and_head_copies_are_swept_with_it():
     proven dead and the copies are its leftovers too. Plant an abandoned
     sandbox with both copies beside it and prove the next build() takes all
     three, not just the sandbox."""
-    stale = pathlib.Path(tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "abandoned-")).resolve()
-    (stale / "household.yaml").write_text("stranded private data\n")
+    stale = _plant_abandoned_sandbox("abandoned-")
     copies = [stale.parent / (stale.name + suffix) for suffix in DR.COMPARISON_SUFFIXES]
     for copy in copies:
         copy.mkdir()
@@ -622,16 +649,14 @@ def case_an_abandoned_sandboxs_baseline_and_head_copies_are_swept_with_it():
 
 
 @case
-def case_a_stale_sandbox_the_sweep_cannot_remove_keeps_no_marker_of_ours():
-    """The liveness test CREATES the candidate's marker when it is missing, as
-    it is on anything stranded before build() got that far. When the removal
-    then fails, that file is litter the sweep left in a directory it does not
-    own and did not remove. Force the removal to fail and prove the inspection
-    puts the directory back exactly as it found it."""
-    stale = pathlib.Path(tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "unremovable-")).resolve()
-    (stale / "household.yaml").write_text("stranded private data\n")
-    assert not (stale / DR.SANDBOX_MARKER).exists(), \
-        "setup failed: the planted stale sandbox already carries a marker"
+def case_a_stale_sandbox_the_sweep_cannot_remove_is_left_as_found():
+    """Inspecting a candidate must change nothing about it. Force the removal
+    of a provably-abandoned sandbox to fail and prove the failed attempt leaves
+    the directory byte-for-byte as it was found -- its contents intact, and the
+    marker it arrived with still the only marker there, since the sweep never
+    creates one of its own."""
+    stale = _plant_abandoned_sandbox("unremovable-")
+    marker_before = (stale / DR.SANDBOX_MARKER).read_bytes()
     real_rmtree = DR.shutil.rmtree
     blocked = []
 
@@ -651,18 +676,67 @@ def case_a_stale_sandbox_the_sweep_cannot_remove_keeps_no_marker_of_ours():
         assert blocked, \
             "the sweep never tried to remove the planted sandbox, so this case proved nothing"
         assert stale.is_dir(), "the forced failure did not take: the sandbox is gone"
-        assert not (stale / DR.SANDBOX_MARKER).exists(), (
-            "the sweep left its own marker file behind in a stale sandbox it could "
-            f"not remove: {stale / DR.SANDBOX_MARKER}")
+        assert (stale / DR.SANDBOX_MARKER).read_bytes() == marker_before, (
+            "the failed sweep altered the candidate's own marker file: "
+            f"{stale / DR.SANDBOX_MARKER}")
+        assert sorted(p.name for p in stale.iterdir()) == \
+            sorted([DR.SANDBOX_MARKER, "household.yaml"]), (
+            "the failed sweep added or removed entries in a directory it does not "
+            f"own: {sorted(p.name for p in stale.iterdir())}")
         assert (stale / "household.yaml").is_file(), \
             "the failed sweep altered the contents of a directory it does not own"
     finally:
         if sb is not None:
             sb.dispose()
         real_rmtree(stale, ignore_errors=True)
-    return ("a stale sandbox the sweep cannot remove is left exactly as it was found "
-            "-- the marker file the liveness check had to create is taken back with "
-            "the failed attempt")
+    return ("a stale sandbox the sweep cannot remove is left exactly as it was "
+            "found -- same entries, same marker, contents untouched")
+
+
+@case
+def case_a_markerless_candidate_survives_the_sweep_and_is_reported():
+    """The liveness test may never manufacture its own evidence. A directory
+    carrying SANDBOX_PREFIX but NO marker is exactly what a live sibling looks
+    like in the window between its mkdtemp() and its own _lock_marker() call --
+    and what a pre-marker dry_run.py looks like for its entire run. A sweep
+    that CREATES the missing marker wins a lock against nobody, reads
+    "abandoned", and recursively deletes a live run's copy of private/;
+    reproduced directly before this guard existed. Plant that exact shape and
+    prove three things: it survives, the sweep did not mark it, and it is named
+    on stderr rather than silently skipped (issue #187 AC2 accepts a stale
+    sandbox being removed OR reported, and reporting is the only honest verdict
+    available for a candidate whose state is unknowable)."""
+    live = pathlib.Path(
+        tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "LIVE-mid-creation-")).resolve()
+    (live / "private").mkdir()
+    (live / "private" / "household.yaml").write_text("a live run's private data\n")
+    assert not (live / DR.SANDBOX_MARKER).exists(), \
+        "setup failed: the planted directory already carries a marker"
+    sb = None
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            sb = DR.Sandbox(ROOT).build()
+        assert live.is_dir(), (
+            "the sweep deleted a prefixed directory carrying no marker -- which is "
+            f"indistinguishable from a live run mid-creation: {live}")
+        assert (live / "private" / "household.yaml").is_file(), (
+            "the sweep destroyed the contents of a live run's sandbox, including "
+            "its copy of private/")
+        assert not (live / DR.SANDBOX_MARKER).exists(), (
+            "the sweep created a marker inside a directory it does not own; that "
+            "self-made, trivially-won lock is exactly what makes a live sibling "
+            "read as abandoned")
+        assert str(live) in err.getvalue(), (
+            "an unknowable candidate must be REPORTED, not silently skipped -- "
+            f"stderr never named it: {err.getvalue()!r}")
+    finally:
+        if sb is not None:
+            sb.dispose()
+        shutil.rmtree(live, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory with no marker -- a live run between "
+            "mkdtemp() and its own lock -- survives the startup sweep unmarked "
+            "and untouched, and is reported to stderr instead of removed")
 
 
 @case

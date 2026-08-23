@@ -108,6 +108,9 @@ SANDBOX_PREFIX = "sdge-dryrun-"
 # Without this, two overlapping dry_run.py invocations could have the later
 # one's sweep delete the earlier one's still-live sandbox out from under it --
 # a race this sweep would introduce, not one it fixes (issue #187 follow-up).
+# A candidate carrying NO marker is not evidence of abandonment either way: it
+# is equally a sibling between mkdtemp() and its own lock, so the sweep reports
+# it and leaves it alone rather than creating the marker itself.
 SANDBOX_MARKER = ".sandbox.lock"
 # dry_run() materialises the two comparison copies of data/ as SIBLINGS of the
 # sandbox, named from the sandbox's own name -- so they inherit SANDBOX_PREFIX
@@ -507,14 +510,24 @@ class Sandbox:
         return kept
 
     @staticmethod
-    def _lock_marker(sandbox_dir):
-        """Open (creating if absent) and non-blocking-exclusive-lock the marker
-        inside `sandbox_dir`. Returns the open file object holding the lock, or
-        None if the lock could not be acquired -- the caller decides what that
-        means (our own fresh sandbox: a real error; a sweep candidate: still in
-        use by someone else, leave it alone)."""
+    def _lock_marker(sandbox_dir, create=True):
+        """Non-blocking-exclusive-lock the marker inside `sandbox_dir`. Returns
+        the open file object holding the lock, or None if the lock could not be
+        acquired -- the caller decides what that means (our own fresh sandbox: a
+        real error; a sweep candidate: still in use by someone else, leave it
+        alone).
+
+        `create` decides whether a MISSING marker is brought into existence.
+        True (the default) is for a sandbox we own: we are the ones who put the
+        marker there. False is mandatory for _sweep_stale(), which inspects
+        directories it does NOT own: creating a marker in one and then locking
+        the file we just made is a trivially-won lock that proves nothing about
+        the owner, and it leaves our litter behind in someone else's directory.
+        With create=False a missing marker simply fails the open and returns
+        None, exactly as an unlockable one does -- so a caller that must tell
+        those two apart tests for the file itself, before calling."""
         try:
-            fd = open(sandbox_dir / SANDBOX_MARKER, "a+")
+            fd = open(sandbox_dir / SANDBOX_MARKER, "a+" if create else "r+")
         except OSError:
             return None
         try:
@@ -542,12 +555,22 @@ class Sandbox:
         contract belongs to dry_run()'s `finally` block alone, and is
         unchanged here.
 
-        LIVENESS CHECK, before touching anything: a non-blocking exclusive
-        lock attempt on the candidate's own SANDBOX_MARKER. A directory whose
-        owning process is still alive holds that lock, so the attempt fails
-        and the candidate is left alone -- without this, an overlapping
-        invocation's sweep could delete a SIBLING run's still-in-use sandbox,
-        which is a race this sweep would introduce, not one it fixes.
+        LIVENESS CHECK, before touching anything -- three outcomes, only one of
+        which removes anything:
+          * marker present and WE CAN LOCK IT -> the owner's flock is gone, so
+            the owner is gone: provably abandoned, remove it.
+          * marker present and we CANNOT lock it -> a live sibling holds it:
+            leave it alone, silently.
+          * NO marker at all -> unknowable, and never removed. A sibling caught
+            between its own mkdtemp() and its own _lock_marker() looks exactly
+            like this, as does a pre-marker version of this script; the
+            candidate is reported to stderr and left in place. The sweep never
+            creates a marker to lock (_lock_marker(create=False)) -- locking a
+            file we just made ourselves proves nothing about the owner, and it
+            would litter a directory we do not own.
+        Without this, an overlapping invocation's sweep could delete a SIBLING
+        run's still-in-use sandbox, which is a race this sweep would introduce,
+        not one it fixes.
 
         The two COMPARISON_SUFFIXES copies are excluded from candidacy for
         exactly that reason: they carry SANDBOX_PREFIX (they are named from
@@ -575,12 +598,23 @@ class Sandbox:
             p = p.resolve()
             if p == self.path or not p.is_dir() or not self._safe_to_dispose(p):
                 continue
-            # The marker may not exist yet on a candidate stranded before it was
-            # written; _lock_marker() creates it, so remember whether we are the
-            # ones who did, to leave no stray file in a directory we end up not
-            # removing (below).
-            marker_existed = (p / SANDBOX_MARKER).exists()
-            marker_fd = self._lock_marker(p)
+            # A candidate with NO marker is UNKNOWABLE, never abandoned: it is
+            # equally a sibling caught between its own mkdtemp() and its own
+            # _lock_marker() (the directory already carries SANDBOX_PREFIX but
+            # is not marked yet), or a pre-marker version of this script still
+            # running under the same prefix. Deleting either destroys a LIVE
+            # run's copy of private/. Report it and move on -- issue #187's AC2
+            # is satisfied by removing OR reporting a stale sandbox, and a
+            # report is the only honest verdict available here.
+            if not (p / SANDBOX_MARKER).exists():
+                print(f"[stale sandbox candidate left in place: {p} -- it carries "
+                      f"no {SANDBOX_MARKER}, so it is indistinguishable from a "
+                      "live run that has not marked itself yet; if no dry run is "
+                      "in progress this is a prior run's leftover holding a copy "
+                      "of private/, and you should delete it by hand]",
+                      file=sys.stderr)
+                continue
+            marker_fd = self._lock_marker(p, create=False)
             if marker_fd is None:
                 continue  # still in use (or unlockable) -- not our leftover to take
             # Hold the lock THROUGH the removal: releasing it first would let a
@@ -594,16 +628,9 @@ class Sandbox:
                       "leftover holding a copy of private/ (raw bill PDFs, "
                       "the Green Button export, household.yaml); delete it "
                       f"by hand. Cause: {e}]", file=sys.stderr)
-                if not marker_existed:
-                    # Inspecting a candidate must not litter it: this directory
-                    # stays on disk and is not ours, so the marker our own lock
-                    # attempt created goes with the attempt. Unlink before the
-                    # close: the flock lives on the open file description, so it
-                    # is still held for the rest of this block either way.
-                    try:
-                        (p / SANDBOX_MARKER).unlink()
-                    except OSError:
-                        pass  # best effort; the same cause that blocked rmtree
+                # Nothing to take back: the sweep never creates a marker (see
+                # _lock_marker's `create`), so a candidate it fails to remove is
+                # left exactly as it was found, marker and all.
             else:
                 self._sweep_comparison_copies(p)
             finally:

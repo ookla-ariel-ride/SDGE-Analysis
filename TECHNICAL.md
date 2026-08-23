@@ -4421,7 +4421,12 @@ cannot be inferred from the name alone, so every sandbox holds an exclusively `f
 `.sandbox.lock` for its whole lifetime and the sweep tries a NON-BLOCKING lock on each
 candidate first: the kernel drops a process's locks however it dies, so a marker that locks
 cleanly proves nobody is using that sandbox and one that refuses proves a sibling run still
-is. The lock is held through the `rmtree` rather than released before it, and `run_generator`
+is. A candidate carrying NO marker is a third case and not a sweepable one: a run sits
+prefixed-but-unmarked between `mkdtemp` and its own lock, and a `dry_run.py` predating this
+mechanism never marked itself at all, so an absent marker is indistinguishable from a live
+run and the sweep must not create one to test with. Those candidates are reported to stderr
+and left exactly as found — AC2 asks that leftovers be removed *or reported*, and reporting
+is the only honest answer when liveness is unknowable. The lock is held through the `rmtree` rather than released before it, and `run_generator`
 passes the marker fd to each child (`pass_fds`), since a `flock` belongs to the open file
 description — an orphaned generator outliving a killed parent keeps the sandbox looking in use,
 which is the crash shape the sweep exists to survive. A stale sandbox that cannot be removed is
