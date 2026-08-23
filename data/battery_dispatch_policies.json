@@ -154,13 +154,13 @@
   "solar_surplus": {
    "kwh": 704.51,
    "value_usd": 217.19,
-   "cost_per_kwh_stored": 0.30828,
+   "cost_per_kwh_ac_input": 0.30828,
    "cost_per_kwh_delivered": 0.34253,
    "by_period": {
     "on": {
      "kwh": 17.04,
      "value_usd": 12.19,
-     "cost_per_kwh_stored": 0.71575,
+     "cost_per_kwh_ac_input": 0.71575,
      "cost_per_kwh_delivered": 0.79528,
      "share_of_surplus_kwh": 0.0242,
      "reconciliation": {
@@ -174,7 +174,7 @@
     "off": {
      "kwh": 352.26,
      "value_usd": 169.73,
-     "cost_per_kwh_stored": 0.48183,
+     "cost_per_kwh_ac_input": 0.48183,
      "cost_per_kwh_delivered": 0.53537,
      "share_of_surplus_kwh": 0.5,
      "reconciliation": {
@@ -188,7 +188,7 @@
     "sop": {
      "kwh": 335.21,
      "value_usd": 35.26,
-     "cost_per_kwh_stored": 0.10519,
+     "cost_per_kwh_ac_input": 0.10519,
      "cost_per_kwh_delivered": 0.11688,
      "share_of_surplus_kwh": 0.4758,
      "reconciliation": {
@@ -222,7 +222,7 @@
   "grid_topup": {
    "kwh": 4532.64,
    "value_usd": 572.05,
-   "cost_per_kwh_stored": 0.12621,
+   "cost_per_kwh_ac_input": 0.12621,
    "cost_per_kwh_delivered": 0.14023,
    "census": {
     "netting_energy": {

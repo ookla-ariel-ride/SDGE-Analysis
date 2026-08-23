@@ -443,7 +443,13 @@ def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw):
             block["note"] = ("this dispatch charged nothing from this stream, so it "
                              "has no cost per kWh")
             return block
-        block["cost_per_kwh_stored"] = round(value / kwh, 5)
+        # AC INPUT, not what lands in the pack. `kwh` is measured at the meter:
+        # the export that stopped happening, or the import that started. Only
+        # kwh*ETA reaches the cells, so calling this "per kWh stored" overstates
+        # what the pack holds by 1/ETA (5.4% at 90% round-trip). The name says
+        # AC input; cost_per_kwh_delivered below is the figure to quote, and it
+        # carries the full round-trip loss (Codex review, issue #189).
+        block["cost_per_kwh_ac_input"] = round(value / kwh, 5)
         block["cost_per_kwh_delivered"] = round(value / kwh / rte, 5)
         return block
 
