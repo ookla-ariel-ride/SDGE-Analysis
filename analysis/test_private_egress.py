@@ -738,7 +738,11 @@ MOVERS = {
         moves="whatever the real stage-private-data.sh copies -- this runs it, "
               "against the real archive in the archive-present cases",
         destination="linked worktrees of this checkout, created and removed by the "
-                    "case, plus deliberately hostile fixtures the script must refuse",
+                    "case, plus deliberately hostile fixtures the script must "
+                    "refuse; the archive-present case's worktree lives inside a "
+                    "sdge-stage-private-* $TMPDIR sandbox whose lifecycle is "
+                    "guarded -- marker-locked while live, swept when stale, and a "
+                    "removal failure raised rather than stranded (issue #187)",
         guard="analysis/test_stage_private_data.py::"
               "case_accepts_a_registered_linked_worktree_and_the_register_names_it"),
 

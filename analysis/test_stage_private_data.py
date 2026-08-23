@@ -57,6 +57,9 @@ only_match() ever gains a new call site with a new pattern.
 Run from the repo root:  ./.venv/bin/python analysis/test_stage_private_data.py
 """
 import contextlib
+import errno
+import fcntl
+import io
 import os
 import pathlib
 import re
@@ -73,6 +76,65 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ANALYSIS = ROOT / "analysis"
 SCRIPT = ROOT / "stage-private-data.sh"
+
+# Issue #187: the sandbox in case_real_archive_stage_script_produces_every_required_path
+# is the only tempdir in this suite that receives a full copy of the real
+# private archive -- it holds a worktree that stage-private-data.sh fills with
+# `cp -R` (household.yaml, the Green Button export, gas.csv, the billing
+# history, electric-bills/, gas-bills/, caiso_raw/). Every other
+# TemporaryDirectory call in this file builds a purely SYNTHETIC fixture
+# (_synthetic_src, _throwaway_checkout, _operators_checkout) carrying no PII,
+# and stays on the plain "tmp*" default -- only this one needs a greppable,
+# sweepable name (pattern: dry_run.py's SANDBOX_PREFIX = "sdge-dryrun-").
+SANDBOX_PREFIX = "sdge-stage-private-"
+# A marker file inside the real-archive sandbox, flock'd exclusively for the
+# sandbox's whole lifetime. _sweep_stale_sandboxes() tries a NON-BLOCKING lock
+# on each candidate's marker before removing it: the OS releases a process's
+# flocks the instant it exits, crash or not, so a marker that locks cleanly
+# proves nobody is using that sandbox any more, and one that refuses proves a
+# sibling run still is. Without this, two overlapping real-archive suite runs
+# could have the later one's sweep delete the earlier one's still-live
+# sandbox out from under it -- a race this sweep would introduce, not fix.
+# A candidate carrying NO marker proves nothing either way: it is equally a
+# sibling between TemporaryDirectory() and its own lock, so the sweep reports
+# it and leaves it alone rather than creating the marker itself.
+SANDBOX_MARKER = ".sandbox.lock"
+# The ONLY errnos that mean "a live sibling really does hold this lock". flock
+# with LOCK_NB reports contention as EWOULDBLOCK/EAGAIN (Python raises
+# BlockingIOError, an OSError subclass, for those) -- and ONLY as those. Every
+# other OSError, from the open() or from the flock(), means we could not
+# establish liveness at all, which is a different verdict and must not be read
+# as "someone else is using it". Tested as a SET because EWOULDBLOCK == EAGAIN
+# on Linux and macOS but is not required to be equal everywhere.
+_LOCK_CONTENTION_ERRNOS = frozenset((errno.EWOULDBLOCK, errno.EAGAIN))
+
+
+class MarkerUnreadable(Exception):
+    """_lock_marker() could not establish liveness AT ALL: the marker would not
+    open (permissions, an I/O error), or flock() failed for a reason other than
+    contention. Deliberately NOT the same signal as the None return, which
+    means one specific, healthy thing -- a live sibling holds the lock.
+
+    Collapsing the two is the defect this class exists to prevent (issue #187
+    AC2). A sweep reading "unreadable" as "in use" skips an abandoned sandbox
+    SILENTLY, on this run and every future one, while it holds a full copy of
+    the private archive -- neither removed nor reported, which is the one
+    outcome AC2 forbids. Callers must decide: an owner locking its OWN fresh
+    marker treats this as a hard error, a sweep reports the candidate and moves
+    on. Mirrors dry_run.py's MarkerUnreadable."""
+
+
+def _discard_marker_temp(tmp_name):
+    """Remove a marker that never reached its canonical name (see _lock_marker's
+    create=True path). Best effort on purpose: the caller is already raising the
+    real failure, and a leftover under this name is invisible to the sweep,
+    which matches SANDBOX_MARKER exactly and nothing else.
+    Mirrors dry_run.py's _discard_marker_temp."""
+    try:
+        os.unlink(tmp_name)
+    except OSError:
+        pass
+
 
 # private/1-raw-data entries a generator's own NORMAL run needs but this
 # script deliberately does not stage, each with the reason -- an exemption
@@ -340,11 +402,298 @@ def _synthetic_src(td, household_yaml_text, has_gas_bills_dir, with_venv=True):
 # whose failing exit status was swallowed by the last command in the pipe, so
 # nothing in this suite may infer success from output text alone.
 # --------------------------------------------------------------------------
+def _lock_marker(sandbox_dir, create=True):
+    """Non-blocking-exclusive-lock the marker inside `sandbox_dir`. Three
+    outcomes, and the caller MUST be able to tell them apart:
+
+      * the open file object holding the lock -- we won it;
+      * None -- CONTENTION, and only contention: flock refused with
+        EWOULDBLOCK/EAGAIN, which means a live sibling holds the lock. This is
+        the normal, expected, healthy answer for a sweep, and the one case it
+        may act on silently;
+      * MarkerUnreadable -- liveness could not be established at all: the
+        open() failed (permissions, I/O error, or a marker that vanished under
+        create=False), or flock() failed with some other errno.
+
+    Returning None for that third case is the issue #187 AC2 defect: a
+    genuinely abandoned sandbox whose marker cannot be opened would be read as
+    "a sibling has it" and skipped in silence, forever, while holding a copy of
+    private data -- neither removed nor reported.
+
+    `create` decides whether a MISSING marker is brought into existence. True
+    (the default) is for a sandbox we own. False is mandatory for
+    _sweep_stale_sandboxes(), which inspects directories it does NOT own:
+    creating a marker there and then locking the file we just made is a
+    trivially-won lock that proves nothing about the owner, and it leaves our
+    litter behind. With create=False a missing marker fails the open, which is
+    now a MarkerUnreadable rather than a None -- callers that expect a
+    markerless candidate test for the file itself, before calling, and the
+    raise covers only the narrow race where it disappears in between.
+
+    A marker this call has to CREATE is published atomically, already locked.
+    Making the file under its canonical name and locking it a moment later
+    leaves a window -- between the open() and the flock() -- in which
+    SANDBOX_MARKER exists and is FREE, which is exactly the state the sweep is
+    built to read as "provably abandoned, remove it": a sibling sweeping in that
+    instant wins the lock and recursively deletes a LIVE sandbox. So the file is
+    built under a unique temporary name, flocked THERE, and only then linked
+    onto SANDBOX_MARKER. A flock lives on the open file DESCRIPTION, not on the
+    name, so it survives intact, and os.link() is both atomic and
+    non-clobbering; the temporary name is dropped afterwards either way, and the
+    sweep never sees it, matching SANDBOX_MARKER exactly and nothing else. The
+    canonical name therefore only ever becomes visible already locked.
+
+    A marker that is ALREADY THERE is opened and locked exactly as before,
+    create or not: there is no publication window to close for a file this call
+    did not create, and overwriting a live owner's marker would be a far worse
+    bug than the one that closes. os.link() refusing to clobber is what makes
+    that split safe rather than a check-then-act race -- if a sibling publishes
+    between the test and the link, its marker stands and we fall through to
+    locking THAT file, which is where genuine contention gets reported. Any
+    other failure to establish our own marker is raised, not swallowed: an owner
+    that cannot mark itself must fail loudly rather than run on unmarked and
+    sweepable.
+    Mirrors dry_run.py's Sandbox._lock_marker."""
+    path = pathlib.Path(sandbox_dir) / SANDBOX_MARKER
+    if create and not path.exists():
+        try:
+            raw, tmp_name = tempfile.mkstemp(prefix=SANDBOX_MARKER + ".new-",
+                                             dir=str(sandbox_dir))
+        except OSError as e:
+            raise MarkerUnreadable(
+                f"could not create a marker to publish as {path}: {e}") from e
+        try:
+            try:
+                fd = os.fdopen(raw, "a+")
+            except OSError as e:
+                os.close(raw)
+                raise MarkerUnreadable(
+                    f"could not open the marker built for {path}: {e}") from e
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as e:
+                fd.close()
+                # A private, just-created temporary has nobody to contend with,
+                # but the errno rule holds everywhere: only EWOULDBLOCK/EAGAIN
+                # returns None, and an owner treats that answer as fatal
+                # exactly as it treats a MarkerUnreadable.
+                if e.errno in _LOCK_CONTENTION_ERRNOS:
+                    return None
+                raise MarkerUnreadable(
+                    f"could not lock {tmp_name}, this run's own new marker "
+                    f"for {path}: {e}") from e
+            try:
+                os.link(tmp_name, path)
+            except OSError as e:
+                fd.close()
+                if e.errno != errno.EEXIST:
+                    raise MarkerUnreadable(
+                        f"could not publish {tmp_name} as {path}: {e}") from e
+                # A sibling published between the test above and this link.
+                # Its marker stands; fall through and lock THAT one.
+            else:
+                return fd         # published already locked, never unlocked
+        finally:
+            # On success the canonical link keeps the inode -- and this fd's
+            # lock with it -- alive; on every failure path there is nothing to
+            # keep. Either way the temporary name is finished.
+            _discard_marker_temp(tmp_name)
+    try:
+        fd = open(path, "a+" if create else "r+")
+    except OSError as e:
+        raise MarkerUnreadable(f"could not open {path}: {e}") from e
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as e:
+        fd.close()
+        if e.errno in _LOCK_CONTENTION_ERRNOS:
+            return None      # a live sibling holds it -- the healthy path
+        raise MarkerUnreadable(f"could not lock {path}: {e}") from e
+    return fd
+
+
+def _sweep_stale_sandboxes(exclude=None):
+    """Remove real-archive sandboxes stranded by a run that never reached its
+    own cleanup (issue #187: a SIGKILL, an OOM kill, or a Ctrl-C can all escape
+    tempfile.TemporaryDirectory's __exit__, leaving a full copy of the private
+    archive under SANDBOX_PREFIX). Called only from the real-archive path,
+    right before it creates a sandbox of its own -- the ~40 synthetic cases in
+    this file never make one worth sweeping for, so they must not pay this cost.
+    A removal failure here is this suite's own convention (see dry_run.py's
+    "[sandbox not removed: ...]"): report to stderr and keep going, rather than
+    crash the whole run over someone else's leftover.
+
+    LIVENESS CHECK, before touching anything -- four outcomes, only one of
+    which removes anything, and only one of which is silent:
+      * marker present and WE CAN LOCK IT -> the owner's flock is gone, so the
+        owner is gone: provably abandoned, remove it.
+      * marker present but UNREADABLE (it will not open, or flock fails for any
+        reason other than contention) -> liveness was never established. Not
+        removed -- we cannot prove it is dead -- but reported to stderr naming
+        the path and the cause. Silence here was the issue #187 AC2 defect: an
+        abandoned copy of the private archive that is neither removed nor reported is
+        indistinguishable from "nothing to do".
+      * marker present and flock refuses with EWOULDBLOCK/EAGAIN -> a live
+        sibling really does hold it (see _locked_real_archive_sandbox): leave
+        it alone, silently. This is the ONLY silent skip, because it is the
+        only one that has actually established liveness.
+      * NO marker at all -> unknowable, and never removed. A sibling caught
+        between its own TemporaryDirectory(prefix=...) and its own
+        _lock_marker() looks exactly like this, as does a pre-marker version of
+        this suite; the candidate is reported to stderr and left in place. The
+        sweep never creates a marker to lock (_lock_marker(create=False)) --
+        locking a file we just made proves nothing about the owner, and it
+        would litter a directory we do not own.
+    Without this, an overlapping invocation's sweep could delete a SIBLING
+    run's still-in-use sandbox, which is a race this sweep would introduce,
+    not one it fixes."""
+    for stale in pathlib.Path(tempfile.gettempdir()).glob(f"{SANDBOX_PREFIX}*"):
+        if not stale.is_dir() or stale == exclude:
+            continue
+        if not (stale / SANDBOX_MARKER).exists():
+            print(f"[test_stage_private_data: stale sandbox candidate left in "
+                  f"place: {stale} -- it carries no {SANDBOX_MARKER}, so it is "
+                  "indistinguishable from a live run that has not marked itself "
+                  "yet; if no run is in progress this is a prior run's leftover "
+                  "holding a copy of the private archive, and you should delete "
+                  "it by hand]", file=sys.stderr)
+            continue
+        # A marker we cannot even READ is not a live sibling. Skipping it
+        # silently -- which is what collapsing every OSError into None used to
+        # do -- leaves an abandoned copy of the private archive neither removed
+        # nor reported, on this run and every future one (issue #187 AC2).
+        # Report it in the same voice as the markerless case above; do NOT
+        # remove it, since an unreadable marker is no proof of death either.
+        try:
+            marker_fd = _lock_marker(stale, create=False)
+        except MarkerUnreadable as e:
+            print(f"[test_stage_private_data: stale sandbox candidate left in "
+                  f"place: {stale} -- "
+                  f"its {SANDBOX_MARKER} could not be read, so this run cannot "
+                  "tell a live sibling from a prior run's leftover holding a "
+                  f"copy of the private archive; fix the permissions or delete it by "
+                  f"hand once no run is in progress. Cause: {e}]", file=sys.stderr)
+            continue
+        if marker_fd is None:
+            continue  # a live sibling holds the lock -- not our leftover to take
+        # Hold the lock THROUGH the removal: releasing it first would let a
+        # process that is about to legitimately create a sandbox at this
+        # exact path acquire the now-unlocked marker and start using it a
+        # moment before we delete it out from under them (TOCTOU).
+        try:
+            shutil.rmtree(stale)
+        except OSError as e:
+            print(f"[test_stage_private_data: stale sandbox not removed: "
+                  f"{stale}: {e}]", file=sys.stderr)
+        finally:
+            marker_fd.close()
+
+
+# Sandbox path -> its held marker fd, populated only by
+# _locked_real_archive_sandbox and consulted only by _run_script(). Lets
+# _run_script() pass that fd through to the stage-private-data.sh subprocess it
+# launches (see _inherited_marker_fds) without threading a new parameter
+# through this file's ~40 `_run_script(...)` call sites -- every sandbox NOT
+# built by _locked_real_archive_sandbox (i.e. every synthetic fixture) is
+# simply absent from this dict and _run_script() behaves exactly as before.
+_ACTIVE_SANDBOX_MARKERS = {}
+
+
+def _inherited_marker_fds(dst):
+    """The marker fds a child staging into `dst` should inherit (issue #187
+    follow-up): a flock is held by the OPEN FILE DESCRIPTION, not the process,
+    so a child that inherits this fd keeps a real-archive sandbox looking "in
+    use" to any sibling's sweep even if THIS process is SIGKILLed while
+    stage-private-data.sh is still copying -- exactly the crash shape #187
+    exists to survive, and the window in which an orphaned `cp -R` is still
+    filling the sandbox. The destination is the worktree INSIDE the sandbox,
+    not the sandbox itself, so the lookup walks up from it; only the
+    real-archive path ever registers anything, so this is a no-op returning ()
+    for every synthetic call site."""
+    candidate = pathlib.Path(dst)
+    for path in (candidate, *candidate.parents):
+        marker_fd = _ACTIVE_SANDBOX_MARKERS.get(str(path))
+        if marker_fd is not None:
+            return (marker_fd.fileno(),)
+    return ()
+
+
+@contextlib.contextmanager
+def _locked_real_archive_sandbox():
+    """A TemporaryDirectory for the ONE case that stages this machine's real
+    private archive: SANDBOX_PREFIX-named so a stranded copy is greppable,
+    holding its own SANDBOX_MARKER locked for the whole block (including
+    through its own removal) so a sibling process's _sweep_stale_sandboxes()
+    sees it as still in use rather than deleting it out from under this run,
+    and sweeping other runs' leftovers before it starts.
+
+    Managed by hand rather than `with tempfile.TemporaryDirectory()`: that
+    context manager's own __exit__ (the rmtree) would run AFTER this
+    function's `finally` released the marker, reopening the exact TOCTOU
+    window the marker exists to close (a sibling's sweep could lock the freed
+    marker and start using this path a moment before removal completes).
+
+    A removal failure is raised loudly rather than left to surface as a bare
+    OSError, so it is reported as what it actually is -- a stranded copy of
+    the private archive -- matching dry_run.py's contract that a sandbox that
+    cannot be deleted is a FAILURE, never a quiet success."""
+    td_obj = tempfile.TemporaryDirectory(prefix=SANDBOX_PREFIX)
+    sandbox_path = td_obj.name
+    # Lock our own marker BEFORE sweeping: a sweep that ran first (ours or a
+    # sibling's) could otherwise see this brand-new, still-unmarked directory
+    # as unused. _sweep_stale_sandboxes also excludes it by identity as a
+    # belt-and-suspenders check.
+    # An owner has no use for the contention/unreadable distinction: BOTH mean
+    # this run cannot hold its own marker, and both must fail exactly as loudly
+    # as before. Only the sweep, which judges directories it does not own,
+    # needs to tell them apart.
+    try:
+        marker_fd = _lock_marker(sandbox_path)
+    except MarkerUnreadable as e:
+        td_obj.cleanup()
+        raise RuntimeError(
+            f"could not lock the real-archive sandbox's own marker file: "
+            f"{sandbox_path} -- a freshly created, uniquely-named sandbox "
+            f"should never fail this; refusing rather than running unmarked "
+            f"and sweepable. Cause: {e}")
+    if marker_fd is None:
+        td_obj.cleanup()
+        raise RuntimeError(
+            f"could not lock the real-archive sandbox's own marker file: "
+            f"{sandbox_path} -- a freshly created, uniquely-named sandbox "
+            "should never fail this; refusing rather than running unmarked "
+            "and sweepable.")
+    _sweep_stale_sandboxes(exclude=pathlib.Path(sandbox_path))
+    _ACTIVE_SANDBOX_MARKERS[sandbox_path] = marker_fd
+    try:
+        yield sandbox_path
+    finally:
+        # Hold our own marker lock THROUGH cleanup(), releasing only after:
+        # closing it first would let a sibling's sweep lock the now-unlocked
+        # marker and treat this sandbox as abandoned while we still hold it,
+        # or let another legitimate creation land on the same freed path a
+        # moment before removal completes (TOCTOU).
+        try:
+            del _ACTIVE_SANDBOX_MARKERS[sandbox_path]
+            try:
+                td_obj.cleanup()
+            except OSError as e:
+                raise RuntimeError(
+                    f"the real-archive sandbox could not be removed: {sandbox_path} "
+                    "-- it holds a full copy of the private archive (household.yaml, "
+                    "private/1-raw-data, private/verify fixtures). Delete it by "
+                    f"hand. Cause: {e}") from e
+        finally:
+            marker_fd.close()
+
+
 def _run_script(src, dst, cwd, script=SCRIPT, env=None, timeout=None):
     argv = ["bash", str(script), str(src), str(dst)]
+    # Only the real-archive sandbox ever registers a marker; () for the rest.
+    pass_fds = _inherited_marker_fds(dst)
     if timeout is None:
         return subprocess.run(argv, capture_output=True, text=True,
-                              cwd=str(cwd), env=env)
+                              cwd=str(cwd), env=env, pass_fds=pass_fds)
     # A BOUNDED run, for the fixtures that plant something `cp` can block on
     # forever (a FIFO with no reader). Two things subprocess.run's own timeout
     # would not do: it kills only the bash it started, and the process actually
@@ -354,7 +703,8 @@ def _run_script(src, dst, cwd, script=SCRIPT, env=None, timeout=None):
     # as a slow pass, which is why it raises: a guard case whose script hangs
     # has found the defect, not an infrastructure problem.
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, cwd=str(cwd), env=env, start_new_session=True)
+                            text=True, cwd=str(cwd), env=env, start_new_session=True,
+                            pass_fds=pass_fds)
     try:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -2903,6 +3253,403 @@ def case_has_gas_is_read_with_real_yaml_semantics_not_text_scanning():
 
 
 @case
+def case_the_real_archive_sandbox_is_named_and_removed_on_the_failure_path():
+    """The sandbox the real-archive case stages into must carry SANDBOX_PREFIX
+    and must be gone even when the block around it dies partway through --
+    that stranding IS issue #187 (three anonymous `tmp*` directories, 787 files
+    each, holding a full copy of the private archive, four days old at
+    discovery). Proven on the EXCEPTION path, not the happy one, because the
+    happy path was never the one that leaked. Needs no private data: what is
+    under test is the sandbox's lifecycle, not what gets copied into it."""
+    seen = {}
+
+    class _Injected(Exception):
+        pass
+
+    try:
+        with _locked_real_archive_sandbox() as td:
+            seen["path"] = td
+            assert pathlib.Path(td).is_dir(), "the sandbox was not created"
+            (pathlib.Path(td) / "household.yaml").write_text("stand-in for the archive\n")
+            raise _Injected("injected: simulated crash inside the sandbox block")
+    except _Injected:
+        pass
+    else:
+        raise AssertionError(
+            "the injected failure did not propagate out of the sandbox block, "
+            "so this case proved nothing about the failure path")
+    assert pathlib.Path(seen["path"]).name.startswith(SANDBOX_PREFIX), (
+        f"sandbox was not created with SANDBOX_PREFIX: {seen['path']}")
+    assert not pathlib.Path(seen["path"]).exists(), (
+        f"the real-archive sandbox survived an exception mid-block: "
+        f"{seen['path']} -- it may still hold a copy of the private archive")
+    return ("the real-archive sandbox is SANDBOX_PREFIX-named and removed even "
+            "when the block around it raises")
+
+
+@case
+def case_a_real_archive_sandbox_that_cannot_be_removed_fails_loudly():
+    """Issue #187 AC3: _locked_real_archive_sandbox turns a failed removal
+    into a loud RuntimeError that names the private archive still on disk,
+    rather than letting a bare OSError surface (or, worse, passing). This
+    matches dry_run.py's contract that a sandbox that cannot be deleted is a
+    FAILURE, never a quiet success.
+
+    Forcing a real cleanup() failure genuinely strands the sandbox, so this
+    case removes it itself afterwards and asserts it succeeded -- a case
+    about not stranding directories must not strand one."""
+    real_tempdir_cls = tempfile.TemporaryDirectory
+    captured = []
+    fired = {"cleanup": False}
+
+    class _UnremovableTempDir(real_tempdir_cls):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            captured.append(self.name)
+
+        def cleanup(self):
+            if not fired["cleanup"]:
+                fired["cleanup"] = True
+                raise OSError(
+                    "injected: simulated undeletable sandbox (issue #187 AC3)")
+            return super().cleanup()
+
+    tempfile.TemporaryDirectory = _UnremovableTempDir
+    try:
+        try:
+            with _locked_real_archive_sandbox():
+                pass
+            raise AssertionError(
+                "expected the injected cleanup failure to propagate out of "
+                "_locked_real_archive_sandbox, but the block exited cleanly")
+        except RuntimeError as e:
+            message = str(e)
+    finally:
+        tempfile.TemporaryDirectory = real_tempdir_cls
+
+    assert fired["cleanup"], (
+        "the injected cleanup failure never fired, so this case proves "
+        "nothing about the undeletable-sandbox path")
+    assert "could not be removed" in message, (
+        f"the failure never named the removal problem: {message!r}")
+    assert "full copy of the private archive" in message, (
+        f"the failure never named what is still on disk: {message!r}")
+    assert not _ACTIVE_SANDBOX_MARKERS, (
+        "the sandbox stayed in the active-marker registry after its block "
+        f"ended, so a later sweep would treat it as live: {_ACTIVE_SANDBOX_MARKERS}")
+
+    assert captured, "the recording TemporaryDirectory was never constructed"
+    stranded = pathlib.Path(captured[-1])
+    shutil.rmtree(stranded, ignore_errors=True)
+    assert not stranded.exists(), (
+        "this case could not remove the sandbox it deliberately stranded, so "
+        f"it has left one behind: {stranded}")
+    return ("a real-archive sandbox that cannot be removed fails loudly, "
+            "naming the private archive still on disk")
+
+@case
+def case_the_sweep_never_removes_a_real_archive_sandbox_a_live_process_still_holds():
+    """A prefix-matching directory alone is not proof of abandonment: two
+    overlapping real-archive suite runs both carry SANDBOX_PREFIX while both
+    are legitimately alive. A sweep that removed on name alone could delete a
+    SIBLING run's sandbox out from under it -- a race the sweep would
+    introduce, not fix. Simulate a still-running sibling by holding its marker
+    locked ourselves, exactly as _locked_real_archive_sandbox would for its
+    whole lifetime, then prove _sweep_stale_sandboxes leaves it alone. Needs no
+    private data -- the sweep and the marker never touch archive content."""
+    live = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + "still-running-"))
+    (live / "household.yaml").write_text("a live sibling's private data\n")
+    held_fd = _lock_marker(live)
+    assert held_fd is not None, "setup failed: could not lock the simulated sibling's marker"
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            _sweep_stale_sandboxes()
+        assert live.is_dir(), (
+            f"the sweep removed a sandbox whose marker was still locked "
+            f"(a live sibling): {live}")
+        assert (live / "household.yaml").is_file(), \
+            "the sweep touched the contents of a still-in-use sibling sandbox"
+        # The positive control for the unreadable-marker case below: genuine
+        # contention (EWOULDBLOCK/EAGAIN) is the one liveness answer the sweep
+        # has actually established, so it stays SILENT. Without this assert,
+        # making every skip noisy would pass both cases.
+        assert str(live) not in err.getvalue(), (
+            "a live sibling holding its own lock is the normal, healthy path "
+            "and must be skipped silently, but the sweep reported it: "
+            f"{err.getvalue()!r}")
+    finally:
+        held_fd.close()
+        shutil.rmtree(live, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory whose marker is still locked -- a live sibling "
+            "run -- survives _sweep_stale_sandboxes untouched, and silently: real lock "
+            "contention is the one liveness answer the sweep may act on without a word")
+
+
+def _plant_abandoned_sandbox(tag):
+    """A stale sandbox in the ONE state the sweep may act on: prefix-named,
+    carrying a SANDBOX_MARKER whose lock nobody holds -- what a run killed
+    AFTER it marked itself leaves behind. A MARKERLESS directory is
+    deliberately not this shape (see the case below).
+
+    Forcing a precondition means proving the forcing took, so both halves are
+    asserted: the marker is there, and it is genuinely free. Without the second
+    assert a case could pass because the sweep refused a LIVE-looking
+    directory, which is not the behaviour it claims to test."""
+    stale = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + tag))
+    (stale / "household.yaml").write_text("stranded private data\n")
+    (stale / SANDBOX_MARKER).touch()
+    assert (stale / SANDBOX_MARKER).is_file(), \
+        f"setup failed: the planted stale sandbox carries no marker: {stale}"
+    probe = _lock_marker(stale, create=False)
+    assert probe is not None, (
+        f"setup failed: the planted marker at {stale} could not be locked, so "
+        "this fixture would look like a LIVE sibling and the case built on it "
+        "would pass for the wrong reason")
+    probe.close()
+    return stale
+
+
+@case
+def case_an_abandoned_real_archive_sandbox_carrying_a_free_marker_is_swept():
+    """The positive half of the pair: a directory whose marker exists and locks
+    cleanly is PROVABLY abandoned -- the OS drops a process's flocks the instant
+    it exits -- so the sweep must still remove it, private copy and all.
+    Without this, the guard below could be satisfied by a sweep that removed
+    nothing at all."""
+    stale = _plant_abandoned_sandbox("abandoned-")
+    try:
+        _sweep_stale_sandboxes()
+        assert not stale.exists(), (
+            "a provably abandoned sandbox -- marker present, lock free -- was "
+            f"not swept: {stale}")
+    finally:
+        shutil.rmtree(stale, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory whose marker exists and locks cleanly is "
+            "proven abandoned and is removed by _sweep_stale_sandboxes")
+
+
+@case
+def case_a_markerless_candidate_survives_the_sweep_and_is_reported():
+    """The liveness test may never manufacture its own evidence. A directory
+    carrying SANDBOX_PREFIX but NO marker is exactly what a live sibling looks
+    like between its TemporaryDirectory(prefix=...) and its own _lock_marker()
+    call, and what any pre-marker version of this suite looks like for its
+    whole run. A sweep that CREATES the missing marker wins a lock against
+    nobody, reads "abandoned", and deletes a live run's copy of the private
+    archive. Prove such a candidate survives, is not marked by the sweep, and
+    is reported on stderr instead (issue #187 AC2 accepts removed OR reported;
+    reporting is the only honest verdict when the state is unknowable)."""
+    live = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + "LIVE-mid-creation-"))
+    (live / "household.yaml").write_text("a live run's private data\n")
+    assert not (live / SANDBOX_MARKER).exists(), \
+        "setup failed: the planted directory already carries a marker"
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            _sweep_stale_sandboxes()
+        assert live.is_dir(), (
+            "the sweep deleted a prefixed directory carrying no marker -- which is "
+            f"indistinguishable from a live run mid-creation: {live}")
+        assert (live / "household.yaml").is_file(), \
+            "the sweep destroyed the contents of a live run's sandbox"
+        assert not (live / SANDBOX_MARKER).exists(), (
+            "the sweep created a marker inside a directory it does not own; that "
+            "self-made, trivially-won lock is what makes a live sibling read as "
+            "abandoned")
+        assert str(live) in err.getvalue(), (
+            "an unknowable candidate must be REPORTED, not silently skipped -- "
+            f"stderr never named it: {err.getvalue()!r}")
+    finally:
+        shutil.rmtree(live, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory with no marker -- a live run between "
+            "TemporaryDirectory() and its own lock -- survives the sweep unmarked "
+            "and untouched, and is reported to stderr instead of removed")
+
+
+def _plant_unopenable_marker_sandbox(tag):
+    """A stale sandbox whose marker EXISTS but cannot be OPENED (mode 0o000).
+
+    This is the liveness outcome that is neither of the other two: not "we won
+    the lock" and not "a live sibling holds it", but "we could not establish
+    liveness at all". Before the fix _lock_marker collapsed it into the same
+    None a live sibling returns, so the sweep skipped such a candidate in
+    SILENCE -- on that run and every future one -- while it held a copy of the
+    private archive. Neither removed nor reported is the one outcome issue #187
+    AC2 forbids.
+
+    Not removed by the fixed sweep either, and deliberately so: an unreadable
+    marker is no more proof of death than a missing one. The required behaviour
+    is a REPORT.
+
+    chmod 0o000 does not stop the file's owner from opening it when the process
+    runs as root, and some filesystems ignore the mode outright, so the forcing
+    is VERIFIED rather than assumed: if the open still succeeds this raises
+    SkipCase instead of letting the case pass vacuously. Returns
+    (sandbox, marker); the caller MUST restore the mode in a `finally`, so no
+    case leaves an unreadable file behind."""
+    stale = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + tag))
+    (stale / "household.yaml").write_text("stranded private data\n")
+    marker = stale / SANDBOX_MARKER
+    marker.touch()
+    os.chmod(marker, 0o000)
+    try:
+        open(marker, "r+").close()
+    except OSError:
+        pass
+    else:
+        os.chmod(marker, 0o600)
+        shutil.rmtree(stale, ignore_errors=True)
+        raise SkipCase(
+            "chmod 0o000 does not make a file unopenable here (running as "
+            "root, or a filesystem that ignores the mode), so this case "
+            "cannot force the unreadable-marker state it exists to test")
+    return stale, marker
+
+
+@case
+def case_an_unreadable_marker_is_reported_not_silently_skipped():
+    """A candidate whose marker cannot be opened has told us NOTHING about
+    whether its owner is alive, so treating that failure as "a sibling holds
+    it" is a guess dressed as evidence -- and a silent one. Plant a sandbox
+    holding a copy of the private archive whose marker is mode 0o000, and prove
+    the sweep names it on stderr with the cause, rather than skipping it
+    without a word (issue #187 AC2: removed OR reported, never neither).
+
+    It must also SURVIVE: an unreadable marker is not proof of death, so
+    deleting it would be the sibling-destroying race the marker exists to
+    prevent, with a worse excuse."""
+    stale, marker = _plant_unopenable_marker_sandbox("unreadable-marker-")
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            _sweep_stale_sandboxes()
+        assert stale.is_dir(), (
+            "the sweep deleted a candidate whose marker it could not even read "
+            f"-- an unreadable marker is not proof the owner is dead: {stale}")
+        assert (stale / "household.yaml").is_file(), \
+            "the sweep destroyed the contents of a candidate it could not read"
+        assert str(stale) in err.getvalue(), (
+            "a candidate whose marker cannot be read was skipped in SILENCE, "
+            "which is indistinguishable from 'nothing to do', while it holds a "
+            f"copy of the private archive: stderr was {err.getvalue()!r}")
+        assert "could not be read" in err.getvalue(), (
+            "the report must name the CAUSE as well as the path, or the reader "
+            f"cannot tell it from the markerless case: {err.getvalue()!r}")
+    finally:
+        os.chmod(marker, 0o600)
+        shutil.rmtree(stale, ignore_errors=True)
+    return ("a SANDBOX_PREFIX directory whose marker cannot be opened is "
+            "reported to stderr by name and cause, and left in place -- never "
+            "skipped in silence as though a live sibling held it")
+
+
+def _canonical_marker_is_free(sandbox_dir, flock):
+    """The SWEEP's verdict on `sandbox_dir`, taken right now and with the
+    primitive operations rather than through _lock_marker -- because
+    _lock_marker is the thing being observed. True means SANDBOX_MARKER both
+    EXISTS and has a FREE lock, which is the one state the sweep removes on.
+
+    The real fcntl.flock is passed in: the caller observes _lock_marker by
+    replacing fcntl.flock, and a probe measuring through that replacement would
+    recurse into the observer. Any lock this wins is released before it returns
+    -- a probe may not alter what it measures."""
+    marker = pathlib.Path(sandbox_dir) / SANDBOX_MARKER
+    if not marker.exists():
+        return False
+    try:
+        fh = open(marker, "r+")
+    except OSError:
+        return False
+    try:
+        flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False            # somebody holds it -- a sweep would skip it
+    finally:
+        fh.close()
+    return True
+
+
+@case
+def case_a_new_marker_is_never_visible_to_the_sweep_unlocked():
+    """Creating the marker under its canonical name and locking it a moment
+    later publishes a LIVE sandbox in the ABANDONED state for the instant in
+    between: SANDBOX_MARKER on disk with a free lock is exactly what the sweep
+    deletes on
+    (case_an_abandoned_real_archive_sandbox_carrying_a_free_marker_is_swept).
+    A sibling sweeping in that window wins the lock and recursively removes a
+    running sandbox and its copy of the private archive.
+    Locking the missing-marker window shut closed the gap BEFORE the file
+    exists; this is the gap immediately after it appears.
+
+    _lock_marker(create=True) therefore locks a uniquely-named temporary first
+    and renames it onto the canonical name -- a flock lives on the open file
+    DESCRIPTION, not on the name, so it survives the rename and the canonical
+    marker only ever becomes visible already locked.
+
+    Observed at the one instant that separates the two implementations, the
+    flock() call itself, and then confirmed from outside: an independent
+    attempt on the published marker must report contention."""
+    d = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + "atomic-marker-"))
+    real_flock = fcntl.flock
+    seen = {"calls": 0, "sweepable": None}
+
+    def observing_flock(fd, op):
+        # The old implementation had already created the canonical marker by
+        # the time it reached here, and had not yet locked it.
+        if seen["calls"] == 0:
+            seen["sweepable"] = _canonical_marker_is_free(d, real_flock)
+        seen["calls"] += 1
+        return real_flock(fd, op)
+
+    held = None
+    try:
+        fcntl.flock = observing_flock
+        try:
+            held = _lock_marker(d)
+        finally:
+            fcntl.flock = real_flock
+        # Forcing a precondition means proving the forcing took: an observer
+        # that never fired would make every assertion below vacuous.
+        assert seen["calls"] >= 1, (
+            "setup failed: _lock_marker never called fcntl.flock, so this case "
+            "observed nothing")
+        assert seen["sweepable"] is False, (
+            f"{SANDBOX_MARKER} was on disk with a FREE lock while its owner "
+            "was still acquiring it -- a sibling's sweep reads exactly that as "
+            "'provably abandoned' and would delete this LIVE sandbox")
+        assert held is not None, \
+            "the owner did not win the lock on its own fresh marker"
+        assert (d / SANDBOX_MARKER).is_file(), (
+            f"_lock_marker returned without publishing {SANDBOX_MARKER}, so the "
+            "sweep would read this live sandbox as unknowable forever")
+        # From the outside, the way a sweep sees it: the published marker is
+        # locked, so an independent attempt reports contention rather than
+        # winning it.
+        second = _lock_marker(d, create=False)
+        if second is not None:
+            second.close()
+            raise AssertionError(
+                "a second, independent attempt LOCKED the published marker, so "
+                "the marker its owner published is not actually held -- the "
+                "sweep would remove this sandbox")
+        # A rename leaves nothing behind; a copy would. Nothing but the
+        # canonical marker may remain, or the temporary itself becomes litter
+        # inside every sandbox.
+        leftovers = sorted(p.name for p in d.iterdir())
+        assert leftovers == [SANDBOX_MARKER], (
+            "the marker was not published by rename -- the sandbox holds more "
+            f"than its canonical marker: {leftovers}")
+    finally:
+        if held is not None:
+            held.close()
+        shutil.rmtree(d, ignore_errors=True)
+    return ("a sandbox's own marker is published atomically: the canonical "
+            ".sandbox.lock never exists unlocked, so no sibling's sweep can "
+            "read a live sandbox as abandoned and delete it")
+
+
+@case
 def case_real_archive_stage_script_produces_every_required_path():
     """End-to-end proof of AC-1: run the actual script against this
     machine's real private archive into a scratch directory, and check every
@@ -2914,7 +3661,12 @@ def case_real_archive_stage_script_produces_every_required_path():
         raise SkipCase("needs this machine's real private/ archive, which "
                        "this checkout does not have")
     referenced = _referenced_1raw_data_paths()
-    with tempfile.TemporaryDirectory() as td:
+    # The one sandbox in this suite that receives real private data, so the one
+    # that gets the prefixed, marker-locked, swept, loudly-failing lifecycle
+    # (issue #187): stage-private-data.sh copies -- not symlinks -- the whole
+    # archive into the worktree below, so a process killed mid-run would strand
+    # a full PII copy under $TMPDIR under an anonymous `tmp*` name.
+    with _locked_real_archive_sandbox() as td:
         # A real linked worktree, not a bare temp directory: since issue #184
         # the script stages only into a working tree of this checkout.
         # cwd=src: same reason as the synthetic-fixture case above -- without

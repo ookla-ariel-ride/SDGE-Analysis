@@ -4411,6 +4411,46 @@ checkout that stages bill PDFs as symlinks carries no route back out; the CWD fi
 `--timeout` (1800 s default), and disposal refuses any path that is not the prefixed temp
 sandbox this process created.
 
+**Stranded sandboxes, and why the sweep needs a lock.** `TemporaryDirectory` and the `finally`
+that disposes of this one both unwind only on an ordinary exit; a `SIGKILL` between `mkdtemp`
+and teardown leaves a full copy of `private/` on disk, findable but unwatched by every other
+control in the repo — the pre-commit hook reads staged content, CI reads committed history,
+`privacy_tiers.py` reads tracked files, and none of them looks at `$TMPDIR` (issue #187). Each
+run therefore sweeps the temp dir for prefixed leftovers before seeding its own. Abandonment
+cannot be inferred from the name alone, so every sandbox holds an exclusively `flock`ed
+`.sandbox.lock` for its whole lifetime and the sweep tries a NON-BLOCKING lock on each
+candidate first: the kernel drops a process's locks however it dies, so a marker that locks
+cleanly proves nobody is using that sandbox and one that refuses proves a sibling run still
+is. A candidate carrying NO marker is a third case and not a sweepable one: a run sits
+prefixed-but-unmarked between `mkdtemp` and its own lock, and a `dry_run.py` predating this
+mechanism never marked itself at all, so an absent marker is indistinguishable from a live
+run and the sweep must not create one to test with. Those candidates are reported to stderr
+and left exactly as found — AC2 asks that leftovers be removed *or reported*, and reporting
+is the only honest answer when liveness is unknowable. A marker that exists but cannot be
+READ — permissions, an I/O error — is the same answer for the same reason, so the lock helper
+distinguishes genuine contention (`EWOULDBLOCK`/`EAGAIN`, a live sibling, the one healthy case
+and the only silent one) from every other failure, which is reported with its cause. Silence
+would otherwise be indistinguishable from "nothing to do" in exactly the case where a copy of
+`private/` persists on every future run. Four outcomes, then: one removes, one is silent, two
+report. The marker is also PUBLISHED atomically: an owner creates it under a temporary name,
+locks it there, and links it onto `.sandbox.lock` — `os.link` refuses to overwrite, so losing
+that race is an `EEXIST` rather than a clobbered sibling, and a `flock` follows the open file
+description rather than the name. Creating the file and locking it as two visible steps would
+leave the canonical name on disk unlocked for an instant, which is precisely the state the
+sweep reads as "provably abandoned". The lock is held through the `rmtree` rather than released before it, and `run_generator`
+passes the marker fd to each child (`pass_fds`), since a `flock` belongs to the open file
+description — an orphaned generator outliving a killed parent keeps the sandbox looking in use,
+which is the crash shape the sweep exists to survive. A stale sandbox that cannot be removed is
+reported to stderr and left alone; it belongs to a prior run, so it must not fail the current
+one. The two comparison copies (`-baseline`/`-head`) can hold no marker of their own — nothing
+keeps them open — so their liveness is unknowable and they are never standalone sweep
+candidates; the sweep reaches one only through an owning sandbox it has just claimed and
+removed, and `--keep-sandbox` renames them out of the prefix alongside the sandbox itself, so a
+kept tree keeps the baseline it was compared against instead of orphaning it. The same
+prefix/marker/sweep pattern guards the three test suites that stage the real archive:
+`test_scripts_runnable.py` (`sdge-scripts-runnable-`), `test_parse_bills.py`
+(`sdge-parse-bills-`) and `test_stage_private_data.py` (`sdge-stage-private-`).
+
 **Why a "no changes" verdict can be believed.** Three things must hold before any diff is
 reported: the generator exited 0, the sandbox was populated (`analysis/` and `data/` both
 present and non-empty), and the run actually WROTE something — every seeded file is backdated
