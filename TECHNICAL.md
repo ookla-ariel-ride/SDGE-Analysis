@@ -400,7 +400,8 @@ carrying a retired package-payback framing. Its schema:
   (`battery_alone_payback_evening_only_yr` 8.4),
   `projected_bill_current_rates_yr` **1445**, `note` (single integrated shift-then-battery run);
 - `packages.HIGH`: `cost` 20400, `marginal_vs_mid_yr` **216** post-behavior (~27-yr marginal payback on the
-  $5,900 expansion — buys outage endurance, not savings);
+  $5,900 expansion, which it does not earn back inside the warranty — what it buys is
+  outage endurance);
 - `superseded` — records that dividing hardware cost by combined behavior+battery savings is
   invalid; battery-alone payback is the honest hardware metric.
 

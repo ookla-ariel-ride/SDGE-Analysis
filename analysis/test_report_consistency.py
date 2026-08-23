@@ -5983,6 +5983,51 @@ def case_stored_kwh_costs_match_the_dispatch_artifact():
     return ("section 6's three stored-kWh costs and the midday share all match "
             "data/battery_dispatch_policies.json")
 
+
+def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
+    """Issue #142. The HIGH package card asserted "$216/yr more than MID" and
+    then, in the very next bullet, "this package buys outage endurance, not
+    savings". `packages.HIGH.marginal_vs_mid_yr` is positive, so the first
+    bullet is the artifact's and the second contradicted it.
+
+    That is not a wording preference. A reader deciding whether to buy the
+    expansion needs "it saves too little to earn back $5,900", not "it saves
+    nothing" -- those are different purchase advice, and only the second rules
+    the pack out on its own terms. Someone whose own numbers differ would be
+    led the wrong way.
+
+    Pinned by SHAPE, not by the one string that was there: the figure must
+    match the artifact, and no published prose may deny a saving the artifact
+    reports as positive. #131 added the equivalent guard for the token-owned
+    section 7 verdict; this is the half that sees hand-authored prose."""
+    art = json.loads((ROOT / "data" / "package_results.json").read_text())
+    marginal = art["packages"]["HIGH"]["marginal_vs_mid_yr"]
+
+    printed = f"~${marginal:,.0f}/yr more than MID"
+    assert printed in HTML, (
+        f"the HIGH card does not state its own artifact's marginal saving "
+        f"({printed!r} from packages.HIGH.marginal_vs_mid_yr)")
+
+    if marginal <= 0:
+        return ("packages.HIGH.marginal_vs_mid_yr is not positive, so the "
+                "denial-of-savings check does not apply")
+
+    # Phrasings that assert the saving is ABSENT rather than too small. Checked
+    # across every document that publishes this claim, because the same
+    # sentence lived in three of them and an index.html-only sweep is how it
+    # survived the first correction.
+    denials = ("endurance, not savings", "not savings", "no savings",
+               "saves nothing", "zero savings", "rather than savings")
+    for doc in ("index.html", "report-template.html", "TECHNICAL.md"):
+        text = (ROOT / doc).read_text()
+        for phrase in denials:
+            assert phrase not in text.lower(), (
+                f"{doc} says {phrase!r} about a package whose artifact reports a "
+                f"POSITIVE marginal saving of ${marginal:,.0f}/yr. Say it saves too "
+                "little to earn back the increment; do not say it does not save")
+    return (f"the HIGH card states its artifact's ${marginal:,.0f}/yr marginal saving and "
+            "no published document denies that a saving exists")
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -6060,6 +6105,7 @@ CASES = [
     case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch,
     case_every_published_export_figure_names_its_treatment,
     case_stored_kwh_costs_match_the_dispatch_artifact,
+    case_the_high_card_never_denies_the_saving_its_own_bullet_states,
 ]
 
 
