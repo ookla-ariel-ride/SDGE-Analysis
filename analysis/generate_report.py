@@ -184,6 +184,11 @@ class BlockFailure(Exception):
 # ---------------------------------------------------------------------------
 # Token resolution, with gaps kept visible rather than raising.
 # ---------------------------------------------------------------------------
+# The three tokens apply_provenance_overrides ALWAYS replaces. Named once so the
+# override and the egress label below cannot drift apart.
+PROVENANCE_OVERRIDDEN = ("GENERATION_TOOL", "REVIEW_TOOL_1", "REVIEW_TOOL_2")
+
+
 def resolve_tokens_with_gaps():
     """{name: rendered_string} for every resolvable token; the set of names
     whose kind is LITERALLY 'gap' (report_tokens.KNOWN_GAPS) and so never
@@ -201,6 +206,20 @@ def resolve_tokens_with_gaps():
     quietly missing required data."""
     resolved, gaps, resolve_failures = {}, set(), []
     for name, spec in rt.TOKENS.items():
+        # The provenance three are NOT resolved here, because this module
+        # replaces all three a moment later and their household values are
+        # irrelevant to what it publishes. Resolving them anyway made the
+        # DOCUMENTED no-review configuration abort the run: household.example
+        # .yaml leaves both review fields null on purpose, report_tokens.py
+        # refuses to render a name that would claim a review happened, and
+        # those refusals landed in resolve_failures -- which run() folds into
+        # its own failures, so the report never wrote. The overrides that make
+        # the question moot ran afterwards and could not un-record them.
+        # Skipping is the fix rather than swallowing the error: an override is
+        # coming, so there is no question to answer here (issue #135, found by
+        # adversarial review).
+        if name in PROVENANCE_OVERRIDDEN:
+            continue
         try:
             resolved[name] = rt.resolve_token(name, spec)
         except SystemExit as e:
@@ -209,11 +228,6 @@ def resolve_tokens_with_gaps():
             else:
                 resolve_failures.append((name, str(e)))
     return resolved, gaps, resolve_failures
-
-
-# The three tokens apply_provenance_overrides ALWAYS replaces. Named once so the
-# override and the egress label below cannot drift apart.
-PROVENANCE_OVERRIDDEN = ("GENERATION_TOOL", "REVIEW_TOOL_1", "REVIEW_TOOL_2")
 
 
 def apply_provenance_overrides(resolved, provider, model):
