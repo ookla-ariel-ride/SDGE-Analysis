@@ -46,7 +46,7 @@ steps are tried in order, and the first one that answers wins:
 2. **Then the override table.** If an id has a row there, that row is its path.
 3. **Otherwise split the id at its first underscore.** Where the leading segment names a
    top-level block of `household.yaml` — `household`, `location`, `solar`, `charger`,
-   `panel`, `monitoring`, `gas`, `misc` — the path is `<block>.<remainder>`:
+   `panel`, `monitoring`, `gas`, `misc`, `provenance` — the path is `<block>.<remainder>`:
    `panel_busbar_rating_a` → `panel.busbar_rating_a`, `solar_kw_dc` → `solar.kw_dc`,
    `charger_kw` → `charger.kw`, `gas_therm_allin_usd` → `gas.therm_allin_usd`,
    `monitoring_url` → `monitoring[].url`.
@@ -1121,7 +1121,7 @@ nothing as a result, the sentence is the wrong one — leave the fields null and
 rather than claiming a rework that did not occur.
 
 ```yaml
-id: provenance.generation_tool
+id: provenance_generation_tool
 question: "What produced this analysis? Name the tool and model you actually ran."
 type: string
 required_if: always
@@ -1130,7 +1130,7 @@ privacy: public-ok
 ```
 
 ```yaml
-id: provenance.review_tool_independent
+id: provenance_review_tool_independent
 question: "Did anything INDEPENDENTLY review the data, methodology and conclusions? Name it, or leave null."
 type: string_or_null
 required_if: always
@@ -1139,7 +1139,7 @@ privacy: public-ok
 ```
 
 ```yaml
-id: provenance.review_tool_adversarial
+id: provenance_review_tool_adversarial
 question: "Did anything ADVERSARIALLY review it — actively trying to break the findings? Name it, or leave null."
 type: string_or_null
 required_if: always

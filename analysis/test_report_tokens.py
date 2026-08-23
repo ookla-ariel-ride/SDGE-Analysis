@@ -11146,8 +11146,10 @@ def case_provenance_fields_refuse_anything_that_is_not_a_tool_name():
         try:
             rt.resolve_token("REVIEW_TOOL_1")
             raise AssertionError("a null review field rendered a name")
-        except SystemExit as e:
-            assert "empty" in str(e), str(e)
+        except rt.ProvenanceUnanswered as e:
+            # The dedicated type matters, not just the message: resolve_all()
+            # uses it to skip this token instead of losing every other one.
+            assert "not answered" in str(e), str(e)
     finally:
         rt.hh._cache = real
     return ("the three provenance fields refuse booleans, numbers, lists and "
@@ -11200,6 +11202,68 @@ def case_the_shipped_provenance_placeholder_is_refused():
         rt.hh._cache = real
     return (f"the shipped placeholder {shipped!r} and quoted no-review words are refused, "
             "while a real tool name renders")
+
+
+@case
+def case_an_unanswered_review_does_not_take_resolve_all_down():
+    """Issue #135, found by /review. resolve_all() is all-or-nothing, and null
+    review fields are the DOCUMENTED default -- household.example.yaml ships
+    them, CLAUDE.md section 11 recommends them, the README step says to leave
+    them. Refusing to render them is right; letting that refusal abort the bulk
+    resolve lost the household all 218 tokens over the one sentence it had
+    answered correctly.
+
+    That is the shape this file already records twice, and the fix for the
+    generate_report caller did not cover this one -- a patch, not a sweep.
+
+    The split this pins: NOT ANSWERED is skipped like a gap; a MISTAKE still
+    fails the whole resolve, because a placeholder or a boolean is something to
+    fix rather than a state to render around."""
+    _require_household()
+    real = rt.hh._cache
+    base = dict(rt.hh._load())
+    filled = {"generation_tool": "A Generator",
+              "review_tool_independent": "An Independent Reviewer",
+              "review_tool_adversarial": "An Adversarial Reviewer"}
+    try:
+        base["provenance"] = dict(filled)
+        rt.hh._cache = base
+        full = len(rt.resolve_all())
+        assert full > 100, f"resolve_all returned only {full} tokens with everything filled"
+
+        for label, prov in (
+            ("both review fields null",
+             {**filled, "review_tool_independent": None, "review_tool_adversarial": None}),
+            ("review keys omitted entirely", {"generation_tool": filled["generation_tool"]}),
+        ):
+            base["provenance"] = prov
+            rt.hh._cache = base
+            out = rt.resolve_all()
+            assert len(out) == full - 2, (
+                f"with {label}, resolve_all returned {len(out)} of {full} tokens -- an "
+                "unanswered provenance field must cost only its own token")
+            assert "REVIEW_TOOL_1" not in out and "REVIEW_TOOL_2" not in out, (
+                "an unanswered review field rendered a value instead of being skipped")
+
+        # POSITIVE CONTROL: a MISTAKE must still take the resolve down, or this
+        # case would pass against a version that simply swallowed everything.
+        for label, prov in (
+            ("the shipped placeholder", {**filled, "generation_tool": "REPLACE ME"}),
+            ("a boolean review name", {**filled, "review_tool_independent": False}),
+        ):
+            base["provenance"] = prov
+            rt.hh._cache = base
+            try:
+                rt.resolve_all()
+            except SystemExit:
+                continue
+            raise AssertionError(
+                f"resolve_all succeeded with {label}; a malformed provenance value must "
+                "fail the run, not be skipped like an unanswered one")
+    finally:
+        rt.hh._cache = real
+    return ("an unanswered review field costs only its own token, while a placeholder "
+            "or a malformed one still fails the whole resolve")
 
 
 @case
