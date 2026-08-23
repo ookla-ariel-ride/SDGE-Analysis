@@ -274,3 +274,21 @@ gas:                                 # omit only if you have no gas service (has
 misc:
   miles_per_year: 12000              # odometer-derived annualized driven miles, all EVs
   supercharge_kwh_yr: 500            # DC fast-charging kWh/yr (vehicle app charge stats)
+
+provenance:                          # HOW THIS REPORT WAS PRODUCED. These three names are
+                                     # published verbatim in the report's methodology
+                                     # section, so they are a claim about your own process,
+                                     # not about this repo's. State what YOU actually ran.
+                                     # privacy: public-ok (tool names, no personal data).
+                                     #
+                                     # If you generate with analysis/generate_report.py you
+                                     # can leave the two review fields null: that script
+                                     # never emits review-claim text, and writes an explicit
+                                     # "no independent or adversarial review of this specific
+                                     # run has been performed" instead. Fill them in only
+                                     # once BOTH reviews AND the re-work incorporating
+                                     # their findings have genuinely happened -- the
+                                     # published sentence asserts all three.
+  generation_tool: "REPLACE ME"      # what produced the analysis, e.g. "Claude Code (Opus 5)"
+  review_tool_independent: null      # who independently reviewed it, or null if nobody did
+  review_tool_adversarial: null      # who adversarially reviewed it, or null if nobody did

@@ -7823,6 +7823,13 @@ _DECLINED_HOUSEHOLD_PATHS = {
     "private/household.yaml:household.plan": _DECLINE_NO_NUMBER,
     "private/household.yaml:household.pto_date": _DECLINE_NO_NUMBER,
     "private/household.yaml:household.utility": _DECLINE_NO_NUMBER,
+    # The provenance three (issue #135): tool names. "Claude Code (Opus 5)"
+    # carries digits, but they are part of a product name, not a quantity --
+    # there is no non-finite form of a model number and nothing downstream does
+    # arithmetic on it.
+    "private/household.yaml:provenance.generation_tool": _DECLINE_NO_NUMBER,
+    "private/household.yaml:provenance.review_tool_adversarial": _DECLINE_NO_NUMBER,
+    "private/household.yaml:provenance.review_tool_independent": _DECLINE_NO_NUMBER,
     "private/household.yaml:monitoring[].measures": _DECLINE_NO_NUMBER,
     "private/household.yaml:monitoring[].resolution": _DECLINE_NO_NUMBER,
     "private/household.yaml:monitoring[].source": _DECLINE_NO_NUMBER,
@@ -7838,6 +7845,13 @@ _TOKENS_WITH_NO_POISONABLE_FIELD = {
     "GENERATION_PROVIDER", "GENERATION_PROVIDER_SHORT", "INSTALL_PAYMENT_DATE",
     "NEM_EXPIRY_YEAR", "NEM_STATUS", "PTO_DATE", "RATE_SOURCES_DETAIL",
     "SIZE_VERIFICATION_SOURCE", "UTILITY_NAME",
+    # The provenance three (issue #135). They were cited_constant tokens, which
+    # this sweep excludes by KIND; moving them onto private/household.yaml made
+    # them derived, so they now need naming here for the same reason the twelve
+    # above do. Their only field is a tool name, whose digits are part of a
+    # product name rather than a quantity -- see the matching entries in
+    # _DECLINED_HOUSEHOLD_PATHS.
+    "GENERATION_TOOL", "REVIEW_TOOL_1", "REVIEW_TOOL_2",
 }
 
 # Tokens that read no committed artifact at all. Every one resolves out of
@@ -10822,6 +10836,18 @@ class _seam_stand_in_household:
             "data/cleaning_study_daily.csv spans fewer than 60 days, so no stand-in "
             "cleaning date has a 30-day window on both sides of it")
         node["cleaning_history"] = [{"date": days[len(days) // 2], "cost_usd": 150}]
+        # The provenance answers (issue #135). household.example.yaml leaves the
+        # two review fields null ON PURPOSE -- "nobody reviewed this" is the
+        # honest default for a reproduction, and REVIEW_TOOL_1/2 refuse to
+        # render a name that would claim otherwise. That refusal is correct and
+        # is tested elsewhere; here it would stop the seam guard before it
+        # checked a single seam. This path exercises RENDERING, not provenance
+        # policy, so it answers as a household that did have both reviews.
+        node["provenance"] = {
+            "generation_tool": "Stand-In Generator (v0)",
+            "review_tool_independent": "Stand-In Independent Reviewer (v0)",
+            "review_tool_adversarial": "Stand-In Adversarial Reviewer (v0)",
+        }
         self.old_cache, self.old_path = rt.hh._cache, rt.hh.PATH
         self.old_provider = rt._generation_provider_short
         rt.hh._cache = node
@@ -11070,6 +11096,174 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
             f"{len(_SEAM_ALLOWLIST)} occurrence(s) allowlisted"
             + (" -- resolved against the real archive)" if rt.hh.PATH.is_file()
                else " -- resolved against the committed stand-in household)"))
+
+
+@case
+def case_provenance_fields_refuse_anything_that_is_not_a_tool_name():
+    """Issue #135. These three values are published as the names of the tools
+    that produced and checked the report, so anything that merely stringifies
+    is a false claim rather than a formatting problem.
+
+    `review_tool_independent: false` is the case that matters: it is a
+    realistic way to write "nobody reviewed it", YAML parses it as a boolean,
+    and a truthiness check passes it straight through to "the data, methodology,
+    and conclusions were then independently reviewed with False". Lists and
+    mappings render just as readably and just as wrongly. null, and only null,
+    means nobody."""
+    _require_household()
+    real = rt.hh._cache
+    base = dict(rt.hh._load())
+    try:
+        for field, token in (("generation_tool", "GENERATION_TOOL"),
+                             ("review_tool_independent", "REVIEW_TOOL_1"),
+                             ("review_tool_adversarial", "REVIEW_TOOL_2")):
+            for bad in (False, True, 0, 5, ["a name"], {"tool": "a name"}):
+                prov = {"generation_tool": "A Generator",
+                        "review_tool_independent": "An Independent Reviewer",
+                        "review_tool_adversarial": "An Adversarial Reviewer"}
+                prov[field] = bad
+                base["provenance"] = prov
+                rt.hh._cache = base
+                try:
+                    rendered = rt.resolve_token(token)
+                except SystemExit:
+                    continue
+                raise AssertionError(
+                    f"provenance.{field} = {bad!r} rendered {token} as "
+                    f"{rendered!r} instead of refusing -- the report would "
+                    "publish that as the name of a tool")
+        # POSITIVE CONTROL: a real name still renders, so the check above is
+        # rejecting the shape and not simply refusing everything.
+        base["provenance"] = {"generation_tool": "A Generator",
+                              "review_tool_independent": "An Independent Reviewer",
+                              "review_tool_adversarial": "An Adversarial Reviewer"}
+        rt.hh._cache = base
+        assert rt.resolve_token("REVIEW_TOOL_1") == "An Independent Reviewer"
+        # null is the one non-string that is allowed, and it refuses to RENDER
+        # rather than refusing to parse -- a different, documented path.
+        base["provenance"]["review_tool_independent"] = None
+        rt.hh._cache = base
+        try:
+            rt.resolve_token("REVIEW_TOOL_1")
+            raise AssertionError("a null review field rendered a name")
+        except rt.ProvenanceUnanswered as e:
+            # The dedicated type matters, not just the message: resolve_all()
+            # uses it to skip this token instead of losing every other one.
+            assert "not answered" in str(e), str(e)
+    finally:
+        rt.hh._cache = real
+    return ("the three provenance fields refuse booleans, numbers, lists and "
+            "mappings, and take null to mean nobody")
+
+
+@case
+def case_the_shipped_provenance_placeholder_is_refused():
+    """A reproduction that copies household.example.yaml and forgets this one
+    field must not publish "generated with REPLACE ME".
+
+    The placeholder is READ OFF the example file rather than written here, so
+    changing that file without changing the refusal set fails this case instead
+    of silently reopening the hole. Quoted no-review words are checked with it:
+    "false" is a string, so the type check cannot see it, and it would render
+    as the name of a reviewer."""
+    _require_household()
+    import yaml
+    node = yaml.safe_load((rt.ROOT / "household.example.yaml").read_text())
+    shipped = node["provenance"]["generation_tool"]
+    assert isinstance(shipped, str) and shipped.strip(), (
+        "household.example.yaml's generation_tool is no longer a placeholder string; "
+        "this case assumes the example ships one for a reproducer to replace")
+    assert shipped.strip().casefold() in rt._PROVENANCE_NON_ANSWERS, (
+        f"household.example.yaml ships {shipped!r} but report_tokens.py would accept "
+        "it as a tool name -- a reproduction that copied the file unedited would "
+        "publish it")
+
+    real = rt.hh._cache
+    base = dict(rt.hh._load())
+    try:
+        for bad in (shipped, "false", "None", " tbd ", "n/a", "TODO"):
+            base["provenance"] = {"generation_tool": bad,
+                                  "review_tool_independent": "An Independent Reviewer",
+                                  "review_tool_adversarial": "An Adversarial Reviewer"}
+            rt.hh._cache = base
+            try:
+                rendered = rt.resolve_token("GENERATION_TOOL")
+            except SystemExit:
+                continue
+            raise AssertionError(
+                f"provenance.generation_tool = {bad!r} rendered as {rendered!r} "
+                "instead of refusing")
+        # POSITIVE CONTROL: a real name still renders, so this is rejecting
+        # placeholders rather than refusing everything.
+        base["provenance"]["generation_tool"] = "Claude Code (Opus 5)"
+        rt.hh._cache = base
+        assert rt.resolve_token("GENERATION_TOOL") == "Claude Code (Opus 5)"
+    finally:
+        rt.hh._cache = real
+    return (f"the shipped placeholder {shipped!r} and quoted no-review words are refused, "
+            "while a real tool name renders")
+
+
+@case
+def case_an_unanswered_review_does_not_take_resolve_all_down():
+    """Issue #135, found by /review. resolve_all() is all-or-nothing, and null
+    review fields are the DOCUMENTED default -- household.example.yaml ships
+    them, CLAUDE.md section 11 recommends them, the README step says to leave
+    them. Refusing to render them is right; letting that refusal abort the bulk
+    resolve lost the household all 218 tokens over the one sentence it had
+    answered correctly.
+
+    That is the shape this file already records twice, and the fix for the
+    generate_report caller did not cover this one -- a patch, not a sweep.
+
+    The split this pins: NOT ANSWERED is skipped like a gap; a MISTAKE still
+    fails the whole resolve, because a placeholder or a boolean is something to
+    fix rather than a state to render around."""
+    _require_household()
+    real = rt.hh._cache
+    base = dict(rt.hh._load())
+    filled = {"generation_tool": "A Generator",
+              "review_tool_independent": "An Independent Reviewer",
+              "review_tool_adversarial": "An Adversarial Reviewer"}
+    try:
+        base["provenance"] = dict(filled)
+        rt.hh._cache = base
+        full = len(rt.resolve_all())
+        assert full > 100, f"resolve_all returned only {full} tokens with everything filled"
+
+        for label, prov in (
+            ("both review fields null",
+             {**filled, "review_tool_independent": None, "review_tool_adversarial": None}),
+            ("review keys omitted entirely", {"generation_tool": filled["generation_tool"]}),
+        ):
+            base["provenance"] = prov
+            rt.hh._cache = base
+            out = rt.resolve_all()
+            assert len(out) == full - 2, (
+                f"with {label}, resolve_all returned {len(out)} of {full} tokens -- an "
+                "unanswered provenance field must cost only its own token")
+            assert "REVIEW_TOOL_1" not in out and "REVIEW_TOOL_2" not in out, (
+                "an unanswered review field rendered a value instead of being skipped")
+
+        # POSITIVE CONTROL: a MISTAKE must still take the resolve down, or this
+        # case would pass against a version that simply swallowed everything.
+        for label, prov in (
+            ("the shipped placeholder", {**filled, "generation_tool": "REPLACE ME"}),
+            ("a boolean review name", {**filled, "review_tool_independent": False}),
+        ):
+            base["provenance"] = prov
+            rt.hh._cache = base
+            try:
+                rt.resolve_all()
+            except SystemExit:
+                continue
+            raise AssertionError(
+                f"resolve_all succeeded with {label}; a malformed provenance value must "
+                "fail the run, not be skipped like an unanswered one")
+    finally:
+        rt.hh._cache = real
+    return ("an unanswered review field costs only its own token, while a placeholder "
+            "or a malformed one still fails the whole resolve")
 
 
 @case

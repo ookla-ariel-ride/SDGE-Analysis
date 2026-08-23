@@ -624,16 +624,25 @@ def case_generation_tool_reflects_the_actual_provider_and_model_used():
 @case
 def case_review_tools_are_always_the_disclaimer_never_the_hardcoded_report_tokens_values():
     resolved, gaps, resolve_failures = gr.resolve_tokens_with_gaps()
-    original_review_1 = resolved["REVIEW_TOOL_1"]
+    # STRONGER THAN "the override wins" (issue #135): the provenance tokens are
+    # not resolved on this path at all, so there is no household value here for
+    # an override to have to beat. That also means a household which recorded
+    # no review -- the documented default, both fields null, which report_tokens
+    # .py refuses to render -- cannot put a blocking failure in this list.
+    for name in gr.PROVENANCE_OVERRIDDEN:
+        assert name not in resolved, (
+            f"{name} was resolved before its override; a household with no review "
+            "recorded would then fail the whole run")
+        assert name not in {n for n, _ in resolve_failures}, (
+            f"{name} recorded a resolution failure, which run() would treat as "
+            "blocking even though the value is about to be replaced")
     overridden = gr.apply_provenance_overrides(resolved, "anthropic", "claude-fabricated")
     assert overridden["REVIEW_TOOL_1"] == gr.REVIEW_DISCLAIMER
     assert overridden["REVIEW_TOOL_2"] == gr.REVIEW_DISCLAIMER
-    assert overridden["REVIEW_TOOL_1"] != original_review_1, (
-        "report_tokens.py's own hardcoded REVIEW_TOOL_1 must never survive into "
-        "generate_report.py's output")
     assert "Claude Code" not in overridden["REVIEW_TOOL_1"]
     assert "Codex" not in overridden["REVIEW_TOOL_2"]
-    return "REVIEW_TOOL_1/2 are always the fixed disclaimer, never report_tokens.py's values"
+    return ("REVIEW_TOOL_1/2 are never resolved on this path and are always the fixed "
+            "disclaimer, so no household provenance value can reach the output")
 
 
 # ---------------------------------------------------------------------------
@@ -739,6 +748,61 @@ def case_only_without_dry_run_is_refused_even_with_no_model_or_provider_given():
     except SystemExit as e:
         assert "--model" in str(e) or "--only" in str(e), e
     return "an --only-only call (no provider/model/dry-run) still fails closed, one way or the other"
+
+
+@case
+def case_a_full_run_writes_with_no_review_recorded():
+    """Issue #135, found by adversarial review. household.example.yaml leaves
+    both provenance review fields null ON PURPOSE -- "nobody reviewed this" is
+    the honest answer for a reproduction, and report_tokens.py refuses to
+    render a name that would claim otherwise.
+
+    That refusal must not reach this module's failure list. Every provenance
+    token is overridden here, so their household values never reach the page;
+    resolving them anyway recorded two blocking failures and the report did not
+    write at all -- the documented default configuration broke the documented
+    generation path."""
+    _require_gitleaks()
+    _require_household()
+    import yaml
+    node = yaml.safe_load((rt.ROOT / "household.example.yaml").read_text())
+    assert node.get("provenance", {}).get("review_tool_independent") is None, (
+        "household.example.yaml no longer ships a null review_tool_independent, so "
+        "this case is not exercising the documented no-review default any more")
+
+    real = rt.hh._cache
+    hh_now = dict(rt.hh._load())
+    hh_now["provenance"] = {"generation_tool": "Stand-In Generator (v0)",
+                            "review_tool_independent": None,
+                            "review_tool_adversarial": None}
+    rt.hh._cache = hh_now
+    try:
+        for name in ("REVIEW_TOOL_1", "REVIEW_TOOL_2"):
+            try:
+                rt.resolve_token(name)
+                raise AssertionError(
+                    f"{name} resolved with a null review field, so this case is no "
+                    "longer forcing the condition it exists to test")
+            except SystemExit:
+                pass
+        with tempfile.TemporaryDirectory() as td:
+            cache_dir = pathlib.Path(td) / "cache"
+            dest_dir = pathlib.Path(td) / "dest"
+            dest_dir.mkdir()
+            manifest_path = pathlib.Path(td) / "manifest.json"
+            r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call())
+            assert r["wrote"], (
+                "a run with no review recorded did not write; the provenance tokens "
+                f"must not be resolved before they are overridden: {r['failures']}")
+            assert r["failures"] == [], r["failures"]
+            html_out = (dest_dir / "index.generated.html").read_text()
+            assert "no independent or adversarial review" in html_out, (
+                "the generated report does not state that no review happened")
+            assert "{{" not in html_out
+    finally:
+        rt.hh._cache = real
+    return ("a full run with both review fields null writes successfully and states "
+            "that no independent or adversarial review was performed")
 
 
 @case

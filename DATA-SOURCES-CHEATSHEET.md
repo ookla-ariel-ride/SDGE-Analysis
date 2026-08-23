@@ -46,7 +46,7 @@ steps are tried in order, and the first one that answers wins:
 2. **Then the override table.** If an id has a row there, that row is its path.
 3. **Otherwise split the id at its first underscore.** Where the leading segment names a
    top-level block of `household.yaml` — `household`, `location`, `solar`, `charger`,
-   `panel`, `monitoring`, `gas`, `misc` — the path is `<block>.<remainder>`:
+   `panel`, `monitoring`, `gas`, `misc`, `provenance` — the path is `<block>.<remainder>`:
    `panel_busbar_rating_a` → `panel.busbar_rating_a`, `solar_kw_dc` → `solar.kw_dc`,
    `charger_kw` → `charger.kw`, `gas_therm_allin_usd` → `gas.therm_allin_usd`,
    `monitoring_url` → `monitoring[].url`.
@@ -1103,6 +1103,49 @@ privacy: public-ok
 ```
 
 ---
+
+## I. Report provenance ✍️ (how YOUR report was produced — asked last, answered after the run)
+
+The report's methodology section ends by naming who produced and reviewed it. Those names are
+published verbatim, so they are a claim about your own process. They live in
+`private/household.yaml`'s `provenance` block and reach the page through the
+`GENERATION_TOOL` / `REVIEW_TOOL_1` / `REVIEW_TOOL_2` tokens.
+
+Answer the review questions **after** the analysis, not during intake — "nobody reviewed it"
+is the normal answer, and is the one this pipeline is built to state honestly.
+
+**Filling both review fields asserts three things**, because that is what the published
+sentence says: an independent review happened, an adversarial review happened, **and the
+analysis was re-worked to incorporate their findings**. If a review happened but you changed
+nothing as a result, the sentence is the wrong one — leave the fields null and write your own,
+rather than claiming a rework that did not occur.
+
+```yaml
+id: provenance_generation_tool
+question: "What produced this analysis? Name the tool and model you actually ran."
+type: string
+required_if: always
+where: "Whatever you ran, e.g. 'Claude Code (Opus 5)'. Not this repo's answer — yours."
+privacy: public-ok
+```
+
+```yaml
+id: provenance_review_tool_independent
+question: "Did anything INDEPENDENTLY review the data, methodology and conclusions? Name it, or leave null."
+type: string_or_null
+required_if: always
+where: "null unless a real second pass happened. analysis/generate_report.py then states that no review was performed; it never invents one. Filling report-template.html by hand? Rewrite that sentence yourself."
+privacy: public-ok
+```
+
+```yaml
+id: provenance_review_tool_adversarial
+question: "Did anything ADVERSARIALLY review it — actively trying to break the findings? Name it, or leave null."
+type: string_or_null
+required_if: always
+where: "null unless it happened. Same rule as the independent review above."
+privacy: public-ok
+```
 
 ## Minimum to get started
 **B** (electric interval CSV) + **A** (your basics). Claude can do a plan comparison from just those.

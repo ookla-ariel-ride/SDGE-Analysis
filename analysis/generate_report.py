@@ -51,15 +51,20 @@ PIPELINE
      data/*.json. index.html is never touched.
 
 PROVENANCE OVERRIDES (CLAUDE.md section 11 / issue #39's own explicit design)
-  report_tokens.py's GENERATION_TOOL/REVIEW_TOOL_1/REVIEW_TOOL_2 are
-  cited_constant tokens hardcoded to "Claude Cowork (Fable 5)" / "Claude Code
-  (Fable 5)" / "Codex (GPT-5.6 Sol)" -- the literal values CLAUDE.md section
-  11 requires for THIS repo's own hand-curated index.html. Using them
-  verbatim in a FORK's generated report would be false on two counts: it
-  would claim a tool this run never used, and it would assert an
-  independent + adversarial review that never happened. This module
-  overrides all three, always, for its own output only (report_tokens.py
-  itself is untouched, so index.html's provenance sentence is unaffected):
+  report_tokens.py's GENERATION_TOOL/REVIEW_TOOL_1/REVIEW_TOOL_2 resolve from
+  private/household.yaml's `provenance` block (issue #135 moved them out of
+  hardcoded cited_constant values, which had made every reproduction publish
+  THIS household's process). They are household data, not repository
+  literals -- which matters for the egress trust model below, where they are
+  deliberately NOT labelled household_token.
+
+  This module does not use them at all. resolve_tokens_with_gaps() SKIPS all
+  three rather than resolving them, because a household that recorded no
+  review leaves the fields null and report_tokens.py refuses to render a name
+  that would claim one -- resolving them would turn the documented default
+  into a blocking failure. They are then overridden unconditionally, for this
+  module's output only (report_tokens.py itself is untouched, so index.html's
+  own provenance sentence is unaffected):
     - GENERATION_TOOL -> "{provider} ({model})", the ACTUAL provider/model
       this run used.
     - REVIEW_TOOL_1 and REVIEW_TOOL_2 -> REVIEW_DISCLAIMER, a fixed,
@@ -184,6 +189,11 @@ class BlockFailure(Exception):
 # ---------------------------------------------------------------------------
 # Token resolution, with gaps kept visible rather than raising.
 # ---------------------------------------------------------------------------
+# The three tokens apply_provenance_overrides ALWAYS replaces. Named once so the
+# override and the egress label below cannot drift apart.
+PROVENANCE_OVERRIDDEN = ("GENERATION_TOOL", "REVIEW_TOOL_1", "REVIEW_TOOL_2")
+
+
 def resolve_tokens_with_gaps():
     """{name: rendered_string} for every resolvable token; the set of names
     whose kind is LITERALLY 'gap' (report_tokens.KNOWN_GAPS) and so never
@@ -201,6 +211,20 @@ def resolve_tokens_with_gaps():
     quietly missing required data."""
     resolved, gaps, resolve_failures = {}, set(), []
     for name, spec in rt.TOKENS.items():
+        # The provenance three are NOT resolved here, because this module
+        # replaces all three a moment later and their household values are
+        # irrelevant to what it publishes. Resolving them anyway made the
+        # DOCUMENTED no-review configuration abort the run: household.example
+        # .yaml leaves both review fields null on purpose, report_tokens.py
+        # refuses to render a name that would claim a review happened, and
+        # those refusals landed in resolve_failures -- which run() folds into
+        # its own failures, so the report never wrote. The overrides that make
+        # the question moot ran afterwards and could not un-record them.
+        # Skipping is the fix rather than swallowing the error: an override is
+        # coming, so there is no question to answer here (issue #135, found by
+        # adversarial review).
+        if name in PROVENANCE_OVERRIDDEN:
+            continue
         try:
             resolved[name] = rt.resolve_token(name, spec)
         except SystemExit as e:
@@ -607,6 +631,17 @@ def _is_household_sourced(name):
     all rather than being labelled and then withheld -- the question "is this
     household-sourced" stays a fact about the token, and whether it travels
     stays one decision, made upstream."""
+    # The provenance three are household-sourced in report_tokens.py (issue
+    # #135 moved them out of hard-coded constants), but this module overrides
+    # all three before anything leaves it: GENERATION_TOOL becomes the run's
+    # ACTUAL provider/model and the review names become a non-claiming
+    # disclaimer. Labelling them household_token would send the egress guard to
+    # re-resolve them against household.yaml and refuse the override as a
+    # tampered value -- checking the wrong claim. Their in-run value is this
+    # run's own fact, not a household one, so they travel as caller-asserted
+    # literal text, which is exactly what they are.
+    if name in PROVENANCE_OVERRIDDEN:
+        return False
     spec = rt.TOKENS.get(name, {})
     if spec.get("kind") == "household_yaml":
         return True

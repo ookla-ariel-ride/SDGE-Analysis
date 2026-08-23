@@ -5438,12 +5438,160 @@ _tok("ENV_SOURCES_DETAIL", kind="derived", get=_env_sources_detail,
 
 
 # ---- provenance (CLAUDE.md section 11, verbatim-required) ----------------
-_tok("GENERATION_TOOL", kind="cited_constant", value="Claude Cowork (Fable 5)",
-     source="CLAUDE.md section 11's required provenance sentence")
-_tok("REVIEW_TOOL_1", kind="cited_constant", value="Claude Code (Fable 5)",
-     source="CLAUDE.md section 11's required provenance sentence")
-_tok("REVIEW_TOOL_2", kind="cited_constant", value="Codex (GPT-5.6 Sol)",
-     source="CLAUDE.md section 11's required provenance sentence")
+# CONFIGURATION, NOT CONSTANTS (issue #135). These three names are published
+# verbatim in section 14, so they are a claim about how a PARTICULAR report was
+# produced. Hard-coding them made every reproduction assert this household's
+# process -- three named tools the reproducer may never have run, and two review
+# passes that may never have happened -- which section 0 forbids and which no
+# fork could express its way out of.
+#
+# They now come from private/household.yaml's `provenance` block (public-ok:
+# tool names, no personal data). This repo's own answers there are the same
+# three strings, so index.html is unaffected.
+#
+# A reproducer who runs analysis/generate_report.py never reaches these: that
+# script overrides all three and rewrites the whole sentence to state that no
+# review of the run has happened. It stays the stricter path, and these fields
+# exist for the MANUAL route, where a human fills report-template.html by hand
+# and nothing else would tell them the sentence is not theirs.
+#
+# review_tool_* are required=False and may be null, because "nobody reviewed
+# this" is a true and expected answer. The report's own prose is what must then
+# stop claiming one -- see generate_report.PROVENANCE_SENTENCE_REPLACEMENT.
+_tok("GENERATION_TOOL", kind="derived",
+     get=lambda ctx: _provenance_one("provenance.generation_tool"),
+     sources=["private/household.yaml:provenance.generation_tool"])
+class ProvenanceUnanswered(SystemExit):
+    """A provenance field nobody has answered yet -- null, or absent.
+
+    A SystemExit subclass so resolve_token() keeps refusing loudly for the
+    caller that asked for THIS token: a human filling report-template.html by
+    hand must be told, in that moment, that the sentence they are about to
+    publish claims a review that did not happen.
+
+    But resolve_all() is all-or-nothing, and null review fields are the
+    DOCUMENTED default -- household.example.yaml ships them, CLAUDE.md section
+    11 recommends them, the README step says to leave them. Treating that as a
+    bulk failure lost the household all 218 tokens over a sentence it had
+    answered correctly. This repo has recorded that exact shape twice already
+    ("resolve_all() failed, and the household lost the WHOLE report over one
+    <summary> line"), so resolve_all() now skips these the way it skips a gap.
+
+    Only NOT ANSWERED raises this. A malformed answer -- a boolean, a list,
+    the shipped "REPLACE ME" placeholder -- stays an ordinary SystemExit and
+    still fails the bulk resolve, because those are mistakes to fix rather
+    than a state to render around.
+    """
+
+
+# Strings that are somebody declining to answer rather than the name of a tool.
+# Matched casefolded and stripped, on the WHOLE value, so a real product name
+# that merely contains one of these words is unaffected. "REPLACE ME" is the
+# placeholder household.example.yaml ships; a test pins that this set still
+# contains whatever that file currently uses.
+_PROVENANCE_NON_ANSWERS = frozenset({
+    "replace me", "replaceme", "tbd", "todo", "n/a", "na", "none", "null",
+    "nil", "false", "true", "no", "nobody", "unknown", "-", "?", "x",
+})
+
+
+def _provenance_one(path, allow_missing=False):
+    """The single value at a provenance path, through the tiered accessor.
+
+    _hh_value returns a LIST (its contract is [values] at a cheatsheet path),
+    and every provenance field is one scalar. Going through it rather than
+    hh.get keeps the runtime privacy gate in the loop -- these paths are tiered
+    public-ok in DATA-SOURCES-CHEATSHEET.md, and a token that read them any
+    other way would bypass that check and would also be invisible to
+    test_report_tokens' poisoned-artifact sweep.
+    """
+    try:
+        found = _hh_value(path)
+    except SystemExit:
+        # _hh_value refuses an absent key before allow_missing is ever
+        # consulted, so "leave the key out" -- which the refusal below
+        # advertises -- used to surface as a broken-config error instead of
+        # the guidance written for it (Codex/review, issue #135).
+        if allow_missing:
+            raise ProvenanceUnanswered(_unanswered_message(path)) from None
+        raise
+    raw = [v for v in found if v is not None]
+    # TYPE-CHECKED, not just truthiness-checked. `review_tool_independent:
+    # false` is a realistic way to write "nobody reviewed it", and YAML parses
+    # it as a boolean; str() would then render the sentence "independently
+    # reviewed with False", which is exactly the false review claim this whole
+    # change exists to stop. Lists and mappings stringify just as readably and
+    # just as wrongly. Only a real name, or nothing, is a usable answer.
+    for v in raw:
+        if not isinstance(v, str):
+            raise SystemExit(
+                f"report_tokens: private/household.yaml has {type(v).__name__} "
+                f"{v!r} at {path!r}, and this value is published as the name of a "
+                "tool. If you mean nobody did this, write null (or leave the key "
+                "out) -- false, 0 and [] all render as words and would publish a "
+                "claim that is not true.")
+    # A string that is not a NAME. Two shapes reach here: the placeholder this
+    # repo itself ships in household.example.yaml, which a reproduction that
+    # copied the file and forgot this field would publish as "generated with
+    # REPLACE ME"; and a no-review answer written as a quoted word, which the
+    # type check above cannot see because "false" really is a string. Both are
+    # someone declining to answer, and neither is a tool.
+    for v in raw:
+        if v.strip().casefold() in _PROVENANCE_NON_ANSWERS:
+            raise SystemExit(
+                f"report_tokens: private/household.yaml has {v!r} at {path!r}, "
+                "which is a placeholder rather than the name of a tool. Put what "
+                "actually ran there. If you mean nobody did this, write null "
+                "unquoted -- a quoted word is published verbatim.")
+    values = [v for v in raw if v.strip()]
+    if not values:
+        if allow_missing:
+            raise ProvenanceUnanswered(_unanswered_message(path))
+        raise SystemExit(
+            f"report_tokens: private/household.yaml has no value at {path!r}. "
+            "Set it to whatever actually produced this report -- see the "
+            "provenance block in household.example.yaml.")
+    return values[0]
+
+
+def _unanswered_message(path):
+    field = path.split(".")[-1]
+    which = "independently" if "independent" in field else "adversarially"
+    return (
+        f"report_tokens: provenance.{field} in private/household.yaml is not "
+        f"answered, so this report cannot say who {which} reviewed it. That is a "
+        "normal answer -- most reproductions have had no review -- but the sentence "
+        "this fills claims one happened, and there is no value that makes it true. "
+        "Either (a) generate with analysis/generate_report.py, which replaces the "
+        "whole sentence with an explicit 'no independent or adversarial review of "
+        "this specific run has been performed', or (b) if you are filling "
+        "report-template.html by hand, replace that sentence yourself with one that "
+        f"states what really happened. Fill provenance.{field} in only once a real "
+        "review has happened.")
+
+
+def _review_tool(field, which):
+    """A review tool name, or a refusal naming what to do instead.
+
+    null is a TRUE and expected answer -- most reproductions have had no
+    independent review -- but the sentence this token feeds asserts that one
+    happened, so rendering null as anything at all publishes a false claim.
+    (Before this failed closed it rendered the string "None", i.e. "the data,
+    methodology, and conclusions were then independently reviewed with None".)
+    There is no honest value to substitute, so it refuses and says what the two
+    honest options are."""
+    # _provenance_one raises ProvenanceUnanswered for null/absent, which is
+    # the gap-like case resolve_all() skips; anything else it raises is a real
+    # mistake and still fails loudly.
+    return _provenance_one(f"provenance.{field}", allow_missing=True)
+
+
+_tok("REVIEW_TOOL_1", kind="derived",
+     get=lambda ctx: _review_tool("review_tool_independent", "independently"),
+     sources=["private/household.yaml:provenance.review_tool_independent"])
+_tok("REVIEW_TOOL_2", kind="derived",
+     get=lambda ctx: _review_tool("review_tool_adversarial", "adversarially"),
+     sources=["private/household.yaml:provenance.review_tool_adversarial"])
 
 
 # ---- gas / electrification ------------------------------------------------
@@ -7662,6 +7810,12 @@ def resolve_token(name, spec=None):
         rendered = FORMATTERS.get(fmt, _raw)(raw)
         _forbid_unearned_annual_unit(name, rendered)
         return rendered
+    except ProvenanceUnanswered:
+        # Re-raised AS ITSELF. Wrapping it in a plain SystemExit below would
+        # erase the type resolve_all() uses to tell "nobody answered this yet"
+        # -- the documented default -- from "this token is broken", and the
+        # bulk resolve would go back to losing every other token over it.
+        raise
     except SystemExit as e:
         msg = str(e)
         if name in msg or kind == "gap":
@@ -7694,6 +7848,12 @@ def resolve_all(include_gaps=False):
             continue
         try:
             out[name] = resolve_token(name, spec)
+        except ProvenanceUnanswered:
+            # Nobody has answered this one, which is the documented default.
+            # Skipped like a gap so the other tokens still resolve -- see
+            # ProvenanceUnanswered for why this is not folded into `failures`.
+            if include_gaps:
+                raise
         except SystemExit as e:
             failures.append(str(e))
     if failures:
