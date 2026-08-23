@@ -5984,126 +5984,119 @@ def case_stored_kwh_costs_match_the_dispatch_artifact():
             "data/battery_dispatch_policies.json")
 
 
-# Every document that publishes the HIGH package's marginal claim. One list, so
-# the two sign branches below cannot check different sets -- an index.html-only
-# sweep is how the contradiction survived its first correction in #131.
-_HIGH_CARD_DOCS = ("index.html", "report-template.html", "TECHNICAL.md")
+# The HIGH package's claim, in each document that publishes it. SCOPED
+# REGIONS, not whole files: TECHNICAL.md legitimately reports absent savings
+# for panel cleaning, array upgrades and CCA repricing, so scanning it entire
+# for "no savings" fails this case over prose that has nothing to do with the
+# package, with a message blaming the package (Codex /review, issue #142).
+def _high_card_regions():
+    """{document: the passage that makes the HIGH package's claim}."""
+    out = {}
+    card = re.search(r'<div class="pkg">\s*<h3>HIGH\b.*?</div>', HTML, re.S)
+    assert card, ("the HIGH package card is not in index.html in the form this case "
+                  "pins (<div class=\"pkg\"> then <h3>HIGH); re-anchor it rather "
+                  "than deleting it")
+    out["index.html"] = card.group(0)
+
+    tech = (ROOT / "TECHNICAL.md").read_text()
+    bullet = re.search(r"- `packages\.HIGH`.*?(?=\n- `)", tech, re.S)
+    assert bullet, "TECHNICAL.md no longer carries a `packages.HIGH` schema bullet"
+    out["TECHNICAL.md"] = bullet.group(0)
+
+    tpl = (ROOT / "report-template.html").read_text()
+    todo = re.search(r"<li><!-- TODO: what the expansion increment really buys.*?--></li>",
+                     tpl, re.S)
+    assert todo, "report-template.html no longer carries the expansion-increment TODO"
+    out["report-template.html"] = todo.group(0)
+    return out
+
+
+# One vocabulary for "this saves nothing", shared with the sibling guard in
+# test_report_tokens.py (_ABSENT_SAVING_RE). Keeping two lists let the half that
+# sees hand-authored prose drift weaker than the half that sees tokens: this one
+# was missing "nothing", "never repays" and "saves no" entirely.
+_ABSENT_SAVING_RE = re.compile(
+    r"not savings|no savings|nothing|never repays|saves? no\b|zero saving|"
+    r"rather than savings|rather than dollars", re.I)
+
+# Claims that a positive marginal exists, for the branch where it does not.
+_POSITIVE_SAVING_RE = re.compile(
+    r"more than MID|does save money|saves more than", re.I)
 
 
 def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
     """Issue #142. The HIGH package card asserted "$216/yr more than MID" and
     then, in the very next bullet, "this package buys outage endurance, not
     savings". `packages.HIGH.marginal_vs_mid_yr` is positive, so the first
-    bullet is the artifact's and the second contradicted it.
+    bullet was the artifact's and the second contradicted it.
 
-    That is not a wording preference. A reader deciding whether to buy the
-    expansion needs "it saves too little to earn back $5,900", not "it saves
-    nothing" -- those are different purchase advice, and only the second rules
-    the pack out on its own terms. Someone whose own numbers differ would be
-    led the wrong way.
+    Not a wording preference. A reader deciding whether to buy the expansion
+    needs "it saves too little to earn back $5,900", not "it saves nothing" --
+    only the second rules the pack out on its own terms, and someone whose own
+    numbers differ would be led the wrong way.
 
-    Pinned by SHAPE, not by the one string that was there: the figure must
-    match the artifact, and no published prose may deny a saving the artifact
-    reports as positive. #131 added the equivalent guard for the token-owned
-    section 7 verdict; this is the half that sees hand-authored prose."""
+    Two artifact fields, two different claims, checked separately:
+    `savings_yr` is what the PACKAGE saves against the baseline;
+    `marginal_vs_mid_yr` is what the INCREMENT adds over MID. A denial of the
+    first is false whatever the second does.
+
+    #131 added the equivalent guard for the token-owned section 7 verdict;
+    this is the half that sees hand-authored prose."""
     art = json.loads((ROOT / "data" / "package_results.json").read_text())
     marginal = art["packages"]["HIGH"]["marginal_vs_mid_yr"]
     savings = art["packages"]["HIGH"]["savings_yr"]
+    regions = _high_card_regions()
 
-    # TWO DIFFERENT CLAIMS, and only one of them is about the increment.
-    # "this package buys endurance, not savings" is about the PACKAGE, and it is
-    # false whenever savings_yr is positive -- no matter what the marginal does.
-    # Checked before the marginal branches below, because a marginal that went
-    # to zero would otherwise let that package-level denial back in while HIGH
-    # still saves $3,675/yr against the baseline (Codex review, issue #142).
+    # UNCONDITIONAL, whatever the sign: TECHNICAL.md hard-codes the figure in
+    # its schema note, so the two can drift apart silently. Bare integer, which
+    # is that document's own convention for these values -- a comma-grouped
+    # pattern would demand **1,216** from a file that writes **1216**.
+    assert f"`marginal_vs_mid_yr` **{marginal:.0f}**" in regions["TECHNICAL.md"], (
+        f"TECHNICAL.md's packages.HIGH bullet does not carry marginal_vs_mid_yr as "
+        f"{marginal:.0f}; the schema note has drifted from data/package_results.json")
+
+    # The PACKAGE claim, independent of the increment: while savings_yr is
+    # positive, no region may say the package saves nothing.
     if savings > 0:
-        for doc in _HIGH_CARD_DOCS:
-            lowered = (ROOT / doc).read_text().lower()
-            # PACKAGE-REFERENT phrasings only. The bare "endurance, not
-            # savings" is deliberately NOT here: if marginal_vs_mid_yr ever goes
-            # negative that sentence becomes TRUE of the expansion, and a guard
-            # that rejected it would be forcing wrong wording again. While the
-            # marginal is positive it is still caught, by the denials list in
-            # the positive branch below.
-            for phrase in ("package buys outage endurance, not savings",
-                           "package saves nothing", "package has no savings",
-                           "this package buys endurance, not savings"):
-                assert phrase not in lowered, (
-                    f"{doc} says {phrase!r} of a package whose artifact reports "
-                    f"savings_yr of ${savings:,.0f}/yr. That denial is about the "
-                    "PACKAGE, and the package does save; only a claim scoped to the "
-                    "expansion's marginal saving could ever be true")
+        for doc, text in regions.items():
+            m = _ABSENT_SAVING_RE.search(text)
+            assert not (m and "package" in text.lower()[:m.end()].rsplit(".", 1)[-1]), (
+                f"{doc} says {m.group(0)!r} of the PACKAGE, whose artifact reports "
+                f"savings_yr of ${savings:,.0f}/yr. Only a claim scoped to the "
+                "expansion's marginal saving could be true here")
 
-    # THE SIGN IS CHECKED FIRST, and that ordering is the point.
-    # marginal_vs_mid_yr is an unconstrained difference between two savings, so
-    # a later analysis can legitimately produce zero or a negative. Asserting
-    # the "more than MID" wording before testing the sign would demand a report
-    # print "~$-50/yr more than MID" -- so a CORRECT report saying the pack
-    # saves less would fail this case, and the way to make it pass would be to
-    # publish false purchase advice. A guard against a misleading claim must
-    # not be the reason the next one gets written.
     if marginal <= 0:
-        # NOT a free pass. Returning here without checking anything was the
-        # mirror image of the bug above: the wording would no longer be
-        # DEMANDED, but a stale "Saves ~$216/yr more than MID" left over from a
-        # previous regeneration would sail through while the artifact said the
-        # pack now saves nothing. Both directions are purchase advice, and only
-        # one of them is checked by the positive branch.
-        # A LIST, not one pattern. The headline claim is not the only sentence
-        # that asserts a positive marginal: the card also says "It does save
-        # money -- the ~$216/yr above". Rejecting only the headline left that
-        # one standing, which is the same enumerate-one-site mistake the whole
-        # issue is about. Mirrors the `denials` list in the positive branch.
-        stale_positive = ("more than mid", "does save money", "saves more than")
-        for doc in _HIGH_CARD_DOCS:
-            lowered = (ROOT / doc).read_text().lower()
-            for phrase in stale_positive:
-                assert phrase not in lowered, (
-                    f"{doc} still says {phrase!r}, but "
-                    f"packages.HIGH.marginal_vs_mid_yr is now {marginal}. The prose is "
-                    "stale: a regeneration moved the artifact and left the purchase "
-                    "advice behind")
+        # Not a free pass: a stale positive claim left by an earlier
+        # regeneration must not survive the artifact moving under it.
+        for doc, text in regions.items():
+            m = _POSITIVE_SAVING_RE.search(text)
+            assert not m, (
+                f"{doc} still says {m.group(0)!r}, but "
+                f"packages.HIGH.marginal_vs_mid_yr is now {marginal}. The prose is "
+                "stale: a regeneration moved the artifact and left the purchase "
+                "advice behind")
         return (f"packages.HIGH.marginal_vs_mid_yr is {marginal}, not positive; no "
-                "document claims a positive marginal saving, and the denial check "
-                "does not apply because a denial would now be true")
+                f"region claims a positive marginal, and TECHNICAL.md carries "
+                f"{marginal:.0f}")
 
     printed = f"~${marginal:,.0f}/yr more than MID"
-    # SCOPED TO THE CARD, not to the document. Presence anywhere in index.html
-    # passes with a stale card as long as the expected text appears in some
-    # other section or an HTML comment -- reproduced by setting the card to
-    # $999 and adding the expected string in a comment. This is the same
-    # presence-anywhere weakness a guard in this file already had once, so it
-    # is pinned to the container that makes the claim.
-    card = re.search(r'<div class="pkg">\s*<h3>HIGH\b.*?</div>', HTML, re.S)
-    assert card, ("the HIGH package card is not in index.html in the form this case "
-                  "pins (<div class=\"pkg\"> then <h3>HIGH); re-anchor it rather "
-                  "than deleting it")
-    assert printed in card.group(0), (
+    assert printed in regions["index.html"], (
         f"the HIGH card does not state its own artifact's marginal saving "
         f"({printed!r} from packages.HIGH.marginal_vs_mid_yr)")
 
-    # TECHNICAL.md hard-codes the same figure in its package_results schema
-    # note; it was never checked, so the two could drift apart silently.
-    tech = (ROOT / "TECHNICAL.md").read_text()
-    assert f"`marginal_vs_mid_yr` **{marginal:,.0f}**" in tech, (
-        f"TECHNICAL.md does not carry marginal_vs_mid_yr as {marginal:,.0f}; the "
-        "schema note has drifted from data/package_results.json")
+    # The INCREMENT claim: with a positive marginal, no region may deny it.
+    # report-template.html is included on purpose -- the defect this issue
+    # exists to fix lived in its TODO, where it instructed every generated
+    # report to write the contradiction.
+    for doc, text in regions.items():
+        m = _ABSENT_SAVING_RE.search(text)
+        assert not m, (
+            f"{doc} says {m.group(0)!r} about an increment whose artifact reports a "
+            f"POSITIVE marginal saving of ${marginal:,.0f}/yr. Say it saves too "
+            "little to earn back the increment; do not say it does not save")
+    return (f"the HIGH card states its artifact's ${marginal:,.0f}/yr marginal saving, "
+            f"TECHNICAL.md carries the same figure, and no region denies it")
 
-    # Phrasings that assert the saving is ABSENT rather than too small. Checked
-    # across every document that publishes this claim, because the same
-    # sentence lived in three of them and an index.html-only sweep is how it
-    # survived the first correction.
-    denials = ("endurance, not savings", "not savings", "no savings",
-               "saves nothing", "zero savings", "rather than savings")
-    for doc in _HIGH_CARD_DOCS:
-        text = (ROOT / doc).read_text()
-        for phrase in denials:
-            assert phrase not in text.lower(), (
-                f"{doc} says {phrase!r} about a package whose artifact reports a "
-                f"POSITIVE marginal saving of ${marginal:,.0f}/yr. Say it saves too "
-                "little to earn back the increment; do not say it does not save")
-    return (f"the HIGH card states its artifact's ${marginal:,.0f}/yr marginal saving and "
-            "no published document denies that a saving exists")
 
 CASES = [
     case_periods_chart_matches_its_artifact,
