@@ -40,6 +40,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_dry_run.py
 import ast
 import contextlib
 import errno
+import fcntl
 import hashlib
 import io
 import json
@@ -1677,6 +1678,175 @@ def case_a_setup_failure_is_not_masked_by_keep_sandbox():
         f"{message!r}")
     return ("a setup failure before any sandbox exists surfaces as itself "
             "under --keep-sandbox, instead of being masked by keep()")
+
+
+def _canonical_marker_is_free(sandbox_dir, flock):
+    """The SWEEP's verdict on `sandbox_dir`, taken right now and with the
+    primitive operations rather than through _lock_marker -- because
+    _lock_marker is the thing being observed. True means SANDBOX_MARKER both
+    EXISTS and has a FREE lock, which is the one state the sweep removes on
+    (case_stale_sandboxes_from_a_prior_run_are_swept_at_build_time).
+
+    The real fcntl.flock is passed in: the caller observes _lock_marker by
+    replacing fcntl.flock, and a probe measuring through that replacement would
+    recurse into the observer. Any lock this wins is released before it returns
+    -- a probe may not alter what it measures."""
+    marker = pathlib.Path(sandbox_dir) / DR.SANDBOX_MARKER
+    if not marker.exists():
+        return False
+    try:
+        fh = open(marker, "r+")
+    except OSError:
+        return False
+    try:
+        flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False            # somebody holds it -- a sweep would skip it
+    finally:
+        fh.close()
+    return True
+
+
+@case
+def case_a_new_marker_is_never_visible_to_the_sweep_unlocked():
+    """Creating the marker under its canonical name and locking it a moment
+    later publishes a LIVE sandbox in the ABANDONED state for the instant in
+    between: SANDBOX_MARKER on disk with a free lock is exactly what
+    _sweep_stale() removes on. A sibling sweeping in that window wins the lock
+    and recursively removes a running sandbox and its copy of private/. Locking
+    the markerless window shut closed the gap BEFORE the file exists; this is
+    the gap immediately after it appears.
+
+    _lock_marker(create=True) therefore locks a uniquely-named temporary first
+    and renames it onto the canonical name -- a flock lives on the open file
+    DESCRIPTION, not on the name, so it survives the rename and the canonical
+    marker only ever becomes visible already locked.
+
+    Observed at the one instant that separates the two implementations, the
+    flock() call itself, and then confirmed from outside: an independent
+    attempt on the published marker must report contention."""
+    d = pathlib.Path(
+        tempfile.mkdtemp(prefix=DR.SANDBOX_PREFIX + "atomic-marker-")).resolve()
+    real_flock = fcntl.flock
+    seen = {"calls": 0, "sweepable": None}
+
+    def observing_flock(fd, op):
+        # The old implementation had already created the canonical marker by
+        # the time it reached here, and had not yet locked it.
+        if seen["calls"] == 0:
+            seen["sweepable"] = _canonical_marker_is_free(d, real_flock)
+        seen["calls"] += 1
+        return real_flock(fd, op)
+
+    held = None
+    try:
+        fcntl.flock = observing_flock
+        try:
+            held = DR.Sandbox._lock_marker(d)
+        finally:
+            fcntl.flock = real_flock
+        # Forcing a precondition means proving the forcing took: an observer
+        # that never fired would make every assertion below vacuous.
+        assert seen["calls"] >= 1, (
+            "setup failed: _lock_marker never called fcntl.flock, so this case "
+            "observed nothing")
+        assert seen["sweepable"] is False, (
+            f"{DR.SANDBOX_MARKER} was on disk with a FREE lock while its owner "
+            "was still acquiring it -- a sibling's sweep reads exactly that as "
+            "'provably abandoned' and would delete this LIVE sandbox")
+        assert held is not None, \
+            "the owner did not win the lock on its own fresh marker"
+        assert (d / DR.SANDBOX_MARKER).is_file(), (
+            f"_lock_marker returned without publishing {DR.SANDBOX_MARKER}, so "
+            "the sweep would read this live sandbox as unknowable forever")
+        # From the outside, the way a sweep sees it: the published marker is
+        # locked, so an independent attempt reports contention rather than
+        # winning it.
+        second = DR.Sandbox._lock_marker(d, create=False)
+        if second is not None:
+            second.close()
+            raise AssertionError(
+                "a second, independent attempt LOCKED the published marker, so "
+                "the marker its owner published is not actually held -- the "
+                "sweep would remove this sandbox")
+        # A rename leaves nothing behind; a copy would. Nothing but the
+        # canonical marker may remain, or the temporary itself becomes litter
+        # inside every sandbox.
+        leftovers = sorted(p.name for p in d.iterdir())
+        assert leftovers == [DR.SANDBOX_MARKER], (
+            "the marker was not published by rename -- the sandbox holds more "
+            f"than its canonical marker: {leftovers}")
+    finally:
+        if held is not None:
+            held.close()
+        shutil.rmtree(d, ignore_errors=True)
+    return ("a sandbox's own marker is published atomically: the canonical "
+            ".sandbox.lock never exists unlocked, so no sibling's sweep can "
+            "read a live sandbox as abandoned and delete it")
+
+
+@case
+def case_a_marker_failure_is_not_masked_by_keep_sandbox():
+    """The sibling of the case above it, at the exit where the bug actually
+    was. When build() cannot lock its OWN marker it removes the sandbox it just
+    made -- and used to leave self.path naming that deleted directory. Under
+    --keep-sandbox, dry_run()'s finally then called keep(), whose rename raised
+    FileNotFoundError over the top of the marker error, so the operator read a
+    missing-file traceback instead of the reason the run refused to start.
+
+    Two halves, because the state and the symptom are separately wrong: the
+    attribute must not survive the removal (checked on Sandbox directly), and
+    the error that reaches the caller must be the marker error (checked
+    end-to-end through dry_run(keep_sandbox=True))."""
+    gen = ROOT / "analysis" / "tou_spread.py"
+    if not gen.is_file():
+        raise SkipCase("analysis/tou_spread.py is missing from this checkout")
+
+    real = DR.Sandbox.__dict__["_lock_marker"]
+    made = []
+
+    def refusing_lock_marker(sandbox_dir, create=True):
+        made.append(pathlib.Path(sandbox_dir))
+        raise DR.MarkerUnreadable("injected: this marker cannot be locked")
+
+    DR.Sandbox._lock_marker = staticmethod(refusing_lock_marker)
+    try:
+        # Half one: the state itself.
+        sb = DR.Sandbox(ROOT)
+        try:
+            sb.build()
+            raise AssertionError("expected the injected marker failure to propagate")
+        except DR.DryRunError as e:
+            assert "injected: this marker cannot be locked" in str(e), (
+                f"build() raised something other than the marker failure: {e}")
+        assert made, "the injected marker failure never fired"
+        assert not made[0].exists(), (
+            f"build() left the sandbox it refused to mark on disk: {made[0]}")
+        assert sb.path is None, (
+            f"sb.path still names {sb.path}, a directory build() has already "
+            "deleted -- teardown will operate on it and raise over the top of "
+            "the real error")
+
+        # Half two: what the caller actually sees.
+        try:
+            DR.dry_run(gen, keep_sandbox=True)
+            raise AssertionError("expected the injected marker failure to propagate")
+        except DR.DryRunError as e:
+            message = str(e)
+        except OSError as e:      # FileNotFoundError is the masking failure
+            raise AssertionError(
+                "--keep-sandbox raised over the top of the marker failure and "
+                f"hid it: {type(e).__name__}: {e}")
+    finally:
+        DR.Sandbox._lock_marker = real
+
+    assert "injected: this marker cannot be locked" in message, (
+        "the marker failure was masked by --keep-sandbox's own teardown: "
+        f"{message!r}")
+    return ("a sandbox that cannot lock its own marker stops naming the "
+            "directory it just deleted, so --keep-sandbox reports the marker "
+            "failure instead of a FileNotFoundError from keep()")
+
 
 def main():
     listed = [fn.__name__ for fn in CASES]

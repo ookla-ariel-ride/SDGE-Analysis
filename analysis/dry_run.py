@@ -159,6 +159,17 @@ class MarkerUnreadable(Exception):
     on."""
 
 
+def _discard_marker_temp(tmp_name):
+    """Remove a marker that never reached its canonical name (see _lock_marker's
+    create=True path). Best effort on purpose: the caller is already raising the
+    real failure, and a leftover under this name is invisible to the sweep,
+    which matches SANDBOX_MARKER exactly and nothing else."""
+    try:
+        os.unlink(tmp_name)
+    except OSError:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # repo root -- resolved from the GENERATOR's path, not from this file's, so a
 # synthetic repo built by a test can be dry-run exactly like the real one.
@@ -353,6 +364,14 @@ class Sandbox:
             self._marker_fd = self._lock_marker(tmp)
         except MarkerUnreadable as e:
             shutil.rmtree(tmp, ignore_errors=True)
+            # The directory self.path names no longer exists, so the attribute
+            # must stop naming it. Left set, teardown operates on a deleted
+            # path -- keep()'s rename raises FileNotFoundError over the top of
+            # THIS error and hides the reason the run actually failed. Every
+            # exit that removes the sandbox owes this line; the exits below
+            # that raise WITHOUT removing it deliberately do not, because there
+            # the directory is still there for dry_run()'s finally to dispose.
+            self.path = None
             raise DryRunError(
                 f"could not lock the sandbox's own marker file: {tmp} -- a "
                 "freshly created, uniquely-named sandbox should never fail "
@@ -360,6 +379,7 @@ class Sandbox:
                 f"Cause: {e}")
         if self._marker_fd is None:
             shutil.rmtree(tmp, ignore_errors=True)
+            self.path = None            # same reason as the branch above
             raise DryRunError(
                 f"could not lock the sandbox's own marker file: {tmp} -- a "
                 "freshly created, uniquely-named sandbox should never fail "
@@ -525,6 +545,13 @@ class Sandbox:
         if self.path is None:
             raise DryRunError("keep() called with no sandbox built")
         p = self.path
+        if not p.is_dir():
+            # Nothing to rename. Saying so as a DryRunError keeps this in the
+            # same failure vocabulary as the rest of the module, instead of a
+            # bare FileNotFoundError from the rename below.
+            raise DryRunError(
+                f"keep() called with no sandbox on disk at {p} -- it was "
+                "removed by whatever failed before this point")
         kept = p.parent / f"kept-{p.name}"
         p.rename(kept)
         # The COMPARISON_SUFFIXES copies travel WITH the sandbox, for the same
@@ -575,8 +602,76 @@ class Sandbox:
         With create=False a missing marker fails the open, which is now a
         MarkerUnreadable rather than a None -- callers that expect a markerless
         candidate test for the file itself, before calling, and the raise
-        covers only the narrow race where it disappears in between."""
+        covers only the narrow race where it disappears in between.
+
+        A marker this call has to CREATE is published atomically, already
+        locked. Making the file under its canonical name and locking it a
+        moment later leaves a window -- between the open() and the flock() --
+        in which SANDBOX_MARKER exists and is FREE, which is exactly the state
+        _sweep_stale() is built to read as "provably abandoned, remove it": a
+        sibling sweeping in that instant wins the lock and recursively deletes
+        a LIVE sandbox. So the file is built under a unique temporary name,
+        flocked THERE, and only then linked onto SANDBOX_MARKER. A flock lives
+        on the open file DESCRIPTION, not on the name, so it survives intact,
+        and os.link() is both atomic and non-clobbering; the temporary name is
+        dropped afterwards either way, and the sweep never sees it, matching
+        SANDBOX_MARKER exactly and nothing else. The canonical name therefore
+        only ever becomes visible in an already-locked state.
+
+        A marker that is ALREADY THERE is opened and locked exactly as before,
+        create or not: there is no publication window to close for a file this
+        call did not create, and overwriting a live owner's marker would be a
+        far worse bug than the one that closes. os.link() refusing to clobber
+        is what makes that split safe rather than a check-then-act race -- if a
+        sibling publishes between the test and the link, its marker stands and
+        we fall through to locking THAT file, which is where genuine contention
+        gets reported. Any other failure to establish our own marker is raised,
+        not swallowed: an owner that cannot mark itself must fail loudly rather
+        than run on unmarked and sweepable."""
         path = sandbox_dir / SANDBOX_MARKER
+        if create and not path.exists():
+            try:
+                raw, tmp_name = tempfile.mkstemp(prefix=SANDBOX_MARKER + ".new-",
+                                                 dir=str(sandbox_dir))
+            except OSError as e:
+                raise MarkerUnreadable(
+                    f"could not create a marker to publish as {path}: {e}") from e
+            try:
+                try:
+                    fd = os.fdopen(raw, "a+")
+                except OSError as e:
+                    os.close(raw)
+                    raise MarkerUnreadable(
+                        f"could not open the marker built for {path}: {e}") from e
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError as e:
+                    fd.close()
+                    # A private, just-created temporary has nobody to contend
+                    # with, but the errno rule holds everywhere: only
+                    # EWOULDBLOCK/EAGAIN returns None, and an owner treats that
+                    # answer as fatal exactly as it treats a MarkerUnreadable.
+                    if e.errno in _LOCK_CONTENTION_ERRNOS:
+                        return None
+                    raise MarkerUnreadable(
+                        f"could not lock {tmp_name}, this run's own new "
+                        f"marker for {path}: {e}") from e
+                try:
+                    os.link(tmp_name, path)
+                except OSError as e:
+                    fd.close()
+                    if e.errno != errno.EEXIST:
+                        raise MarkerUnreadable(
+                            f"could not publish {tmp_name} as {path}: {e}") from e
+                    # A sibling published between the test above and this
+                    # link. Its marker stands; fall through and lock THAT one.
+                else:
+                    return fd     # published already locked, never unlocked
+            finally:
+                # On success the canonical link keeps the inode -- and this
+                # fd's lock with it -- alive; on every failure path there is
+                # nothing to keep. Either way the temporary name is finished.
+                _discard_marker_temp(tmp_name)
         try:
             fd = open(path, "a+" if create else "r+")
         except OSError as e:
@@ -1112,10 +1207,19 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
         # the marker unlockable. keep() would then raise over the top of that
         # real setup error and hide it, so there is nothing to keep and nothing
         # to say: let the original exception out unchanged.
-        if keep_sandbox and sb.path is not None:
+        # `sb.path` naming a directory that is no longer THERE is the same
+        # failure wearing a different mask: a build() exit that removed its own
+        # sandbox is supposed to clear the attribute (both marker branches do),
+        # but this guard must not depend on every present and future exit
+        # remembering to. Check the disk, not just the attribute.
+        if keep_sandbox and sb.path is not None and sb.path.is_dir():
             kept_path = sb.keep()
             rep.sandbox_path = kept_path  # the pre-rename path no longer exists
             print(f"[sandbox kept] {kept_path}", file=sys.stderr)
+        elif keep_sandbox and sb.path is not None:
+            print(f"[sandbox not kept] {sb.path} no longer exists, so there is "
+                  "nothing to keep -- the setup failure that removed it is the "
+                  "error to read.", file=sys.stderr)
         else:
             # Two INDEPENDENT cleanups, deliberately asymmetric. The
             # -baseline/-head copies hold nothing but committed data/ artifacts,

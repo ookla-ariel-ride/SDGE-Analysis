@@ -79,6 +79,18 @@ class MarkerUnreadable(Exception):
     on. Mirrors dry_run.py's MarkerUnreadable."""
 
 
+def _discard_marker_temp(tmp_name):
+    """Remove a marker that never reached its canonical name (see _lock_marker's
+    create=True path). Best effort on purpose: the caller is already raising the
+    real failure, and a leftover under this name is invisible to the sweep,
+    which matches SANDBOX_MARKER exactly and nothing else.
+    Mirrors dry_run.py's _discard_marker_temp."""
+    try:
+        os.unlink(tmp_name)
+    except OSError:
+        pass
+
+
 def _lock_marker(sandbox_dir, create=True):
     """Non-blocking-exclusive-lock the marker inside `sandbox_dir`. Three
     outcomes, and the caller MUST be able to tell them apart:
@@ -106,8 +118,75 @@ def _lock_marker(sandbox_dir, create=True):
     now a MarkerUnreadable rather than a None -- callers that expect a
     markerless candidate test for the file itself, before calling, and the
     raise covers only the narrow race where it disappears in between.
+
+    A marker this call has to CREATE is published atomically, already locked.
+    Making the file under its canonical name and locking it a moment later
+    leaves a window -- between the open() and the flock() -- in which
+    SANDBOX_MARKER exists and is FREE, which is exactly the state the sweep is
+    built to read as "provably abandoned, remove it": a sibling sweeping in that
+    instant wins the lock and recursively deletes a LIVE sandbox. So the file is
+    built under a unique temporary name, flocked THERE, and only then linked
+    onto SANDBOX_MARKER. A flock lives on the open file DESCRIPTION, not on the
+    name, so it survives intact, and os.link() is both atomic and
+    non-clobbering; the temporary name is dropped afterwards either way, and the
+    sweep never sees it, matching SANDBOX_MARKER exactly and nothing else. The
+    canonical name therefore only ever becomes visible already locked.
+
+    A marker that is ALREADY THERE is opened and locked exactly as before,
+    create or not: there is no publication window to close for a file this call
+    did not create, and overwriting a live owner's marker would be a far worse
+    bug than the one that closes. os.link() refusing to clobber is what makes
+    that split safe rather than a check-then-act race -- if a sibling publishes
+    between the test and the link, its marker stands and we fall through to
+    locking THAT file, which is where genuine contention gets reported. Any
+    other failure to establish our own marker is raised, not swallowed: an owner
+    that cannot mark itself must fail loudly rather than run on unmarked and
+    sweepable.
     Mirrors dry_run.py's Sandbox._lock_marker."""
     path = pathlib.Path(sandbox_dir) / SANDBOX_MARKER
+    if create and not path.exists():
+        try:
+            raw, tmp_name = tempfile.mkstemp(prefix=SANDBOX_MARKER + ".new-",
+                                             dir=str(sandbox_dir))
+        except OSError as e:
+            raise MarkerUnreadable(
+                f"could not create a marker to publish as {path}: {e}") from e
+        try:
+            try:
+                fd = os.fdopen(raw, "a+")
+            except OSError as e:
+                os.close(raw)
+                raise MarkerUnreadable(
+                    f"could not open the marker built for {path}: {e}") from e
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as e:
+                fd.close()
+                # A private, just-created temporary has nobody to contend with,
+                # but the errno rule holds everywhere: only EWOULDBLOCK/EAGAIN
+                # returns None, and an owner treats that answer as fatal
+                # exactly as it treats a MarkerUnreadable.
+                if e.errno in _LOCK_CONTENTION_ERRNOS:
+                    return None
+                raise MarkerUnreadable(
+                    f"could not lock {tmp_name}, this run's own new marker "
+                    f"for {path}: {e}") from e
+            try:
+                os.link(tmp_name, path)
+            except OSError as e:
+                fd.close()
+                if e.errno != errno.EEXIST:
+                    raise MarkerUnreadable(
+                        f"could not publish {tmp_name} as {path}: {e}") from e
+                # A sibling published between the test above and this link.
+                # Its marker stands; fall through and lock THAT one.
+            else:
+                return fd         # published already locked, never unlocked
+        finally:
+            # On success the canonical link keeps the inode -- and this fd's
+            # lock with it -- alive; on every failure path there is nothing to
+            # keep. Either way the temporary name is finished.
+            _discard_marker_temp(tmp_name)
     try:
         fd = open(path, "a+" if create else "r+")
     except OSError as e:
@@ -989,6 +1068,109 @@ def case_an_unreadable_marker_is_reported_not_silently_skipped():
     return ("a SANDBOX_PREFIX directory whose marker cannot be opened is "
             "reported to stderr by name and cause, and left in place -- never "
             "skipped in silence as though a live sibling held it")
+
+
+def _canonical_marker_is_free(sandbox_dir, flock):
+    """The SWEEP's verdict on `sandbox_dir`, taken right now and with the
+    primitive operations rather than through _lock_marker -- because
+    _lock_marker is the thing being observed. True means SANDBOX_MARKER both
+    EXISTS and has a FREE lock, which is the one state the sweep removes on.
+
+    The real fcntl.flock is passed in: the caller observes _lock_marker by
+    replacing fcntl.flock, and a probe measuring through that replacement would
+    recurse into the observer. Any lock this wins is released before it returns
+    -- a probe may not alter what it measures."""
+    marker = pathlib.Path(sandbox_dir) / SANDBOX_MARKER
+    if not marker.exists():
+        return False
+    try:
+        fh = open(marker, "r+")
+    except OSError:
+        return False
+    try:
+        flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False            # somebody holds it -- a sweep would skip it
+    finally:
+        fh.close()
+    return True
+
+
+def case_a_new_marker_is_never_visible_to_the_sweep_unlocked():
+    """Creating the marker under its canonical name and locking it a moment
+    later publishes a LIVE sandbox in the ABANDONED state for the instant in
+    between: SANDBOX_MARKER on disk with a free lock is exactly what the sweep
+    deletes on (case_an_abandoned_sandbox_carrying_a_free_marker_is_swept).
+    A sibling sweeping in that window wins the lock and recursively removes a
+    running sandbox and its copy of the real bill PDFs.
+    Locking the missing-marker window shut closed the gap BEFORE the file
+    exists; this is the gap immediately after it appears.
+
+    _lock_marker(create=True) therefore locks a uniquely-named temporary first
+    and renames it onto the canonical name -- a flock lives on the open file
+    DESCRIPTION, not on the name, so it survives the rename and the canonical
+    marker only ever becomes visible already locked.
+
+    Observed at the one instant that separates the two implementations, the
+    flock() call itself, and then confirmed from outside: an independent
+    attempt on the published marker must report contention."""
+    d = pathlib.Path(tempfile.mkdtemp(prefix=SANDBOX_PREFIX + "atomic-marker-"))
+    real_flock = fcntl.flock
+    seen = {"calls": 0, "sweepable": None}
+
+    def observing_flock(fd, op):
+        # The old implementation had already created the canonical marker by
+        # the time it reached here, and had not yet locked it.
+        if seen["calls"] == 0:
+            seen["sweepable"] = _canonical_marker_is_free(d, real_flock)
+        seen["calls"] += 1
+        return real_flock(fd, op)
+
+    held = None
+    try:
+        fcntl.flock = observing_flock
+        try:
+            held = _lock_marker(d)
+        finally:
+            fcntl.flock = real_flock
+        # Forcing a precondition means proving the forcing took: an observer
+        # that never fired would make every assertion below vacuous.
+        assert seen["calls"] >= 1, (
+            "setup failed: _lock_marker never called fcntl.flock, so this case "
+            "observed nothing")
+        assert seen["sweepable"] is False, (
+            f"{SANDBOX_MARKER} was on disk with a FREE lock while its owner "
+            "was still acquiring it -- a sibling's sweep reads exactly that as "
+            "'provably abandoned' and would delete this LIVE sandbox")
+        assert held is not None, \
+            "the owner did not win the lock on its own fresh marker"
+        assert (d / SANDBOX_MARKER).is_file(), (
+            f"_lock_marker returned without publishing {SANDBOX_MARKER}, so the "
+            "sweep would read this live sandbox as unknowable forever")
+        # From the outside, the way a sweep sees it: the published marker is
+        # locked, so an independent attempt reports contention rather than
+        # winning it.
+        second = _lock_marker(d, create=False)
+        if second is not None:
+            second.close()
+            raise AssertionError(
+                "a second, independent attempt LOCKED the published marker, so "
+                "the marker its owner published is not actually held -- the "
+                "sweep would remove this sandbox")
+        # A rename leaves nothing behind; a copy would. Nothing but the
+        # canonical marker may remain, or the temporary itself becomes litter
+        # inside every sandbox.
+        leftovers = sorted(p.name for p in d.iterdir())
+        assert leftovers == [SANDBOX_MARKER], (
+            "the marker was not published by rename -- the sandbox holds more "
+            f"than its canonical marker: {leftovers}")
+    finally:
+        if held is not None:
+            held.close()
+        shutil.rmtree(d, ignore_errors=True)
+    return ("a sandbox's own marker is published atomically: the canonical "
+            ".sandbox.lock never exists unlocked, so no sibling's sweep can "
+            "read a live sandbox as abandoned and delete it")
 
 
 def case_rollback_after_partial_swap():
@@ -2477,6 +2659,7 @@ STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
                     case_an_abandoned_sandbox_carrying_a_free_marker_is_swept,
                     case_a_markerless_candidate_survives_the_sweep_and_is_reported,
                     case_an_unreadable_marker_is_reported_not_silently_skipped,
+                    case_a_new_marker_is_never_visible_to_the_sweep_unlocked,
                     case_restore_failure_preserves_backups,
                     case_retry_after_failed_rollback_refuses,
                     case_lock_blocks_second_publisher,

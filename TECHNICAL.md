@@ -4432,7 +4432,12 @@ distinguishes genuine contention (`EWOULDBLOCK`/`EAGAIN`, a live sibling, the on
 and the only silent one) from every other failure, which is reported with its cause. Silence
 would otherwise be indistinguishable from "nothing to do" in exactly the case where a copy of
 `private/` persists on every future run. Four outcomes, then: one removes, one is silent, two
-report. The lock is held through the `rmtree` rather than released before it, and `run_generator`
+report. The marker is also PUBLISHED atomically: an owner creates it under a temporary name,
+locks it there, and links it onto `.sandbox.lock` — `os.link` refuses to overwrite, so losing
+that race is an `EEXIST` rather than a clobbered sibling, and a `flock` follows the open file
+description rather than the name. Creating the file and locking it as two visible steps would
+leave the canonical name on disk unlocked for an instant, which is precisely the state the
+sweep reads as "provably abandoned". The lock is held through the `rmtree` rather than released before it, and `run_generator`
 passes the marker fd to each child (`pass_fds`), since a `flock` belongs to the open file
 description — an orphaned generator outliving a killed parent keeps the sandbox looking in use,
 which is the crash shape the sweep exists to survive. A stale sandbox that cannot be removed is
