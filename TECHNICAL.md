@@ -894,7 +894,7 @@ continuous charge caps -- 5 kW bare-unit / 8 kW with-expansion, Tesla's own data
 issue #40, see research/battery-research-notes.md — 90% RTE): **evening-only**
 (discharge 4–9pm; overnight top-up to 60%), **two-window** (+6–9am house load), and
 **price-aware** (discharge against every non-super-off-peak import; top-up toward full in
-any super-off-peak gap). Rationale: stored energy costs 11.7¢/kWh in the midday cell (34.4¢ averaged over all the solar surplus the run stores, only 47.6% of which is midday) to 14.0¢
+any super-off-peak gap). Rationale: stored energy costs 11.7¢/kWh in the midday cell (34.3¢ averaged over all the solar surplus the run stores, only 47.6% of which is midday) to 14.0¢
 (grid top-up) while all non-super-off-peak imports price at 51–87¢, so every such import
 is worth serving. Ordering matters: solar surplus charges first (10am–2pm is both
 super-off-peak and peak solar). EV-spillover intervals (≥2.5 kW outside on-peak) are
