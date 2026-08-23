@@ -11099,6 +11099,62 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
 
 
 @case
+def case_provenance_fields_refuse_anything_that_is_not_a_tool_name():
+    """Issue #135. These three values are published as the names of the tools
+    that produced and checked the report, so anything that merely stringifies
+    is a false claim rather than a formatting problem.
+
+    `review_tool_independent: false` is the case that matters: it is a
+    realistic way to write "nobody reviewed it", YAML parses it as a boolean,
+    and a truthiness check passes it straight through to "the data, methodology,
+    and conclusions were then independently reviewed with False". Lists and
+    mappings render just as readably and just as wrongly. null, and only null,
+    means nobody."""
+    _require_household()
+    real = rt.hh._cache
+    base = dict(rt.hh._load())
+    try:
+        for field, token in (("generation_tool", "GENERATION_TOOL"),
+                             ("review_tool_independent", "REVIEW_TOOL_1"),
+                             ("review_tool_adversarial", "REVIEW_TOOL_2")):
+            for bad in (False, True, 0, 5, ["a name"], {"tool": "a name"}):
+                prov = {"generation_tool": "A Generator",
+                        "review_tool_independent": "An Independent Reviewer",
+                        "review_tool_adversarial": "An Adversarial Reviewer"}
+                prov[field] = bad
+                base["provenance"] = prov
+                rt.hh._cache = base
+                try:
+                    rendered = rt.resolve_token(token)
+                except SystemExit:
+                    continue
+                raise AssertionError(
+                    f"provenance.{field} = {bad!r} rendered {token} as "
+                    f"{rendered!r} instead of refusing -- the report would "
+                    "publish that as the name of a tool")
+        # POSITIVE CONTROL: a real name still renders, so the check above is
+        # rejecting the shape and not simply refusing everything.
+        base["provenance"] = {"generation_tool": "A Generator",
+                              "review_tool_independent": "An Independent Reviewer",
+                              "review_tool_adversarial": "An Adversarial Reviewer"}
+        rt.hh._cache = base
+        assert rt.resolve_token("REVIEW_TOOL_1") == "An Independent Reviewer"
+        # null is the one non-string that is allowed, and it refuses to RENDER
+        # rather than refusing to parse -- a different, documented path.
+        base["provenance"]["review_tool_independent"] = None
+        rt.hh._cache = base
+        try:
+            rt.resolve_token("REVIEW_TOOL_1")
+            raise AssertionError("a null review field rendered a name")
+        except SystemExit as e:
+            assert "empty" in str(e), str(e)
+    finally:
+        rt.hh._cache = real
+    return ("the three provenance fields refuse booleans, numbers, lists and "
+            "mappings, and take null to mean nobody")
+
+
+@case
 def case_the_seam_guard_checks_the_same_tokens_without_the_private_archive():
     """The case above resolves against private/household.yaml where it is
     staged, and .github/workflows/tests.yml runs this suite where it is not.

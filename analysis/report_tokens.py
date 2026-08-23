@@ -5471,7 +5471,22 @@ def _provenance_one(path, allow_missing=False):
     other way would bypass that check and would also be invisible to
     test_report_tokens' poisoned-artifact sweep.
     """
-    values = [v for v in _hh_value(path) if v is not None and str(v).strip()]
+    raw = [v for v in _hh_value(path) if v is not None]
+    # TYPE-CHECKED, not just truthiness-checked. `review_tool_independent:
+    # false` is a realistic way to write "nobody reviewed it", and YAML parses
+    # it as a boolean; str() would then render the sentence "independently
+    # reviewed with False", which is exactly the false review claim this whole
+    # change exists to stop. Lists and mappings stringify just as readably and
+    # just as wrongly. Only a real name, or nothing, is a usable answer.
+    for v in raw:
+        if not isinstance(v, str):
+            raise SystemExit(
+                f"report_tokens: private/household.yaml has {type(v).__name__} "
+                f"{v!r} at {path!r}, and this value is published as the name of a "
+                "tool. If you mean nobody did this, write null (or leave the key "
+                "out) -- false, 0 and [] all render as words and would publish a "
+                "claim that is not true.")
+    values = [v for v in raw if v.strip()]
     if not values:
         if allow_missing:
             return None
