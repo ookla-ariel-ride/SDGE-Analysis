@@ -6003,14 +6003,23 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
     art = json.loads((ROOT / "data" / "package_results.json").read_text())
     marginal = art["packages"]["HIGH"]["marginal_vs_mid_yr"]
 
+    # THE SIGN IS CHECKED FIRST, and that ordering is the point.
+    # marginal_vs_mid_yr is an unconstrained difference between two savings, so
+    # a later analysis can legitimately produce zero or a negative. Asserting
+    # the "more than MID" wording before testing the sign would demand a report
+    # print "~$-50/yr more than MID" -- so a CORRECT report saying the pack
+    # saves less would fail this case, and the way to make it pass would be to
+    # publish false purchase advice. A guard against a misleading claim must
+    # not be the reason the next one gets written.
+    if marginal <= 0:
+        return (f"packages.HIGH.marginal_vs_mid_yr is {marginal}, not positive, so "
+                "neither the saving claim nor the denial check applies -- a report "
+                "that says the pack saves no more than MID would be correct")
+
     printed = f"~${marginal:,.0f}/yr more than MID"
     assert printed in HTML, (
         f"the HIGH card does not state its own artifact's marginal saving "
         f"({printed!r} from packages.HIGH.marginal_vs_mid_yr)")
-
-    if marginal <= 0:
-        return ("packages.HIGH.marginal_vs_mid_yr is not positive, so the "
-                "denial-of-savings check does not apply")
 
     # Phrasings that assert the saving is ABSENT rather than too small. Checked
     # across every document that publishes this claim, because the same
