@@ -6008,6 +6008,24 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
     section 7 verdict; this is the half that sees hand-authored prose."""
     art = json.loads((ROOT / "data" / "package_results.json").read_text())
     marginal = art["packages"]["HIGH"]["marginal_vs_mid_yr"]
+    savings = art["packages"]["HIGH"]["savings_yr"]
+
+    # TWO DIFFERENT CLAIMS, and only one of them is about the increment.
+    # "this package buys endurance, not savings" is about the PACKAGE, and it is
+    # false whenever savings_yr is positive -- no matter what the marginal does.
+    # Checked before the marginal branches below, because a marginal that went
+    # to zero would otherwise let that package-level denial back in while HIGH
+    # still saves $3,675/yr against the baseline (Codex review, issue #142).
+    if savings > 0:
+        for doc in _HIGH_CARD_DOCS:
+            lowered = (ROOT / doc).read_text().lower()
+            for phrase in ("package buys outage endurance, not savings",
+                           "endurance, not savings"):
+                assert phrase not in lowered, (
+                    f"{doc} says {phrase!r} of a package whose artifact reports "
+                    f"savings_yr of ${savings:,.0f}/yr. That denial is about the "
+                    "PACKAGE, and the package does save; only a claim scoped to the "
+                    "expansion's marginal saving could ever be true")
 
     # THE SIGN IS CHECKED FIRST, and that ordering is the point.
     # marginal_vs_mid_yr is an unconstrained difference between two savings, so
