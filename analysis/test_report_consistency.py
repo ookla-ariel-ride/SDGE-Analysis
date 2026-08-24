@@ -1469,6 +1469,12 @@ def case_gas_hdd_decomposition_matches_extended_results():
     assert er_path.exists(), f"{er_path} is committed public data and must exist"
     er = json.loads(er_path.read_text())
     gd = er["gas_decomposition"]
+    # SKIP, not KeyError (issue #146). extended_findings.py publishes this
+    # section as an explicit not_applicable stub when household.has_gas is
+    # false, so a gasless checkout reaches here with no floor_therms_day to
+    # index. Fourth case in this file gated on the same flag.
+    if gd.get("not_applicable"):
+        raise SkipCase("household.has_gas is false")
 
     m = re.search(r"<p><b>The HDD decomposition agrees with the bills.*?</p>", HTML, re.S)
     assert m, "§9 HDD gas-decomposition paragraph not found in index.html"
@@ -6147,7 +6153,8 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
     gated = ("data/heat_pump_conversion.json", "data/all_electric_endgame.json")
     targets = ("case_heat_pump_conversion_section_matches_the_artifact",
                "case_all_electric_paragraph_furnace_savings_matches_the_artifact",
-               "case_all_electric_endgame_section_matches_the_artifact")
+               "case_all_electric_endgame_section_matches_the_artifact",
+               "case_gas_hdd_decomposition_matches_extended_results")
 
     for rel in gated:
         if not json.loads((ROOT / rel).read_text()).get("applicable", True):
@@ -6167,6 +6174,24 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
             payload = json.loads((sandbox / rel).read_text())
             payload["applicable"] = False
             (sandbox / rel).write_text(json.dumps(payload, indent=1))
+        # extended_results.json carries no top-level `applicable`: its gas
+        # section is replaced wholesale by extended_findings._not_applicable
+        # when household.has_gas is false. The stub is written out here rather
+        # than imported, because importing that generator executes module-level
+        # code that reads usage.csv from the private archive. The KEY is pinned
+        # against the generator's source instead, so renaming it there fails
+        # this fixture rather than leaving it describing a stub the pipeline no
+        # longer emits.
+        gen_src = (ROOT / "analysis" / "extended_findings.py").read_text()
+        assert '"not_applicable": True' in gen_src, (
+            "extended_findings.py no longer publishes a `not_applicable` stub in "
+            "that shape; this fixture's no-gas artifact is out of date")
+        er_path = sandbox / "data" / "extended_results.json"
+        er = json.loads(er_path.read_text())
+        er["gas_decomposition"] = {
+            "not_applicable": True,
+            "reason": "household.has_gas is false (fixture, issue #146)"}
+        er_path.write_text(json.dumps(er, indent=1))
 
         r = subprocess.run([sys.executable, "analysis/test_report_consistency.py"],
                            cwd=str(sandbox), capture_output=True, text=True)
@@ -6184,8 +6209,8 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
         "a household with no gas cannot get a green consistency suite; the run "
         f"exited {r.returncode}:\n{out[-900:]}")
     assert "skipped" in out, "the tally does not report the skips"
-    return ("a no-gas checkout skips all three has_gas-gated cases by name and the "
-            "suite still exits 0, driven in a copy of the tracked tree")
+    return (f"a no-gas checkout skips all {len(targets)} has_gas-gated cases by name "
+            "and the suite still exits 0, driven in a copy of the tracked tree")
 
 
 CASES = [
