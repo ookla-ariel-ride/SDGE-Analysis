@@ -6142,10 +6142,10 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
     read-only checkout, races a concurrent run, and leaves the tree modified if
     the process is killed before `finally`.
 
-    Asserts the three target cases BY NAME, in both directions. This case
+    Asserts every target case BY NAME, in both directions. This case
     itself skips in the child run, so a generic "some line says SKIP" check is
-    satisfied by its own skip and would pass even if all three targets
-    wrongly reported PASS."""
+    satisfied by its own skip and would pass even if every target wrongly
+    reported PASS."""
     import shutil
     import subprocess
     import tempfile
@@ -6158,6 +6158,13 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
 
     live = {rel: json.loads((ROOT / rel).read_text()).get("applicable", True)
             for rel in gated}
+    # extended_results.json is gated on the same flag but signals it differently:
+    # its gas section is replaced by a not_applicable stub rather than carrying
+    # an `applicable` key. Leaving it out of this check let exactly the mixed
+    # state the assert exists to report pass silently.
+    live["data/extended_results.json:gas_decomposition"] = not json.loads(
+        (ROOT / "data" / "extended_results.json").read_text()
+    )["gas_decomposition"].get("not_applicable", False)
     # household.has_gas gates both of these, so they can only ever agree. A
     # checkout where they disagree was produced by regenerating one and not the
     # other, and reporting that is more useful than skipping past it.
@@ -6168,8 +6175,13 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
         raise SkipCase("this checkout already has no gas, so the fixture has "
                        "nothing to change")
 
-    tracked = subprocess.run(["git", "ls-files"], cwd=str(ROOT),
-                             capture_output=True, text=True, check=True).stdout.split()
+    # -z and core.quotePath=false: a tracked path with a space would otherwise
+    # split into fragments, and a non-ASCII one would come back octal-quoted.
+    # Either way the file is silently skipped and the child dies at import with
+    # a message about the wrong thing.
+    tracked = [t for t in subprocess.run(
+        ["git", "-c", "core.quotePath=false", "ls-files", "-z"], cwd=str(ROOT),
+        capture_output=True, text=True, check=True).stdout.split("\0") if t]
     with tempfile.TemporaryDirectory(prefix="sdge-nogas-") as td:
         sandbox = pathlib.Path(td)
         for rel in tracked:
@@ -6177,7 +6189,11 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
             if not src.is_file():
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            # copyfile, NOT copy2: copy2 preserves permission bits, so a
+            # read-only checkout yields 0444 copies and the two artifacts this
+            # fixture rewrites below die with PermissionError -- the very
+            # scenario the docstring above gives as the reason for sandboxing.
+            shutil.copyfile(src, dst)
         # THE PRODUCERS' OWN STUB, not the full payload with one flag flipped.
         # heat_pump_conversion.build() and all_electric_endgame.build() both
         # return {"applicable": False, "reason": ...} and nothing else, so
@@ -6210,8 +6226,11 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
             "reason": "household.has_gas is false (fixture, issue #146)"}
         er_path.write_text(json.dumps(er, indent=1))
 
+        # timeout: the child is the whole 78-case suite, and capture_output
+        # means a hang would print nothing and block the parent indefinitely.
         r = subprocess.run([sys.executable, "analysis/test_report_consistency.py"],
-                           cwd=str(sandbox), capture_output=True, text=True)
+                           cwd=str(sandbox), capture_output=True, text=True,
+                           timeout=900)
         out = r.stdout + r.stderr
 
     assert "NameError" not in out, (
@@ -6220,12 +6239,21 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
     for name in targets:
         assert f"SKIP  {name} " in out, (
             f"{name} did not skip with its artifact not applicable:\n{out[-900:]}")
-        assert f"PASS  {name}" not in out, (
-            f"{name} reported PASS on data it cannot check:\n{out[-900:]}")
+        # main() prints `PASS  {case()}` -- the RETURN STRING, never the case
+        # name -- so an f"PASS  {name}" check could never fire. FAIL lines do
+        # carry the name, and a gated case that stopped skipping fails there.
+        assert f"FAIL  {name}" not in out, (
+            f"{name} failed instead of skipping on data it cannot check:\n{out[-900:]}")
     assert r.returncode == 0, (
         "a household with no gas cannot get a green consistency suite; the run "
         f"exited {r.returncode}:\n{out[-900:]}")
-    assert "skipped" in out, "the tally does not report the skips"
+    # Not `"skipped" in out`: this case skips in the child run too, so that is
+    # satisfied by its own skip. The tally must account for at least the target
+    # cases plus this one.
+    tally = re.search(r"(\d+) skipped", out)
+    assert tally and int(tally.group(1)) >= len(targets) + 1, (
+        f"the tally reports {tally.group(1) if tally else 'no'} skips, fewer than the "
+        f"{len(targets)} gated cases plus this one:\n{out[-900:]}")
     return (f"a no-gas checkout skips all {len(targets)} has_gas-gated cases by name "
             "and the suite still exits 0, driven in a copy of the tracked tree")
 
@@ -6315,6 +6343,7 @@ CASES = [
 
 def main():
     ran = skipped = failures = 0
+    skipped_names = []
     for case in CASES:
         try:
             print(f"PASS  {case()}")
@@ -6323,12 +6352,25 @@ def main():
         # not a failure, and this ordering is the whole fix.
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
+            skipped_names.append(case.__name__)
             skipped += 1
         except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
             suite_runner.report_case_failure(case, e)
             failures += 1
     tail = f", {skipped} skipped" if skipped else ""
     print(f"\n{ran}/{len(CASES)} passed{tail}")
+    # NAME WHAT WENT UNPROVEN. This suite turns content checks into skips when
+    # the artifact they read does not apply, so a green line alone no longer
+    # means the report was fully checked: a tree carrying the not-applicable
+    # stubs -- a fork's regeneration, an older branch, a run against the wrong
+    # household.yaml -- would silently stop checking those sections and still
+    # exit 0. test_private_egress.py hit exactly that (#186) and answered it
+    # with a banner; this is the same answer.
+    if skipped_names:
+        print(f"\nNOT CHECKED ({len(skipped_names)}), because the artifacts they "
+              "read do not apply to this household:")
+        for name in skipped_names:
+            print(f"  - {name}")
     return 1 if failures else 0
 
 
