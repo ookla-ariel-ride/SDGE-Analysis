@@ -841,7 +841,13 @@ def case_all_electric_endgame_section_matches_the_artifact():
     aee_path = ROOT / "data" / "all_electric_endgame.json"
     assert aee_path.exists(), f"{aee_path} is committed public data and must exist"
     aee = json.loads(aee_path.read_text())
-    assert aee["applicable"], "this household's own household.has_gas must be true"
+    # SKIP, not assert (issue #146). all_electric_endgame.json is gated on the
+    # same household.has_gas as heat_pump_conversion.json, so a gasless checkout
+    # gets BOTH marked not applicable. Fixing only the heat-pump pair left this
+    # one failing and the suite still red -- the third site of the same defect,
+    # found by driving the scenario rather than by reading for it.
+    if not aee["applicable"]:
+        raise SkipCase("household.has_gas is false")
 
     m = re.search(r'<h3 id="wh-real-interval">.*?<h2 id="s11">', HTML, re.S)
     assert m, "the water-heater-real-interval subsection was not found in index.html"
@@ -6120,9 +6126,10 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
 
 
 def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
-    """Issue #146. One case skips -- the all-electric citation, when
-    heat_pump_conversion.json is not applicable because the household has no
-    gas -- and this file raised SkipCase without defining or importing it.
+    """Issue #146. A gasless household gets every has_gas-gated artifact
+    marked not applicable, and the cases reading them must skip. This file
+    raised SkipCase without defining or importing it, and two other cases
+    asserted `applicable` outright.
 
     The symptom was not the crash the issue predicted. Since #236 main()
     catches Exception through suite_runner.CASE_FAILURES, so the NameError
@@ -6134,20 +6141,27 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
     import subprocess
     import tempfile
 
-    art = ROOT / "data" / "heat_pump_conversion.json"
-    original = art.read_text()
-    payload = json.loads(original)
-    if not payload.get("applicable", True):
-        raise SkipCase("heat_pump_conversion.json is already not applicable here")
-    payload["applicable"] = False
+    # BOTH artifacts, because both are gated on household.has_gas: patching only
+    # one models a checkout that cannot exist, and it is what let a third
+    # asserting case survive the first version of this fix.
+    arts = [ROOT / "data" / "heat_pump_conversion.json",
+            ROOT / "data" / "all_electric_endgame.json"]
+    originals = {a: a.read_text() for a in arts}
+    if not all(json.loads(t).get("applicable", True) for t in originals.values()):
+        raise SkipCase("a has_gas-gated artifact is already not applicable here")
     try:
-        art.write_text(json.dumps(payload, indent=1))
+        for a in arts:
+            payload = json.loads(originals[a])
+            payload["applicable"] = False
+            a.write_text(json.dumps(payload, indent=1))
         r = subprocess.run([sys.executable, str(ROOT / "analysis" /
                                                 "test_report_consistency.py")],
                            capture_output=True, text=True, cwd=str(ROOT))
     finally:
-        art.write_text(original)
-    assert art.read_text() == original, "the artifact was not restored"
+        for a in arts:
+            a.write_text(originals[a])
+    for a in arts:
+        assert a.read_text() == originals[a], f"{a.name} was not restored"
 
     out = r.stdout + r.stderr
     assert "NameError" not in out, (
