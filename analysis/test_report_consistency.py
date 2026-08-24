@@ -6126,55 +6126,67 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
 
 
 def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
-    """Issue #146. A gasless household gets every has_gas-gated artifact
-    marked not applicable, and the cases reading them must skip. This file
-    raised SkipCase without defining or importing it, and two other cases
-    asserted `applicable` outright.
+    """Issue #146. A gasless household gets every has_gas-gated artifact marked
+    not applicable, and every case reading one must skip. This file raised
+    SkipCase without defining or importing it, and two other cases asserted
+    `applicable` outright, so such a checkout could not get a green suite.
 
-    The symptom was not the crash the issue predicted. Since #236 main()
-    catches Exception through suite_runner.CASE_FAILURES, so the NameError
-    surfaced as a FAILING case and a non-zero exit: a checkout whose household
-    legitimately has no gas could not get a green consistency suite at all.
+    Runs in a COPY of the tracked tree, never in this checkout. Rewriting two
+    committed artifacts in place -- the first version of this case -- fails on a
+    read-only checkout, races a concurrent run, and leaves the tree modified if
+    the process is killed before `finally`.
 
-    Drives the real branch against a not-applicable artifact and requires the
-    suite to SKIP that case, keep going, and exit 0."""
+    Asserts the three target cases BY NAME, in both directions. This case
+    itself skips in the child run, so a generic "some line says SKIP" check is
+    satisfied by its own skip and would pass even if all three targets
+    wrongly reported PASS."""
+    import shutil
     import subprocess
     import tempfile
 
-    # BOTH artifacts, because both are gated on household.has_gas: patching only
-    # one models a checkout that cannot exist, and it is what let a third
-    # asserting case survive the first version of this fix.
-    arts = [ROOT / "data" / "heat_pump_conversion.json",
-            ROOT / "data" / "all_electric_endgame.json"]
-    originals = {a: a.read_text() for a in arts}
-    if not all(json.loads(t).get("applicable", True) for t in originals.values()):
-        raise SkipCase("a has_gas-gated artifact is already not applicable here")
-    try:
-        for a in arts:
-            payload = json.loads(originals[a])
-            payload["applicable"] = False
-            a.write_text(json.dumps(payload, indent=1))
-        r = subprocess.run([sys.executable, str(ROOT / "analysis" /
-                                                "test_report_consistency.py")],
-                           capture_output=True, text=True, cwd=str(ROOT))
-    finally:
-        for a in arts:
-            a.write_text(originals[a])
-    for a in arts:
-        assert a.read_text() == originals[a], f"{a.name} was not restored"
+    gated = ("data/heat_pump_conversion.json", "data/all_electric_endgame.json")
+    targets = ("case_heat_pump_conversion_section_matches_the_artifact",
+               "case_all_electric_paragraph_furnace_savings_matches_the_artifact",
+               "case_all_electric_endgame_section_matches_the_artifact")
 
-    out = r.stdout + r.stderr
+    for rel in gated:
+        if not json.loads((ROOT / rel).read_text()).get("applicable", True):
+            raise SkipCase(f"{rel} is already not applicable in this checkout")
+
+    tracked = subprocess.run(["git", "ls-files"], cwd=str(ROOT),
+                             capture_output=True, text=True, check=True).stdout.split()
+    with tempfile.TemporaryDirectory(prefix="sdge-nogas-") as td:
+        sandbox = pathlib.Path(td)
+        for rel in tracked:
+            src, dst = ROOT / rel, sandbox / rel
+            if not src.is_file():
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        for rel in gated:
+            payload = json.loads((sandbox / rel).read_text())
+            payload["applicable"] = False
+            (sandbox / rel).write_text(json.dumps(payload, indent=1))
+
+        r = subprocess.run([sys.executable, "analysis/test_report_consistency.py"],
+                           cwd=str(sandbox), capture_output=True, text=True)
+        out = r.stdout + r.stderr
+
     assert "NameError" not in out, (
         "the not-applicable branch still raises NameError -- SkipCase is not "
         f"defined or imported in this file:\n{out[-600:]}")
-    assert "SKIP  case_all_electric" in out or "SKIP " in out, (
-        f"no case reported SKIP with the artifact not applicable:\n{out[-600:]}")
+    for name in targets:
+        assert f"SKIP  {name} " in out, (
+            f"{name} did not skip with its artifact not applicable:\n{out[-900:]}")
+        assert f"PASS  {name}" not in out, (
+            f"{name} reported PASS on data it cannot check:\n{out[-900:]}")
     assert r.returncode == 0, (
         "a household with no gas cannot get a green consistency suite; the run "
-        f"exited {r.returncode}:\n{out[-800:]}")
-    assert "skipped" in out, "the tally does not report the skip"
-    return ("a not-applicable heat_pump_conversion.json skips its case, the run "
-            "continues, and the suite still exits 0")
+        f"exited {r.returncode}:\n{out[-900:]}")
+    assert "skipped" in out, "the tally does not report the skips"
+    return ("a no-gas checkout skips all three has_gas-gated cases by name and the "
+            "suite still exits 0, driven in a copy of the tracked tree")
+
 
 CASES = [
     case_periods_chart_matches_its_artifact,
