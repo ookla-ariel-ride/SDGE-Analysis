@@ -6156,9 +6156,17 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
                "case_all_electric_endgame_section_matches_the_artifact",
                "case_gas_hdd_decomposition_matches_extended_results")
 
-    for rel in gated:
-        if not json.loads((ROOT / rel).read_text()).get("applicable", True):
-            raise SkipCase(f"{rel} is already not applicable in this checkout")
+    live = {rel: json.loads((ROOT / rel).read_text()).get("applicable", True)
+            for rel in gated}
+    # household.has_gas gates both of these, so they can only ever agree. A
+    # checkout where they disagree was produced by regenerating one and not the
+    # other, and reporting that is more useful than skipping past it.
+    assert len(set(live.values())) == 1, (
+        f"these artifacts are gated on the same household.has_gas but disagree: "
+        f"{live}. One was regenerated without the other")
+    if not all(live.values()):
+        raise SkipCase("this checkout already has no gas, so the fixture has "
+                       "nothing to change")
 
     tracked = subprocess.run(["git", "ls-files"], cwd=str(ROOT),
                              capture_output=True, text=True, check=True).stdout.split()
@@ -6170,10 +6178,19 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
-        for rel in gated:
-            payload = json.loads((sandbox / rel).read_text())
-            payload["applicable"] = False
-            (sandbox / rel).write_text(json.dumps(payload, indent=1))
+        # THE PRODUCERS' OWN STUB, not the full payload with one flag flipped.
+        # heat_pump_conversion.build() and all_electric_endgame.build() both
+        # return {"applicable": False, "reason": ...} and nothing else, so
+        # keeping the gas-only fields would let a case that ignores the marker
+        # read figures a real no-gas checkout does not have -- passing here and
+        # failing for a reproducer, which is the failure this whole issue is.
+        for rel, gen in ((gated[0], "heat_pump_conversion.py"),
+                         (gated[1], "all_electric_endgame.py")):
+            gen_src = (ROOT / "analysis" / gen).read_text()
+            assert '{"applicable": False, "reason": "household.has_gas is false"}' in gen_src, (
+                f"{gen} no longer emits that no-gas stub; this fixture is out of date")
+            (sandbox / rel).write_text(json.dumps(
+                {"applicable": False, "reason": "household.has_gas is false"}, indent=1))
         # extended_results.json carries no top-level `applicable`: its gas
         # section is replaced wholesale by extended_findings._not_applicable
         # when household.has_gas is false. The stub is written out here rather
