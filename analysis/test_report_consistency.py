@@ -168,6 +168,19 @@ RETIRED_HOLIDAY_PHRASES = [
 ]
 
 
+class SkipCase(Exception):
+    """Typed skip signal, matching the convention 40 sibling suites already
+    use. This file RAISED it without defining or importing it (issue #146), so
+    the one branch that skips -- a household with no gas, where
+    heat_pump_conversion.json is not applicable -- raised NameError instead.
+    Since #236 main() catches Exception through suite_runner.CASE_FAILURES, so
+    that surfaced as a FAILING consistency suite rather than the crashed run
+    the issue predicted: a checkout whose household legitimately has no gas
+    could not get a green suite at all, which is exactly the reproducer this
+    repo is written for.
+    """
+
+
 def _array(name):
     """The numeric array assigned to `name` in the report's const D block."""
     m = re.search(re.escape(name) + r":\s*(\[[-\d.,\s]*\])", HTML)
@@ -738,7 +751,14 @@ def case_heat_pump_conversion_section_matches_the_artifact():
     hpc_path = ROOT / "data" / "heat_pump_conversion.json"
     assert hpc_path.exists(), f"{hpc_path} is committed public data and must exist"
     hpc = json.loads(hpc_path.read_text())
-    assert hpc["applicable"], "this household's own household.has_gas must be true"
+    # SKIP, not assert (issue #146). The sibling case that reads this artifact
+    # already skips when it is not applicable; this one asserted, so a household
+    # with no gas -- for which "not applicable" is the correct and expected
+    # answer -- got a FAILING consistency suite from the one document it cannot
+    # produce. Two cases, one artifact, two different answers to the same
+    # question was the actual reason a gasless checkout could not go green.
+    if not hpc["applicable"]:
+        raise SkipCase("household.has_gas is false")
 
     m = re.search(r"<h3>Replacing the furnace \+ AC with a heat pump.*?</p>\s*<p><b>Going all-electric",
                   HTML, re.S)
@@ -821,7 +841,13 @@ def case_all_electric_endgame_section_matches_the_artifact():
     aee_path = ROOT / "data" / "all_electric_endgame.json"
     assert aee_path.exists(), f"{aee_path} is committed public data and must exist"
     aee = json.loads(aee_path.read_text())
-    assert aee["applicable"], "this household's own household.has_gas must be true"
+    # SKIP, not assert (issue #146). all_electric_endgame.json is gated on the
+    # same household.has_gas as heat_pump_conversion.json, so a gasless checkout
+    # gets BOTH marked not applicable. Fixing only the heat-pump pair left this
+    # one failing and the suite still red -- the third site of the same defect,
+    # found by driving the scenario rather than by reading for it.
+    if not aee["applicable"]:
+        raise SkipCase("household.has_gas is false")
 
     m = re.search(r'<h3 id="wh-real-interval">.*?<h2 id="s11">', HTML, re.S)
     assert m, "the water-heater-real-interval subsection was not found in index.html"
@@ -1443,6 +1469,12 @@ def case_gas_hdd_decomposition_matches_extended_results():
     assert er_path.exists(), f"{er_path} is committed public data and must exist"
     er = json.loads(er_path.read_text())
     gd = er["gas_decomposition"]
+    # SKIP, not KeyError (issue #146). extended_findings.py publishes this
+    # section as an explicit not_applicable stub when household.has_gas is
+    # false, so a gasless checkout reaches here with no floor_therms_day to
+    # index. Fourth case in this file gated on the same flag.
+    if gd.get("not_applicable"):
+        raise SkipCase("household.has_gas is false")
 
     m = re.search(r"<p><b>The HDD decomposition agrees with the bills.*?</p>", HTML, re.S)
     assert m, "§9 HDD gas-decomposition paragraph not found in index.html"
@@ -6098,6 +6130,134 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
             f"TECHNICAL.md carries the same figure, and no region denies it")
 
 
+
+def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
+    """Issue #146. A gasless household gets every has_gas-gated artifact marked
+    not applicable, and every case reading one must skip. This file raised
+    SkipCase without defining or importing it, and two other cases asserted
+    `applicable` outright, so such a checkout could not get a green suite.
+
+    Runs in a COPY of the tracked tree, never in this checkout. Rewriting two
+    committed artifacts in place -- the first version of this case -- fails on a
+    read-only checkout, races a concurrent run, and leaves the tree modified if
+    the process is killed before `finally`.
+
+    Asserts every target case BY NAME, in both directions. This case
+    itself skips in the child run, so a generic "some line says SKIP" check is
+    satisfied by its own skip and would pass even if every target wrongly
+    reported PASS."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    gated = ("data/heat_pump_conversion.json", "data/all_electric_endgame.json")
+    targets = ("case_heat_pump_conversion_section_matches_the_artifact",
+               "case_all_electric_paragraph_furnace_savings_matches_the_artifact",
+               "case_all_electric_endgame_section_matches_the_artifact",
+               "case_gas_hdd_decomposition_matches_extended_results")
+
+    live = {rel: json.loads((ROOT / rel).read_text()).get("applicable", True)
+            for rel in gated}
+    # extended_results.json is gated on the same flag but signals it differently:
+    # its gas section is replaced by a not_applicable stub rather than carrying
+    # an `applicable` key. Leaving it out of this check let exactly the mixed
+    # state the assert exists to report pass silently.
+    live["data/extended_results.json:gas_decomposition"] = not json.loads(
+        (ROOT / "data" / "extended_results.json").read_text()
+    )["gas_decomposition"].get("not_applicable", False)
+    # household.has_gas gates both of these, so they can only ever agree. A
+    # checkout where they disagree was produced by regenerating one and not the
+    # other, and reporting that is more useful than skipping past it.
+    assert len(set(live.values())) == 1, (
+        f"these artifacts are gated on the same household.has_gas but disagree: "
+        f"{live}. One was regenerated without the other")
+    if not all(live.values()):
+        raise SkipCase("this checkout already has no gas, so the fixture has "
+                       "nothing to change")
+
+    # -z and core.quotePath=false: a tracked path with a space would otherwise
+    # split into fragments, and a non-ASCII one would come back octal-quoted.
+    # Either way the file is silently skipped and the child dies at import with
+    # a message about the wrong thing.
+    tracked = [t for t in subprocess.run(
+        ["git", "-c", "core.quotePath=false", "ls-files", "-z"], cwd=str(ROOT),
+        capture_output=True, text=True, check=True).stdout.split("\0") if t]
+    with tempfile.TemporaryDirectory(prefix="sdge-nogas-") as td:
+        sandbox = pathlib.Path(td)
+        for rel in tracked:
+            src, dst = ROOT / rel, sandbox / rel
+            if not src.is_file():
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            # copyfile, NOT copy2: copy2 preserves permission bits, so a
+            # read-only checkout yields 0444 copies and the two artifacts this
+            # fixture rewrites below die with PermissionError -- the very
+            # scenario the docstring above gives as the reason for sandboxing.
+            shutil.copyfile(src, dst)
+        # THE PRODUCERS' OWN STUB, not the full payload with one flag flipped.
+        # heat_pump_conversion.build() and all_electric_endgame.build() both
+        # return {"applicable": False, "reason": ...} and nothing else, so
+        # keeping the gas-only fields would let a case that ignores the marker
+        # read figures a real no-gas checkout does not have -- passing here and
+        # failing for a reproducer, which is the failure this whole issue is.
+        for rel, gen in ((gated[0], "heat_pump_conversion.py"),
+                         (gated[1], "all_electric_endgame.py")):
+            gen_src = (ROOT / "analysis" / gen).read_text()
+            assert '{"applicable": False, "reason": "household.has_gas is false"}' in gen_src, (
+                f"{gen} no longer emits that no-gas stub; this fixture is out of date")
+            (sandbox / rel).write_text(json.dumps(
+                {"applicable": False, "reason": "household.has_gas is false"}, indent=1))
+        # extended_results.json carries no top-level `applicable`: its gas
+        # section is replaced wholesale by extended_findings._not_applicable
+        # when household.has_gas is false. The stub is written out here rather
+        # than imported, because importing that generator executes module-level
+        # code that reads usage.csv from the private archive. The KEY is pinned
+        # against the generator's source instead, so renaming it there fails
+        # this fixture rather than leaving it describing a stub the pipeline no
+        # longer emits.
+        gen_src = (ROOT / "analysis" / "extended_findings.py").read_text()
+        assert '"not_applicable": True' in gen_src, (
+            "extended_findings.py no longer publishes a `not_applicable` stub in "
+            "that shape; this fixture's no-gas artifact is out of date")
+        er_path = sandbox / "data" / "extended_results.json"
+        er = json.loads(er_path.read_text())
+        er["gas_decomposition"] = {
+            "not_applicable": True,
+            "reason": "household.has_gas is false (fixture, issue #146)"}
+        er_path.write_text(json.dumps(er, indent=1))
+
+        # timeout: the child is the whole 78-case suite, and capture_output
+        # means a hang would print nothing and block the parent indefinitely.
+        r = subprocess.run([sys.executable, "analysis/test_report_consistency.py"],
+                           cwd=str(sandbox), capture_output=True, text=True,
+                           timeout=900)
+        out = r.stdout + r.stderr
+
+    assert "NameError" not in out, (
+        "the not-applicable branch still raises NameError -- SkipCase is not "
+        f"defined or imported in this file:\n{out[-600:]}")
+    for name in targets:
+        assert f"SKIP  {name} " in out, (
+            f"{name} did not skip with its artifact not applicable:\n{out[-900:]}")
+        # main() prints `PASS  {case()}` -- the RETURN STRING, never the case
+        # name -- so an f"PASS  {name}" check could never fire. FAIL lines do
+        # carry the name, and a gated case that stopped skipping fails there.
+        assert f"FAIL  {name}" not in out, (
+            f"{name} failed instead of skipping on data it cannot check:\n{out[-900:]}")
+    assert r.returncode == 0, (
+        "a household with no gas cannot get a green consistency suite; the run "
+        f"exited {r.returncode}:\n{out[-900:]}")
+    # Not `"skipped" in out`: this case skips in the child run too, so that is
+    # satisfied by its own skip. The tally must account for at least the target
+    # cases plus this one.
+    tally = re.search(r"(\d+) skipped", out)
+    assert tally and int(tally.group(1)) >= len(targets) + 1, (
+        f"the tally reports {tally.group(1) if tally else 'no'} skips, fewer than the "
+        f"{len(targets)} gated cases plus this one:\n{out[-900:]}")
+    return (f"a no-gas checkout skips all {len(targets)} has_gas-gated cases by name "
+            "and the suite still exits 0, driven in a copy of the tracked tree")
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -6176,20 +6336,41 @@ CASES = [
     case_every_published_export_figure_names_its_treatment,
     case_stored_kwh_costs_match_the_dispatch_artifact,
     case_the_high_card_never_denies_the_saving_its_own_bullet_states,
+    case_a_household_with_no_gas_skips_that_case_and_still_exits_zero,
 ]
 
 
 
 def main():
-    ran = failures = 0
+    ran = skipped = failures = 0
+    skipped_names = []
     for case in CASES:
         try:
             print(f"PASS  {case()}")
             ran += 1
+        # BEFORE suite_runner.CASE_FAILURES, which catches Exception: a skip is
+        # not a failure, and this ordering is the whole fix.
+        except SkipCase as e:
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped_names.append(case.__name__)
+            skipped += 1
         except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
             suite_runner.report_case_failure(case, e)
             failures += 1
-    print(f"\n{ran}/{len(CASES)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{ran}/{len(CASES)} passed{tail}")
+    # NAME WHAT WENT UNPROVEN. This suite turns content checks into skips when
+    # the artifact they read does not apply, so a green line alone no longer
+    # means the report was fully checked: a tree carrying the not-applicable
+    # stubs -- a fork's regeneration, an older branch, a run against the wrong
+    # household.yaml -- would silently stop checking those sections and still
+    # exit 0. test_private_egress.py hit exactly that (#186) and answered it
+    # with a banner; this is the same answer.
+    if skipped_names:
+        print(f"\nNOT CHECKED ({len(skipped_names)}), because the artifacts they "
+              "read do not apply to this household:")
+        for name in skipped_names:
+            print(f"  - {name}")
     return 1 if failures else 0
 
 
