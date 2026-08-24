@@ -168,6 +168,19 @@ RETIRED_HOLIDAY_PHRASES = [
 ]
 
 
+class SkipCase(Exception):
+    """Typed skip signal, matching the convention 40 sibling suites already
+    use. This file RAISED it without defining or importing it (issue #146), so
+    the one branch that skips -- a household with no gas, where
+    heat_pump_conversion.json is not applicable -- raised NameError instead.
+    Since #236 main() catches Exception through suite_runner.CASE_FAILURES, so
+    that surfaced as a FAILING consistency suite rather than the crashed run
+    the issue predicted: a checkout whose household legitimately has no gas
+    could not get a green suite at all, which is exactly the reproducer this
+    repo is written for.
+    """
+
+
 def _array(name):
     """The numeric array assigned to `name` in the report's const D block."""
     m = re.search(re.escape(name) + r":\s*(\[[-\d.,\s]*\])", HTML)
@@ -738,7 +751,14 @@ def case_heat_pump_conversion_section_matches_the_artifact():
     hpc_path = ROOT / "data" / "heat_pump_conversion.json"
     assert hpc_path.exists(), f"{hpc_path} is committed public data and must exist"
     hpc = json.loads(hpc_path.read_text())
-    assert hpc["applicable"], "this household's own household.has_gas must be true"
+    # SKIP, not assert (issue #146). The sibling case that reads this artifact
+    # already skips when it is not applicable; this one asserted, so a household
+    # with no gas -- for which "not applicable" is the correct and expected
+    # answer -- got a FAILING consistency suite from the one document it cannot
+    # produce. Two cases, one artifact, two different answers to the same
+    # question was the actual reason a gasless checkout could not go green.
+    if not hpc["applicable"]:
+        raise SkipCase("household.has_gas is false")
 
     m = re.search(r"<h3>Replacing the furnace \+ AC with a heat pump.*?</p>\s*<p><b>Going all-electric",
                   HTML, re.S)
@@ -6098,6 +6118,50 @@ def case_the_high_card_never_denies_the_saving_its_own_bullet_states():
             f"TECHNICAL.md carries the same figure, and no region denies it")
 
 
+
+def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
+    """Issue #146. One case skips -- the all-electric citation, when
+    heat_pump_conversion.json is not applicable because the household has no
+    gas -- and this file raised SkipCase without defining or importing it.
+
+    The symptom was not the crash the issue predicted. Since #236 main()
+    catches Exception through suite_runner.CASE_FAILURES, so the NameError
+    surfaced as a FAILING case and a non-zero exit: a checkout whose household
+    legitimately has no gas could not get a green consistency suite at all.
+
+    Drives the real branch against a not-applicable artifact and requires the
+    suite to SKIP that case, keep going, and exit 0."""
+    import subprocess
+    import tempfile
+
+    art = ROOT / "data" / "heat_pump_conversion.json"
+    original = art.read_text()
+    payload = json.loads(original)
+    if not payload.get("applicable", True):
+        raise SkipCase("heat_pump_conversion.json is already not applicable here")
+    payload["applicable"] = False
+    try:
+        art.write_text(json.dumps(payload, indent=1))
+        r = subprocess.run([sys.executable, str(ROOT / "analysis" /
+                                                "test_report_consistency.py")],
+                           capture_output=True, text=True, cwd=str(ROOT))
+    finally:
+        art.write_text(original)
+    assert art.read_text() == original, "the artifact was not restored"
+
+    out = r.stdout + r.stderr
+    assert "NameError" not in out, (
+        "the not-applicable branch still raises NameError -- SkipCase is not "
+        f"defined or imported in this file:\n{out[-600:]}")
+    assert "SKIP  case_all_electric" in out or "SKIP " in out, (
+        f"no case reported SKIP with the artifact not applicable:\n{out[-600:]}")
+    assert r.returncode == 0, (
+        "a household with no gas cannot get a green consistency suite; the run "
+        f"exited {r.returncode}:\n{out[-800:]}")
+    assert "skipped" in out, "the tally does not report the skip"
+    return ("a not-applicable heat_pump_conversion.json skips its case, the run "
+            "continues, and the suite still exits 0")
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -6176,20 +6240,27 @@ CASES = [
     case_every_published_export_figure_names_its_treatment,
     case_stored_kwh_costs_match_the_dispatch_artifact,
     case_the_high_card_never_denies_the_saving_its_own_bullet_states,
+    case_a_household_with_no_gas_skips_that_case_and_still_exits_zero,
 ]
 
 
 
 def main():
-    ran = failures = 0
+    ran = skipped = failures = 0
     for case in CASES:
         try:
             print(f"PASS  {case()}")
             ran += 1
+        # BEFORE suite_runner.CASE_FAILURES, which catches Exception: a skip is
+        # not a failure, and this ordering is the whole fix.
+        except SkipCase as e:
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
             suite_runner.report_case_failure(case, e)
             failures += 1
-    print(f"\n{ran}/{len(CASES)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{ran}/{len(CASES)} passed{tail}")
     return 1 if failures else 0
 
 
