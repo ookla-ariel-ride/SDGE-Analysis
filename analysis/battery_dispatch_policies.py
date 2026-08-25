@@ -60,8 +60,11 @@ as sqrt-eta per direction):
   twowin   + 6-9am house load
   greedy   price-aware: any non-super-off-peak import; top-up toward full in any
            super-off-peak gap; solar surplus always charges first
-EV exclusion: intervals >= 2.5 kW outside on-peak are EV spillover; the (free)
-schedule fix moves that load, so the battery never serves it outside on-peak.
+EV exclusion (twowin and greedy, and ONLY on a household that has an EV):
+intervals >= 2.5 kW outside on-peak are EV spillover; the (free) schedule fix
+moves that load, so the battery never serves it outside on-peak. The exclusion
+is gated on br.EV_ANALYSIS (household.has_ev) -- see the comment at the rule in
+run_batt() and EV_EXCLUSION_NOTE_* below, which is what the artifact publishes.
 
 INTEGRATED VALUATION: the battery modifies the physical import/export series and the
 modified year is re-billed with the canonical engine (rates.bill_nem: monthly
@@ -181,10 +184,32 @@ def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, charge_kw=None, soc0=Non
     soc0 = cap / 2 if soc0 is None else soc0
     soc = soc0; served = 0.0; thru = 0.0
     p = d.p.values; h = d.hour.values; kw = imp0 * 4
+    # THE EV-SPILLOVER EXCLUSION IS CONDITIONAL ON THE HOUSEHOLD HAVING AN EV
+    # (issue #147). The >= 2.5 kW test below encodes one claim and one only: an
+    # import that big outside on-peak is EV charging spilling out of its window,
+    # the free schedule fix moves it, and the battery must not be credited with
+    # serving load that is about to move. On a household with household.has_ev
+    # false there is no such load, and the same test then withholds ORDINARY
+    # HOUSE LOAD -- a heat pump, an oven, a well pump -- from a battery that
+    # should serve it, understating the battery marginal and every MID/HIGH
+    # package, sizing-curve cell and plan-matrix cell built on it.
+    #
+    # KEYED OFF THE INTAKE FLAG, NOT OFF THE DETECTOR. br.EV_ANALYSIS is
+    # household.has_ev, the same predicate free_fix_shift() below uses. A
+    # detector that found no sessions is NOT the same fact as a household with
+    # no EV -- br.detect_sessions() returns nothing on a household whose EV
+    # charges away from home for a month, and reading that silence as "no EV"
+    # would switch the exclusion off on a household that needs it. Only the
+    # declared flag decides.
+    ev_spillover_excluded = br.EV_ANALYSIS
     for i in range(len(d)):
+        # True when this interval's import is servable at all: with an EV, only
+        # sub-2.5 kW imports outside on-peak are (the rest is spillover); with
+        # no EV, every one of them is.
+        serve_ok = (kw[i] < 2.5) if ev_spillover_excluded else True
         disch_win = (p[i] == "on") or \
-                    (policy == "twowin" and 6 <= h[i] < 9 and kw[i] < 2.5) or \
-                    (policy == "greedy" and p[i] != "sop" and kw[i] < 2.5)
+                    (policy == "twowin" and 6 <= h[i] < 9 and serve_ok) or \
+                    (policy == "greedy" and p[i] != "sop" and serve_ok)
         if exp[i] > 0 and not (disch_win and imp[i] > 0):
             # charge from surplus — unless this interval also has import inside a
             # discharge window (6.3% of intervals carry both flows; serving the
@@ -678,6 +703,26 @@ _ESCALATION_SEED_NOTE = {
          "that precedes the battery is behavior scenario c, not the EV shift)"),
 }
 
+# What the discharge-eligibility rule in run_batt() DID, per household, published
+# as notes.ev_exclusion. Two strings rather than one because the rule itself is
+# two rules (issue #147): a household with no EV has no spillover to exclude, and
+# an artifact that claimed one would be describing a filter that never ran.
+EV_EXCLUSION_NOTE_EV = ">=2.5 kW outside on-peak = EV spillover, never battery-served"
+EV_EXCLUSION_NOTE_NO_EV = (
+    "no EV-spillover exclusion applied: household.has_ev is false, so every "
+    "import outside super-off-peak is battery-servable, including ordinary "
+    "house load at or above 2.5 kW")
+
+
+def ev_exclusion_note():
+    """The notes.ev_exclusion string this household's dispatch earned.
+
+    Reads the SAME predicate run_batt() gates the exclusion on, so the artifact
+    cannot describe a filter the dispatch did not apply.
+    """
+    return EV_EXCLUSION_NOTE_EV if br.EV_ANALYSIS else EV_EXCLUSION_NOTE_NO_EV
+
+
 if __name__ == "__main__":
     d = br.load()
     imp0 = d.Consumption.values.astype(float); gen0 = d.Generation.values.astype(float)
@@ -689,9 +734,16 @@ if __name__ == "__main__":
     # convention the legacy ranking model has always used. The two bases used to
     # disagree by ~40 kWh of off-peak import; that gap is closed.
     _p = d.p.values; _kw = imp0 * 4
+    # The off-peak slice is a RESTATEMENT of run_batt()'s own discharge-eligibility
+    # rule, so it carries the same EV gate (issue #147). With an EV, only the
+    # sub-2.5 kW part of off-peak import is servable — the rest is spillover the
+    # free schedule fix moves. With household.has_ev false there is no spillover,
+    # the dispatch serves all of it, and a figure that still subtracted a 2.5 kW
+    # slice would contradict notes.ev_exclusion in the same artifact.
+    _servable_off = ((_p == "off") & (_kw < 2.5)) if br.EV_ANALYSIS else (_p == "off")
     inp = {"nonsop_import_kwh": round(float(imp0[_p != "sop"].sum())),
            "onpeak_import_kwh": round(float(imp0[_p == "on"].sum())),
-           "servable_offpeak_house_kwh": round(float(imp0[(_p == "off") & (_kw < 2.5)].sum()))}
+           "servable_offpeak_house_kwh": round(float(imp0[_servable_off].sum()))}
     inp["serviceable_total_kwh"] = inp["onpeak_import_kwh"] + inp["servable_offpeak_house_kwh"]
     inp["note"] = ("canonical rates.period_at assignment, including the eight "
                    "bill-confirmed tariff holidays as weekend days")
@@ -734,7 +786,7 @@ if __name__ == "__main__":
     out["escalation_greedy_pw3_post_behavior"] = escalation(pb["mid"]["battery_marginal"])
     out["escalation_note"] = _ESCALATION_SEED_NOTE[fix_scenario]
     out["notes"] = {"engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
-                    "ev_exclusion": ">=2.5 kW outside on-peak = EV spillover, never battery-served",
+                    "ev_exclusion": ev_exclusion_note(),
                     "rte": 0.9, "power_kw": 11.5,
                     "charge_kw_bare_unit": CHARGE_KW,
                     "charge_kw_with_expansion": CHARGE_KW_WITH_EXPANSION,
