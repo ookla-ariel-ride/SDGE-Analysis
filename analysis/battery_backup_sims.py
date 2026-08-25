@@ -3,11 +3,17 @@
 Inputs: usage.csv (SDGE Green Button 15-min), samA.csv/samB.csv (Enphase SAM 8760
 hourly consumption 2026/2025). Rates: EV-TOU-5 + CEA eff. 6/1/2026, PCIA 2023 vintage.
 Outputs: battery_sim.json (arbitrage), backup_endurance.json (outage endurance).
+
+Beside usage.csv/samA.csv/samB.csv this needs ROOT/private/household.yaml, for the
+one intake flag household.has_ev: the endurance half strips presumed EV charging
+out of the whole-house load, and whether there is any to strip is the intake's
+answer, never the load profile's (see the `ev` line below).
 """
 import pandas as pd, numpy as np, json, datetime as dt
 import sys, pathlib as _pl
 sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 import rates as R   # canonical TOU assignment (holiday rule included)
+import behavior_rebuild as br   # THIS run's intake flag (household.has_ev)
 
 # ---- load SDGE 15-min ----
 df=pd.read_csv("usage.csv",skiprows=13); df.columns=[c.strip() for c in df.columns]
@@ -71,10 +77,22 @@ load=pd.concat([pd.Series(b,index=idx25),pd.Series(a,index=idx26)])["2025-07-24"
 h=df.set_index("dt").resample("h")[["Consumption","Generation"]].sum()["2025-07-24":"2026-07-23 23:00"]
 m=pd.DataFrame({"load":load,"imp":h.Consumption,"exp":h.Generation}).dropna()
 m["prod"]=(m["load"]-m["imp"]+m["exp"]).clip(lower=0)
-ev=np.where(m["load"]>7,m["load"]-1.5,0)          # EV heuristic: >7 kWh/h hours
+# THE >7 kWh/h STRIP IS AN EV HEURISTIC, so it only runs where the intake says
+# there is an EV to strip (issue #147). br.EV_ANALYSIS is behavior_rebuild.py's
+# ONE predicate over household.has_ev, the same one every other generator on
+# this pipeline branches on -- the FLAG decides, never the load profile, because
+# a stitched SAM 8760 cannot tell a car from a heat pump. On a house with no EV
+# the hours above 7 kWh are ordinary house load (HVAC, an oven, a well pump);
+# subtracting 5.5+ kWh from each of them left `t2` -- the tier the report labels
+# "Whole-home load" -- short of exactly the hours that end an outage, and
+# OVERSTATED the endurance published beside that label.
+if br.EV_ANALYSIS:
+    ev=np.where(m["load"]>7,m["load"]-1.5,0)      # EV heuristic: >7 kWh/h hours
+else:
+    ev=0.0                                        # no EV: nothing to strip
 m["nonev"]=m["load"]-ev
 m["t1"]=np.minimum(m["nonev"],0.7)                 # essentials tier: 0.7 kW cap
-m["t2"]=m["nonev"]                                 # whole house minus EV
+m["t2"]=m["nonev"]                                 # whole house, less any EV charging
 # `pwr` is the DISCHARGE cap (as in sim() above). `charge_pwr` (issue #70) caps
 # the solar-recharge branch's hourly charge the same way sim()'s `charge_pwr`
 # already caps its export-charging branch; defaults to None (reuse `pwr`,

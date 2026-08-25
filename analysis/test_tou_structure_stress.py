@@ -372,7 +372,15 @@ def case_current_pipeline_matches_the_committed_behavior_and_battery_artifacts()
     (behavior_rebuild.json's scenario (a), battery_dispatch_policies.json's
     post-behavior greedy marginal) to within a few dollars -- an
     independent cross-check that the reused pipeline (shift_ev + run_batt)
-    is wired correctly, not just internally self-consistent."""
+    is wired correctly, not just internally self-consistent.
+
+    THE BEHAVIOR HALF IS AN EV CROSS-CHECK, AND NOT EVERY HOUSEHOLD HAS ONE
+    (issue #147). behavior_rebuild.py writes scenarios.a as an explicit
+    not-applicable stub when the intake says household.has_ev is false -- no
+    `saved` field at all -- so this case raised KeyError there. There is no EV
+    shift for _pipeline to reproduce on such a household, which makes it a
+    SKIP rather than a failure: the same treatment the two cases below already
+    give an artifact this checkout does not have."""
     _require_archive()
     root = ROOT
     behavior_path = root / "data" / "behavior_rebuild.json"
@@ -381,6 +389,10 @@ def case_current_pipeline_matches_the_committed_behavior_and_battery_artifacts()
         raise SkipCase("sibling artifacts not committed in this checkout")
     behavior_json = json.loads(behavior_path.read_text())
     battery_json = json.loads(battery_path.read_text())
+    if behavior_json["scenarios"]["a"].get("not_applicable"):
+        raise SkipCase("household.has_ev is false, so behavior_rebuild.json publishes "
+                       "scenarios.a as a not-applicable stub and there is no EV shift "
+                       "to cross-check")
     d = br.load()
     d["imp"] = d.Consumption.astype(float)
     d["exp"] = d.Generation.astype(float)

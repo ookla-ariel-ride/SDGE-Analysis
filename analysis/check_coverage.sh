@@ -27,7 +27,8 @@ for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
          test_service_headroom test_irreducible_bill test_privacy_tiers test_bill_decomposition \
          test_rates_history test_tou_spread test_scripts_runnable test_nem3_grandfathering \
          test_dsgs_vpp_backtest test_cca_rate_extraction test_cca_bundled_counterfactual \
-         test_battery_sizing_curve test_perfect_foresight_dispatch test_tou_structure_stress \
+         test_battery_sizing_curve test_battery_dispatch_policies \
+         test_perfect_foresight_dispatch test_tou_structure_stress \
          test_gross_import_decomposition test_reprice_by_vintage test_uncertainty_propagation \
          test_battery_backup_sims test_deep_analyses test_lifetime_payback test_soiling_analysis \
          test_extended_findings test_battery_plan_matrix test_package_results test_report_tokens \

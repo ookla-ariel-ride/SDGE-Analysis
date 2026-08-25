@@ -18,6 +18,14 @@ wants a flat, gapless load/production floor across the whole day), so each
 case builds its OWN throwaway usage.csv/samA.csv/samB.csv and runs a fresh
 subprocess, checking only the one artifact its fixture was designed for.
 
+Every fixture is a whole repo-SHAPED root, not a bare directory: since issue
+#147 the generator imports behavior_rebuild.py for the intake flag
+household.has_ev, and behavior_rebuild.py reads it through household.py, which
+locates ROOT/private/household.yaml by walking up for a directory holding both
+analysis/ and data/. _stage below builds exactly that, and takes the flag as
+an argument, so the same fixture can be run as a household WITH an EV and as
+one WITHOUT and the two answers compared.
+
 Class SkipCase matches test_parse_bills.py's typed-exception convention
 (CLAUDE.md / issue #44 AC4) -- there is no skip path in this file (both cases
 are fully synthetic), but the convention is kept for consistency with the rest
@@ -26,6 +34,7 @@ of the suite as SkipCase becomes the house style.
 import datetime as dt
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +44,7 @@ ANALYSIS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ANALYSIS))
 import suite_runner  # noqa: E402
 import rates as R  # canonical TOU/DST clock, so the fixture ages with the tariff
+import test_scripts_runnable as TSR  # its SYNTH_HOUSEHOLD, the one synthetic intake
 
 
 class SkipCase(Exception):
@@ -122,6 +132,47 @@ def _write_flat_sam(path, value, year):
     path.write_text("kWh\n" + "".join(f"{value:.6f}\n" for _ in range(n)))
 
 
+def _household_yaml(has_ev):
+    """test_scripts_runnable.SYNTH_HOUSEHOLD as an EV or a genuinely EV-FREE
+    intake -- the same edit test_deep_analyses.py makes, for the same reason:
+    behavior_rebuild.py REFUSES a declared charger beside a false
+    household.has_ev, so "no EV" is both edits or neither.
+
+    Every edit asserts it took. A str.replace that matched nothing writes the
+    file back unchanged, and the no-EV case would then run the EV household
+    under a no-EV name and pass for the wrong reason."""
+    hh = TSR.SYNTH_HOUSEHOLD
+    assert "household:\n  pto_date: 2019-12-01\n" in hh, \
+        "SYNTH_HOUSEHOLD's household block no longer has the shape this edit expects"
+    assert "charger:\n  kw: 11.5\n" in hh, "SYNTH_HOUSEHOLD no longer declares a charger"
+    if has_ev:
+        return hh
+    hh = hh.replace("household:\n  pto_date: 2019-12-01\n",
+                    "household:\n  pto_date: 2019-12-01\n  has_ev: false\n")
+    hh = hh.replace("charger:\n  kw: 11.5\n", "")
+    assert "has_ev: false" in hh and "charger:" not in hh, hh
+    return hh
+
+
+def _stage(tmp, has_ev=True):
+    """One throwaway repo-shaped root battery_backup_sims.py can run in.
+
+    analysis/ and data/ exist only so household.py's _repo_root() resolves
+    `tmp` and finds private/household.yaml beside them; the generator and the
+    three modules it imports are copied to the root itself, which is the
+    sandbox convention the whole repo runs generators under (CLAUDE.md's
+    private/verify pattern). The committed sources are copied byte-for-byte --
+    no case here patches the generator."""
+    (tmp / "analysis").mkdir()
+    (tmp / "data").mkdir()
+    (tmp / "private").mkdir()
+    (tmp / "private" / "household.yaml").write_text(_household_yaml(has_ev))
+    for mod in ("battery_backup_sims.py", "rates.py", "household.py",
+                "behavior_rebuild.py"):
+        shutil.copy(ANALYSIS / mod, tmp / mod)
+    return tmp
+
+
 def _run(tmp):
     r = subprocess.run([sys.executable, "battery_backup_sims.py"], cwd=tmp,
                        capture_output=True, text=True, timeout=300)
@@ -186,9 +237,7 @@ def case_arbitrage_sim_matches_hand_computation():
         assert pwr * 0.25 * 20 >= cap, "discharge window too short for this fixture"
 
     with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        shutil.copy(ANALYSIS / "battery_backup_sims.py", tmp / "battery_backup_sims.py")
-        shutil.copy(ANALYSIS / "rates.py", tmp / "rates.py")
+        tmp = _stage(pathlib.Path(td))
         _write_meter_csv(tmp / "usage.csv", shape)
         # sim() runs before the SAM/endurance half needs samA/samB, but the
         # script is monolithic -- it always tries to read both files.
@@ -240,9 +289,7 @@ def case_backup_endurance_matches_hand_computation():
         return 0.125, 0.0   # (imp, exp) per 15-min slot -> 0.5 kWh/h, 0 kWh/h
 
     with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        shutil.copy(ANALYSIS / "battery_backup_sims.py", tmp / "battery_backup_sims.py")
-        shutil.copy(ANALYSIS / "rates.py", tmp / "rates.py")
+        tmp = _stage(pathlib.Path(td))
         _write_meter_csv(tmp / "usage.csv", flat)
         _write_flat_sam(tmp / "samA.csv", 1.0, 2026)
         _write_flat_sam(tmp / "samB.csv", 1.0, 2025)
@@ -322,9 +369,7 @@ def case_endurance_solar_recharge_respects_the_charge_cap():
         return 0.0, BIG / 4
 
     with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        shutil.copy(ANALYSIS / "battery_backup_sims.py", tmp / "battery_backup_sims.py")
-        shutil.copy(ANALYSIS / "rates.py", tmp / "rates.py")
+        tmp = _stage(pathlib.Path(td))
         _write_meter_csv(tmp / "usage.csv", shape)
         _write_flat_sam(tmp / "samA.csv", SL, 2026)
         _write_flat_sam(tmp / "samB.csv", SL, 2025)
@@ -354,10 +399,173 @@ def case_endurance_solar_recharge_respects_the_charge_cap():
             "PW3+Exp)")
 
 
+def _ev_heuristic_constants():
+    """(threshold, residual) out of the generator's OWN EV-stripping line,
+    read from its source rather than retyped here -- the same anti-drift rule
+    _generator_constants keeps for the rate tables and the config list.
+
+    The line is `ev=np.where(m["load"]>T,m["load"]-R,0)`: every hour whose
+    stitched SAM whole-house load exceeds T kWh is treated as an hour with an
+    EV on the charger, and all but R kWh of it is charged to the car."""
+    src = (ANALYSIS / "battery_backup_sims.py").read_text()
+    m = re.search(r'ev=np\.where\(m\["load"\]>([\d.]+),m\["load"\]-([\d.]+),0\)', src)
+    assert m, ("battery_backup_sims.py no longer carries the >N kWh/h EV-stripping "
+               "np.where this case is written about; re-derive the fixture below "
+               "from whatever replaced it rather than editing this regex to match")
+    return float(m.group(1)), float(m.group(2))
+
+
+def _write_hourly_sam(path, hour_of_day_kwh, year):
+    """One 8760-row Enphase SAM export whose value repeats on a 24-hour cycle.
+
+    battery_backup_sims.py indexes these rows with
+    pd.date_range("<year>-01-01", periods=8760, freq="h"), so row i is hour
+    i % 24 of the local clock -- no DST in the SAM index at all, which is why
+    a plain modulo is the right mapping and not an approximation of one."""
+    assert len(hour_of_day_kwh) == 24, hour_of_day_kwh
+    n = 8784 if (year % 4 == 0 and (year % 100 or year % 400 == 0)) else 8760
+    path.write_text("kWh\n" + "".join(f"{hour_of_day_kwh[i % 24]:.6f}\n"
+                                      for i in range(n)))
+
+
+def _trace_zero_prod_endurance(cap, pwr, hour_of_day_kwh, start_hour=18,
+                               max_steps=24 * 14):
+    """Independent re-implementation of endurance()'s inner walk (NOT a call
+    into the generator) for a fixture whose hourly production is ZERO at every
+    hour -- so `net` is positive at every step and the walk is a pure drain --
+    and whose tier load repeats on a 24-hour cycle. Same documented physics as
+    endurance() (discharge net*1.05, break when soc cannot cover the next
+    step), written independently, so an arithmetic bug in the generator shows
+    up as a mismatch here rather than agreeing with itself."""
+    soc = cap
+    t = 0
+    h = start_hour
+    while t < max_steps:
+        net = min(hour_of_day_kwh[h % 24], pwr)   # production is 0 at every hour
+        if soc >= net * 1.05:
+            soc -= net * 1.05
+        else:
+            break
+        t += 1
+        h += 1
+    return t
+
+
+# ---------------------------------------------------------------------------
+# Case 4: the >7 kWh/h EV strip runs only where the intake says there is an EV
+# (issue #147).
+#
+# Fixture: a whole-house SAM load of BASE = 1.0 kWh/h at every hour except
+# 18:00, 19:00 and 20:00, which carry EVENING = 9.0 kWh/h -- above the
+# generator's own EV threshold, and on a household with no EV that is an
+# ordinary evening: an air conditioner, an oven and a well pump, none of which
+# a stitched 8760 can tell apart from a car. usage.csv carries the SAME energy
+# as import (load/4 per 15-minute slot) and zero export at every hour, so by
+# the module's own identity prod = load - imp + exp = 0 EVERYWHERE: every hour
+# of every walk is a discharge hour and nothing ever recharges.
+#
+# The two readings of t2 the flag chooses between:
+#   has_ev false -> nonev = load           = 9.0 at 18/19/20, 1.0 elsewhere
+#   has_ev true  -> nonev = load - (load - 1.5) where load > 7
+#                                          = 1.5 at 18/19/20, 1.0 elsewhere
+# Every walk starts at 18:00 on a full battery, so the no-EV reading meets
+# 9.0 kWh in its FIRST hour and the EV reading meets 1.5 -- a PW3 (13.5 kWh)
+# lasts 1 h against 11 h, i.e. the strip was overstating this household's
+# outage endurance by a factor of eleven.
+#
+# t1 IS THE CONTROL INSIDE THE FIXTURE: min(nonev, 0.7) is 0.7 at every hour
+# under BOTH readings (nonev never drops below 1.0 either way), so t1 must come
+# back IDENTICAL. A change that leaked past the flag into the shared `nonev`
+# arithmetic would move it.
+# ---------------------------------------------------------------------------
+def case_endurance_strips_an_ev_only_where_the_intake_declares_one():
+    threshold, residual = _ev_heuristic_constants()
+    BASE, EVENING = 1.0, 9.0
+    PEAK_HOURS = (18, 19, 20)
+    assert EVENING > threshold > BASE, (
+        f"the fixture must straddle the generator's own {threshold} kWh/h EV "
+        f"threshold: BASE={BASE}, EVENING={EVENING}")
+    assert 0 < residual < EVENING, (
+        f"the generator leaves {residual} kWh/h behind on a stripped hour; this "
+        f"fixture assumes a real strip, i.e. something above zero and well below "
+        f"its {EVENING} kWh/h evening")
+
+    load = [EVENING if h in PEAK_HOURS else BASE for h in range(24)]
+    stripped = [v - (v - residual) if v > threshold else v for v in load]
+    assert stripped == [residual if h in PEAK_HOURS else BASE for h in range(24)], stripped
+    essentials = [min(v, 0.7) for v in load]
+    assert essentials == [min(v, 0.7) for v in stripped], (
+        "the fixture's t1 tier is not identical under the two readings, so it "
+        "cannot be this case's control")
+
+    def shape(d, h):
+        # (imp, exp) per 15-minute slot: the hour's whole load, imported.
+        return load[int(h)] / 4, 0.0
+
+    got = {}
+    for has_ev in (False, True):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = _stage(pathlib.Path(td), has_ev=has_ev)
+            _write_meter_csv(tmp / "usage.csv", shape)
+            _write_hourly_sam(tmp / "samA.csv", load, 2026)
+            _write_hourly_sam(tmp / "samB.csv", load, 2025)
+            _run(tmp)
+            got[has_ev] = json.loads((tmp / "backup_endurance.json").read_text())
+
+    key_for = {"1x Tesla Powerwall 3": "PW3", "PW3 + 1 Expansion": "PW3+Exp",
+               "1x Enphase IQ 5P": "IQ 5P", "1x Enphase IQ 10C": "IQ 10C"}
+    seen = {}
+    for cap, pwr, name, _charge_kw in GENERATOR_CONFIGS:
+        cfg = key_for.get(name)
+        if cfg is None:            # a config sim() prices but endurance() does not run
+            continue
+        exp_house_no_ev = _trace_zero_prod_endurance(cap, pwr, load)
+        exp_house_ev = _trace_zero_prod_endurance(cap, pwr, stripped)
+        exp_essentials = _trace_zero_prod_endurance(cap, pwr, essentials)
+        assert exp_house_ev > exp_house_no_ev, (
+            f"{cfg}: the fixture does not distinguish the two readings at all")
+
+        # THE DEFECT: t2 on a household with no EV is the WHOLE load.
+        house_no_ev = got[False][f"{cfg}|t2"]
+        assert house_no_ev["median_h"] == exp_house_no_ev, (
+            f"{cfg}|t2 on a household whose intake says household.has_ev is false "
+            f"reports {house_no_ev['median_h']} h of outage endurance where the "
+            f"whole-home load ({EVENING} kWh/h at {PEAK_HOURS}, {BASE} elsewhere) "
+            f"gives {exp_house_no_ev} h -- the >{threshold} kWh/h EV strip is still "
+            f"running and is charging this house's evening load to a car it does "
+            f"not own")
+        assert house_no_ev["p10_h"] == exp_house_no_ev, (cfg, house_no_ev)
+
+        # THE POSITIVE CONTROL: an EV household still gets the heuristic.
+        house_ev = got[True][f"{cfg}|t2"]
+        assert house_ev["median_h"] == exp_house_ev, (
+            f"{cfg}|t2 on a household WITH an EV no longer strips the "
+            f">{threshold} kWh/h hours: {house_ev} against {exp_house_ev} h")
+        assert house_ev["p10_h"] == exp_house_ev, (cfg, house_ev)
+
+        # THE CONTROL INSIDE THE FIXTURE: t1 is the same tier either way.
+        assert got[False][f"{cfg}|t1"] == got[True][f"{cfg}|t1"], (
+            f"{cfg}|t1 moved with the intake flag, but min(nonev, 0.7) is 0.7 at "
+            f"every hour of this fixture under both readings: "
+            f"{got[False][f'{cfg}|t1']} vs {got[True][f'{cfg}|t1']}")
+        assert got[False][f"{cfg}|t1"]["median_h"] == exp_essentials, (
+            cfg, got[False][f"{cfg}|t1"], exp_essentials)
+        seen[cfg] = (exp_house_no_ev, exp_house_ev)
+
+    assert set(got[False]) == set(got[True]), (sorted(got[False]), sorted(got[True]))
+    return ("endurance()'s whole-house tier counts the WHOLE load on a household "
+            "whose intake says household.has_ev is false, and still strips the "
+            f">{threshold} kWh/h hours on one that has an EV -- median t2 hours "
+            "(no EV vs EV): "
+            + ", ".join(f"{c}: {a} vs {b}" for c, (a, b) in sorted(seen.items()))
+            + "; the essentials tier is identical either way")
+
+
 CASES = [
     case_arbitrage_sim_matches_hand_computation,
     case_backup_endurance_matches_hand_computation,
     case_endurance_solar_recharge_respects_the_charge_cap,
+    case_endurance_strips_an_ev_only_where_the_intake_declares_one,
 ]
 
 

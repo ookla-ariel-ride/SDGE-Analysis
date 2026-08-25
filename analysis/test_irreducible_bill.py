@@ -844,6 +844,113 @@ def case_low_conservation_guard_fires_on_a_poisoned_shift():
 
 
 @case
+def case_low_package_free_fix_follows_the_has_ev_flag():
+    """issue #147: LOW is THIS household's free behavior fix, and which fix
+    that is follows the intake flag household.has_ev -- behavior scenario a
+    (the EV charge reschedule) when true, behavior scenario c (the flexible
+    house-load shift) when false. MID and HIGH dispatch the battery on top of
+    whichever one ran.
+
+    compute_package_gross_imports() used to call behavior_rebuild.shift_ev()
+    unconditionally. On a household with no EV that moves nothing and raises
+    nothing: LOW came back equal to the baseline (which it must anyway, since
+    both shifts conserve energy), so the existing conservation guard could not
+    see the problem, and MID/HIGH silently dispatched the battery on an
+    UNSHIFTED year while package_results.json's own MID/HIGH sat on scenario c.
+    Two pipelines under one set of package names, published without a murmur.
+
+    Both branches run here, on the real archive. The no-EV half is checked on
+    ARITHMETIC: MID and HIGH must equal an INDEPENDENT transcription of
+    "scenario c, then the greedy dispatch at each capacity", and must NOT equal
+    the same dispatch on the unshifted baseline. A shift that moved nothing
+    would still report scenario "c"; it would land on the baseline figures, so
+    the label alone cannot carry this case."""
+    _require_corpus()
+    import numpy as np                        # lazy: only this case needs it
+    import behavior_rebuild as br             # lazy, per the module note above
+    import battery_dispatch_policies as bdp   # lazy, same reason
+
+    gross_ev = irr.compute_package_gross_imports()
+    assert gross_ev["free_fix_scenario"] == "a", (
+        "this checkout's household has an EV, so LOW must be behavior "
+        "scenario a", gross_ev["free_fix_scenario"])
+    assert gross_ev["kwh_moved_free_fix"] > 0, gross_ev["kwh_moved_free_fix"]
+
+    real_flag = br.EV_ANALYSIS
+    br.EV_ANALYSIS = False
+    try:
+        gross = irr.compute_package_gross_imports()
+
+        # --- the independent transcription, under the same forced flag -----
+        real_csv = br.CSV
+        br.CSV = str(irr._raw_interval_csv())
+        try:
+            d = br.load()
+        finally:
+            br.CSV = real_csv
+        imp0 = d.Consumption.values.astype(float)
+        gen0 = d.Generation.values.astype(float)
+        sop_idx, sop_ts = br.build_sop_index(d)
+        ev, _sessions = br.detect_sessions(d)
+        # behavior_rebuild.main()'s own scenario-c arguments for a house with
+        # no charger: a quarter of each day's remaining on-peak non-EV import,
+        # capped at the largest 15-min import this meter has recorded. The
+        # fraction is a literal here so the reference does not simply follow
+        # whatever the generator decides scenario c means; the assertion below
+        # pins the two together.
+        imp_c, moved_c = br.shift_house(d, imp0, ev, 0.25,
+                                        sop_idx, sop_ts, float(np.max(imp0)))
+        ref_mid_imp, _, ref_mid_served, _ = bdp.run_batt(
+            d, imp_c, gen0, 13.5, "greedy", charge_kw=bdp.CHARGE_KW)
+        ref_high_imp, _, ref_high_served, _ = bdp.run_batt(
+            d, imp_c, gen0, 27.0, "greedy", charge_kw=bdp.CHARGE_KW_WITH_EXPANSION)
+        # what MID would have been with NO free fix at all -- the figure the
+        # unconditional-shift_ev defect actually produced here
+        _, _, unshifted_served, _ = bdp.run_batt(
+            d, imp0, gen0, 13.5, "greedy", charge_kw=bdp.CHARGE_KW)
+    finally:
+        br.EV_ANALYSIS = real_flag
+
+    assert bdp.HOUSE_SHIFT_FRAC == 0.25, (
+        "battery_dispatch_policies.HOUSE_SHIFT_FRAC changed; the literal in "
+        "the reference above has to change with it", bdp.HOUSE_SHIFT_FRAC)
+    assert gross["free_fix_scenario"] == "c", (
+        "with household.has_ev false LOW must be behavior scenario c",
+        gross["free_fix_scenario"])
+    assert "behavior scenario c" in gross["method"], gross["method"]
+    assert gross["kwh_moved_free_fix"] == round(moved_c, 1), (
+        "LOW did not move what the scenario-c house shift moves",
+        gross["kwh_moved_free_fix"], moved_c)
+    assert gross["kwh_moved_free_fix"] > 0, (
+        "the no-EV free fix moved nothing, so this case could not tell a "
+        "working shift from the unconditional-shift_ev defect", gross)
+    # LOW still conserves energy exactly -- true of scenario c as well
+    assert gross["LOW"]["gross_kwh"] == gross["baseline_gross_kwh"], gross
+    # the arithmetic: MID and HIGH dispatched the SHIFTED year
+    assert gross["MID"]["gross_kwh"] == round(float(ref_mid_imp.sum()), 1), (
+        gross["MID"], round(float(ref_mid_imp.sum()), 1))
+    assert gross["MID"]["kwh_served"] == round(ref_mid_served, 1), (
+        gross["MID"], ref_mid_served)
+    assert gross["HIGH"]["gross_kwh"] == round(float(ref_high_imp.sum()), 1), (
+        gross["HIGH"], round(float(ref_high_imp.sum()), 1))
+    assert gross["HIGH"]["kwh_served"] == round(ref_high_served, 1), (
+        gross["HIGH"], ref_high_served)
+    # ... and NOT the unshifted one
+    assert abs(gross["MID"]["kwh_served"] - round(unshifted_served, 1)) > 1.0, (
+        "MID serves exactly what the battery serves on the UNSHIFTED baseline: "
+        "the free fix contributed nothing, which is the defect this case "
+        "exists to catch", gross["MID"]["kwh_served"], unshifted_served)
+    return ("compute_package_gross_imports follows household.has_ev: this "
+            f"household (flag true) runs behavior scenario a "
+            f"({gross_ev['kwh_moved_free_fix']} kWh); with the flag forced "
+            f"false it runs behavior scenario c ({gross['kwh_moved_free_fix']} "
+            f"kWh), LOW still equals the baseline exactly, and MID/HIGH match "
+            f"an independent scenario-c transcription ({gross['MID']['kwh_served']} "
+            f"/ {gross['HIGH']['kwh_served']} kWh served) rather than the "
+            f"unshifted dispatch ({round(unshifted_served, 1)} kWh)")
+
+
+@case
 def case_raw_interval_csv_is_fail_closed_on_wrong_match_count():
     """_raw_interval_csv() must refuse anything but exactly one match under
     private/1-raw-data/ -- zero (missing export) or two-or-more (a stale

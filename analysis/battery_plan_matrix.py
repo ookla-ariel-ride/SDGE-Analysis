@@ -22,23 +22,32 @@ now agree on which days take weekend windows; what still separates this column
 from the canonical figures is the rate basis (published tables here, bill-derived
 there). Both are recorded in the artifact (canonical_crosscheck, asserted against
 the resolved dispatch artifact — see ORDERING CONTRACT below). The same
-shared-window reasoning covers the mid-package EV shift below:
-behavior_rebuild.shift_ev selects source and destination intervals by TOU period
-LABEL only (on/off -> sop), so one shifted import series serves all three plans
-exactly as the one dispatch trace does.
+shared-window reasoning covers the mid-package free-fix shift below: both
+behavior_rebuild.shift_ev and behavior_rebuild.shift_house select source and
+destination intervals by TOU period LABEL only (on/off -> sop), so one shifted
+import series serves all three plans exactly as the one dispatch trace does.
 
 MID PACKAGE (issue #200): the artifact also prices the report's mid package —
-EV shift scenario a (all sessions) FIRST, then the same 13.5 kWh greedy
+this household's free behavior fix FIRST, then the same 13.5 kWh greedy
 dispatch on the shifted year — under EACH plan, so a household whose ranking
 favors a different plan can read what the package is worth on that plan. This
 is ONE integrated pipeline re-billed end-to-end per plan (shift, then dispatch,
 then bill the whole modified year under the plan's own table rates) — never a
 sum of separately modeled deltas (CLAUDE.md section 9's one-pipeline rule).
 Baseline: the SAME plan's modeled no-package year (the no_battery column), same
-published-table rate basis, one rate vintage. A household with no EV
-(household.has_ev false) degenerates cleanly: detect_sessions returns an
-EV-free year, kwh_moved records 0, and the package row equals the battery row —
-the artifact still generates.
+published-table rate basis, one rate vintage.
+
+WHICH free fix that is comes from battery_dispatch_policies.free_fix_shift()
+(issue #147) — scenario a, the EV charge reschedule, when household.has_ev;
+scenario c, the flexible house-load shift, when it is false — so this script
+cannot drift onto a different branch from the two artifacts that already use
+that function. It used to call behavior_rebuild.shift_ev() unconditionally,
+which on a household with no EV moves nothing: kwh_moved was 0 and the "mid
+package" row was the battery-only row wearing a package label, while
+package_results.py's MID for the same household was scenario c THEN the
+battery. Two pipelines under one name is precisely what CLAUDE.md section 9
+forbids. The applied scenario key is published as
+mid_package_on_plans.free_fix_scenario.
 
 ORDERING CONTRACT (this script runs AFTER the dispatch generator):
   battery_dispatch_policies.py  ->  battery_plan_matrix.py, in the SAME working
@@ -49,6 +58,14 @@ ORDERING CONTRACT (this script runs AFTER the dispatch generator):
   committed copy otherwise, and a disagreement between the two is announced
   loudly rather than resolved in silence (see _resolve_dispatch_artifact).
   CLAUDE.md's section 9 regeneration gate already runs the pair in this order.
+  Whichever copy is used, its EV APPLICABILITY must match this run's intake
+  flag (household.has_ev) or the run refuses -- an artifact from a household
+  with a different answer to that question is a different household's artifact,
+  and the crosscheck block below would publish its baseline and battery value
+  as this household's (_check_ev_applicability). The $100 crosscheck tolerance
+  is NOT that guard: it is a tolerance on a magnitude, so two households whose
+  battery economics happen to land within $100 of each other pass it while
+  composing one artifact out of both.
 
 Output: data/battery_plan_matrix.json (repo-root resolved, so the
 private/verify sandbox pattern needs no path edits).
@@ -63,7 +80,35 @@ import pandas as pd
 
 import rates as R                 # canonical TOU assignment
 import behavior_rebuild as br
-from battery_dispatch_policies import run_batt, CHARGE_KW
+from battery_dispatch_policies import (run_batt, free_fix_shift, CHARGE_KW,
+                                       FREE_FIX_SCENARIO_EV, FREE_FIX_SCENARIO_NO_EV)
+
+# What the mid-package row actually did, per free-fix scenario. The row is one
+# integrated shift-then-dispatch run re-billed per plan either way; only the
+# NAME of the shift that led it differs, so the method sentence has to name the
+# fix that really ran rather than assert the EV one on every household.
+_MID_PACKAGE_METHOD = {
+    FREE_FIX_SCENARIO_EV:
+        ("integrated mid package: EV shift scenario a (all sessions, "
+         "behavior_rebuild.shift_ev) FIRST, then the price-aware PW3 "
+         "greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
+         "on the shifted year, and the WHOLE modified year re-billed "
+         "end-to-end under each plan's own published-table rates — one "
+         "pipeline, never a sum of separately modeled deltas. Baseline "
+         "= the same plan's modeled no-package year (the no_battery "
+         "column), same published-table rate basis, one rate vintage."),
+    FREE_FIX_SCENARIO_NO_EV:
+        ("integrated mid package: house-load shift scenario c "
+         "(behavior_rebuild.shift_house — household.has_ev is false, so the "
+         "free fix that precedes the battery is the flexible on-peak house "
+         "load, not the EV charge reschedule) FIRST, then the price-aware PW3 "
+         "greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
+         "on the shifted year, and the WHOLE modified year re-billed "
+         "end-to-end under each plan's own published-table rates — one "
+         "pipeline, never a sum of separately modeled deltas. Baseline "
+         "= the same plan's modeled no-package year (the no_battery "
+         "column), same published-table rate basis, one rate vintage."),
+}
 
 # ---- published rate-table values (ranking-only; identical to analyze*.py) ----
 WFNBC_DWR = 0.00591
@@ -112,6 +157,95 @@ def _read_dispatch_json(path):
             f"{path}: cannot parse the dispatch artifact ({type(e).__name__}: "
             f"{e}). Regenerate it with battery_dispatch_policies.py; this "
             "script will not fall back past a broken artifact.")
+
+
+def _check_ev_applicability(doc, path):
+    """Fail closed when the resolved dispatch artifact belongs to a household
+    with a DIFFERENT EV applicability than this run's intake declares.
+
+    The two sides of the comparison are two independent facts, and this script
+    reads both:
+      * br.EV_ANALYSIS -- behavior_rebuild's household.has_ev predicate, read
+        from THIS run's private/household.yaml. The intake flag is the
+        authority on whether this household has an EV (CLAUDE.md section 0),
+        and free_fix_shift() below keys the mid-package row off the same
+        predicate;
+      * the artifact's post_behavior.free_fix_scenario -- FREE_FIX_SCENARIO_EV
+        ("a", the EV charge reschedule) on an EV household's artifact,
+        FREE_FIX_SCENARIO_NO_EV ("c", the flexible house-load shift) on a
+        no-EV household's. battery_dispatch_policies.py publishes it for
+        exactly this purpose.
+
+    A disagreement means the artifact was written for a DIFFERENT household (or
+    before the intake flag changed), and neither direction may be resolved
+    silently:
+      * intake says no EV, artifact ran the EV fix -> canonical_crosscheck_
+        ev_tou_5 would publish ANOTHER household's no-battery baseline and
+        battery value beside this household's own scenario-c mid-package row,
+        in one self-contradicting artifact;
+      * intake says EV, artifact ran the house-load fix -> this household's
+        real EV-shift package would be crosschecked against, and cited as, a
+        run that never moved a charging session.
+
+    The two existing $100 assertions do NOT cover this. They compare
+    MAGNITUDES, so any two households whose battery economics land within $100
+    of each other pass them; the applicability question is about identity, not
+    tolerance.
+
+    A missing or unrecognised free_fix_scenario is not an applicability answer.
+    An artifact with no post_behavior block at all is reported by the
+    mid-package crosscheck's own message further down; one that carries the
+    block but cannot say which free fix it ran is refused here, since there is
+    then nothing to check this household against.
+
+    The remedy is the same in both directions and is this script's own ordering
+    contract: run battery_dispatch_policies.py in this working directory first,
+    so the dispatch artifact is THIS household's."""
+    pb = doc.get("post_behavior")
+    if not isinstance(pb, dict):
+        return          # reported by the post_behavior.mid check in __main__
+    scen = pb.get("free_fix_scenario")
+    if scen not in (FREE_FIX_SCENARIO_EV, FREE_FIX_SCENARIO_NO_EV):
+        raise SystemExit(
+            f"the dispatch artifact {path} has a post_behavior block but no "
+            f"usable post_behavior.free_fix_scenario (got {scen!r}; expected "
+            f"{FREE_FIX_SCENARIO_EV!r} on a household with an EV or "
+            f"{FREE_FIX_SCENARIO_NO_EV!r} on one without). Without it the "
+            "artifact cannot say which household it belongs to, so this run "
+            "cannot check it against its own intake flag household.has_ev "
+            "(CLAUDE.md section 0: every figure must be this household's). "
+            "Regenerate it with battery_dispatch_policies.py in this working "
+            "directory (see the ORDERING CONTRACT in the module docstring).")
+    artifact_has_ev = scen == FREE_FIX_SCENARIO_EV
+    ev_applies = br.EV_ANALYSIS       # read at call time; tests rebind it
+    if artifact_has_ev == ev_applies:
+        return
+    if ev_applies:
+        flag_says = ("household.has_ev is NOT false (the intake applicability "
+                     "flag in private/household.yaml says this household HAS "
+                     "an EV)")
+        harm = ("Crosschecking this run against that artifact would cite a run "
+                "that never moved a charging session as the canonical figure "
+                "for this household's EV-shift package")
+    else:
+        flag_says = ("household.has_ev is false (the intake applicability flag "
+                     "in private/household.yaml says this household has NO EV)")
+        harm = ("Crosschecking this run against that artifact would publish "
+                "ANOTHER household's no-battery baseline and battery value in "
+                "canonical_crosscheck_ev_tou_5, beside this household's own "
+                "scenario-c mid-package row, in one self-contradicting "
+                "artifact")
+    raise SystemExit(
+        f"EV APPLICABILITY MISMATCH between this run and its dispatch "
+        f"artifact: this run's intake says {flag_says}, but the dispatch "
+        f"artifact {path} records post_behavior.free_fix_scenario {scen!r}, "
+        f"the free fix of a household with "
+        f"{'an EV' if artifact_has_ev else 'NO EV'}. {harm} (CLAUDE.md "
+        "section 0: every figure must be this household's). Run "
+        "battery_dispatch_policies.py in this working directory "
+        f"({pathlib.Path.cwd()}) first so the dispatch artifact belongs to "
+        "THIS household; this script will not crosscheck one household's plan "
+        "matrix against another household's dispatch artifact.")
 
 
 def _resolve_dispatch_artifact(root):
@@ -163,12 +297,18 @@ def _resolve_dispatch_artifact(root):
                 "battery_dispatch_policies.py in this working directory "
                 "first (see the ordering contract above).")
         v = _read_dispatch_json(committed)
+        _check_ev_applicability(v, committed)
         print(f"NOTICE: no current-run {DISPATCH_JSON} in {pathlib.Path.cwd()}; "
               f"canonical crosscheck read from the committed {committed}. If "
               "this run's dispatch inputs changed, run "
               "battery_dispatch_policies.py here FIRST.")
         return v, "data/battery_dispatch_policies.json (committed)"
     v = _read_dispatch_json(run)
+    # The guard covers the CURRENT-RUN copy too, not just the committed
+    # fallback: a stale battery_dispatch_policies.json left in this working
+    # directory by another household's run is the same defect, one directory
+    # across, and it WINS the resolution below.
+    _check_ev_applicability(v, run)
     if committed.exists() and run.samefile(committed):
         print(f"NOTICE: canonical crosscheck read from {run} (the working "
               "directory IS the committed data/ directory).")
@@ -238,19 +378,28 @@ if __name__ == "__main__":
         print(f"{plan:9s} no-batt ${no_b:8,.0f}  with PW3 ${with_b:8,.0f}  "
               f"battery value ${no_b - with_b:6,.0f}/yr")
 
-    # ---- mid package (EV shift scenario a, then the 13.5 kWh battery), per plan
+    # ---- mid package (this household's free fix, then the 13.5 kWh battery), per plan
     # One integrated pipeline (CLAUDE.md section 9): shift first (exactly as
     # battery_dispatch_policies.py's post_behavior block does), dispatch on the
     # shifted year, then re-bill the WHOLE modified year under each plan's own
     # table rates. Never a sum of separately modeled deltas. The shift is
-    # plan-independent for the same reason the single dispatch trace is: shift_ev
-    # selects intervals by TOU period label only (on/off -> sop) and all three
-    # plans share the 2026 three-period windows. With household.has_ev false,
-    # detect_sessions returns an EV-free year, moved is 0.0, and the package row
-    # degenerates to the battery row — no crash, no refusal.
-    ev, sessions = br.detect_sessions(d)
-    sop_idx, sop_ts = br.build_sop_index(d)
-    imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
+    # plan-independent for the same reason the single dispatch trace is: both
+    # br.shift_ev and br.shift_house select source and destination intervals by
+    # TOU period label only (on/off -> sop) and all three plans share the 2026
+    # three-period windows.
+    #
+    # WHICH fix runs comes from battery_dispatch_policies.free_fix_shift(), the
+    # single implementation of that branch: scenario a (the EV charge
+    # reschedule) when household.has_ev, scenario c (the flexible house-load
+    # shift) when it is false. This used to call br.shift_ev() unconditionally,
+    # and on a household with no EV that is a NO-OP -- moved was 0.0 and the
+    # "mid package" row silently equalled the battery-only row while still
+    # carrying a package label. package_results.py's MID for the same household
+    # is scenario c THEN the battery, so the two artifacts described different
+    # pipelines under the same name. Now the row is the real free fix plus the
+    # battery on every household, and mid_package_on_plans.free_fix_scenario
+    # records which fix it was.
+    imp_sh, moved, fix_scenario = free_fix_shift(d, imp0)
     imp_p, exp_p, _, _ = run_batt(d, imp_sh, gen0, 13.5, "greedy", charge_kw=CHARGE_KW)
     pkg = {}
     for plan in PLANS:
@@ -302,15 +451,12 @@ if __name__ == "__main__":
                       "NEM netting, canonical holiday rule; the published EV-TOU-5 "
                       "battery economics")},
         "mid_package_on_plans": {
-            "method": ("integrated mid package: EV shift scenario a (all sessions, "
-                       "behavior_rebuild.shift_ev) FIRST, then the price-aware PW3 "
-                       "greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
-                       "on the shifted year, and the WHOLE modified year re-billed "
-                       "end-to-end under each plan's own published-table rates — one "
-                       "pipeline, never a sum of separately modeled deltas. Baseline "
-                       "= the same plan's modeled no-package year (the no_battery "
-                       "column), same published-table rate basis, one rate vintage."),
+            "method": _MID_PACKAGE_METHOD[fix_scenario],
             "kwh_moved": round(moved),
+            # WHICH free fix the kwh_moved and every package_save below sit on
+            # top of, straight from free_fix_shift() rather than re-derived
+            # here from an intake flag this artifact's readers cannot see.
+            "free_fix_scenario": fix_scenario,
             "plans": pkg,
             "canonical_crosscheck_ev_tou_5": {
                 "combined_save": canon_mid["combined_save"],

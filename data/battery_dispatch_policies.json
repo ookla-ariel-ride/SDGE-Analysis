@@ -100,6 +100,7 @@
  "post_behavior": {
   "behavior_save": 1221,
   "kwh_moved": 2618,
+  "free_fix_scenario": "a",
   "mid": {
    "battery_marginal": 2238,
    "combined_save": 3459,

@@ -52,9 +52,16 @@ INPUT DISTRIBUTIONS AND THEIR EVIDENTIAL BASIS
    blending the battery_dispatch_policies.json PRE-behavior marginal saving
    (pw3.greedy.save, the battery serving the UNSHIFTED load, c=0) and the
    POST-behavior marginal saving (post_behavior.mid.battery_marginal, the
-   battery serving the load AFTER the EV-shift behavior holds, c=1) — the
+   battery serving the load AFTER the free behavior fix holds, c=1) — the
    ONLY two compliance points the pipeline actually computes; no continuum of
-   partial compliance is measured. This is a MODELED, not-yet-implemented
+   partial compliance is measured. WHICH free fix c=1 means follows the intake
+   flag household.has_ev, exactly as battery_dispatch_policies.free_fix_shift()
+   decides it (issue #147): behavior scenario a (the EV charge reschedule) when
+   the flag is true, scenario c (the flexible house-load shift) when it is
+   false. The prose below describes the has_ev-true case, this household's;
+   dispatch_calibration() returns free_fix_scenario so the artifact's own
+   evidential_basis sentence names whichever fix actually ran. This is a
+   MODELED, not-yet-implemented
    change: §7 of the report recommends the EV-charging fix as a still-pending
    action ("do it this week"), not something this household has actually
    sustained -- an earlier draft of this docstring wrongly called it "already
@@ -394,6 +401,30 @@ FADE_LO, FADE_HI = 0.005, 0.025
 PRICE_LO, PRICE_HI = 12500.0, 17000.0
 RTE_LO, RTE_NOM, RTE_HI = 0.85, 0.90, 0.95
 EV_PERSIST_A, EV_PERSIST_B = 2.0, 1.0     # Beta(2,1) shape params
+
+# What the compliance prior's skew toward c=1 actually rests on. WHICH free
+# behavior fix c=1 means is not a constant across households (issue #147):
+# battery_dispatch_policies.free_fix_shift() applies the EV charge reschedule
+# (behavior scenario a) when household.has_ev is true and the flexible
+# house-load shift (scenario c) when it is false. The evidence sentence has to
+# name the fix that actually applies -- a household with no EV has no EV
+# charging that could "already land in favorable windows". Keyed by the scenario
+# key free_fix_shift() itself returns, never by a locally re-derived flag. The
+# scenario-"a" text is verbatim what this artifact already published, so this
+# household's uncertainty_results.json is unchanged.
+_SKEW_BASIS = {
+    "a": ("the mild skew toward c=1 reflects only the indirect evidence that "
+          "~80% of this household's EV charging already lands in favorable "
+          "windows unshifted (Codex review pass 3 finding: an earlier draft "
+          "wrongly called this an already-observed, completed behavior to "
+          "justify a more confident prior)"),
+    "c": ("household.has_ev is false, so the c=1 endpoint is behavior scenario "
+          "c -- moving a quarter of each day's flexible on-peak house load "
+          "into super-off-peak hours, not rescheduling EV charging. No "
+          "compliance evidence for that habit exists in this household's "
+          "record, so the mild skew toward c=1 is a stated modeling prior for "
+          "a low-effort change, not an evidence-backed one"),
+}
 CAP_KWH = 13.5
 STEADY_STATE_TOL_KWH = 0.01
 STEADY_STATE_MAX_ITERS = 8
@@ -767,6 +798,12 @@ def dispatch_calibration():
     blends the two dollar figures by c), the raw calibration points, and
     mid_pre_slope_unaveraging_fix (issue #107's own before/after
     quantification) for the artifact's own "calibration" section.
+
+    It also returns free_fix_scenario and kwh_moved: WHICH free behavior fix
+    the "post-behavior" side of every band above is built on. That is not a
+    constant across households (issue #147) — see the call to
+    battery_dispatch_policies.free_fix_shift() below — and build() reads it so
+    the compliance lever describes the fix this household would actually make.
     """
     import behavior_rebuild as br
     import battery_dispatch_policies as bp
@@ -776,9 +813,16 @@ def dispatch_calibration():
     gen0 = d.Generation.values.astype(float)
     base = bp.billed(d, imp0, gen0)
 
-    ev, sessions = br.detect_sessions(d)
-    sop_idx, sop_ts = br.build_sop_index(d)
-    imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
+    # THIS household's free behavior fix, applied through battery_dispatch_
+    # policies.free_fix_shift() so the branch has one implementation in the repo
+    # (issue #147). It follows the intake flag household.has_ev: scenario a (the
+    # EV charge reschedule) when true, scenario c (the flexible house-load
+    # shift) when false. This used to call br.shift_ev() unconditionally, which
+    # moves nothing on a household with no EV -- imp_sh was then the baseline,
+    # so mid_nominal collapsed onto pre_nominal, behavior_save was 0, and every
+    # uncertainty band published here described a "post-behavior" world that
+    # household never enters.
+    imp_sh, moved, free_fix_scenario = bp.free_fix_shift(d, imp0)
     b_sh = bp.billed(d, imp_sh, gen0)
 
     # issue #60: gross production (P), reconstructed once from the real
@@ -1197,6 +1241,8 @@ def dispatch_calibration():
         "pre_nominal_single_pass": pre_nominal_single_pass,
         "mid_nominal_single_pass": mid_nominal_single_pass,
         "behavior_save": float(base - b_sh),
+        "free_fix_scenario": free_fix_scenario,
+        "kwh_moved": float(moved),
         "lossA": lossA,
         "lossB": lossB,
         # issue #107: no averaged single slope per lever any more -- each
@@ -1852,12 +1898,7 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                                         "two compliance points the pipeline computes. This is "
                                         "a MODELED, not-yet-implemented change (the report "
                                         "recommends it as pending, not observed as sustained); "
-                                        "the mild skew toward c=1 reflects only the indirect "
-                                        "evidence that ~80% of this household's EV charging "
-                                        "already lands in favorable windows unshifted (Codex "
-                                        "review pass 3 finding: an earlier draft wrongly "
-                                        "called this an already-observed, completed behavior "
-                                        "to justify a more confident prior)"},
+                                        + _SKEW_BASIS[calib["free_fix_scenario"]]},
             "soiling_loss_fraction": {"dist": "Triangular", "low": lossA, "mode": lossA,
                                       "high": lossB, "evidential_basis":
                                       "data/soiling_results.json's split evidence, reframed "

@@ -6,6 +6,11 @@ artifact regenerable by a committed script). It computes nothing new: every figu
 read from the two upstream artifacts that the integrated pipeline writes —
 
   data/behavior_rebuild.json            (behavior scenarios a–d, baseline bill)
+                                        — on a household whose intake says
+                                        household.has_ev is false, scenarios a
+                                        and b are explicit not-applicable stubs
+                                        with no figure, and the LOW package is
+                                        scenario c instead (see below)
   data/battery_dispatch_policies.json   (price-aware battery, post_behavior block)
 
 — and package costs, which are purchase-price constants from the battery research
@@ -36,9 +41,31 @@ ORDERING CONTRACT (this script runs THIRD):
   CLAUDE.md's section 9 regeneration gate already runs behavior_rebuild.py
   and battery_dispatch_policies.py before this script.
 
+ONE FREE FIX ACROSS ALL THREE PACKAGES. packages.LOW is one behavior scenario on
+its own; packages.MID/HIGH are that scenario PLUS the battery, from
+battery_dispatch_policies.py's post_behavior block. Which scenario depends on the
+intake flag household.has_ev (a with an EV, c without), and both generators now
+publish the one they used -- packages.LOW.free_fix_scenario here,
+post_behavior.free_fix_scenario there. A disagreement is refused, not composed:
+see the check beside `pb` below.
+
+WHOSE HOUSEHOLD THE RESOLVED ARTIFACTS BELONG TO. Whichever copy of each artifact
+_resolve_artifact returns, its EV APPLICABILITY must match this run's intake flag
+(household.has_ev, read through behavior_rebuild.EV_ANALYSIS) or the run refuses
+-- an artifact from a household with a different answer to that question is a
+different household's artifact, and composing packages out of it publishes
+figures that are not this one's (_check_ev_applicability). The FLAG is the
+authority and the artifact is the thing being checked, never the other way
+round: this script used to read the artifact's own scenario stubs as the answer
+to "does this household have an EV", which let a committed EV artifact hand a
+household with no EV a $1,221/yr EV charge-reschedule package, in the packages
+block that feeds the report's own §0/§7/§15 verdicts.
+
 Run AFTER behavior_rebuild.py and battery_dispatch_policies.py.
 """
 import json, pathlib
+
+import behavior_rebuild   # THIS run's intake flag (household.has_ev) — the authority
 
 def _repo_root():
     """Locate the repo root: the nearest ancestor directory containing BOTH an
@@ -82,7 +109,7 @@ def _read_json(path):
             "fall back past a broken artifact.")
 
 
-def _resolve_artifact(name, generator):
+def _resolve_artifact(name, generator, check=None):
     """Read one upstream JSON artifact whole, from THIS run's copy when present.
 
     package_results.py composes EVERY figure it reports out of its two
@@ -106,6 +133,15 @@ def _resolve_artifact(name, generator):
          mismatch is announced loudly: the committed copy is stale relative
          to this run, and the section 9 regeneration gate will fail until it
          is promoted.
+
+    `check` (a callable taking (document, path)) is applied to WHICHEVER copy
+    this function actually returns, before any NOTICE quotes it. It is the
+    hook _check_ev_applicability hangs on, and it deliberately runs on the
+    current-run copy as well as on the committed fallback: a stale
+    current-run file left in this working directory by ANOTHER household's
+    run is the same defect as a committed artifact from another household,
+    one directory across, and a guard placed only on the fallback path would
+    miss it.
     """
     run = pathlib.Path.cwd() / name
     committed = DATA / name
@@ -116,11 +152,15 @@ def _resolve_artifact(name, generator):
                 f"committed {committed} exists. Run {generator} in this "
                 "working directory first (see the ordering contract above).")
         v = _read_json(committed)
+        if check is not None:
+            check(v, committed)
         print(f"NOTICE: no current-run {name} in {pathlib.Path.cwd()}; reading "
               f"the committed {committed}. If this run's household inputs or "
               f"upstream inputs changed, run {generator} here FIRST.")
         return v
     v = _read_json(run)
+    if check is not None:
+        check(v, run)
     if committed.exists() and run.samefile(committed):
         print(f"NOTICE: {name} read from {run} (the working directory IS the "
               "committed data/ directory).")
@@ -184,20 +224,236 @@ def _check_cohort(specs):
             "left over from an unrelated session.")
 
 
+def _is_not_applicable(node):
+    """True when an upstream section is an explicit not-applicable STUB.
+
+    behavior_rebuild.py publishes {"not_applicable": True, "reason": ...} for a
+    section whose governing intake flag is false (its own _not_applicable()).
+    That is not_applicable, NOT not_determined: the intake DID determine the
+    answer, so the stub is a VALID artifact, never a broken one.
+
+    This reads the ARTIFACT's own state -- never charger.kw, and never a merely
+    MISSING key. A missing key is a malformed artifact and must keep failing
+    loudly; only this explicit marker means "the domain does not exist for the
+    household this artifact came from".
+
+    That is a statement about the ARTIFACT, not about THIS run's household. The
+    two are compared, and the intake flag wins: see _check_ev_applicability.
+    """
+    return isinstance(node, dict) and node.get("not_applicable") is True
+
+
+# The behavior scenario each household's free fix is, keyed by household.has_ev.
+# Same two letters battery_dispatch_policies.FREE_FIX_SCENARIO_EV/_NO_EV name;
+# spelled locally here because this script deliberately depends on the two
+# ARTIFACTS rather than on the dispatch engine module.
+EV_FREE_FIX = "a"       # EV-only charge reschedule, 100% compliance
+NO_EV_FREE_FIX = "c"    # 25% of flexible on-peak house load, moved to SOP
+
+
+def _check_ev_applicability(artifact_has_ev, path, generator,
+                            ev_form, no_ev_form):
+    """Fail closed when a resolved upstream artifact belongs to a household with
+    a DIFFERENT EV applicability than THIS run's intake declares.
+
+    The two sides of the comparison are two independent facts:
+      * behavior_rebuild.EV_ANALYSIS — the household.has_ev predicate, read from
+        THIS run's private/household.yaml. The intake FLAG is the authority on
+        whether this household has an EV (CLAUDE.md §0). The artifact never gets
+        to declare which household it is, and neither does a detector that
+        happened to find sessions;
+      * `artifact_has_ev` — the artifact's OWN applicability, read out of
+        whichever copy _resolve_artifact returned. The two readers below call
+        this only when the artifact states one of the two shapes; an artifact
+        that states NEITHER is malformed, and they leave it to the loud failure
+        its own reader already raises rather than reporting it as the wrong
+        household.
+
+    Neither direction may be resolved silently:
+      * intake says no EV, artifact carries EV figures -> packages.LOW becomes
+        an EV charge-reschedule package priced in ANOTHER household's dollars.
+        packages.LOW feeds the report's §0, §7 and §15 verdicts, so the
+        published report tells a household with no EV to reprogram a charger it
+        does not own;
+      * intake says EV, artifact carries the no-EV form -> packages.LOW drops
+        this household's real EV-shift saving and publishes the flexible
+        house-load shift in its place, silently deleting a real saving.
+
+    The remedy is the same in both directions and is this script's own ordering
+    contract: run the upstream generator in this working directory first, so the
+    artifact is THIS household's."""
+    ev_applies = behavior_rebuild.EV_ANALYSIS   # read at call time; tests rebind it
+    if artifact_has_ev == ev_applies:
+        return
+    if ev_applies:
+        flag_says = ("household.has_ev is NOT false (the intake applicability "
+                     "flag in private/household.yaml says this household HAS "
+                     "an EV)")
+        harm = ("Composing packages from that artifact would drop this "
+                "household's real EV-shift saving and publish the flexible "
+                "house-load shift in its place, deleting a real saving")
+    else:
+        flag_says = ("household.has_ev is false (the intake applicability flag "
+                     "in private/household.yaml says this household has NO EV)")
+        harm = ("Composing packages from that artifact would publish ANOTHER "
+                "household's EV charge-reschedule saving as packages.LOW — the "
+                "block that feeds the report's §0, §7 and §15 verdicts — and "
+                "tell a household with no EV to reprogram a charger it does "
+                "not own")
+    artifact_says = ev_form if artifact_has_ev else no_ev_form
+    raise SystemExit(
+        f"EV APPLICABILITY MISMATCH between this run and an upstream artifact: "
+        f"this run's intake says {flag_says}, but the artifact {path} "
+        f"{artifact_says}. {harm} (CLAUDE.md §0: every figure must be this "
+        f"household's). Run {generator} in this working directory "
+        f"({pathlib.Path.cwd()}) first so the artifact belongs to THIS "
+        "household; this script will not compose one household's packages out "
+        "of another household's artifact.")
+
+
+def _behavior_artifact_has_ev(doc, path):
+    """_check_ev_applicability for behavior_rebuild.json.
+
+    That artifact states its applicability through scenarios a and b: real
+    savings on a household with an EV, behavior_rebuild.py's explicit
+    not-applicable STUBS on one without. Any OTHER shape (a missing key, an a
+    with neither "saved" nor the marker) is not an applicability answer at all
+    — it is a malformed artifact, and it must keep failing where it is read
+    rather than being reported here as the wrong household."""
+    sc = doc.get("scenarios")
+    if not isinstance(sc, dict):
+        return
+    a, b = sc.get("a"), sc.get("b")
+    if _is_not_applicable(a) and _is_not_applicable(b):
+        has_ev = False
+    elif (isinstance(a, dict) and "saved" in a
+          and isinstance(b, dict) and "saved" in b):
+        has_ev = True
+    else:
+        return
+    _check_ev_applicability(
+        has_ev, path, "behavior_rebuild.py",
+        "publishes behavior scenarios a and b as real EV-shift savings, which "
+        "only a household WITH an EV has",
+        "publishes behavior scenarios a and b as the explicit not-applicable "
+        "stubs of a household with NO EV")
+
+
+def _dispatch_artifact_has_ev(doc, path):
+    """_check_ev_applicability for battery_dispatch_policies.json.
+
+    That artifact states its applicability through the free fix its
+    post_behavior block sat on top of: scenario a (the EV charge reschedule) on
+    a household with an EV, scenario c (the flexible house-load shift) on one
+    without. A missing or unrecognised key is not an applicability answer; the
+    free-fix cross-check further down reports that shape with its own
+    message."""
+    pb = doc.get("post_behavior")
+    if not isinstance(pb, dict):
+        return
+    scen = pb.get("free_fix_scenario")
+    if scen == EV_FREE_FIX:
+        has_ev = True
+    elif scen == NO_EV_FREE_FIX:
+        has_ev = False
+    else:
+        return
+    _check_ev_applicability(
+        has_ev, path, "battery_dispatch_policies.py",
+        f"records post_behavior.free_fix_scenario {EV_FREE_FIX!r}, the EV "
+        "charge reschedule, which only a household WITH an EV can run",
+        f"records post_behavior.free_fix_scenario {NO_EV_FREE_FIX!r}, the "
+        "flexible house-load shift a household with NO EV gets instead of the "
+        "EV charge reschedule")
+
+
 _check_cohort([(BEHAVIOR_JSON, "behavior_rebuild.py"), (DISPATCH_JSON, "battery_dispatch_policies.py")])
-br = _resolve_artifact(BEHAVIOR_JSON, "behavior_rebuild.py")
-bp = _resolve_artifact(DISPATCH_JSON, "battery_dispatch_policies.py")
+br = _resolve_artifact(BEHAVIOR_JSON, "behavior_rebuild.py",
+                       check=_behavior_artifact_has_ev)
+bp = _resolve_artifact(DISPATCH_JSON, "battery_dispatch_policies.py",
+                       check=_dispatch_artifact_has_ev)
 
 base = round(br["baseline"]["model_bill"])           # modelled baseline at 6/1/2026 rates (see behavior_rebuild.json)
 sc = br["scenarios"]
-a, b, c, d = (round(sc[k]["saved"]) for k in ("a", "b", "c", "d"))
+# Scenarios c and d (flexible house-load shifts) exist for EVERY household.
+c, d = (round(sc[k]["saved"]) for k in ("c", "d"))
+# Scenarios a and b are the EV-only rungs. On a household whose intake says
+# household.has_ev is false, behavior_rebuild.py publishes them as explicit
+# not-applicable stubs with no "saved" figure at all -- so they must not be
+# computed here either. The LOW package is still a real, free behavior fix on
+# such a household: it becomes scenario c, the pure 25% flexible house-load
+# shift, so section 7 keeps its LOW/MID/HIGH structure.
+#
+# WHICH BRANCH IS THE INTAKE FLAG'S ANSWER, NOT THE ARTIFACT'S. This line used
+# to read `not (_is_not_applicable(sc["a"]) or _is_not_applicable(sc["b"]))` --
+# the resolved artifact declaring which household this run is about. A
+# household with no EV, running with no current-run upstream copies, then
+# composed its packages out of the committed EV household's artifact and was
+# handed that household's EV charge-reschedule package with no complaint. The
+# flag is the authority; the artifact is checked against it at resolution
+# (_check_ev_applicability), so by the time this line runs the two agree.
+ev_shift_applies = behavior_rebuild.EV_ANALYSIS
+if ev_shift_applies:
+    a, b = (round(sc[k]["saved"]) for k in ("a", "b"))
+    low_scenario = EV_FREE_FIX
+    low_savings = a
+    low_range = [b, c]
+    low_note = (f"EV-only 100% compliance; 80% = ${b:,}; +25% flexible house "
+                f"load = ${c:,}; stretch (50%) = ${d:,}")
+else:
+    low_scenario = NO_EV_FREE_FIX
+    low_savings = c
+    low_range = [c, d]
+    low_note = ("household.has_ev is false (intake applicability flag), so there "
+                "is no EV charging to reschedule; the free fix here is moving "
+                "flexible on-peak house load off peak, into the super-off-peak "
+                f"window: 25% of it = ${c:,}; stretch (50%) = ${d:,}")
 pb = bp["post_behavior"]
+
+# The two artifacts must be composing the SAME free fix.
+#
+# packages.MID and packages.HIGH are read out of post_behavior, which
+# battery_dispatch_policies.py produces by applying one behavior scenario and
+# THEN dispatching the battery, re-billed end to end. packages.LOW is that same
+# behavior scenario on its own. If the two generators picked different scenarios,
+# MID stops being "LOW plus the battery" and becomes a composite spliced from two
+# different pipelines -- the failure CLAUDE.md §9's one-pipeline-per-package-
+# figure rule exists to prevent, and the one the cohort check above already
+# guards in its cross-RUN form. Both generators now publish the scenario they used, so this
+# is a comparison of two recorded facts, never a re-derivation of the branch.
+#
+# A missing key on either side is a mismatch too: it means one artifact predates
+# the field, so it was written by a generator that could not have made this
+# choice deliberately.
+_dispatch_scenario = pb.get("free_fix_scenario")
+if _dispatch_scenario != low_scenario:
+    raise SystemExit(
+        "free-fix scenario mismatch between the two upstream artifacts: "
+        f"{DISPATCH_JSON} (written by battery_dispatch_policies.py) says its "
+        f"post_behavior block sits on top of behavior scenario "
+        f"{_dispatch_scenario!r}, while {BEHAVIOR_JSON} (written by "
+        f"behavior_rebuild.py) makes packages.LOW behavior scenario "
+        f"{low_scenario!r}. Composing packages.MID/HIGH from a different "
+        "behavior scenario than packages.LOW splices one package figure out of "
+        "two pipelines (CLAUDE.md §9: one integrated simulation, re-billed "
+        "end-to-end). Regenerate both from ONE run, in order: behavior_rebuild.py "
+        "-> battery_dispatch_policies.py -> package_results.py, in the same "
+        "working directory.")
+
+# Which free fix precedes the battery in the MID/HIGH runs. Named in the artifact's
+# own `basis` line and in the MID/HIGH notes, so each is true for an EV household
+# and a no-EV one alike -- "EV shift" is a false description of a run that shifted
+# flexible house load instead. EVERY place this artifact names the first stage of
+# the integrated pipeline reads this one value; none of them spells the phrase out.
+FREE_FIX_PHRASE = {EV_FREE_FIX: "EV shift",
+                   NO_EV_FREE_FIX: "flexible house-load shift"}[low_scenario]
+
 batt_alone = bp["pw3"]["greedy"]["save"]             # baseline battery marginal (see battery_dispatch_policies.json)
-batt_post = pb["mid"]["battery_marginal"]            # 2245 post-EV-fix marginal
+batt_post = pb["mid"]["battery_marginal"]            # battery marginal after the free fix
 evening = bp["pw3"]["evening"]["save"]               # evening-only variant
 
 out = {
-    "basis": ("integrated pipeline: behavior_rebuild.py EV shift -> "
+    "basis": (f"integrated pipeline: behavior_rebuild.py {FREE_FIX_PHRASE} -> "
               "battery_dispatch_policies.py price-aware dispatch -> rates.bill_nem "
               "(canonical bill-derived rates, NBC on gross imports); baseline "
               f"${base:,} at 6/1/2026 rates; actual 365-day billed baseline $3,282 "
@@ -206,11 +462,18 @@ out = {
     "packages": {
         "LOW": {
             "cost": 0,
-            "savings_yr": a,
-            "savings_range": [b, c],
-            "note": (f"EV-only 100% compliance; 80% = ${b:,}; +25% flexible house "
-                     f"load = ${c:,}; stretch (50%) = ${d:,}"),
-            "projected_bill_current_rates_yr": base - a,
+            "savings_yr": low_savings,
+            "savings_range": low_range,
+            "note": low_note,
+            # Which behavior scenario this LOW is: savings_yr IS
+            # round(scenarios[free_fix_scenario].saved). Consumers
+            # (report_tokens._free_fix_saving) run a derived-from-one-another
+            # guard asserting exactly that, and they must read WHICH scenario
+            # fed it from the artifact rather than re-deriving the branch --
+            # otherwise the guard can check the wrong scenario and either pass
+            # vacuously or fire on a household it was never about.
+            "free_fix_scenario": low_scenario,
+            "projected_bill_current_rates_yr": base - low_savings,
         },
         "MID": {
             "cost": PW3_COST,
@@ -221,15 +484,18 @@ out = {
             "battery_alone_payback_post_fix_yr": round(PW3_COST / batt_post, 1),
             "battery_alone_payback_evening_only_yr": round(PW3_COST / evening, 1),
             "projected_bill_current_rates_yr": pb["mid"]["bill"],
-            "note": ("single integrated run: EV shift then price-aware PW3 dispatch, "
-                     "re-billed end-to-end"),
+            "note": (f"single integrated run: {FREE_FIX_PHRASE} then price-aware "
+                     "PW3 dispatch, re-billed end-to-end"),
         },
         "HIGH": {
             "cost": HIGH_COST,
             "savings_yr": pb["high"]["combined_save"],
             "marginal_vs_mid_yr": pb["high"]["combined_save"] - pb["mid"]["combined_save"],
             "projected_bill_current_rates_yr": pb["high"]["bill"],
-            "note": (f"post-behavior expansion marginal "
+            # The free fix is named here for the same reason it is named in MID:
+            # "post-behavior" alone does not say WHICH behavior, and the two
+            # households' answers differ.
+            "note": (f"post-behavior ({FREE_FIX_PHRASE}) expansion marginal "
                      f"${pb['high']['combined_save'] - pb['mid']['combined_save']}/yr "
                      f"(~{round(EXPANSION_COST / (pb['high']['combined_save'] - pb['mid']['combined_save']))}"
                      f"-yr marginal payback on ${EXPANSION_COST:,}) — outage "

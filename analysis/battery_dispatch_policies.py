@@ -60,15 +60,35 @@ as sqrt-eta per direction):
   twowin   + 6-9am house load
   greedy   price-aware: any non-super-off-peak import; top-up toward full in any
            super-off-peak gap; solar surplus always charges first
-EV exclusion: intervals >= 2.5 kW outside on-peak are EV spillover; the (free)
-schedule fix moves that load, so the battery never serves it outside on-peak.
+EV exclusion (twowin and greedy, and ONLY on a household that has an EV):
+intervals >= 2.5 kW outside on-peak are EV spillover; the (free) schedule fix
+moves that load, so the battery never serves it outside on-peak. The exclusion
+is gated on br.EV_ANALYSIS (household.has_ev) -- see the comment at the rule in
+run_batt() and EV_EXCLUSION_NOTE_* below, which is what the artifact publishes.
 
 INTEGRATED VALUATION: the battery modifies the physical import/export series and the
 modified year is re-billed with the canonical engine (rates.bill_nem: monthly
 per-period NEM netting, NBC on gross imports) — the same engine used for the
-behavior model. The post-behavior block runs the EV shift (behavior_rebuild
-scenario a) FIRST, then the battery on the shifted load: one pipeline, one rate
-set, no cross-model splicing.
+behavior model. The post-behavior block runs THIS HOUSEHOLD'S FREE FIX FIRST,
+then the battery on the shifted load: one pipeline, one rate set, no cross-model
+splicing.
+
+WHICH free fix is not a constant. It is whichever behavior scenario the LOW
+package is, and that depends on the intake flag household.has_ev:
+
+  has_ev true   -> scenario a, the EV-only 100%-compliance charge reschedule
+  has_ev false  -> scenario c, the pure 25% flexible house-load shift
+
+free_fix_shift() below selects between them and applies it with behavior_
+rebuild.py's OWN shift functions, so there is one implementation of each shift in
+the repo. This used to call br.shift_ev() unconditionally. On a household with no
+EV that is a NO-OP (the detector returns no sessions), so post_behavior was the
+battery on the bare baseline while packages.LOW was scenario c -- MID and HIGH
+then meant "free fix + battery" for one household and "battery only" for another,
+which is exactly the composite-from-different-pipelines blend CLAUDE.md §9's
+one-pipeline-per-package-figure rule forbids. The block publishes the scenario key
+it applied (post_behavior.free_fix_scenario) so package_results.py can refuse a
+mismatch against packages.LOW.free_fix_scenario rather than re-derive the branch.
 
 Output: battery_dispatch_policies.json — savings per policy/config, kWh served,
 cycles/day, summer hourly grid-import profiles, escalation ladder, post_behavior
@@ -164,10 +184,32 @@ def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, charge_kw=None, soc0=Non
     soc0 = cap / 2 if soc0 is None else soc0
     soc = soc0; served = 0.0; thru = 0.0
     p = d.p.values; h = d.hour.values; kw = imp0 * 4
+    # THE EV-SPILLOVER EXCLUSION IS CONDITIONAL ON THE HOUSEHOLD HAVING AN EV
+    # (issue #147). The >= 2.5 kW test below encodes one claim and one only: an
+    # import that big outside on-peak is EV charging spilling out of its window,
+    # the free schedule fix moves it, and the battery must not be credited with
+    # serving load that is about to move. On a household with household.has_ev
+    # false there is no such load, and the same test then withholds ORDINARY
+    # HOUSE LOAD -- a heat pump, an oven, a well pump -- from a battery that
+    # should serve it, understating the battery marginal and every MID/HIGH
+    # package, sizing-curve cell and plan-matrix cell built on it.
+    #
+    # KEYED OFF THE INTAKE FLAG, NOT OFF THE DETECTOR. br.EV_ANALYSIS is
+    # household.has_ev, the same predicate free_fix_shift() below uses. A
+    # detector that found no sessions is NOT the same fact as a household with
+    # no EV -- br.detect_sessions() returns nothing on a household whose EV
+    # charges away from home for a month, and reading that silence as "no EV"
+    # would switch the exclusion off on a household that needs it. Only the
+    # declared flag decides.
+    ev_spillover_excluded = br.EV_ANALYSIS
     for i in range(len(d)):
+        # True when this interval's import is servable at all: with an EV, only
+        # sub-2.5 kW imports outside on-peak are (the rest is spillover); with
+        # no EV, every one of them is.
+        serve_ok = (kw[i] < 2.5) if ev_spillover_excluded else True
         disch_win = (p[i] == "on") or \
-                    (policy == "twowin" and 6 <= h[i] < 9 and kw[i] < 2.5) or \
-                    (policy == "greedy" and p[i] != "sop" and kw[i] < 2.5)
+                    (policy == "twowin" and 6 <= h[i] < 9 and serve_ok) or \
+                    (policy == "greedy" and p[i] != "sop" and serve_ok)
         if exp[i] > 0 and not (disch_win and imp[i] > 0):
             # charge from surplus — unless this interval also has import inside a
             # discharge window (6.3% of intervals carry both flows; serving the
@@ -596,6 +638,91 @@ def escalation(save1, cost=14500, fade=0.01, disc=0.05):
         out[f"{int(esc*100)}%"] = {"payback": round(pay, 1), "npv10": round(npv)}
     return out
 
+# The behavior scenario each household's FREE FIX is, keyed by the intake flag
+# household.has_ev. These are behavior_rebuild.py's own scenario letters, and
+# package_results.py picks the SAME two for packages.LOW -- the two scripts must
+# agree, which is why the choice is published and cross-checked rather than
+# re-derived on each side.
+FREE_FIX_SCENARIO_EV = "a"      # EV-only charge reschedule, 100% compliance
+FREE_FIX_SCENARIO_NO_EV = "c"   # 25% of flexible on-peak house load, moved to SOP
+# behavior_rebuild.py's scenario (c) fraction. Named here so the two scripts
+# cannot silently drift to different definitions of "the same" scenario.
+HOUSE_SHIFT_FRAC = 0.25
+
+
+def free_fix_shift(d, imp0):
+    """Apply THIS household's free behavior fix; return (imp, kwh_moved, scenario).
+
+    The battery is valued on top of the free fix, not on top of the bare
+    baseline, so the package figures are one integrated re-billed run (CLAUDE.md
+    §9). Which fix that is comes from behavior_rebuild.py's own intake predicate
+    EV_ANALYSIS (household.has_ev), never from whether a shift happens to move
+    anything: br.shift_ev() on a household with no EV silently returns the
+    baseline unchanged, and reading that no-op as "the free fix is already in"
+    is precisely the defect this function exists to remove.
+
+    Both branches call behavior_rebuild.py's OWN shift function with the same
+    arguments behavior_rebuild.main() gives it for that scenario, so the shifted
+    series here is the series behind the scenario's published `saved` figure and
+    not a second implementation of it:
+
+      scenario a  br.shift_ev  every detected session, moved to the next
+                  overnight SOP window, capped at the charger's power (CAP_KWH)
+      scenario c  br.shift_house  HOUSE_SHIFT_FRAC of each day's remaining
+                  on-peak non-EV import, capped at the largest 15-min import
+                  this house has actually drawn — the data-derived destination
+                  cap behavior_rebuild.main() derives for a house with no
+                  charger, measured off this meter rather than assumed.
+
+    Returns the scenario KEY too. A consumer must be able to read which fix ran
+    instead of re-deriving the branch from an intake flag it cannot see.
+    """
+    sop_idx, sop_ts = br.build_sop_index(d)
+    ev, sessions = br.detect_sessions(d)
+    if br.EV_ANALYSIS:
+        imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions),
+                                    sop_idx, sop_ts)
+        return imp_sh, moved, FREE_FIX_SCENARIO_EV
+    # No charger, so no hardware cap on the destination intervals; the cap is
+    # this house's own largest observed 15-min import (behavior_rebuild.main()).
+    house_cap = float(np.max(imp0))
+    imp_sh, moved = br.shift_house(d, imp0, ev, HOUSE_SHIFT_FRAC,
+                                   sop_idx, sop_ts, house_cap)
+    return imp_sh, moved, FREE_FIX_SCENARIO_NO_EV
+
+
+# What the escalation ladder is seeded from, per free-fix scenario. The ladder
+# runs on the battery's marginal saving AFTER the free fix, so the note has to
+# name the fix that actually preceded it.
+_ESCALATION_SEED_NOTE = {
+    FREE_FIX_SCENARIO_EV:
+        "seeded from the post-EV-fix battery marginal (the decision-relevant figure)",
+    FREE_FIX_SCENARIO_NO_EV:
+        ("seeded from the post-house-shift battery marginal (the "
+         "decision-relevant figure; household.has_ev is false, so the free fix "
+         "that precedes the battery is behavior scenario c, not the EV shift)"),
+}
+
+# What the discharge-eligibility rule in run_batt() DID, per household, published
+# as notes.ev_exclusion. Two strings rather than one because the rule itself is
+# two rules (issue #147): a household with no EV has no spillover to exclude, and
+# an artifact that claimed one would be describing a filter that never ran.
+EV_EXCLUSION_NOTE_EV = ">=2.5 kW outside on-peak = EV spillover, never battery-served"
+EV_EXCLUSION_NOTE_NO_EV = (
+    "no EV-spillover exclusion applied: household.has_ev is false, so every "
+    "import outside super-off-peak is battery-servable, including ordinary "
+    "house load at or above 2.5 kW")
+
+
+def ev_exclusion_note():
+    """The notes.ev_exclusion string this household's dispatch earned.
+
+    Reads the SAME predicate run_batt() gates the exclusion on, so the artifact
+    cannot describe a filter the dispatch did not apply.
+    """
+    return EV_EXCLUSION_NOTE_EV if br.EV_ANALYSIS else EV_EXCLUSION_NOTE_NO_EV
+
+
 if __name__ == "__main__":
     d = br.load()
     imp0 = d.Consumption.values.astype(float); gen0 = d.Generation.values.astype(float)
@@ -607,9 +734,16 @@ if __name__ == "__main__":
     # convention the legacy ranking model has always used. The two bases used to
     # disagree by ~40 kWh of off-peak import; that gap is closed.
     _p = d.p.values; _kw = imp0 * 4
+    # The off-peak slice is a RESTATEMENT of run_batt()'s own discharge-eligibility
+    # rule, so it carries the same EV gate (issue #147). With an EV, only the
+    # sub-2.5 kW part of off-peak import is servable — the rest is spillover the
+    # free schedule fix moves. With household.has_ev false there is no spillover,
+    # the dispatch serves all of it, and a figure that still subtracted a 2.5 kW
+    # slice would contradict notes.ev_exclusion in the same artifact.
+    _servable_off = ((_p == "off") & (_kw < 2.5)) if br.EV_ANALYSIS else (_p == "off")
     inp = {"nonsop_import_kwh": round(float(imp0[_p != "sop"].sum())),
            "onpeak_import_kwh": round(float(imp0[_p == "on"].sum())),
-           "servable_offpeak_house_kwh": round(float(imp0[(_p == "off") & (_kw < 2.5)].sum()))}
+           "servable_offpeak_house_kwh": round(float(imp0[_servable_off].sum()))}
     inp["serviceable_total_kwh"] = inp["onpeak_import_kwh"] + inp["servable_offpeak_house_kwh"]
     inp["note"] = ("canonical rates.period_at assignment, including the eight "
                    "bill-confirmed tariff holidays as weekend days")
@@ -632,12 +766,16 @@ if __name__ == "__main__":
         row["charge_kw"] = chg_kw
         out[name] = row
         print(name, {k: v for k, v in row.items() if isinstance(v, dict)})
-    # post-behavior integrated package (EV shift scenario a, then battery)
-    ev, sessions = br.detect_sessions(d)
-    sop_idx, sop_ts = br.build_sop_index(d)
-    imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
+    # post-behavior integrated package: this household's free fix (scenario a
+    # with an EV, scenario c without), then the battery on the shifted load
+    imp_sh, moved, fix_scenario = free_fix_shift(d, imp0)
     b_sh = billed(d, imp_sh, gen0)
-    pb = {"behavior_save": round(base - b_sh), "kwh_moved": round(moved)}
+    pb = {"behavior_save": round(base - b_sh), "kwh_moved": round(moved),
+          # WHICH free fix the two figures above, and every mid/high combined_save
+          # below, sit on top of. package_results.py refuses to compose packages.MID
+          # from this block unless it matches packages.LOW.free_fix_scenario, so a
+          # cross-run blend is caught rather than published.
+          "free_fix_scenario": fix_scenario}
     for cap, name, chg_kw in [(13.5, "mid", CHARGE_KW), (27.0, "high", CHARGE_KW_WITH_EXPANSION)]:
         i3, e3, _, _ = run_batt(d, imp_sh, gen0, cap, "greedy", charge_kw=chg_kw)
         b2 = billed(d, i3, e3)
@@ -646,9 +784,9 @@ if __name__ == "__main__":
                     "charge_kw": chg_kw}
     out["post_behavior"] = pb
     out["escalation_greedy_pw3_post_behavior"] = escalation(pb["mid"]["battery_marginal"])
-    out["escalation_note"] = "seeded from the post-EV-fix battery marginal (the decision-relevant figure)"
+    out["escalation_note"] = _ESCALATION_SEED_NOTE[fix_scenario]
     out["notes"] = {"engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
-                    "ev_exclusion": ">=2.5 kW outside on-peak = EV spillover, never battery-served",
+                    "ev_exclusion": ev_exclusion_note(),
                     "rte": 0.9, "power_kw": 11.5,
                     "charge_kw_bare_unit": CHARGE_KW,
                     "charge_kw_with_expansion": CHARGE_KW_WITH_EXPANSION,
