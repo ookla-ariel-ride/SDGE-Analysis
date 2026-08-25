@@ -828,6 +828,44 @@ def _needs_household(name):
     return any("private/household.yaml" in s for s in rt.TOKENS[name].get("sources", []))
 
 
+# household.py's own fail-closed text, matched to tell "this checkout has no
+# private archive" apart from "this token cannot state its answer". Taken from
+# the module rather than retyped, so it cannot drift out of sync with it.
+# WITH NO private/household.yaml ON DISK AT ALL, any refusal that cites the
+# file is caused by its absence, not by the household's EV applicability --
+# household.py's own "missing ..." message for the tokens that read it
+# directly, and each token's own named refusal for the fields it cannot find
+# inside it (REVIEW_TOOL_1/2's provenance block, issue #135). Both cite the
+# path, and neither says anything about an EV, so the path is the honest test.
+# Checked against household.py's message rather than a retyped copy, so a
+# reworded fail-closed cannot silently stop matching.
+_INTAKE_PATH_IN_MESSAGE = "private/household.yaml"
+assert _INTAKE_PATH_IN_MESSAGE in (rt.hh._MSG % "private/household.yaml"), (
+    "household.py's fail-closed message no longer names the intake path, so a "
+    "missing-archive refusal can no longer be told apart from a real one")
+
+
+def _runnable_here(names):
+    """`names`, minus the ones this checkout cannot resolve for want of the
+    intake.
+
+    A case that PATCHES ARTIFACTS still lets a token reach the real
+    private/household.yaml, so on a checkout without the private archive it
+    refuses for a reason the case is not about -- S0_VERDICT reads
+    household.plan through _plan_ranking, and a no-EV artifact case would read
+    that refusal as "a no-EV household gets no report", while a case expecting
+    a NAMED refusal would see the wrong name. Both shapes shipped green here
+    and went red in CI (issue #147).
+
+    Gate on the source the token DECLARES rather than on a hand-kept list, so
+    a token that starts or stops reading the intake needs no edit here. On a
+    checkout WITH the archive -- this one -- nothing is dropped and every
+    token is still exercised."""
+    if rt.hh.PATH.is_file():
+        return tuple(names)
+    return tuple(n for n in names if not _needs_household(n))
+
+
 _H2_ID_RE = re.compile(r'<h2 id="([^"]+)"')
 
 
@@ -8848,9 +8886,20 @@ def case_a_legitimate_null_or_not_applicable_emission_renders_rather_than_aborts
         #     instruction rather than a valuation. Both come out of
         #     _free_fix_move off the scenario packages.LOW prices, so each is
         #     pinned to the phrase its own sentence is built from.
+        # This stub patches ARTIFACTS, not the intake, so a token that also
+        # reads private/household.yaml still reaches the real file. S0_VERDICT
+        # does, through _plan_ranking's household.plan, and declares it in its
+        # own sources -- so on a checkout without the private archive it
+        # refuses for a reason that has nothing to do with EV applicability.
+        # Gate by the DECLARED source rather than by name, so a token that
+        # starts or stops reading the intake is handled without editing this
+        # list.
+        _here = _runnable_here(("S0_VERDICT", "S7_VERDICT", "S15_VERDICT"))
         for token, names_the_move in (("S0_VERDICT", "free load-shift fix"),
                                       ("S7_VERDICT", "free load-shift fix"),
                                       ("S15_VERDICT", "flexible house load")):
+            if token not in _here:
+                continue
             value = got[f"no_ev_{token}"] = _renders(token)
             low_value = value.lower()
             assert "charger" not in low_value and "reprogram" not in low_value, (
@@ -8862,6 +8911,8 @@ def case_a_legitimate_null_or_not_applicable_emission_renders_rather_than_aborts
                 f"(scenario c, a pure house-load shift): {value!r}")
             _assert_within_density_cap(token, value, "a household with no EV")
         for token in ("S0_VERDICT", "S7_VERDICT"):
+            if f"no_ev_{token}" not in got:      # held out for want of the intake
+                continue
             assert f"${low_yr:,}/yr" in got[f"no_ev_{token}"], (
                 f"{token} does not quote packages.LOW.savings_yr (${low_yr:,}/yr): "
                 f"{got[f'no_ev_{token}']!r}")
@@ -8920,7 +8971,7 @@ def case_the_free_fix_guard_refuses_a_package_that_cannot_name_its_own_scenario(
     that reach _free_fix_saving, because each of them alone blocks the whole
     report, and a guard that fired in one of the three would still let the
     other two publish the contradiction."""
-    tokens = ("S0_VERDICT", "S7_VERDICT", "S15_VERDICT")
+    tokens = _runnable_here(("S0_VERDICT", "S7_VERDICT", "S15_VERDICT"))
     said = {}
 
     # (a) The artifact that predates the field.
@@ -9016,7 +9067,11 @@ _NO_EV_ALLOWED_TOKEN_FAILURES = frozenset({
 # carbon_fullyear_results.json below.
 _NO_EV_ARTIFACT_WITNESS = {
     "behavior_rebuild.json": "EV_SESSION_COUNT",
-    "package_results.json": "S0_VERDICT",
+    # S7_VERDICT, not S0_VERDICT: both read packages.LOW, but S0 also reads
+    # household.plan through _plan_ranking, so it is held out on a checkout
+    # with no private archive and could not witness anything there -- which is
+    # exactly where this case has to keep working.
+    "package_results.json": "S7_VERDICT",
     "carbon_fullyear_results.json": "SEC13_TEASER",
     "extended_results.json": None,
 }
@@ -9068,7 +9123,17 @@ def case_every_token_in_the_report_resolves_on_a_complete_no_ev_artifact_set():
             f"the no-EV fixture returns data/{artifact} unchanged, so this case is "
             "resolving the EV household's artifacts under a no-EV label")
 
-    swept, gaps = {}, set()
+    # This fixture patches ARTIFACTS, not the intake, so a token that reads
+    # private/household.yaml still reaches the real file. On a checkout that
+    # has one (this one) they resolve and are swept like everything else; in
+    # CI, which has no private archive, they would refuse for a reason that
+    # has nothing to do with EV applicability and would read here as "a no-EV
+    # household gets no report". Gate ONLY those, by the source they declare,
+    # so the rest of the sweep keeps running in CI -- which is where this case
+    # earns its keep, since the regressions it exists to catch all reached
+    # main through CI-visible paths.
+    have_intake = rt.hh.PATH.is_file()
+    swept, gaps, no_intake = {}, set(), set()
     failures, values = {}, {}
     with _patched(rt, "_json", stub):
         for name, spec in rt.TOKENS.items():
@@ -9079,6 +9144,25 @@ def case_every_token_in_the_report_resolves_on_a_complete_no_ev_artifact_set():
             try:
                 values[name] = rt.resolve_token(name)
             except SystemExit as e:
+                # TELL THE TWO REFUSALS APART. A token can refuse here for a
+                # reason that is nothing to do with EV applicability: on a
+                # checkout with no private archive, anything reaching
+                # private/household.yaml hits household.py's own fail-closed
+                # message. Counting those as "a no-EV household gets no
+                # report" made this case red in CI and green here, which is
+                # the wrong way round for a guard.
+                #
+                # Detected by the intake's OWN message rather than by a list
+                # of token names or declared sources: `sources` misses the
+                # kind="household_yaml" tokens and every derived one that
+                # reaches the intake indirectly (S4_VERDICT_SHORT and the
+                # BEST_PLAN_* family go through _plan_ranking), and a list
+                # would need editing every time a token starts or stops
+                # reading it.
+                if not have_intake and _INTAKE_PATH_IN_MESSAGE in str(e):
+                    del swept[name]
+                    no_intake.add(name)
+                    continue
                 failures[name] = str(e)
 
     # 1. NOTHING IS SMUGGLED OUT OF THE SWEEP. The only tokens skipped are the
@@ -9087,9 +9171,18 @@ def case_every_token_in_the_report_resolves_on_a_complete_no_ev_artifact_set():
     #    case_known_gaps_are_small_and_each_fails_closed_by_name is waiting.
     assert gaps == set(rt.KNOWN_GAPS), (
         f"the sweep skipped {sorted(gaps - set(rt.KNOWN_GAPS))} beyond KNOWN_GAPS")
-    assert len(swept) >= 200, (
-        f"only {len(swept)} token(s) were swept -- TOKENS did not load, and every "
-        "assertion below is passing on an empty set")
+    # EXACT ACCOUNTING, not a magic floor. Every token is swept, declared a
+    # gap, or held out for want of the intake -- nothing may simply vanish.
+    # A floor was the first draft and it was wrong twice over: it passed a
+    # sweep that had quietly lost tokens as long as enough remained, and it
+    # failed CI for the innocent reason that a checkout with no private
+    # archive legitimately holds ~40 back. Conservation catches the first and
+    # is indifferent to the second.
+    assert len(swept) + len(gaps) + len(no_intake) == len(rt.TOKENS), (
+        f"{len(rt.TOKENS)} tokens went in but {len(swept)} were swept, "
+        f"{len(gaps)} are gaps and {len(no_intake)} were held out -- "
+        "the sweep lost some, so the assertions below cover less than they claim")
+    assert swept, "no token was swept at all -- TOKENS did not load"
 
     # 2. THE WHOLE POINT.
     new = sorted(set(failures) - _NO_EV_ALLOWED_TOKEN_FAILURES)
@@ -9169,7 +9262,13 @@ def case_every_token_in_the_report_resolves_on_a_complete_no_ev_artifact_set():
             + (f"; {len(allowed)} pre-existing non-EV failure(s) allowed: {allowed}"
                if allowed else "; zero failures, allowed or otherwise")
             + f"; section 13's teaser states the measured grid gap "
-              f"({gap_kg_mwh:,.0f} kg CO₂/MWh) and section 9's the overnight floor")
+              f"({gap_kg_mwh:,.0f} kg CO₂/MWh) and section 9's the overnight floor"
+            # NO SILENT CAPS: a sweep that quietly covered less than it claims
+            # reads as "everything passes" when it is really "everything I
+            # still looked at passes", so say what was held out and why.
+            + (f"; {len(no_intake)} token(s) held out for needing "
+               f"private/household.yaml, which this checkout lacks: "
+               f"{sorted(no_intake)}" if no_intake else ""))
 
 
 # ===========================================================================
@@ -9293,6 +9392,13 @@ def case_the_markup_around_the_no_ev_tokens_names_no_ev_either():
     private/household.yaml alone, so the rest of the page still carries
     household-sourced EV facts -- the plan really is called EV-TOU-5 -- which
     are not this defect and never were."""
+    # Renders the real template, which carries household_yaml tokens
+    # (UTILITY_NAME and friends), so this one genuinely cannot run without
+    # the intake -- unlike the sweep above, which holds those tokens out and
+    # keeps going. Same SkipCase convention the other archive-dependent
+    # cases in this file use.
+    _require_household()
+
     # 1. THE CONTROL. The EV household's four sites, unchanged to the
     #    character. Located by their own text, so putting the literal markup
     #    back does not break the control -- it is the no-EV half below that
@@ -9486,6 +9592,10 @@ def case_the_free_win_card_stops_calling_it_a_win_when_the_artifacts_say_it_is_n
     BOTH artifacts together: packages.LOW.savings_yr is literally
     round(scenarios[k].saved), and swapping one alone builds a pair no run
     produces and tests the drift guard instead of the card."""
+    # Renders live template markup, which carries household_yaml tokens, so
+    # it cannot run without the intake. Same convention as the sibling case.
+    _require_household()
+
     scen = rt._json("behavior_rebuild.json")["scenarios"]
     got = {}
 
