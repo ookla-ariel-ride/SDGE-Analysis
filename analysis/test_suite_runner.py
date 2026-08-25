@@ -52,7 +52,8 @@ SUITES = [
     # test_extra_results) call run(), are wired into CI and the coverage gate,
     # and were invisible to a discovery that matched on the name. All three
     # were exposed.
-    "test_all_electric_endgame", "test_battery_backup_sims", "test_battery_plan_matrix",
+    "test_all_electric_endgame", "test_battery_backup_sims",
+    "test_battery_dispatch_policies", "test_battery_plan_matrix",
     "test_battery_sizing_curve", "test_bill_decomposition", "test_carbon_dispatch_tradeoff",
     "test_carbon_fullyear", "test_cca_bundled_counterfactual", "test_cca_rate_extraction",
     "test_charge_discharge_distinct_naming", "test_deep_analyses", "test_dry_run",

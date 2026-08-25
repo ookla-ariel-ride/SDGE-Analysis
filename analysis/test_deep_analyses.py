@@ -37,6 +37,7 @@ ANALYSIS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ANALYSIS))
 import suite_runner  # noqa: E402
 import rates as R
+import test_scripts_runnable as TSR   # the proven synthetic-household fixture
 
 
 class SkipCase(Exception):
@@ -132,30 +133,83 @@ def _write_flat_sam(path, value, year):
 
 BASE_SAVE = 1500.0    # this run's battery_dispatch_policies.json marginal
 
+FREE_FIX_EV = "a"      # the free fix an EV household's dispatch artifact records
+FREE_FIX_NO_EV = "c"   # ...and the one a household with no EV records instead
+
+_OMIT = object()
+"""Sentinel for _stage(free_fix_scenario=...): leave the key OUT of the dispatch
+artifact entirely, which is what one written before the field existed looks
+like -- a different shape from a key holding another household's letter, and
+deep_analyses.py has to refuse both."""
+
+
+def _household_yaml(has_ev):
+    """test_scripts_runnable.SYNTH_HOUSEHOLD as an EV or a genuinely EV-FREE
+    intake. deep_analyses.py imports behavior_rebuild for the intake flag
+    household.has_ev (issue #147), so every root now needs one.
+
+    has_ev False sets household.has_ev false AND removes the charger block:
+    behavior_rebuild.py refuses a declared charger beside a false flag. Every
+    edit asserts it took -- a string surgery that silently matched nothing
+    would leave the EV household in place and make the no-EV cases pass for the
+    wrong reason."""
+    hh = TSR.SYNTH_HOUSEHOLD
+    assert "household:\n  pto_date: 2019-12-01\n" in hh, \
+        "SYNTH_HOUSEHOLD's household block no longer has the shape this edit expects"
+    assert "charger:\n  kw: 11.5\n" in hh, "SYNTH_HOUSEHOLD no longer declares a charger"
+    if has_ev:
+        return hh
+    hh = hh.replace("household:\n  pto_date: 2019-12-01\n",
+                    "household:\n  pto_date: 2019-12-01\n  has_ev: false\n")
+    hh = hh.replace("charger:\n  kw: 11.5\n", "")
+    assert "has_ev: false" in hh and "charger:" not in hh, hh
+    return hh
+
+
+def _stage(tmp, src_text=None, has_ev=True, free_fix_scenario=FREE_FIX_EV,
+           where="current-run"):
+    """Build one throwaway root deep_analyses.py can run in.
+
+    `src_text` substitutes a PATCHED copy of the generator's own source (used
+    below to perturb the rate tables it declares); None stages the committed
+    file byte-for-byte. `has_ev` is THIS root's intake; `free_fix_scenario` is
+    what the dispatch artifact says about the household IT came from; `where`
+    puts that artifact in the CWD (the current-run copy, which wins), in data/
+    (the committed fallback), or in both."""
+    (tmp / "analysis").mkdir()
+    (tmp / "data").mkdir()          # so _repo_root() resolves tmp as root
+    (tmp / "private").mkdir()
+    (tmp / "private" / "household.yaml").write_text(_household_yaml(has_ev))
+    for mod in ("rates.py", "household.py", "behavior_rebuild.py"):
+        shutil.copy(ANALYSIS / mod, tmp / mod)
+    (tmp / "deep_analyses.py").write_text(
+        (ANALYSIS / "deep_analyses.py").read_text() if src_text is None
+        else src_text)
+    _write_meter_csv(tmp / "usage.csv")
+    _write_flat_sam(tmp / "samA.csv", 0.2, 2026)
+    _write_flat_sam(tmp / "samB.csv", 0.2, 2025)
+    mid = {"battery_marginal": BASE_SAVE}
+    post = ({"mid": mid} if free_fix_scenario is _OMIT
+            else {"free_fix_scenario": free_fix_scenario, "mid": mid})
+    text = json.dumps({"post_behavior": post})
+    if where in ("current-run", "both"):
+        (tmp / "battery_dispatch_policies.json").write_text(text)
+    if where in ("committed", "both"):
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(text)
+    return tmp
+
+
+def _run(tmp):
+    return subprocess.run([sys.executable, "deep_analyses.py"], cwd=tmp,
+                          capture_output=True, text=True, timeout=300)
+
 
 def _run_generator(src_text=None):
     """Run the REAL deep_analyses.py end to end on the synthetic house and
-    return the deep_results.json it wrote.
-
-    `src_text` substitutes a PATCHED copy of the generator's own source (used
-    below to perturb the rate tables it declares); None runs the committed
-    file byte-for-byte."""
+    return the deep_results.json it wrote."""
     with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        (tmp / "analysis").mkdir()
-        (tmp / "data").mkdir()          # so _repo_root() resolves tmp as root
-        shutil.copy(ANALYSIS / "rates.py", tmp / "rates.py")
-        (tmp / "deep_analyses.py").write_text(
-            (ANALYSIS / "deep_analyses.py").read_text() if src_text is None
-            else src_text)
-        _write_meter_csv(tmp / "usage.csv")
-        _write_flat_sam(tmp / "samA.csv", 0.2, 2026)
-        _write_flat_sam(tmp / "samB.csv", 0.2, 2025)
-        (tmp / "battery_dispatch_policies.json").write_text(
-            json.dumps({"post_behavior": {"mid": {"battery_marginal": BASE_SAVE}}}))
-
-        r = subprocess.run([sys.executable, "deep_analyses.py"], cwd=tmp,
-                           capture_output=True, text=True, timeout=300)
+        tmp = _stage(pathlib.Path(td), src_text=src_text)
+        r = _run(tmp)
         assert r.returncode == 0, f"deep_analyses.py failed: {r.stderr[-2000:]}"
         return json.loads((tmp / "deep_results.json").read_text())
 
@@ -386,8 +440,95 @@ def case_no_published_dollar_figure_survives_a_change_to_its_rate_table():
             "publishes no dollar figure at all")
 
 
+def case_dispatch_artifact_from_the_other_household_is_refused():
+    """issue #147: the dispatch artifact deep_analyses.py seeds its Monte Carlo
+    from must belong to THIS household.
+
+    _base_save() falls back to the committed data/battery_dispatch_policies.json
+    when no current-run copy exists, and nothing checked that the resolved copy
+    came from a household with the same EV applicability. A household with no EV
+    then built its entire battery payback and NPV distribution out of the
+    committed EV household's post_behavior.mid.battery_marginal -- a figure
+    measured on top of a free fix this household never ran -- and exited 0.
+
+    post_behavior.mid.battery_marginal is the ONLY figure this script takes from
+    that artifact, so there is no tolerance, no tie-out and no other assertion
+    anywhere in the file that could have caught it: the number simply flowed
+    into the Monte Carlo as the base case.
+
+    Both directions, and both resolution paths -- guarding only the committed
+    fallback would leave the identical defect for a stale current-run copy
+    another household's run left in this working directory, and that copy WINS
+    the resolution.
+    """
+    variants = [("no-EV household handed the EV household's dispatch artifact",
+                 False, FREE_FIX_EV),
+                ("EV household handed the no-EV household's dispatch artifact",
+                 True, FREE_FIX_NO_EV)]
+    for label, has_ev, theirs in variants:
+        for where in ("committed", "current-run"):
+            with tempfile.TemporaryDirectory() as td:
+                tmp = _stage(pathlib.Path(td), has_ev=has_ev,
+                             free_fix_scenario=theirs, where=where)
+                r = _run(tmp)
+                ctx = f"{where}/{label}"
+                assert r.returncode != 0, (
+                    f"{ctx}: deep_analyses.py seeded this household's Monte "
+                    f"Carlo from another household's dispatch artifact:\n"
+                    f"{r.stdout[-2000:]}")
+                assert "EV APPLICABILITY MISMATCH" in r.stderr, (ctx, r.stderr)
+                # the message must name the intake FLAG, the artifact, what it
+                # says, the harm and the remedy
+                assert "household.has_ev" in r.stderr, (ctx, r.stderr)
+                assert "battery_dispatch_policies.json" in r.stderr, (ctx, r.stderr)
+                assert f"free_fix_scenario {theirs!r}" in r.stderr, (ctx, r.stderr)
+                assert "Monte Carlo" in r.stderr, (ctx, r.stderr)
+                assert "battery_dispatch_policies.py" in r.stderr, (ctx, r.stderr)
+                assert not (tmp / "deep_results.json").exists(), (
+                    f"{ctx}: deep_results.json was written despite the "
+                    "applicability abort")
+
+    # An artifact that names NO free fix cannot be checked against this
+    # household at all, so it is refused too rather than trusted.
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _stage(pathlib.Path(td), free_fix_scenario=_OMIT)
+        r = _run(tmp)
+        assert r.returncode != 0, (
+            "deep_analyses.py accepted a dispatch artifact that names no free "
+            f"fix at all:\n{r.stdout[-2000:]}")
+        assert "no usable post_behavior.free_fix_scenario" in r.stderr, r.stderr
+        assert "household.has_ev" in r.stderr, r.stderr
+        assert not (tmp / "deep_results.json").exists(), (
+            "deep_results.json was written despite the abort")
+
+    # POSITIVE CONTROL: a MATCHING household still runs, and its Monte Carlo is
+    # still seeded from the artifact's own battery_marginal. Without this a
+    # generator that refused everything would pass every assertion above.
+    oracle = _monte_carlo_oracle(BASE_SAVE)
+    for has_ev, mine in ((True, FREE_FIX_EV), (False, FREE_FIX_NO_EV)):
+        for where in ("committed", "current-run"):
+            with tempfile.TemporaryDirectory() as td:
+                tmp = _stage(pathlib.Path(td), has_ev=has_ev,
+                             free_fix_scenario=mine, where=where)
+                r = _run(tmp)
+                ctx = f"{where}/has_ev={has_ev}"
+                assert r.returncode == 0, (
+                    f"{ctx}: deep_analyses.py refused a dispatch artifact from "
+                    f"its OWN household: {r.stderr[-2000:]}")
+                mc = json.loads((tmp / "deep_results.json").read_text())["monte_carlo"]
+                for k, v in oracle.items():
+                    assert mc[k] == v, (ctx, k, mc[k], v)
+    return ("deep_analyses.py refuses a dispatch artifact whose "
+            "post_behavior.free_fix_scenario disagrees with this run's "
+            "household.has_ev -- both directions, on the current-run copy as "
+            "well as the committed fallback -- refuses one that names no free "
+            "fix at all, writes nothing in either case, and still seeds the "
+            "Monte Carlo from its own household's artifact")
+
+
 CASES = [case_deep_analyses_end_to_end_matches_hand_and_oracle_computations,
-         case_no_published_dollar_figure_survives_a_change_to_its_rate_table]
+         case_no_published_dollar_figure_survives_a_change_to_its_rate_table,
+         case_dispatch_artifact_from_the_other_household_is_refused]
 
 
 def main():

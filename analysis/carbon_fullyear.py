@@ -67,6 +67,10 @@ ORDERING CONTRACT (this script runs SECOND):
   is there, from the committed copy otherwise, and a disagreement between the two
   is announced loudly rather than resolved in silence (see _scenario_a_saved).
   CLAUDE.md's section 9 regeneration gate already runs the pair in this order.
+  Whichever copy is used, its EV APPLICABILITY must match this run's intake flag
+  (household.has_ev) or the run refuses -- an artifact from a household with a
+  different answer to that question is a different household's artifact, and
+  quoting it publishes a figure that is not this one's (_check_ev_applicability).
 
 Run from private/verify with usage.csv, behavior_rebuild.py and rates.py beside it
 (repo paths resolve automatically); public artifacts are written to the repo data/:
@@ -157,6 +161,66 @@ def _describe_scenario_a(v):
     return f"scenario-a saving ${saved:,.2f}/yr"
 
 
+def _check_ev_applicability(v, path):
+    """Fail closed when the behavior artifact belongs to a household with a
+    DIFFERENT EV applicability than this run's intake declares.
+
+    The two sides of the comparison are two independent facts, and this script
+    reads both:
+      * br.EV_ANALYSIS -- behavior_rebuild's household.has_ev predicate, read
+        from THIS run's private/household.yaml. The intake flag is the
+        authority on whether this household has an EV (CLAUDE.md 0);
+      * the artifact's scenarios.a -- a real dollar figure (an EV household's
+        artifact) or the explicit not-applicable stub (a no-EV household's),
+        as distinguished by _read_scenario_a.
+
+    A disagreement means the artifact was written for a DIFFERENT household (or
+    before the intake flag changed), and neither direction may be resolved
+    silently:
+      * intake says no EV, artifact carries a figure -> the cost_note would
+        publish another household's mistimed-charging dollars beside this
+        household's own not-applicable EV stubs, in one self-contradicting
+        artifact. That is the figure CLAUDE.md 0 forbids: it is not this
+        household's;
+      * intake says EV, artifact carries the stub -> the cost_note would state
+        that there is no mistimed-charging saving to price on a household that
+        has one, silently deleting a real saving.
+
+    The remedy is the same in both directions and is the script's own ordering
+    contract: run behavior_rebuild.py in this working directory first, so the
+    behavior artifact is THIS household's."""
+    saved, _reason = v
+    ev_applies = br.EV_ANALYSIS          # read at call time; tests rebind it
+    artifact_has_ev = saved is not None
+    if artifact_has_ev == ev_applies:
+        return v
+    if ev_applies:
+        flag_says = ("household.has_ev is NOT false (the intake applicability "
+                     "flag in private/household.yaml says this household HAS "
+                     "an EV)")
+        artifact_says = ("publishes scenarios.a as the explicit "
+                         "not-applicable stub of a household with NO EV")
+        harm = ("Pricing this run against that artifact would state that there "
+                "is no mistimed-charging saving to price on a household that "
+                "has one, deleting a real saving")
+    else:
+        flag_says = ("household.has_ev is false (the intake applicability flag "
+                     "in private/household.yaml says this household has NO EV)")
+        artifact_says = (f"publishes scenarios.a as a real saving of "
+                         f"${saved:,.2f}/yr, which only an EV household has")
+        harm = ("Quoting that figure would publish ANOTHER household's "
+                "mistimed-charging dollars beside this household's own "
+                "not-applicable EV stubs, in one self-contradicting artifact")
+    raise SystemExit(
+        f"EV APPLICABILITY MISMATCH between this run and its behavior "
+        f"artifact: this run's intake says {flag_says}, but the behavior "
+        f"artifact {path} {artifact_says}. {harm} (CLAUDE.md section 0: every "
+        "figure must be this household's). Run behavior_rebuild.py in this "
+        f"working directory ({pathlib.Path.cwd()}) first so the behavior "
+        "artifact belongs to THIS household; this script will not compose one "
+        "household's carbon run with another household's behavior artifact.")
+
+
 def _scenario_a_saved():
     """Scenario-a outcome, as (saved, reason), from THIS run's behavior artifact.
 
@@ -179,6 +243,14 @@ def _scenario_a_saved():
       3. both present and DISAGREEING -- this run's copy wins, and the mismatch
          is announced loudly: the committed copy is stale relative to this run,
          and the section 9 regeneration gate will fail until it is promoted.
+
+    WHICHEVER copy is used is then checked against this run's intake flag by
+    _check_ev_applicability, BEFORE any NOTICE quotes it: an artifact whose EV
+    applicability disagrees with household.has_ev belongs to a different
+    household, and this run refuses rather than quoting it. The check covers
+    both resolution paths, not just the committed fallback -- a current-run copy
+    left in the working directory by a previous household's run is the same
+    defect, one directory across.
     """
     run = pathlib.Path.cwd() / BEHAVIOR_JSON
     committed = DATA / BEHAVIOR_JSON
@@ -188,13 +260,13 @@ def _scenario_a_saved():
                 f"no behavior artifact: neither a current-run {run} nor the "
                 f"committed {committed} exists. Run behavior_rebuild.py in this "
                 "working directory first (see the ordering contract above).")
-        v = _read_scenario_a(committed)
+        v = _check_ev_applicability(_read_scenario_a(committed), committed)
         print(f"NOTICE: no current-run {BEHAVIOR_JSON} in {pathlib.Path.cwd()}; "
               f"{_describe_scenario_a(v)} read from the committed "
               f"{committed}. If this run's household inputs or EV detector "
               "changed, run behavior_rebuild.py here FIRST.")
         return v
-    v = _read_scenario_a(run)
+    v = _check_ev_applicability(_read_scenario_a(run), run)
     if committed.exists() and run.samefile(committed):
         print(f"NOTICE: {_describe_scenario_a(v)} from {run} "
               "(the working directory IS the committed data/ directory).")

@@ -147,12 +147,43 @@ BASE_DISPATCH = dict(greedy_save=2328, evening_save=1720, mid_marginal=2238,
                      high_bill=1229)
 
 
-def _build_root(tmp):
+def _household_yaml(has_ev):
+    """test_scripts_runnable.SYNTH_HOUSEHOLD as an EV or a genuinely EV-FREE
+    intake.
+
+    has_ev False sets household.has_ev false AND removes the charger block:
+    behavior_rebuild.py refuses a declared charger beside a false flag, since
+    the two contradict each other. Every edit asserts it took -- a string
+    surgery that silently matched nothing would leave the EV household in place
+    and make the no-EV cases below pass for the wrong reason."""
+    hh = TSR.SYNTH_HOUSEHOLD
+    assert "household:\n  pto_date: 2019-12-01\n" in hh, \
+        "SYNTH_HOUSEHOLD's household block no longer has the shape this edit expects"
+    assert "charger:\n  kw: 11.5\n" in hh, "SYNTH_HOUSEHOLD no longer declares a charger"
+    if has_ev:
+        return hh
+    hh = hh.replace("household:\n  pto_date: 2019-12-01\n",
+                    "household:\n  pto_date: 2019-12-01\n  has_ev: false\n")
+    hh = hh.replace("charger:\n  kw: 11.5\n", "")
+    assert "has_ev: false" in hh and "charger:" not in hh, hh
+    return hh
+
+
+def _build_root(tmp, has_ev=True):
     """A minimal repo-shaped root: package_results.py's _repo_root() only
     requires an 'analysis' and a 'data' subdirectory to exist (their contents
-    are never inspected by that function)."""
+    are never inspected by that function).
+
+    It also needs private/household.yaml now: package_results.py imports
+    behavior_rebuild for the intake flag household.has_ev, which is the
+    AUTHORITY on whether this household has an EV (issue #147). has_ev says
+    which household this root is, and every case has to say -- an EV root under
+    a no-EV artifact pair (or the reverse) is exactly what the applicability
+    guard refuses."""
     (tmp / "analysis").mkdir()
     (tmp / "data").mkdir()
+    (tmp / "private").mkdir()
+    (tmp / "private" / "household.yaml").write_text(_household_yaml(has_ev))
     return tmp
 
 
@@ -176,12 +207,12 @@ def _run(tmp):
                           capture_output=True, text=True, timeout=120)
 
 
-def _committed_only_root(td, behavior_text, dispatch_text=None):
+def _committed_only_root(td, behavior_text, dispatch_text=None, has_ev=True):
     """A repo-shaped root holding ONLY the committed copy of both upstream
     artifacts -- the "operator already promoted" resolution path, which the
     cases below use so artifact RESOLUTION (covered by its own cases above)
     stays out of the way of what they are actually about."""
-    tmp = _build_root(pathlib.Path(td))
+    tmp = _build_root(pathlib.Path(td), has_ev=has_ev)
     (tmp / "data" / "behavior_rebuild.json").write_text(behavior_text)
     (tmp / "data" / "battery_dispatch_policies.json").write_text(
         dispatch_text if dispatch_text is not None else _dispatch_json(**BASE_DISPATCH))
@@ -350,7 +381,8 @@ def case_no_ev_household_low_package_is_scenario_c():
         # from the same run: the two must name the same free fix, and issue
         # #147's own guard refuses the pair if they do not.
         tmp = _committed_only_root(td, _behavior_json_no_ev(**BASE_NOEV_BEHAVIOR),
-                                   _dispatch_json(**BASE_NOEV_DISPATCH))
+                                   _dispatch_json(**BASE_NOEV_DISPATCH),
+                                   has_ev=False)
 
         r = _run(tmp)
         assert r.returncode == 0, (
@@ -412,13 +444,14 @@ def case_low_savings_is_always_the_named_scenarios_rounded_saving():
     rounding is real work rather than an identity."""
     ev = dict(model_bill=4903.61, a=1220.85, b=1008.72, c=1699.50, d=2178.83)
     fixtures = [
-        ("EV", _behavior_json(**ev), _dispatch_json(**BASE_DISPATCH), "a"),
+        ("EV", _behavior_json(**ev), _dispatch_json(**BASE_DISPATCH), "a", True),
         ("no-EV", _behavior_json_no_ev(**BASE_NOEV_BEHAVIOR),
-         _dispatch_json(**BASE_NOEV_DISPATCH), "c"),
+         _dispatch_json(**BASE_NOEV_DISPATCH), "c", False),
     ]
-    for label, behavior_text, dispatch_text, expected_key in fixtures:
+    for label, behavior_text, dispatch_text, expected_key, has_ev in fixtures:
         with tempfile.TemporaryDirectory() as td:
-            tmp = _committed_only_root(td, behavior_text, dispatch_text)
+            tmp = _committed_only_root(td, behavior_text, dispatch_text,
+                                       has_ev=has_ev)
             r = _run(tmp)
             assert r.returncode == 0, f"{label}: {r.stderr[-2000:]}"
 
@@ -482,46 +515,189 @@ def case_free_fix_scenario_mismatch_between_the_artifacts_fails_closed():
     CLAUDE.md 9's one-pipeline-per-package-figure rule, in the same shape the
     cohort check already guards across RUNS. Three ways the pair can disagree,
     all of which must abort before package_results.json is written.
+
+    WHICH guard catches each shape is checked too, because issue #147 moved the
+    boundary. packages.LOW's scenario now comes from the intake flag
+    household.has_ev rather than from the behavior artifact, so on a household
+    whose intake settles the question a dispatch artifact naming the OTHER
+    scenario is a different household's artifact, and the applicability guard
+    reports it at resolution -- earlier, and with the flag named. The free-fix
+    cross-check keeps the shape the flag CANNOT settle: a dispatch artifact
+    that names no scenario at all, which the applicability guard has nothing to
+    compare and deliberately passes through.
     """
     noev = _behavior_json_no_ev(**BASE_NOEV_BEHAVIOR)
     ev = _behavior_json(**BASE_BEHAVIOR)
+    APPLIC = "EV APPLICABILITY MISMATCH"
+    FREEFIX = "free-fix scenario mismatch"
     variants = [
-        ("a no-EV behavior artifact under an EV dispatch block", noev,
+        ("a no-EV behavior artifact under an EV dispatch block", False, noev,
          _dispatch_json(**dict(BASE_NOEV_DISPATCH, free_fix_scenario="a")),
-         "'a'", "'c'"),
-        ("an EV behavior artifact under a no-EV dispatch block", ev,
+         APPLIC, ("household.has_ev", "'a'", "battery_dispatch_policies.json",
+                  "battery_dispatch_policies.py")),
+        ("an EV behavior artifact under a no-EV dispatch block", True, ev,
          _dispatch_json(**dict(BASE_DISPATCH, free_fix_scenario="c")),
-         "'c'", "'a'"),
+         APPLIC, ("household.has_ev", "'c'", "battery_dispatch_policies.json",
+                  "battery_dispatch_policies.py")),
         # An artifact written before the field existed is a mismatch too: its
         # generator could not have made this choice deliberately, so the pair
         # is unverifiable rather than merely unlabelled.
-        ("a dispatch artifact written before free_fix_scenario existed", noev,
-         _dispatch_json(**dict(BASE_NOEV_DISPATCH, free_fix_scenario=_OMIT)),
-         "None", "'c'"),
+        ("a dispatch artifact written before free_fix_scenario existed", False,
+         noev, _dispatch_json(**dict(BASE_NOEV_DISPATCH, free_fix_scenario=_OMIT)),
+         FREEFIX, ("battery_dispatch_policies.json",
+                   "battery_dispatch_policies.py", "behavior_rebuild.json",
+                   "behavior_rebuild.py", "package_results.py", "None", "'c'")),
     ]
-    for label, behavior_text, dispatch_text, said, low_is in variants:
+    for label, has_ev, behavior_text, dispatch_text, expected, tokens in variants:
         with tempfile.TemporaryDirectory() as td:
-            tmp = _committed_only_root(td, behavior_text, dispatch_text)
+            tmp = _committed_only_root(td, behavior_text, dispatch_text,
+                                       has_ev=has_ev)
 
             r = _run(tmp)
             assert r.returncode != 0, (
                 f"{label}: package_results.py composed packages.MID from a "
                 "DIFFERENT behavior scenario than packages.LOW")
-            assert "free-fix scenario mismatch" in r.stderr, (label, r.stderr)
-            # both artifacts and both generators named, so the operator knows
-            # which two files disagree and which two scripts wrote them
-            for token in ("battery_dispatch_policies.json",
-                          "battery_dispatch_policies.py",
-                          "behavior_rebuild.json", "behavior_rebuild.py",
-                          "package_results.py", said, low_is):
+            assert expected in r.stderr, (label, expected, r.stderr)
+            # the artifacts and generators named, so the operator knows which
+            # files disagree and which scripts wrote them
+            for token in tokens:
                 assert token in r.stderr, (label, token, r.stderr)
             assert not (tmp / "data" / "package_results.json").exists(), (
                 f"{label}: package_results.json was written despite the "
                 "mismatch abort")
-    return ("package_results.py refuses a free-fix scenario mismatch between "
+    return ("package_results.py refuses a free-fix disagreement between "
             "behavior_rebuild.json and battery_dispatch_policies.json in both "
-            "directions and when the dispatch artifact predates the field, "
-            "naming both artifacts, both generators and the regeneration order")
+            "directions (as an EV-applicability mismatch against the intake "
+            "flag) and when the dispatch artifact predates the field (as a "
+            "free-fix scenario mismatch), naming the artifacts and generators")
+
+
+def case_upstream_artifact_from_the_other_household_is_refused():
+    """Issue #147, the defect itself, in the shape that shipped: a household
+    whose intake says household.has_ev is false, running with NO current-run
+    upstream copies, composed its packages out of the committed EV household's
+    artifacts and exited 0. packages.LOW came back as a $1,221/yr EV
+    charge-reschedule package -- and packages.LOW feeds S0_VERDICT, S7_VERDICT
+    and S15_VERDICT, so the published report told a household with no EV to
+    reprogram a charger it does not own.
+
+    package_results.py used to derive that branch from the ARTIFACT
+    (_is_not_applicable on scenarios a/b), which let the artifact declare which
+    household the run was about. Its two existing guards cannot catch this:
+    _check_cohort compares file CO-PRESENCE, and the free-fix cross-check
+    compares the two artifacts to EACH OTHER -- and two artifacts from the same
+    (other) household agree with each other perfectly.
+
+    Every direction and both resolution paths, since guarding only the
+    committed fallback would leave the identical defect for a stale current-run
+    file another household's run left in the working directory:
+
+      household  | artifacts  | which artifact carries the mismatch
+      no EV      | EV         | behavior_rebuild.json (scenarios a/b)
+      no EV      | EV         | battery_dispatch_policies.json (free_fix_scenario)
+      EV         | no EV      | behavior_rebuild.json  (the mirror)
+      EV         | no EV      | battery_dispatch_policies.json (the mirror)
+    """
+    ev_pair = (_behavior_json(**BASE_BEHAVIOR), _dispatch_json(**BASE_DISPATCH))
+    noev_pair = (_behavior_json_no_ev(**BASE_NOEV_BEHAVIOR),
+                 _dispatch_json(**BASE_NOEV_DISPATCH))
+    variants = [
+        # (label, this run's intake, behavior text, dispatch text,
+        #  the artifact the message must name, the phrase it must carry)
+        #
+        # FIRST TWO: the shipped reproduction and its mirror -- BOTH artifacts
+        # from the other household, which is what a clean checkout with no
+        # current-run copies actually hands you. This is the pair the two
+        # existing guards cannot see: the artifacts are co-present (so
+        # _check_cohort passes) and they agree with EACH OTHER on the free fix
+        # (so the free-fix cross-check passes). Only a comparison against the
+        # INTAKE FLAG can tell that neither of them is this household's.
+        ("no-EV household handed the EV household's whole cohort",
+         False, ev_pair[0], ev_pair[1], "behavior_rebuild.json",
+         "real EV-shift savings"),
+        ("EV household handed the no-EV household's whole cohort",
+         True, noev_pair[0], noev_pair[1], "behavior_rebuild.json",
+         "not-applicable"),
+        ("no-EV household handed the EV household's behavior artifact",
+         False, ev_pair[0], noev_pair[1], "behavior_rebuild.json",
+         "real EV-shift savings"),
+        ("no-EV household handed the EV household's dispatch artifact",
+         False, noev_pair[0], ev_pair[1], "battery_dispatch_policies.json",
+         "free_fix_scenario 'a'"),
+        ("EV household handed the no-EV household's behavior artifact",
+         True, noev_pair[0], ev_pair[1], "behavior_rebuild.json",
+         "not-applicable"),
+        ("EV household handed the no-EV household's dispatch artifact",
+         True, ev_pair[0], noev_pair[1], "battery_dispatch_policies.json",
+         "free_fix_scenario 'c'"),
+    ]
+    for where in ("committed", "current-run"):
+        for label, has_ev, behavior_text, dispatch_text, named, phrase in variants:
+            with tempfile.TemporaryDirectory() as td:
+                tmp = _build_root(pathlib.Path(td), has_ev=has_ev)
+                if where == "committed":
+                    # the committed data/ copies only -- the resolution path the
+                    # reproduction used (no current-run copy in the CWD at all)
+                    (tmp / "data" / "behavior_rebuild.json").write_text(behavior_text)
+                    (tmp / "data" / "battery_dispatch_policies.json").write_text(
+                        dispatch_text)
+                else:
+                    # a current-run copy of BOTH (so the cohort check passes),
+                    # left behind by another household's run in this very
+                    # working directory. This copy WINS the resolution, so a
+                    # guard placed only on the fallback path would never see it.
+                    (tmp / "behavior_rebuild.json").write_text(behavior_text)
+                    (tmp / "battery_dispatch_policies.json").write_text(dispatch_text)
+                    (tmp / "data" / "behavior_rebuild.json").write_text(behavior_text)
+                    (tmp / "data" / "battery_dispatch_policies.json").write_text(
+                        dispatch_text)
+
+                r = _run(tmp)
+                ctx = f"{where}/{label}"
+                assert r.returncode != 0, (
+                    f"{ctx}: package_results.py composed this household's "
+                    f"packages out of another household's artifacts:\n{r.stdout}")
+                assert "EV APPLICABILITY MISMATCH" in r.stderr, (ctx, r.stderr)
+                # the message must name the intake FLAG (what settled it), the
+                # ARTIFACT that disagrees, what each says, the harm, and the
+                # remedy -- an operator has to be able to act on it
+                assert "household.has_ev" in r.stderr, (ctx, r.stderr)
+                assert named in r.stderr, (ctx, named, r.stderr)
+                assert phrase in r.stderr, (ctx, phrase, r.stderr)
+                assert "CLAUDE.md" in r.stderr, (ctx, r.stderr)
+                assert not (tmp / "data" / "package_results.json").exists(), (
+                    f"{ctx}: package_results.json was written despite the "
+                    "applicability abort")
+
+    # POSITIVE CONTROL, in the same case: without it a script that refused
+    # EVERY pair would pass all eight assertions above. Both matched
+    # households, both resolution paths.
+    for has_ev, (behavior_text, dispatch_text), scenario in (
+            (True, ev_pair, "a"), (False, noev_pair, "c")):
+        for where in ("committed", "current-run"):
+            with tempfile.TemporaryDirectory() as td:
+                tmp = _build_root(pathlib.Path(td), has_ev=has_ev)
+                (tmp / "data" / "behavior_rebuild.json").write_text(behavior_text)
+                (tmp / "data" / "battery_dispatch_policies.json").write_text(
+                    dispatch_text)
+                if where == "current-run":
+                    (tmp / "behavior_rebuild.json").write_text(behavior_text)
+                    (tmp / "battery_dispatch_policies.json").write_text(dispatch_text)
+
+                r = _run(tmp)
+                ctx = f"{where}/has_ev={has_ev}"
+                assert r.returncode == 0, (
+                    f"{ctx}: package_results.py refused a MATCHING household "
+                    f"and artifact pair: {r.stderr[-2000:]}")
+                low = json.loads((tmp / "data" / "package_results.json").read_text()
+                                 )["packages"]["LOW"]
+                assert low["free_fix_scenario"] == scenario, (ctx, low)
+    return ("package_results.py refuses an upstream artifact whose EV "
+            "applicability disagrees with this run's household.has_ev -- both "
+            "artifacts, both directions, and on the current-run copy as well "
+            "as the committed fallback -- naming the flag, the artifact and "
+            "the harm, writing nothing; and still composes packages for a "
+            "household whose artifacts match it")
 
 
 def _generated_cohort(tmp, has_ev):
@@ -672,6 +848,7 @@ CASES = [
     case_low_savings_is_always_the_named_scenarios_rounded_saving,
     case_malformed_scenario_a_still_fails_loudly,
     case_free_fix_scenario_mismatch_between_the_artifacts_fails_closed,
+    case_upstream_artifact_from_the_other_household_is_refused,
     case_no_ev_mid_package_includes_the_scenario_c_free_fix,
     case_ev_mid_package_still_includes_the_scenario_a_free_fix,
 ]

@@ -197,18 +197,38 @@ def _independent_ref_and_dispatch(tmp):
     return ref, with_b5, exp_battery_value, pkg_ref
 
 
-def _dispatch_fixture(ref, exp_battery_value, pkg_ref, offset=0):
+_OMIT = object()
+"""Sentinel for _dispatch_fixture(free_fix_scenario=...): leave the key OUT of
+the artifact entirely, which is what a dispatch artifact written before the
+field existed looks like -- a different shape from a key holding the wrong
+value, and battery_plan_matrix.py has to refuse both."""
+
+
+def _dispatch_fixture(ref, exp_battery_value, pkg_ref, offset=0,
+                      free_fix_scenario=None):
     """The dispatch-artifact tie-out fixture every case promotes: the
     independently computed battery value AND the post_behavior.mid block the
     generator's mid-package crosscheck reads. offset shifts every figure to
-    build a deliberately stale/divergent copy."""
+    build a deliberately stale/divergent copy.
+
+    post_behavior.free_fix_scenario is what the artifact says about WHICH
+    household it belongs to (issue #147): "a" (the EV charge reschedule) on an
+    EV household, "c" (the flexible house-load shift) on one with no EV. It
+    defaults to the scenario THIS root's own free_fix_shift() selected, so
+    every fixture is that household's by construction; a case that wants a
+    different household's artifact passes the other letter (or _OMIT for an
+    artifact that names none)."""
     ev5 = pkg_ref["plans"]["EV-TOU-5"]
+    if free_fix_scenario is None:
+        free_fix_scenario = pkg_ref["scenario"]
+    post = {"mid": {"combined_save": ev5["package_save"] + offset,
+                    "bill": round(ev5["package_bill"]) + offset}}
+    if free_fix_scenario is not _OMIT:
+        post = dict({"free_fix_scenario": free_fix_scenario}, **post)
     return json.dumps({
         "pw3": {"greedy": {"save": exp_battery_value + offset}},
         "baseline_bill_current_rates": round(ref["EV-TOU-5"]) + offset,
-        "post_behavior": {"mid": {
-            "combined_save": ev5["package_save"] + offset,
-            "bill": round(ev5["package_bill"]) + offset}},
+        "post_behavior": post,
     })
 
 
@@ -484,6 +504,135 @@ def case_mid_package_uses_the_house_shift_when_the_household_has_no_ev():
             "beats the battery-alone row on every plan")
 
 
+def case_dispatch_artifact_from_the_other_household_is_refused():
+    """issue #147: the dispatch artifact battery_plan_matrix.py crosschecks
+    against must belong to THIS household.
+
+    _resolve_dispatch_artifact() falls back to the committed
+    data/battery_dispatch_policies.json when no current-run copy exists, and
+    nothing checked that the resolved copy came from a household with the same
+    EV applicability. A household with no EV then published
+    canonical_crosscheck_ev_tou_5 out of the committed EV household's baseline
+    and battery value, beside its own scenario-c mid-package row -- one
+    artifact composed from two households.
+
+    The two $100 crosscheck assertions are NOT this guard. They compare
+    MAGNITUDES, so they only fire when the two households' numbers happen to
+    be far apart; the fixtures here are deliberately built so both tolerances
+    are SATISFIED, and the run must still refuse. Without that, this case
+    would pass against a generator with no applicability check at all.
+
+    Both directions, and both resolution paths -- guarding only the committed
+    fallback would leave the identical defect for a stale current-run copy
+    another household's run left in this working directory, and that copy WINS
+    the resolution.
+    """
+    # (label, build the root, the letter THIS household's own run selects,
+    #  the letter the other household's artifact carries)
+    households = [("no-EV household handed the EV household's dispatch artifact",
+                   False, "c", "a"),
+                  ("EV household handed the no-EV household's dispatch artifact",
+                   True, "a", "c")]
+    for label, has_ev, mine, theirs in households:
+        for where in ("committed", "current-run"):
+            with tempfile.TemporaryDirectory() as td:
+                tmp = pathlib.Path(td)
+                if has_ev:
+                    TSR._build_throwaway_root(tmp, synthetic=True)
+                else:
+                    _noev_root(tmp)
+                ref, with_b5, exp_battery_value, pkg_ref = \
+                    _independent_ref_and_dispatch(tmp)
+                assert pkg_ref["scenario"] == mine, (label, pkg_ref["scenario"])
+
+                # every FIGURE is this run's own, so both $100 tolerances pass;
+                # only the free_fix_scenario says another household
+                fixture = _dispatch_fixture(ref, exp_battery_value, pkg_ref,
+                                            free_fix_scenario=theirs)
+                (tmp / "data" / "battery_dispatch_policies.json").write_text(fixture)
+                if where == "current-run":
+                    (tmp / "battery_dispatch_policies.json").write_text(fixture)
+                (tmp / "data" / "battery_plan_matrix.json").unlink(missing_ok=True)
+
+                r = subprocess.run([sys.executable, "battery_plan_matrix.py"],
+                                   cwd=tmp, capture_output=True, text=True,
+                                   timeout=600)
+                ctx = f"{where}/{label}"
+                assert r.returncode != 0, (
+                    f"{ctx}: battery_plan_matrix.py crosschecked this "
+                    f"household against another household's dispatch "
+                    f"artifact:\n{r.stdout[-2000:]}")
+                assert "EV APPLICABILITY MISMATCH" in r.stderr, (ctx, r.stderr)
+                # the message must name the intake FLAG, the artifact, what it
+                # says, and the remedy
+                assert "household.has_ev" in r.stderr, (ctx, r.stderr)
+                assert "battery_dispatch_policies.json" in r.stderr, (ctx, r.stderr)
+                assert f"free_fix_scenario {theirs!r}" in r.stderr, (ctx, r.stderr)
+                assert "battery_dispatch_policies.py" in r.stderr, (ctx, r.stderr)
+                # the two magnitude tolerances must NOT be what fired
+                assert "diverged from the canonical" not in r.stderr, (
+                    f"{ctx}: the $100 crosscheck fired instead of the "
+                    "applicability guard, so this case proves nothing about "
+                    f"applicability: {r.stderr}")
+                assert not (tmp / "data" / "battery_plan_matrix.json").exists(), (
+                    f"{ctx}: battery_plan_matrix.json was written despite the "
+                    "applicability abort")
+
+    # An artifact that names NO free fix cannot be checked against this
+    # household at all, so it is refused too rather than trusted.
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        TSR._build_throwaway_root(tmp, synthetic=True)
+        ref, with_b5, exp_battery_value, pkg_ref = _independent_ref_and_dispatch(tmp)
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(
+            _dispatch_fixture(ref, exp_battery_value, pkg_ref,
+                              free_fix_scenario=_OMIT))
+        (tmp / "data" / "battery_plan_matrix.json").unlink(missing_ok=True)
+
+        r = subprocess.run([sys.executable, "battery_plan_matrix.py"], cwd=tmp,
+                           capture_output=True, text=True, timeout=600)
+        assert r.returncode != 0, (
+            "battery_plan_matrix.py accepted a dispatch artifact that names no "
+            f"free fix at all:\n{r.stdout[-2000:]}")
+        assert "no usable post_behavior.free_fix_scenario" in r.stderr, r.stderr
+        assert "household.has_ev" in r.stderr, r.stderr
+        assert not (tmp / "data" / "battery_plan_matrix.json").exists(), (
+            "battery_plan_matrix.json was written despite the abort")
+
+    # POSITIVE CONTROL: a MATCHING household still runs. Without it a generator
+    # that refused every artifact would pass everything above. (The EV/committed
+    # and no-EV/committed combinations are the two end-to-end cases above; this
+    # covers the current-run path for both households.)
+    for has_ev, mine in ((True, "a"), (False, "c")):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            if has_ev:
+                TSR._build_throwaway_root(tmp, synthetic=True)
+            else:
+                _noev_root(tmp)
+            ref, with_b5, exp_battery_value, pkg_ref = \
+                _independent_ref_and_dispatch(tmp)
+            fixture = _dispatch_fixture(ref, exp_battery_value, pkg_ref)
+            (tmp / "data" / "battery_dispatch_policies.json").write_text(fixture)
+            (tmp / "battery_dispatch_policies.json").write_text(fixture)
+
+            r = subprocess.run([sys.executable, "battery_plan_matrix.py"],
+                               cwd=tmp, capture_output=True, text=True, timeout=600)
+            assert r.returncode == 0, (
+                f"has_ev={has_ev}: battery_plan_matrix.py refused a dispatch "
+                f"artifact from its OWN household: {r.stderr[-2000:]}")
+            out = json.loads((tmp / "data" / "battery_plan_matrix.json").read_text())
+            assert out["mid_package_on_plans"]["free_fix_scenario"] == mine, out
+    return ("battery_plan_matrix.py refuses a dispatch artifact whose "
+            "post_behavior.free_fix_scenario disagrees with this run's "
+            "household.has_ev -- both directions, on the current-run copy as "
+            "well as the committed fallback, with every figure inside the $100 "
+            "crosscheck tolerances so only the applicability guard can fire -- "
+            "refuses one that names no free fix at all, writes nothing in "
+            "either case, and still runs for a household whose artifact "
+            "matches it")
+
+
 CASES = [
     case_battery_plan_matrix_end_to_end_on_a_synthetic_house,
     case_disagreeing_current_run_dispatch_artifact_wins_and_is_announced,
@@ -491,6 +640,7 @@ CASES = [
     case_mid_package_on_plans_on_a_synthetic_house,
     case_mid_package_crosscheck_fails_closed_on_divergent_dispatch_artifact,
     case_mid_package_uses_the_house_shift_when_the_household_has_no_ev,
+    case_dispatch_artifact_from_the_other_household_is_refused,
 ]
 
 

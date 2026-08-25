@@ -10,14 +10,21 @@ ORDERING CONTRACT (this script runs SECOND):
   the committed copy otherwise, and a disagreement between the two is announced
   loudly rather than resolved in silence (see _base_save). CLAUDE.md's section 9
   regeneration gate already runs the pair in this order.
+  Whichever copy is used, its EV APPLICABILITY must match this run's intake flag
+  (household.has_ev) or the run refuses -- an artifact from a household with a
+  different answer to that question is a different household's artifact, and the
+  Monte Carlo would seed its whole payback distribution from another household's
+  post-free-fix battery marginal (see _check_ev_applicability).
 
-Inputs beside it in the CWD: usage.csv, samA.csv, samB.csv, rates.py, and this
-run's battery_dispatch_policies.json.  Output: deep_results.json in the CWD.
+Inputs beside it in the CWD: usage.csv, samA.csv, samB.csv, rates.py,
+behavior_rebuild.py (imported for the intake flag only, not for its models), and
+this run's battery_dispatch_policies.json.  Output: deep_results.json in the CWD.
 """
 import pandas as pd, numpy as np, json, datetime as dt
 import sys, pathlib as _pl
 sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 import rates as R   # canonical TOU assignment (holiday rule included)
+import behavior_rebuild as br   # THIS run's intake flag (household.has_ev)
 
 def _repo_root():
     for start in (_pl.Path.cwd(), _pl.Path(__file__).resolve().parent):
@@ -44,6 +51,87 @@ def _read_marginal(path):
                          "battery_dispatch_policies.py; this script will not fall "
                          "back past a broken artifact.")
 
+FREE_FIX_SCENARIO_EV="a"      # EV-only charge reschedule (battery_dispatch_policies.py)
+FREE_FIX_SCENARIO_NO_EV="c"   # 25% of flexible on-peak house load, moved to SOP
+
+def _check_ev_applicability(path):
+    """Fail closed when the dispatch artifact just read belongs to a household
+    with a DIFFERENT EV applicability than this run's intake declares.
+
+    The two sides of the comparison are two independent facts:
+      * br.EV_ANALYSIS -- behavior_rebuild's household.has_ev predicate, read
+        from THIS run's private/household.yaml. The intake FLAG is the authority
+        on whether this household has an EV (CLAUDE.md section 0); this module
+        imports behavior_rebuild for that one predicate and nothing else;
+      * the artifact's post_behavior.free_fix_scenario -- "a" (the EV charge
+        reschedule) on an EV household's artifact, "c" (the flexible house-load
+        shift) on a no-EV household's. battery_dispatch_policies.py publishes it
+        for exactly this purpose.
+
+    post_behavior.mid.battery_marginal -- the ONLY figure this script takes from
+    that artifact -- is the battery's saving measured ON TOP OF whichever free
+    fix that household ran, so it is not transferable between the two. A
+    disagreement means the artifact was written for a DIFFERENT household (or
+    before the intake flag changed), and neither direction may be resolved
+    silently:
+      * intake says no EV, artifact ran the EV fix -> the Monte Carlo seeds its
+        whole payback/NPV distribution from ANOTHER household's post-EV-fix
+        battery marginal, and publishes it as this household's battery ROI;
+      * intake says EV, artifact ran the house-load fix -> the same block prices
+        this household's battery against a free fix it never ran.
+
+    A missing or unrecognised free_fix_scenario is refused too: an artifact that
+    cannot say which household it belongs to cannot be checked against this
+    one's intake flag. An artifact with no post_behavior block at all already
+    fails in _read_marginal, with its own message.
+
+    The remedy is the same in every direction and is this script's own ordering
+    contract: run battery_dispatch_policies.py in this working directory first,
+    so the dispatch artifact is THIS household's."""
+    try:
+        with open(path) as fh: doc=json.load(fh)
+        pb=doc["post_behavior"]
+    except (OSError,ValueError,TypeError,KeyError):
+        return   # _read_marginal already reports this shape, with its own message
+    if not isinstance(pb,dict): return
+    scen=pb.get("free_fix_scenario")
+    if scen not in (FREE_FIX_SCENARIO_EV,FREE_FIX_SCENARIO_NO_EV):
+        raise SystemExit(
+            f"{path}: has a post_behavior block but no usable "
+            f"post_behavior.free_fix_scenario (got {scen!r}; expected "
+            f"{FREE_FIX_SCENARIO_EV!r} on a household with an EV or "
+            f"{FREE_FIX_SCENARIO_NO_EV!r} on one without). Without it the "
+            "artifact cannot say which household it belongs to, so this run "
+            "cannot check post_behavior.mid.battery_marginal against its own "
+            "intake flag household.has_ev (CLAUDE.md section 0: every figure "
+            "must be this household's). Regenerate it with "
+            "battery_dispatch_policies.py in this working directory (see the "
+            "ordering contract above).")
+    artifact_has_ev = scen==FREE_FIX_SCENARIO_EV
+    ev_applies = br.EV_ANALYSIS       # read at call time; tests rebind it
+    if artifact_has_ev==ev_applies: return
+    if ev_applies:
+        flag_says=("household.has_ev is NOT false (the intake applicability flag "
+                   "in private/household.yaml says this household HAS an EV)")
+        harm=("Seeding the Monte Carlo from that artifact would price this "
+              "household's battery against a free fix it never ran")
+    else:
+        flag_says=("household.has_ev is false (the intake applicability flag in "
+                   "private/household.yaml says this household has NO EV)")
+        harm=("Seeding the Monte Carlo from that artifact would build this "
+              "household's whole battery payback and NPV distribution out of "
+              "ANOTHER household's post-EV-fix battery marginal")
+    raise SystemExit(
+        f"EV APPLICABILITY MISMATCH between this run and its dispatch artifact: "
+        f"this run's intake says {flag_says}, but the dispatch artifact {path} "
+        f"records post_behavior.free_fix_scenario {scen!r}, the free fix of a "
+        f"household with {'an EV' if artifact_has_ev else 'NO EV'}. {harm} "
+        "(CLAUDE.md section 0: every figure must be this household's). Run "
+        "battery_dispatch_policies.py in this working directory "
+        f"({_pl.Path.cwd()}) first so the dispatch artifact belongs to THIS "
+        "household; this script will not seed one household's Monte Carlo from "
+        "another household's dispatch artifact.")
+
 def _base_save():
     """Marginal battery saving after behavior, from THIS run's dispatch artifact.
 
@@ -63,12 +151,18 @@ def _base_save():
                              "battery_dispatch_policies.py in this working directory "
                              "first (see the ordering contract above).")
         v=_read_marginal(committed)
+        _check_ev_applicability(committed)
         print(f"NOTICE: no current-run {DISPATCH_JSON} in {_pl.Path.cwd()}; Monte "
               f"Carlo base saving ${v:,.2f}/yr read from the committed {committed}. "
               "If this run's dispatch inputs changed, run "
               "battery_dispatch_policies.py here FIRST.")
         return v
     v=_read_marginal(run)
+    # the CURRENT-RUN copy is guarded too, not just the committed fallback: a
+    # stale battery_dispatch_policies.json left in this working directory by
+    # another household's run is the same defect one directory across, and it
+    # WINS the resolution below
+    _check_ev_applicability(run)
     if committed.exists() and run.samefile(committed):
         print(f"NOTICE: Monte Carlo base saving ${v:,.2f}/yr from {run} "
               "(the working directory IS the committed data/ directory).")

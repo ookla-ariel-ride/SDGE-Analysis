@@ -58,6 +58,14 @@ ORDERING CONTRACT (this script runs AFTER the dispatch generator):
   committed copy otherwise, and a disagreement between the two is announced
   loudly rather than resolved in silence (see _resolve_dispatch_artifact).
   CLAUDE.md's section 9 regeneration gate already runs the pair in this order.
+  Whichever copy is used, its EV APPLICABILITY must match this run's intake
+  flag (household.has_ev) or the run refuses -- an artifact from a household
+  with a different answer to that question is a different household's artifact,
+  and the crosscheck block below would publish its baseline and battery value
+  as this household's (_check_ev_applicability). The $100 crosscheck tolerance
+  is NOT that guard: it is a tolerance on a magnitude, so two households whose
+  battery economics happen to land within $100 of each other pass it while
+  composing one artifact out of both.
 
 Output: data/battery_plan_matrix.json (repo-root resolved, so the
 private/verify sandbox pattern needs no path edits).
@@ -151,6 +159,95 @@ def _read_dispatch_json(path):
             "script will not fall back past a broken artifact.")
 
 
+def _check_ev_applicability(doc, path):
+    """Fail closed when the resolved dispatch artifact belongs to a household
+    with a DIFFERENT EV applicability than this run's intake declares.
+
+    The two sides of the comparison are two independent facts, and this script
+    reads both:
+      * br.EV_ANALYSIS -- behavior_rebuild's household.has_ev predicate, read
+        from THIS run's private/household.yaml. The intake flag is the
+        authority on whether this household has an EV (CLAUDE.md section 0),
+        and free_fix_shift() below keys the mid-package row off the same
+        predicate;
+      * the artifact's post_behavior.free_fix_scenario -- FREE_FIX_SCENARIO_EV
+        ("a", the EV charge reschedule) on an EV household's artifact,
+        FREE_FIX_SCENARIO_NO_EV ("c", the flexible house-load shift) on a
+        no-EV household's. battery_dispatch_policies.py publishes it for
+        exactly this purpose.
+
+    A disagreement means the artifact was written for a DIFFERENT household (or
+    before the intake flag changed), and neither direction may be resolved
+    silently:
+      * intake says no EV, artifact ran the EV fix -> canonical_crosscheck_
+        ev_tou_5 would publish ANOTHER household's no-battery baseline and
+        battery value beside this household's own scenario-c mid-package row,
+        in one self-contradicting artifact;
+      * intake says EV, artifact ran the house-load fix -> this household's
+        real EV-shift package would be crosschecked against, and cited as, a
+        run that never moved a charging session.
+
+    The two existing $100 assertions do NOT cover this. They compare
+    MAGNITUDES, so any two households whose battery economics land within $100
+    of each other pass them; the applicability question is about identity, not
+    tolerance.
+
+    A missing or unrecognised free_fix_scenario is not an applicability answer.
+    An artifact with no post_behavior block at all is reported by the
+    mid-package crosscheck's own message further down; one that carries the
+    block but cannot say which free fix it ran is refused here, since there is
+    then nothing to check this household against.
+
+    The remedy is the same in both directions and is this script's own ordering
+    contract: run battery_dispatch_policies.py in this working directory first,
+    so the dispatch artifact is THIS household's."""
+    pb = doc.get("post_behavior")
+    if not isinstance(pb, dict):
+        return          # reported by the post_behavior.mid check in __main__
+    scen = pb.get("free_fix_scenario")
+    if scen not in (FREE_FIX_SCENARIO_EV, FREE_FIX_SCENARIO_NO_EV):
+        raise SystemExit(
+            f"the dispatch artifact {path} has a post_behavior block but no "
+            f"usable post_behavior.free_fix_scenario (got {scen!r}; expected "
+            f"{FREE_FIX_SCENARIO_EV!r} on a household with an EV or "
+            f"{FREE_FIX_SCENARIO_NO_EV!r} on one without). Without it the "
+            "artifact cannot say which household it belongs to, so this run "
+            "cannot check it against its own intake flag household.has_ev "
+            "(CLAUDE.md section 0: every figure must be this household's). "
+            "Regenerate it with battery_dispatch_policies.py in this working "
+            "directory (see the ORDERING CONTRACT in the module docstring).")
+    artifact_has_ev = scen == FREE_FIX_SCENARIO_EV
+    ev_applies = br.EV_ANALYSIS       # read at call time; tests rebind it
+    if artifact_has_ev == ev_applies:
+        return
+    if ev_applies:
+        flag_says = ("household.has_ev is NOT false (the intake applicability "
+                     "flag in private/household.yaml says this household HAS "
+                     "an EV)")
+        harm = ("Crosschecking this run against that artifact would cite a run "
+                "that never moved a charging session as the canonical figure "
+                "for this household's EV-shift package")
+    else:
+        flag_says = ("household.has_ev is false (the intake applicability flag "
+                     "in private/household.yaml says this household has NO EV)")
+        harm = ("Crosschecking this run against that artifact would publish "
+                "ANOTHER household's no-battery baseline and battery value in "
+                "canonical_crosscheck_ev_tou_5, beside this household's own "
+                "scenario-c mid-package row, in one self-contradicting "
+                "artifact")
+    raise SystemExit(
+        f"EV APPLICABILITY MISMATCH between this run and its dispatch "
+        f"artifact: this run's intake says {flag_says}, but the dispatch "
+        f"artifact {path} records post_behavior.free_fix_scenario {scen!r}, "
+        f"the free fix of a household with "
+        f"{'an EV' if artifact_has_ev else 'NO EV'}. {harm} (CLAUDE.md "
+        "section 0: every figure must be this household's). Run "
+        "battery_dispatch_policies.py in this working directory "
+        f"({pathlib.Path.cwd()}) first so the dispatch artifact belongs to "
+        "THIS household; this script will not crosscheck one household's plan "
+        "matrix against another household's dispatch artifact.")
+
+
 def _resolve_dispatch_artifact(root):
     """Read battery_dispatch_policies.json whole for the canonical crosscheck
     below, preferring THIS run's copy in the CWD over the committed data/
@@ -200,12 +297,18 @@ def _resolve_dispatch_artifact(root):
                 "battery_dispatch_policies.py in this working directory "
                 "first (see the ordering contract above).")
         v = _read_dispatch_json(committed)
+        _check_ev_applicability(v, committed)
         print(f"NOTICE: no current-run {DISPATCH_JSON} in {pathlib.Path.cwd()}; "
               f"canonical crosscheck read from the committed {committed}. If "
               "this run's dispatch inputs changed, run "
               "battery_dispatch_policies.py here FIRST.")
         return v, "data/battery_dispatch_policies.json (committed)"
     v = _read_dispatch_json(run)
+    # The guard covers the CURRENT-RUN copy too, not just the committed
+    # fallback: a stale battery_dispatch_policies.json left in this working
+    # directory by another household's run is the same defect, one directory
+    # across, and it WINS the resolution below.
+    _check_ev_applicability(v, run)
     if committed.exists() and run.samefile(committed):
         print(f"NOTICE: canonical crosscheck read from {run} (the working "
               "directory IS the committed data/ directory).")
