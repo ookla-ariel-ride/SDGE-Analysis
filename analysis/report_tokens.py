@@ -2471,7 +2471,16 @@ def _s7_switch_pricing(winners):
     that took a whole report down over its own chrome, and a household whose
     winner is unpriced is still owed every other figure on the page. Same
     escaping constraints as the caller: no apostrophe, no markup, section
-    references by prose name only."""
+    references by prose name only.
+
+    WHAT THE MID PACKAGE CONTAINS IS NOT A LITERAL HERE EITHER (issue #147).
+    The priced clause named it "the EV fix plus one battery" in fixed text, so
+    a household whose intake says household.has_ev is false read a live
+    section-7 sentence about a car it does not own -- the same falsehood
+    HOUSE_LOAD_COLUMN_HEADER carries out of the section 6 table, one section
+    down. The name comes off _free_fix_move's short form, the SAME reading
+    {{FREE_FIX_SHORT_NAME}} publishes into the Monday appendix's heading, so
+    the two cannot disagree about which move the package includes."""
     if len(winners) > 1:
         return (" The battery×plan matrix above prices the MID package one plan "
                 "at a time, so no switch to a set of tied plans is modeled here.")
@@ -2480,7 +2489,14 @@ def _s7_switch_pricing(winners):
     row = (mid or {}).get("plans", {}).get(best)
     save = row.get("package_save") if isinstance(row, dict) else None
     if isinstance(save, (int, float)) and _finite(save):
-        return (f" Re-billed end-to-end on {best}, the MID package (the EV fix "
+        # Read INSIDE the priced branch: the two stated-why-not branches name
+        # no package contents, so neither owes the free fix a reading, and
+        # neither may acquire _free_fix_saving's refusals as a side effect of
+        # this one sentence gaining a variable.
+        _saved, _low, _saves, (_fix_name, _move_noun, _ev, short_name) = \
+            _free_fix_saving("S7_PLAN_FOOTING")
+        return (f" Re-billed end-to-end on {best}, the MID package (the "
+                f"{short_name} fix "
                 f"plus one battery) saves ${save:,.0f}/yr against the no-package "
                 f"year modeled for that same plan at the same published-table "
                 f"rates in the battery×plan matrix above, one rate vintage "
@@ -2493,6 +2509,10 @@ _tok("S7_PLAN_FOOTING", kind="derived", get=_s7_plan_footing,
      sources=["data/plan_results.csv (the household provider's total column)",
               "data/battery_plan_matrix.json:mid_package_on_plans (what the MID "
               "package saves re-billed on the winning plan, beaten branch only)",
+              "data/package_results.json:packages.LOW.free_fix_scenario (what the "
+              "MID package's free fix moves, priced beaten branch only)",
+              "data/behavior_rebuild.json:detection (the not-applicable stub that "
+              "renames that move)",
               "private/household.yaml:household.plan",
               "private/household.yaml:household.cca (which provider column ranks)"])
 
@@ -5321,27 +5341,43 @@ def _s2_verdict(ctx):
     # overnight" branch -- a habit claim selected by a non-number (issue #131
     # review round 4, finding 5). Every three-state gate in this module tests
     # finiteness FIRST for exactly this reason.
-    lo, hi, _lab = _overnight_cheap_run()
-    charging, absent, observed = _overnight_ev_night_counts(ctx)
-    if not _finite(charging, absent, observed):
-        ev_state = NOT_DETERMINED
-    elif observed <= 0 or absent < 0 or charging < 0:
-        ev_state = NOT_DETERMINED
-    elif charging > absent:
-        ev_state = SUPPORTED
+    #
+    # A FOURTH PATH, AHEAD OF THE THREE (issue #147). All three renderable
+    # states above assert an EV: the SUPPORTED one says it charges overnight,
+    # and the state written for the opposite reading says it "does not usually
+    # charge overnight" -- still a claim about a car. On a household whose
+    # intake says household.has_ev is false the census cannot select anything
+    # else: behavior_rebuild.detect_sessions() returns no sessions there, so
+    # quiet_night_floor.py counts EVERY night EV-free, absent == observed, and
+    # the clause lands in the confident second sentence. The three-state gate
+    # is not wrong -- it is being asked a question this household does not
+    # have, so the question is dropped rather than answered, and section 2's
+    # remaining claim (where the exports leave) is measured for every house.
+    det, _reason = _ev_detection()
+    if det is None:
+        ev_clause = ""
     else:
-        ev_state = SUPPORTED_OPPOSITE
-    charges_overnight = _claim(
-        "S2_VERDICT", "whether the EV usually charges overnight", ev_state,
-        f"data/quiet_night_floor.json's ev_absence_by_window counted {charging} "
-        f"charging and {absent} absent night(s) across {observed} eligible night(s) "
-        f"in the tariff's {int(lo)}-{int(hi)}h overnight super-off-peak window")
-    ev_clause = ("while the EV charges overnight" if charges_overnight
-                 else "while the EV does not usually charge overnight")
+        lo, hi, _lab = _overnight_cheap_run()
+        charging, absent, observed = _overnight_ev_night_counts(ctx)
+        if not _finite(charging, absent, observed):
+            ev_state = NOT_DETERMINED
+        elif observed <= 0 or absent < 0 or charging < 0:
+            ev_state = NOT_DETERMINED
+        elif charging > absent:
+            ev_state = SUPPORTED
+        else:
+            ev_state = SUPPORTED_OPPOSITE
+        charges_overnight = _claim(
+            "S2_VERDICT", "whether the EV usually charges overnight", ev_state,
+            f"data/quiet_night_floor.json's ev_absence_by_window counted {charging} "
+            f"charging and {absent} absent night(s) across {observed} eligible night(s) "
+            f"in the tariff's {int(lo)}-{int(hi)}h overnight super-off-peak window")
+        ev_clause = (" while the EV charges overnight" if charges_overnight
+                     else " while the EV does not usually charge overnight")
     return (f"{VERDICT_STEM}at age {age} the {kw_dc:,.2f} kW array produced "
             f"{production:,.0f} kWh at {production / kw_dc:,.0f} kWh/kW, but "
             f"{round(midday_share * 100)}% of its exports leave in the "
-            f"{_cheap_window()} window {ev_clause}.")
+            f"{_cheap_window()} window{ev_clause}.")
 
 
 _tok("S2_VERDICT", kind="derived", get=_s2_verdict,
@@ -5349,7 +5385,9 @@ _tok("S2_VERDICT", kind="derived", get=_s2_verdict,
               "data/report_data.json:hourly_S.exp / hourly_W.exp",
               "data/report_data.json:totals.exp (rebuild check)",
               "data/quiet_night_floor.json:night_floor.issue_114_investigation."
-              "ev_absence_by_window",
+              "ev_absence_by_window (EV household only)",
+              "data/behavior_rebuild.json:detection (the not-applicable stub that "
+              "drops the overnight-charging clause)",
               "data/behavior_rebuild.json:window.start/end",
               "analysis/rates.py:SUMMER_MONTHS", "analysis/rates.py:period() (sampled)",
               "private/household.yaml:solar.kw_dc", "private/household.yaml:household.pto_date"])

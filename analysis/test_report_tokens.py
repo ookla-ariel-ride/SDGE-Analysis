@@ -8653,21 +8653,61 @@ def _no_ev_extended(doc):
         doc[section] = _no_ev_section_stub()
 
 
+def _no_ev_quiet_night(doc):
+    """data/quiet_night_floor.json's EV-absence census as quiet_night_floor.py
+    writes it for that same household.
+
+    The census classifies each night with behavior_rebuild.detect_sessions(),
+    which returns NO sessions at all when household.has_ev is false, so every
+    eligible night comes back EV-free: `n` == `n_eligible_nights` in every
+    window. That is the whole of the edit -- nothing else in the artifact is
+    EV-derived.
+
+    THIS IS THE STATE THAT MAKES THE FLIP, and it is why the fixture cannot
+    stop at the four artifacts above. Read through S2_VERDICT's three-state
+    gate, a full house of absences is not "not determined": absent >= charging
+    selects the state written for the OPPOSITE reading, and the section
+    published "while the EV does not usually charge overnight" -- a habit
+    claim about a car the intake says is not there. An EV household's census
+    (fewer absences than charging nights) never reaches that branch, so no
+    fixture built on this household's own counts could see it.
+
+    median_kw/p10_kw are left alone. They are the median of the EV-free
+    nights' floors, and on this household that subset is 42 of 365 nights
+    while on a no-EV one it would be all 365 -- a figure this fixture has no
+    way to compute and no business inventing (CLAUDE.md section 0). Nothing
+    reads them through the EV branch; SEC9_TEASER reads night_floor.median_kw,
+    a different field, which is EV-free for every household."""
+    census = doc["night_floor"]["issue_114_investigation"]["ev_absence_by_window"]
+    assert census, ("quiet_night_floor.json no longer carries an ev_absence_by_window "
+                    "census, so this fixture describes a document no generator writes")
+    for label, entry in census.items():
+        eligible = entry["n_eligible_nights"]
+        assert entry["n"] < eligible, (
+            f"the committed census already counts every {label} night EV-free "
+            f"({entry['n']}/{eligible}); this edit would be a no-op and the no-EV "
+            "fixture would be indistinguishable from the EV household's")
+        entry["n"] = eligible
+
+
 def _no_ev_household():
     """The consistent set: behavior_rebuild.json, package_results.json,
-    carbon_fullyear_results.json and extended_results.json as ONE no-EV run
-    writes them.
+    carbon_fullyear_results.json, extended_results.json and
+    quiet_night_floor.json as ONE no-EV run writes them.
 
-    All four, because a household is not a document -- it is every artifact
+    All five, because a household is not a document -- it is every artifact
     the flag reaches, and a fixture that stops early does not test a narrower
     household, it tests one that cannot exist. Two report-aborting defects on
-    this branch survived a 165-case suite for exactly that reason."""
+    this branch survived a 165-case suite for exactly that reason, and a third
+    (S2_VERDICT's overnight-charging clause) survived the four-artifact
+    version of this fixture -- see _no_ev_quiet_night."""
     scen = rt._json("behavior_rebuild.json")["scenarios"]
     return _stub_for_many({
         "behavior_rebuild.json": _no_ev_behavior,
         "package_results.json": _no_ev_package(scen["c"], scen["d"]),
         "carbon_fullyear_results.json": _no_ev_carbon,
-        "extended_results.json": _no_ev_extended})
+        "extended_results.json": _no_ev_extended,
+        "quiet_night_floor.json": _no_ev_quiet_night})
 
 
 @case
@@ -9059,12 +9099,22 @@ _NO_EV_ALLOWED_TOKEN_FAILURES = frozenset({
     "STORED_KWH_MIDDAY_SHARE",
 })
 
-# The four artifacts one no-EV run rewrites, and a token that reads each --
+# The five artifacts one no-EV run rewrites, and a token that reads each --
 # the witness that proves the fixture is not silently a no-op. There is no
 # witness for extended_results.json BECAUSE NO TOKEN READS IT TODAY: it is in
 # the fixture so the first one that does is swept from its first commit
 # rather than after it aborts someone's report, which is the whole lesson of
 # carbon_fullyear_results.json below.
+#
+# quiet_night_floor.json has none either, for the OPPOSITE reason, and it is
+# the fix working rather than a gap: the only token that reads its EV-absence
+# census is S2_VERDICT, and the whole point of issue #147's fourth path there
+# is that a household with no EV never reaches the census at all. A witness
+# would have to be a token whose value MOVES with the census on a no-EV
+# household, and after the fix there is deliberately no such token. The stub
+# still belongs in the set -- _no_ev_quiet_night is what makes the census say
+# what a real no-EV run's says, and the dedicated case below drives S2_VERDICT
+# through it directly.
 _NO_EV_ARTIFACT_WITNESS = {
     "behavior_rebuild.json": "EV_SESSION_COUNT",
     # S7_VERDICT, not S0_VERDICT: both read packages.LOW, but S0 also reads
@@ -9074,6 +9124,7 @@ _NO_EV_ARTIFACT_WITNESS = {
     "package_results.json": "S7_VERDICT",
     "carbon_fullyear_results.json": "SEC13_TEASER",
     "extended_results.json": None,
+    "quiet_night_floor.json": None,
 }
 
 
@@ -9258,7 +9309,8 @@ def case_every_token_in_the_report_resolves_on_a_complete_no_ev_artifact_set():
     allowed = sorted(set(failures) & _NO_EV_ALLOWED_TOKEN_FAILURES)
     return (f"all {len(swept)} non-gap token(s) resolve against a complete no-EV "
             f"artifact set (behavior_rebuild, package_results, "
-            f"carbon_fullyear_results, extended_results), none blank or malformed"
+            f"carbon_fullyear_results, extended_results, quiet_night_floor), "
+            f"none blank or malformed"
             + (f"; {len(allowed)} pre-existing non-EV failure(s) allowed: {allowed}"
                if allowed else "; zero failures, allowed or otherwise")
             + f"; section 13's teaser states the measured grid gap "
@@ -9269,6 +9321,314 @@ def case_every_token_in_the_report_resolves_on_a_complete_no_ev_artifact_set():
             + (f"; {len(no_intake)} token(s) held out for needing "
                f"private/household.yaml, which this checkout lacks: "
                f"{sorted(no_intake)}" if no_intake else ""))
+
+
+@case
+def case_section_7s_switch_clause_names_the_move_this_household_can_make():
+    """ISSUE #147, CODEX REVIEW. S7_PLAN_FOOTING's priced beaten branch named
+    the MID package's own contents in FIXED TEXT -- "the MID package (the EV
+    fix plus one battery)" -- so a household whose intake says
+    household.has_ev is false read a live section 7 sentence about a car it
+    does not own, in the one clause telling it what switching plans is worth.
+
+    THE NAME IS NOT RE-DERIVED HERE EITHER. The assertion is that the clause
+    carries whatever {{FREE_FIX_SHORT_NAME}} publishes in the SAME state --
+    the token the Monday appendix's heading is built from -- so the two
+    sentences cannot come apart the way this one came apart from section 7's
+    own verdict. A second reading of packages.LOW.free_fix_scenario written
+    here would be free to disagree with both.
+
+    Ungated: _stub_plan supplies the two intake answers the plan ranking
+    reads, so the beaten branch is driven on a checkout with no private
+    archive, which is where the report is generated in CI."""
+    provider, cheapest, priced = _plan_ranking_inputs()
+    own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
+    mid_plans = set(
+        rt._json("battery_plan_matrix.json")["mid_package_on_plans"]["plans"])
+    rivals = [r for r in priced if r["plan"] != cheapest and r["plan"] in mid_plans]
+    assert rivals, (
+        f"no plan data/plan_results.csv prices for {provider!r} is also priced by "
+        f"battery_plan_matrix.json's mid_package_on_plans ({sorted(mid_plans)}); "
+        "this case needs one, because the clause it is about only renders when the "
+        "winner is priced there")
+    rival = min(rivals, key=lambda r: float(r["total"]))["plan"]
+
+    seen = {}
+    for label, household in (("with an EV", None),
+                             ("with no EV", _no_ev_household())):
+        with contextlib.ExitStack() as stack:
+            if household is not None:
+                stack.enter_context(_patched(rt, "_json", household))
+            stack.enter_context(_stub_plan(cheapest, provider))
+            stack.enter_context(
+                _plan_repriced(provider, {cheapest: own, rival: own - 1}))
+            footing = rt.resolve_token("S7_PLAN_FOOTING")
+            short = rt.resolve_token("FREE_FIX_SHORT_NAME")
+        # The priced branch really was driven -- the two stated-why-not
+        # branches name no package contents at all and would pass every
+        # assertion below vacuously.
+        assert "$" in footing and "Re-billed end-to-end on" in footing, (
+            f"a household {label} did not reach section 7's PRICED switch clause, so "
+            f"this case checked nothing: {footing!r}")
+        assert f"the {short} fix plus one battery" in footing, (
+            f"section 7's switch clause does not name the move "
+            f"{{{{FREE_FIX_SHORT_NAME}}}} publishes ({short!r}) for a household "
+            f"{label}: {footing!r}")
+        seen[label] = (short, footing)
+
+    ev_short, ev_footing = seen["with an EV"]
+    no_ev_short, no_ev_footing = seen["with no EV"]
+    # THE POSITIVE CONTROL. This household has an EV, so the published clause
+    # must be unchanged to the character -- and if it were not, "no EV fix on
+    # a no-EV household" below would be passing on a clause that had simply
+    # stopped naming the package's contents at all.
+    assert ev_short == "EV" and "the EV fix plus one battery" in ev_footing, (
+        f"the EV household's switch clause no longer reads 'the EV fix plus one "
+        f"battery' ({ev_short!r}): {ev_footing!r}")
+    assert no_ev_short != ev_short, (
+        f"the free fix has the same short name on both households ({no_ev_short!r}), "
+        "so this case cannot tell the two clauses apart")
+    assert "the EV fix" not in no_ev_footing and "EV fix" not in no_ev_footing, (
+        f"section 7 tells a household whose intake says household.has_ev is false "
+        f"that the MID package contains an EV fix: {no_ev_footing!r}")
+    return ("section 7's priced switch clause names the move packages.LOW actually "
+            "prices, in the same words FREE_FIX_SHORT_NAME publishes -- "
+            + "; ".join(f"{k}: {v[0]!r}" for k, v in sorted(seen.items())))
+
+
+@case
+def case_section_2_asks_about_overnight_charging_only_where_there_is_an_ev():
+    """ISSUE #147, CODEX REVIEW. S2_VERDICT closes on a clause about when the
+    EV charges, and ALL THREE of its states assert an EV: the supported one
+    says it charges overnight, and the state written for the opposite reading
+    says it "does not usually charge overnight", which is still a claim about
+    a car.
+
+    On a household with no EV the census cannot select anything else.
+    quiet_night_floor.py classifies each night with
+    behavior_rebuild.detect_sessions(), which finds nothing there, so every
+    eligible night is counted EV-free, absent == observed, and the clause
+    lands in the confident second sentence. That is DRIVEN below, not
+    asserted: the census-only fixture (the EV detection block left in place)
+    is rendered first and shown to produce exactly that sentence, so the
+    fourth path is measured against the falsehood it replaces rather than
+    against an imagined one.
+
+    Ungated for the same reason case_s2_verdict_reports_a_daytime_charger...
+    is: _s2_household_inputs supplies the array size and PTO date, so the
+    guard runs in CI, where the report is actually generated."""
+    census_only = _stub_for("quiet_night_floor.json", _no_ev_quiet_night)
+    whole_household = _no_ev_household()
+    with _stub_household(_s2_household_inputs()):
+        published = rt.resolve_token("S2_VERDICT")
+        # 1. THE CONTROL, on this household's own artifacts: the clause is
+        #    live, and it is the SUPPORTED state.
+        assert "while the EV charges overnight" in published, published
+
+        # 2. THE FALSEHOOD, driven. Census as a no-EV run writes it, EV
+        #    detection block left alone -- i.e. the code before the fourth
+        #    path existed.
+        with _patched(rt, "_json", census_only):
+            charging, absent, observed = rt._overnight_ev_night_counts(rt.CTX)
+            flipped = rt.resolve_token("S2_VERDICT")
+        assert charging == 0 and absent == observed > 0, (
+            f"the no-EV census fixture does not put every one of its {observed} "
+            f"eligible nights in the EV-free column ({charging} charging, {absent} "
+            "absent), so it is not the census a household with no EV produces")
+        assert "while the EV does not usually charge overnight" in flipped, (
+            f"the three-state gate no longer sends a full house of absences into the "
+            f"habit-denial branch, so this case is not driving the defect it names: "
+            f"{flipped!r}")
+
+        # 3. THE FIX: the whole no-EV household drops the question instead of
+        #    answering it the other way.
+        with _patched(rt, "_json", whole_household):
+            value = rt.resolve_token("S2_VERDICT")
+    assert not re.search(r"\bEVs?\b", value), (
+        f"S2_VERDICT still states something about an EV on a household whose intake "
+        f"says household.has_ev is false: {value!r}")
+    for gone in ("charge overnight", "charges overnight", "charger", "charging"):
+        assert gone not in value, (
+            f"S2_VERDICT's closing clause still talks about charging on a household "
+            f"with no EV ({gone!r}): {value!r}")
+    # 4. THE CLAUSE IS DROPPED, NOT MANGLED. The window name is the last thing
+    #    in the sentence and the stop follows it directly -- a clause replaced
+    #    by an empty string leaves "window ." behind.
+    assert value.endswith(f"{rt._cheap_window()} window."), (
+        f"S2_VERDICT does not close cleanly on the export-timing clause: {value!r}")
+    assert " ." not in value, f"S2_VERDICT left a dangling stop: {value!r}"
+    # 5. AND THE REST OF THE SECTION'S CONCLUSION SURVIVES. A token can also
+    #    "pass" by giving up on the whole sentence.
+    production = rt._annual_production_kwh(rt.CTX)
+    assert f"{production:,.0f} kWh" in value and "kWh/kW" in value, (
+        f"S2_VERDICT dropped its measured production figures along with the EV "
+        f"clause: {value!r}")
+    share = rt._midday_export_share(rt.CTX)
+    assert f"{round(share * 100)}% of its exports leave in the" in value, (
+        f"S2_VERDICT dropped the export-timing conclusion: {value!r}")
+    _assert_within_density_cap("S2_VERDICT", value, "a household with no EV")
+    with _stub_household(_s2_household_inputs()):
+        assert rt.resolve_token("S2_VERDICT") == published, (
+            "the substituted no-EV artifacts leaked out of this case")
+    return ("S2_VERDICT drops its overnight-charging clause on a household whose "
+            "intake says household.has_ev is false, instead of inverting it into "
+            f"{'while the EV does not usually charge overnight'!r} the way the "
+            f"census alone ({absent}/{observed} nights EV-free) makes it")
+
+
+# Words that only mean something on a household with a car. A token rendering
+# one of these for a household whose intake says household.has_ev is false is
+# either asserting an EV or giving an instruction that cannot be carried out.
+_EV_WORD_RE = re.compile(r"\bEVs?\b|\bchargers?\b|\bcharging\b|\breprogram\w*")
+
+# The renderings that DO carry an EV word truthfully on such a household, each
+# named with the whole phrase it is allowed. Deleted from the value before the
+# sweep below looks at what is left, so a token may not smuggle a second,
+# unlisted EV claim through on the back of a listed one.
+#
+# OTHER_MAJOR_LOADS is the finding this list records rather than fixes. It
+# renders a COUNT off the intake's `vehicles` list ("2 EVs" here), and on a
+# household with no EV that list is [] and it renders "0 EVs" -- a denial, not
+# an assertion, but it lands in report-template.html's header meta row as
+# "<solar size> kW solar + 0 EVs", which reads as a category nobody has. The
+# whole phrase is fixed markup in the template, not in this module, so the fix
+# is a template change and not a token change: see the PR notes for issue #147.
+_NO_EV_TRUTHFUL_EV_PHRASES = {
+    "SEC9_EV_HEADING": ("EV charging — not applicable to this household",),
+    "SEC9_TEASER": ("no EV charging to shift here",),
+    "OTHER_MAJOR_LOADS": ("0 EVs",),
+}
+
+
+@case
+def case_no_token_says_ev_to_a_household_that_has_none():
+    """ISSUE #147, THE STRUCTURAL GUARD FOR WORDING. The sweep above proves
+    every token RESOLVES for a household with no EV. Both defects Codex found
+    after it went green resolved perfectly well -- section 7 priced "the EV
+    fix plus one battery" and section 2 closed "while the EV does not usually
+    charge overnight" -- so resolution was never the property that mattered
+    for them. This case sweeps the same complete no-EV artifact set for what
+    the tokens SAY.
+
+    It names no tokens. Every non-gap token is rendered, the tariff names are
+    removed (EV-TOU-5 is a plan, not a car), the listed truthful phrases are
+    removed, and nothing else may contain an EV word. A token added next year
+    that hardcodes "the EV fix" fails here without anyone editing this case.
+
+    THE INTAKE IS PART OF THE HOUSEHOLD. `vehicles` is [] on a household with
+    no EV, so it is stubbed to [] here -- the artifacts and the intake have to
+    describe the same house, which is the lesson _no_ev_household already
+    carries one level down.
+
+    AND SO IS THE PLAN STANDING. A token renders one branch at a time, and
+    this household is on the cheapest plan, so a single pass never reaches
+    section 7's beaten-branch switch clause at all -- which is exactly where
+    Codex found "the MID package (the EV fix plus one battery)". The sweep
+    therefore runs TWICE: as published, and with the household repriced just
+    below a rival that battery_plan_matrix.json prices, which is the state an
+    ordinary household on the wrong tariff generates. Both passes are the same
+    household; only which sentence it is shown changes."""
+    plan_names = sorted({r["plan"] for r in rt._csv_rows("plan_results.csv")},
+                        key=len, reverse=True)
+    assert any(_EV_WORD_RE.search(p) for p in plan_names), (
+        f"no plan in data/plan_results.csv carries an EV word ({plan_names}); the "
+        "tariff-name removal below is doing nothing, so drop it rather than leave a "
+        "filter nobody can see the effect of")
+    stub = _no_ev_household()
+    real_hh_value = rt._hh_value
+
+    def no_vehicles(path):
+        return [[]] if path == "vehicles" else real_hh_value(path)
+
+    provider, cheapest, priced = _plan_ranking_inputs()
+    own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
+    mid_plans = set(
+        rt._json("battery_plan_matrix.json")["mid_package_on_plans"]["plans"])
+    rivals = [r for r in priced if r["plan"] != cheapest and r["plan"] in mid_plans]
+    assert rivals, (
+        f"no plan data/plan_results.csv prices for {provider!r} is also priced by "
+        "mid_package_on_plans, so the beaten pass below cannot reach the priced "
+        "switch clause")
+    rival = min(rivals, key=lambda r: float(r["total"]))["plan"]
+    states = {
+        "as published": lambda: [],
+        "beaten by a priced rival": lambda: [
+            _stub_plan(cheapest, provider),
+            _plan_repriced(provider, {cheapest: own, rival: own - 1})],
+    }
+
+    have_intake = rt.hh.PATH.is_file()
+    swept, held_out, offenders = {}, set(), {}
+    for state, contexts in states.items():
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(_patched(rt, "_json", stub))
+            stack.enter_context(_patched(rt, "_hh_value", no_vehicles))
+            for ctx in contexts():
+                stack.enter_context(ctx)
+            for name, spec in rt.TOKENS.items():
+                if spec.get("kind") == "gap":
+                    continue
+                where = f"{name} ({state})"
+                try:
+                    value = rt.resolve_token(name)
+                except SystemExit:
+                    # A REFUSAL IS THE OTHER CASE'S BUSINESS, not this one's.
+                    # case_every_token_in_the_report_resolves_on_a_complete_no_ev
+                    # _artifact_set asserts the failure set and tells an
+                    # archive-less checkout's refusals apart from real ones;
+                    # duplicating that here would make one defect fail two
+                    # cases with two different stories. This case is only
+                    # about what a token that DOES render says.
+                    held_out.add(where)
+                    continue
+                swept[where] = value
+                # THE ARTIFACTS' OWN NOT-APPLICABLE STATEMENTS pass through
+                # whole. They name an EV domain in order to say it does not
+                # exist here, and they name the flag that settled it -- the
+                # opposite of the defect this case is about, and the answer
+                # every fix for it renders. Both halves are required: the flag
+                # alone could sit inside a sentence still claiming something,
+                # so the disclaimer has to be there too.
+                if "household.has_ev is false" in value:
+                    assert "not applicable" in value or "does not apply" in value, (
+                        f"{where} names household.has_ev without saying the domain "
+                        f"does not apply, so this exemption is covering a live "
+                        f"claim: {value!r}")
+                    continue
+                residue = value
+                for phrase in _NO_EV_TRUTHFUL_EV_PHRASES.get(name, ()):
+                    assert phrase in residue, (
+                        f"{where} no longer renders the phrase this case exempts "
+                        f"({phrase!r}) on a household with no EV, so the exemption "
+                        f"is stale and hiding whatever it says now: {residue!r}")
+                    residue = residue.replace(phrase, "")
+                for plan in plan_names:
+                    residue = residue.replace(plan, "")
+                hit = _EV_WORD_RE.search(residue)
+                if hit:
+                    offenders[where] = (hit.group(0), value)
+
+    assert swept, "no token was rendered at all -- TOKENS did not load"
+    # THE BEATEN PASS REALLY DID SHOW A DIFFERENT SENTENCE. Without this, a
+    # repricing that stopped taking would leave the second pass sweeping the
+    # winning state twice and the case would still be green.
+    beaten_footing = swept.get("S7_PLAN_FOOTING (beaten by a priced rival)")
+    assert beaten_footing and "Re-billed end-to-end on" in beaten_footing, (
+        "the beaten pass did not reach section 7's priced switch clause, so half "
+        f"this sweep checked the published state twice: {beaten_footing!r}")
+    assert not offenders, (
+        "a household whose intake says household.has_ev is false is told about an EV "
+        f"in {len(offenders)} live token rendering(s): "
+        + "; ".join(f"{n} says {w!r} in {v!r}" for n, (w, v) in sorted(offenders.items()))
+        + ". Branch the wording on the artifact's own not-applicable stub the way "
+          "HOUSE_LOAD_COLUMN_HEADER and _free_fix_move do; do NOT add it to "
+          "_NO_EV_TRUTHFUL_EV_PHRASES unless the phrase is true for a house with no car.")
+    return (f"none of the {len(swept)} token rendering(s) across "
+            f"{len(states)} plan standing(s) says EV, charger, charging or reprogram "
+            f"to a household with no EV, beyond the "
+            f"{len(_NO_EV_TRUTHFUL_EV_PHRASES)} listed truthful phrase(s) and the "
+            f"{len(plan_names)} tariff name(s)"
+            + (f"; {len(held_out)} rendering(s) held out" if held_out else ""))
 
 
 # ===========================================================================
