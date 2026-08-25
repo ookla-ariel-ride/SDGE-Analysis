@@ -30,6 +30,20 @@ the new free_fix_scenario field must name whichever scenario actually fed
 savings_yr -- report_tokens._free_fix_saving cross-checks the two artifacts
 through that field, so a wrong name silently checks the wrong number.
 
+A THIRD group covers the one free fix that has to run through all three packages.
+packages.LOW is one behavior scenario alone; packages.MID/HIGH are that scenario
+plus the battery, composed out of battery_dispatch_policies.json's post_behavior
+block. Which scenario it is depends on household.has_ev (a with an EV, c
+without), and battery_dispatch_policies.py used to apply the EV shift
+unconditionally -- a NO-OP on a household with no EV, so MID meant "free fix +
+battery" for one household and "battery only" for another, which is the
+composite-from-two-pipelines blend CLAUDE.md 9 forbids. Both generators now
+publish the scenario they applied and package_results.py refuses a disagreement.
+Two of these cases run the REAL generator chain (behavior_rebuild.py ->
+battery_dispatch_policies.py -> package_results.py) on test_scripts_runnable.py's
+synthetic year, once with an EV and once without, because that is the only way to
+check what the generators actually compose rather than what a fixture asserts.
+
 SkipCase matches test_parse_bills.py's typed-exception convention (issue #44
 AC4); there is no skip path in this file since the fixture is fully synthetic.
 """
@@ -42,7 +56,11 @@ import suite_runner
 import tempfile
 
 ANALYSIS = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(ANALYSIS))
+import test_scripts_runnable as TSR   # the proven synthetic-fixture machinery
 PACKAGE_RESULTS = ANALYSIS / "package_results.py"
+CHAIN = ("behavior_rebuild.py", "battery_dispatch_policies.py",
+         "package_results.py")
 
 
 class SkipCase(Exception):
@@ -58,14 +76,30 @@ def _behavior_json(model_bill, a, b, c, d):
     })
 
 
+_OMIT = object()
+"""Sentinel for _dispatch_json(free_fix_scenario=...): leave the key OUT of the
+artifact entirely, which is what a dispatch artifact written before the field
+existed looks like -- a different shape from a key holding the wrong value, and
+package_results.py has to refuse both."""
+
+
 def _dispatch_json(greedy_save, evening_save, mid_marginal, mid_combined,
-                    mid_bill, high_combined, high_bill):
+                    mid_bill, high_combined, high_bill, free_fix_scenario="a"):
+    """battery_dispatch_policies.json as package_results.py reads it.
+
+    free_fix_scenario is post_behavior's record of WHICH behavior scenario the
+    dispatch ran on top of. It has to match packages.LOW's, so every fixture
+    that feeds a no-EV behavior artifact must pair it with "c" here; pass _OMIT
+    to model an artifact that predates the field.
+    """
+    post = {"mid": {"battery_marginal": mid_marginal, "combined_save": mid_combined,
+                    "bill": mid_bill},
+            "high": {"combined_save": high_combined, "bill": high_bill}}
+    if free_fix_scenario is not _OMIT:
+        post = dict({"free_fix_scenario": free_fix_scenario}, **post)
     return json.dumps({
         "pw3": {"greedy": {"save": greedy_save}, "evening": {"save": evening_save}},
-        "post_behavior": {
-            "mid": {"battery_marginal": mid_marginal, "combined_save": mid_combined,
-                    "bill": mid_bill},
-            "high": {"combined_save": high_combined, "bill": high_bill}},
+        "post_behavior": post,
     })
 
 
@@ -127,6 +161,14 @@ BASE_NOEV_BEHAVIOR = dict(model_bill=3173.79, c=428.83, d=857.66)
 Deliberately un-rounded: round(428.83) = 429, so a case that asserts
 savings_yr == 429 fails against truncation as well as against the wrong
 scenario."""
+
+BASE_NOEV_DISPATCH = dict(greedy_save=1517, evening_save=1078, mid_marginal=1304,
+                          mid_combined=1733, mid_bill=1441, high_combined=2016,
+                          high_bill=1158, free_fix_scenario="c")
+"""The dispatch figures the SAME genuinely generated no-EV run produced, so a
+no-EV fixture pair is internally consistent the way a real cohort is: the
+dispatch names scenario c, and its mid.combined_save is round(c.saved) plus
+mid.battery_marginal (429 + 1304 = 1733). Read off the artifact, not invented."""
 
 
 def _run(tmp):
@@ -304,7 +346,11 @@ def case_no_ev_household_low_package_is_scenario_c():
     house-load shift, which is a real free fix for every household. Its range
     becomes [c, d] and its note names the flag that decided it."""
     with tempfile.TemporaryDirectory() as td:
-        tmp = _committed_only_root(td, _behavior_json_no_ev(**BASE_NOEV_BEHAVIOR))
+        # the no-EV behavior artifact PAIRED with the no-EV dispatch artifact
+        # from the same run: the two must name the same free fix, and issue
+        # #147's own guard refuses the pair if they do not.
+        tmp = _committed_only_root(td, _behavior_json_no_ev(**BASE_NOEV_BEHAVIOR),
+                                   _dispatch_json(**BASE_NOEV_DISPATCH))
 
         r = _run(tmp)
         assert r.returncode == 0, (
@@ -366,12 +412,13 @@ def case_low_savings_is_always_the_named_scenarios_rounded_saving():
     rounding is real work rather than an identity."""
     ev = dict(model_bill=4903.61, a=1220.85, b=1008.72, c=1699.50, d=2178.83)
     fixtures = [
-        ("EV", _behavior_json(**ev), "a"),
-        ("no-EV", _behavior_json_no_ev(**BASE_NOEV_BEHAVIOR), "c"),
+        ("EV", _behavior_json(**ev), _dispatch_json(**BASE_DISPATCH), "a"),
+        ("no-EV", _behavior_json_no_ev(**BASE_NOEV_BEHAVIOR),
+         _dispatch_json(**BASE_NOEV_DISPATCH), "c"),
     ]
-    for label, behavior_text, expected_key in fixtures:
+    for label, behavior_text, dispatch_text, expected_key in fixtures:
         with tempfile.TemporaryDirectory() as td:
-            tmp = _committed_only_root(td, behavior_text)
+            tmp = _committed_only_root(td, behavior_text, dispatch_text)
             r = _run(tmp)
             assert r.returncode == 0, f"{label}: {r.stderr[-2000:]}"
 
@@ -425,6 +472,195 @@ def case_malformed_scenario_a_still_fails_loudly():
             "not_applicable:true marker is read as a no-EV household")
 
 
+def case_free_fix_scenario_mismatch_between_the_artifacts_fails_closed():
+    """The two upstream artifacts must be composing the SAME free fix.
+
+    packages.MID/HIGH come out of post_behavior, which is one behavior scenario
+    plus the battery, re-billed end to end. packages.LOW is that same scenario
+    alone. If the two generators picked different scenarios, MID stops being
+    "LOW plus the battery" and becomes a figure spliced from two pipelines --
+    CLAUDE.md 9's one-pipeline-per-package-figure rule, in the same shape the
+    cohort check already guards across RUNS. Three ways the pair can disagree,
+    all of which must abort before package_results.json is written.
+    """
+    noev = _behavior_json_no_ev(**BASE_NOEV_BEHAVIOR)
+    ev = _behavior_json(**BASE_BEHAVIOR)
+    variants = [
+        ("a no-EV behavior artifact under an EV dispatch block", noev,
+         _dispatch_json(**dict(BASE_NOEV_DISPATCH, free_fix_scenario="a")),
+         "'a'", "'c'"),
+        ("an EV behavior artifact under a no-EV dispatch block", ev,
+         _dispatch_json(**dict(BASE_DISPATCH, free_fix_scenario="c")),
+         "'c'", "'a'"),
+        # An artifact written before the field existed is a mismatch too: its
+        # generator could not have made this choice deliberately, so the pair
+        # is unverifiable rather than merely unlabelled.
+        ("a dispatch artifact written before free_fix_scenario existed", noev,
+         _dispatch_json(**dict(BASE_NOEV_DISPATCH, free_fix_scenario=_OMIT)),
+         "None", "'c'"),
+    ]
+    for label, behavior_text, dispatch_text, said, low_is in variants:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = _committed_only_root(td, behavior_text, dispatch_text)
+
+            r = _run(tmp)
+            assert r.returncode != 0, (
+                f"{label}: package_results.py composed packages.MID from a "
+                "DIFFERENT behavior scenario than packages.LOW")
+            assert "free-fix scenario mismatch" in r.stderr, (label, r.stderr)
+            # both artifacts and both generators named, so the operator knows
+            # which two files disagree and which two scripts wrote them
+            for token in ("battery_dispatch_policies.json",
+                          "battery_dispatch_policies.py",
+                          "behavior_rebuild.json", "behavior_rebuild.py",
+                          "package_results.py", said, low_is):
+                assert token in r.stderr, (label, token, r.stderr)
+            assert not (tmp / "data" / "package_results.json").exists(), (
+                f"{label}: package_results.json was written despite the "
+                "mismatch abort")
+    return ("package_results.py refuses a free-fix scenario mismatch between "
+            "behavior_rebuild.json and battery_dispatch_policies.json in both "
+            "directions and when the dispatch artifact predates the field, "
+            "naming both artifacts, both generators and the regeneration order")
+
+
+def _generated_cohort(tmp, has_ev):
+    """Run the REAL generator chain on a synthetic year and return its cohort.
+
+    Fixtures can only check what package_results.py does with numbers handed to
+    it. What issue #147 is actually about is what battery_dispatch_policies.py
+    COMPUTES for a household with no EV, so these two cases build a repo-shaped
+    root with test_scripts_runnable.py's synthetic export and run all three
+    generators in order, exactly as CLAUDE.md's section 9 gate does.
+
+    has_ev False rewrites private/household.yaml the way a no-EV intake reads:
+    household.has_ev false AND no charger block at all -- behavior_rebuild.py
+    refuses a charger.kw sitting beside a false flag, since the two contradict
+    each other. Returns the three parsed artifacts.
+    """
+    TSR._build_throwaway_root(tmp, synthetic=True)
+    if not has_ev:
+        hh = tmp / "private" / "household.yaml"
+        text = hh.read_text().replace(
+            "household:\n  pto_date: 2019-12-01\n",
+            "household:\n  pto_date: 2019-12-01\n  has_ev: false\n")
+        text = text.replace("charger:\n  kw: 11.5\n", "")
+        assert "has_ev: false" in text and "charger:" not in text, (
+            "the no-EV intake edit did not take -- test_scripts_runnable."
+            f"SYNTH_HOUSEHOLD changed shape:\n{text}")
+        hh.write_text(text)
+    who = "an EV" if has_ev else "a no-EV"
+    for script in CHAIN:
+        r = subprocess.run([sys.executable, script], cwd=tmp,
+                           capture_output=True, text=True, timeout=1800)
+        assert r.returncode == 0, (
+            f"{script} failed on {who} synthetic household: {r.stderr[-3000:]}")
+    return (json.loads((tmp / "behavior_rebuild.json").read_text()),
+            json.loads((tmp / "battery_dispatch_policies.json").read_text()),
+            json.loads((tmp / "data" / "package_results.json").read_text()))
+
+
+def _assert_one_free_fix_across_the_packages(behavior, dispatch, packages,
+                                             scenario, moved_key):
+    """The invariant both households must satisfy: ONE free fix, in all three
+    packages, from one integrated run.
+
+      post_behavior.free_fix_scenario == packages.LOW.free_fix_scenario
+      post_behavior.behavior_save     == round(scenarios[that].saved)
+      packages.MID.savings_yr         == LOW.savings_yr + mid.battery_marginal
+      packages.MID.savings_yr          > MID.battery_alone_yr
+
+    The last line is the one the defect broke: with the EV shift applied
+    unconditionally, a no-EV run's post_behavior was the battery on the bare
+    baseline, so MID.savings_yr EQUALLED battery_alone_yr and the free fix
+    LOW reports was simply missing from MID.
+
+    The two dollar identities carry a 1-dollar tolerance because each side is
+    rounded independently -- behavior_save and battery_marginal are each
+    round()ed before they are added, while combined_save rounds the sum -- so an
+    exact test would be a rounding test, not a composition test. A missing free
+    fix is hundreds of dollars, far outside it.
+    """
+    pb = dispatch["post_behavior"]
+    low, mid = packages["LOW"], packages["MID"]
+    sc = behavior["scenarios"][scenario]
+    assert pb["free_fix_scenario"] == scenario, pb
+    assert low["free_fix_scenario"] == scenario, low
+    assert abs(pb["behavior_save"] - round(sc["saved"])) <= 1, (
+        f"post_behavior.behavior_save {pb['behavior_save']} is not scenario "
+        f"{scenario}'s own saving {round(sc['saved'])} -- the dispatch ran on "
+        "top of a different shift than the one packages.LOW reports")
+    assert pb["kwh_moved"] == round(sc[moved_key]), (
+        f"post_behavior.kwh_moved {pb['kwh_moved']} is not scenario "
+        f"{scenario}'s {moved_key} {round(sc[moved_key])}")
+    assert pb["kwh_moved"] > 0, (
+        f"the free fix moved no energy at all, so scenario {scenario} was a "
+        "no-op and the battery was dispatched on the bare baseline")
+    assert abs(mid["savings_yr"]
+               - (low["savings_yr"] + pb["mid"]["battery_marginal"])) <= 1, (
+        f"MID.savings_yr {mid['savings_yr']} is not LOW's free fix "
+        f"{low['savings_yr']} plus the battery's own post-fix marginal "
+        f"{pb['mid']['battery_marginal']}")
+    assert mid["savings_yr"] > mid["battery_alone_yr"], (
+        f"MID.savings_yr {mid['savings_yr']} does not exceed the battery's "
+        f"stand-alone saving {mid['battery_alone_yr']}, so the free fix "
+        f"packages.LOW reports (${low['savings_yr']}) is not in MID at all")
+
+
+def case_no_ev_mid_package_includes_the_scenario_c_free_fix():
+    """Issue #147, the defect itself. battery_dispatch_policies.py applied the
+    EV shift unconditionally before dispatching. On a household with no EV that
+    shift is a NO-OP -- there are no sessions to move -- so post_behavior was
+    the battery on the untouched baseline while packages.LOW was scenario c,
+    and packages.MID/HIGH silently dropped the free fix that LOW reports.
+
+    Run the real chain on a synthetic no-EV household and require the fix to be
+    in all three packages: the dispatch must name scenario c, must have moved
+    scenario c's own kWh, and MID must exceed the battery's stand-alone saving.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        behavior, dispatch, packages = _generated_cohort(
+            pathlib.Path(td), has_ev=False)
+    _assert_one_free_fix_across_the_packages(
+        behavior, dispatch, packages["packages"], "c", "house_kwh_moved")
+    mid = packages["packages"]["MID"]
+    assert "house-load shift" in mid["note"], (
+        f"MID's note still describes an EV shift on a household with no EV: "
+        f"{mid['note']}")
+    assert "EV shift" not in mid["note"], mid["note"]
+    assert "house-load shift" in packages["packages"]["HIGH"]["note"], (
+        packages["packages"]["HIGH"]["note"])
+    return ("a no-EV household's MID package carries scenario c's free fix: "
+            "battery_dispatch_policies.py shifts flexible house load before "
+            "dispatching, names scenario c in post_behavior, and MID exceeds "
+            "the battery's stand-alone saving by that fix's own value")
+
+
+def case_ev_mid_package_still_includes_the_scenario_a_free_fix():
+    """Positive control for the case above, on the same synthetic year with the
+    intake left as an EV household. Without it, the no-EV case would pass just
+    as happily against a generator broken into ALWAYS shifting house load --
+    which would silently replace the EV reschedule this report is built on."""
+    with tempfile.TemporaryDirectory() as td:
+        behavior, dispatch, packages = _generated_cohort(
+            pathlib.Path(td), has_ev=True)
+    _assert_one_free_fix_across_the_packages(
+        behavior, dispatch, packages["packages"], "a", "kwh_moved")
+    mid = packages["packages"]["MID"]
+    assert "EV shift" in mid["note"], mid["note"]
+    assert "house-load shift" not in mid["note"], mid["note"]
+    assert not _is_stub(behavior["scenarios"]["a"]), (
+        "the EV control household published scenario a as a not-applicable "
+        "stub, so this case was never exercising the EV path")
+    return ("an EV household's MID package still carries scenario a's EV "
+            "shift -- the no-EV branch does not capture the ordinary "
+            "household, and post_behavior still names scenario a")
+
+
+def _is_stub(node):
+    return isinstance(node, dict) and node.get("not_applicable") is True
+
+
 CASES = [
     case_no_current_run_copy_falls_back_to_committed_with_a_notice,
     case_disagreeing_current_run_copy_wins_and_is_announced_loudly,
@@ -435,6 +671,9 @@ CASES = [
     case_ev_household_low_package_is_still_scenario_a,
     case_low_savings_is_always_the_named_scenarios_rounded_saving,
     case_malformed_scenario_a_still_fails_loudly,
+    case_free_fix_scenario_mismatch_between_the_artifacts_fails_closed,
+    case_no_ev_mid_package_includes_the_scenario_c_free_fix,
+    case_ev_mid_package_still_includes_the_scenario_a_free_fix,
 ]
 
 

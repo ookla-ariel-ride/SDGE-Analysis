@@ -7,10 +7,24 @@ never "how much storage this house actually wants". This script re-runs the
 same price-aware ("greedy") dispatch from battery_dispatch_policies.py across
 an ENERGY grid (5-40 kWh, holding power at 11.5 kW — the rate both shipping
 Tesla configs share) and a POWER grid (5-15 kW, holding energy at 13.5 kWh —
-the base Powerwall 3), on both current behavior and post-behavior (EV-shifted)
-load, using the same canonical engine (rates.bill_nem, monthly per-period NEM
-netting, NBC on gross imports) and the same EV-spillover exclusion rule
-(>=2.5 kW outside on-peak is never battery-served) at every grid point.
+the base Powerwall 3), on both current behavior and post-behavior (this
+household's own free behavior fix already applied) load, using the same
+canonical engine (rates.bill_nem, monthly per-period NEM netting, NBC on gross
+imports) and the same EV-spillover exclusion rule (>=2.5 kW outside on-peak is
+never battery-served) at every grid point.
+
+WHICH free fix the post-behavior sweep sits on top of is not this script's
+decision to make: it calls battery_dispatch_policies.free_fix_shift(), the one
+implementation of that branch in the repo (scenario a, the EV charge
+reschedule, when household.has_ev; scenario c, the flexible house-load shift,
+when it is false). This used to call behavior_rebuild.shift_ev()
+unconditionally. On a household with no EV that shift is a NO-OP, so the whole
+post_behavior sweep was the battery on the BARE baseline while it was published
+under a post-behavior label — the same composite-from-two-pipelines defect
+CLAUDE.md §9's one-pipeline-per-package-figure rule forbids, and the same one
+battery_dispatch_policies.py's own post_behavior block was fixed for. The
+artifact records the scenario key that ran (post_behavior.free_fix_scenario) so
+a reader never has to re-derive the branch from an intake flag it cannot see.
 
 CHARGE vs. DISCHARGE power (issue #40): Tesla's own datasheet gives the
 Powerwall 3 DIFFERENT continuous charge ratings from its continuous
@@ -109,7 +123,8 @@ import os
 import numpy as np
 
 import behavior_rebuild as br
-from battery_dispatch_policies import billed, run_batt, CHARGE_KW, CHARGE_KW_WITH_EXPANSION
+from battery_dispatch_policies import (billed, run_batt, free_fix_shift, CHARGE_KW,
+                                       CHARGE_KW_WITH_EXPANSION)
 
 ENERGY_GRID = sorted({5, 10, 13.5, 15, 20, 25, 27, 30, 35, 40})
 POWER_GRID = sorted({5.0, 7.5, 10.0, 11.5, 12.5, 15.0})
@@ -539,11 +554,16 @@ def main():
         "current_behavior": _scenario(d, imp0, gen0, "current_behavior"),
     }
 
-    ev, sessions = br.detect_sessions(d)
-    sop_idx, sop_ts = br.build_sop_index(d)
-    imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
+    # This household's OWN free behavior fix, applied by the single shared
+    # implementation of that branch (battery_dispatch_policies.free_fix_shift),
+    # then the whole sweep re-run on the shifted year. The key it returns is
+    # published beside the figures, and the kWh figure is named for the fix
+    # generically: on a household with no EV this is scenario c's house-load
+    # shift, so an "ev_" prefix would be a false label on a real number.
+    imp_sh, moved, fix_scenario = free_fix_shift(d, imp0)
     post = _scenario(d, imp_sh, gen0, "post_behavior")
-    post["ev_kwh_moved"] = round(moved)
+    post["free_fix_kwh_moved"] = round(moved)
+    post["free_fix_scenario"] = fix_scenario
     out["post_behavior"] = post
 
     root = repo_root()

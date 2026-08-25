@@ -722,10 +722,16 @@ def compute_package_gross_imports():
     METHOD: re-run the EXACT package definitions battery_dispatch_policies.py
     already committed to (its own post_behavior block), not a new
     configuration invented for this check:
-      LOW  = behavior_rebuild.shift_ev(), the 100%-compliance EV-only shift
-             (scenario a) -- the same call package_results.json's LOW is
-             built from.
-      MID  = battery_dispatch_policies.run_batt() on the EV-shifted series,
+      LOW  = battery_dispatch_policies.free_fix_shift(), THIS household's own
+             free behavior fix -- the same call package_results.json's LOW is
+             built from. Which fix that is follows the intake flag
+             household.has_ev, and free_fix_shift() owns that branch for the
+             whole repo (issue #147): behavior scenario a, the 100%-compliance
+             EV charge reschedule, when the flag is true; behavior scenario c,
+             the flexible on-peak house-load shift, when it is false. The
+             returned scenario key travels with the figures below, so a reader
+             never has to re-derive it from an intake file.
+      MID  = battery_dispatch_policies.run_batt() on the shifted series,
              13.5 kWh usable, policy "greedy" -- battery_dispatch_policies.
              json's post_behavior.mid.
       HIGH = the same, 27.0 kWh usable -- post_behavior.high.
@@ -746,12 +752,14 @@ def compute_package_gross_imports():
     12-month window build_floor() uses) -- a wildly different figure would
     mean the interval export, the household config, or the reused pipeline
     has drifted, not that the household's usage changed. LOW's gross imports
-    must equal the baseline's EXACTLY: shift_ev() only moves WHEN energy is
-    drawn (and _conserve() already refuses a run that drops or invents
-    energy), so a 100%-EV-shift scenario cannot change the annual gross-
-    import total at all -- if it ever does, something in the reused pipeline
-    is not doing what its own docstring says, and this must fail closed
-    rather than publish a wrong LOW figure.
+    must equal the baseline's EXACTLY: both free-fix shifts only move energy
+    the household already drew (and behavior_rebuild's _conserve() already
+    refuses a run that drops or invents energy), so a timing-only scenario
+    cannot change the annual gross-import total at all -- if it ever does,
+    something in the reused pipeline is not doing what its own docstring says,
+    and this must fail closed rather than publish a wrong LOW figure. The
+    check holds for either branch, which is why it is stated about the fix
+    rather than about the EV shift specifically.
 
     ALSO RETURNS annual_days: the exact number of distinct calendar days in
     the loaded frame (br.load() slices exactly WINDOW_END-365d..WINDOW_END
@@ -776,16 +784,26 @@ def compute_package_gross_imports():
     gen0 = d.Generation.values.astype(float)
     baseline_gross_kwh = float(imp0.sum())
 
-    ev, sessions = br.detect_sessions(d)
-    sop_idx, sop_ts = br.build_sop_index(d)
-    imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
+    # LOW is THIS household's free behavior fix, reached through battery_
+    # dispatch_policies.free_fix_shift() so the branch has ONE implementation in
+    # the repo (issue #147). It follows the intake flag household.has_ev:
+    # scenario a (the 100%-compliance EV charge reschedule) when true, scenario
+    # c (the flexible house-load shift) when false. This used to call
+    # br.shift_ev() unconditionally; on a household with no EV that moves
+    # nothing, so LOW was the bare baseline and MID/HIGH dispatched the battery
+    # on an unshifted year while package_results.json's own LOW/MID/HIGH were
+    # scenario c -- two pipelines under one set of package names.
+    imp_sh, moved, free_fix_scenario = bdp.free_fix_shift(d, imp0)
     low_gross_kwh = float(imp_sh.sum())
     if abs(low_gross_kwh - baseline_gross_kwh) > EPS:
+        _shift_fn = ("behavior_rebuild.shift_ev()" if free_fix_scenario == "a"
+                     else "behavior_rebuild.shift_house()")
         raise SystemExit(
-            "compute_package_gross_imports: LOW's 100%-EV-shift gross imports "
-            f"({low_gross_kwh:.3f} kWh) differ from the baseline "
+            "compute_package_gross_imports: LOW's free-behavior-fix gross "
+            f"imports (behavior scenario {free_fix_scenario}, "
+            f"{low_gross_kwh:.3f} kWh) differ from the baseline "
             f"({baseline_gross_kwh:.3f} kWh) by more than floating-point "
-            "rounding -- behavior_rebuild.shift_ev() is supposed to only move "
+            f"rounding -- {_shift_fn} is supposed to only move "
             "WHEN energy is drawn, never the annual total; refusing to "
             "publish a package-specific figure built on a pipeline that no "
             "longer matches its own documented invariant")
@@ -812,13 +830,20 @@ def compute_package_gross_imports():
         "LOW": {"gross_kwh": round(low_gross_kwh, 1)},
         "MID": {"gross_kwh": round(mid_gross_kwh, 1), "kwh_served": round(mid_served, 1)},
         "HIGH": {"gross_kwh": round(high_gross_kwh, 1), "kwh_served": round(high_served, 1)},
-        "kwh_moved_ev_shift": round(moved, 1),
+        "kwh_moved_free_fix": round(moved, 1),
+        "free_fix_scenario": free_fix_scenario,
         "annual_days": annual_days,
         "method": (
             "behavior_rebuild.load() on the raw Green Button interval export "
-            "(private/1-raw-data/" + RAW_INTERVAL_GLOB + "), behavior_rebuild."
-            "shift_ev() for the 100%-compliance EV-shift scenario every "
-            "package sits on top of, then battery_dispatch_policies.run_batt("
+            "(private/1-raw-data/" + RAW_INTERVAL_GLOB + "), battery_dispatch_"
+            "policies.free_fix_shift() for the free behavior fix every package "
+            "sits on top of -- behavior scenario " + free_fix_scenario + ", "
+            + ("the 100%-compliance EV charge reschedule"
+               if free_fix_scenario == "a"
+               else "the flexible on-peak house-load shift, since "
+                    "household.has_ev is false")
+            + ", applied with behavior_rebuild.py's own shift function -- "
+            "then battery_dispatch_policies.run_batt("
             "..., 'greedy', charge_kw=...) at 13.5 kWh / 5 kW charge (MID) and "
             "27.0 kWh / 8 kW charge (HIGH) usable -- the same calls and "
             "package definitions battery_dispatch_policies."

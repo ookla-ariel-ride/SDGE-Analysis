@@ -1011,6 +1011,112 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
 
 
 @case
+def case_dispatch_calibration_free_fix_follows_the_has_ev_flag():
+    """issue #147: the "post-behavior" side of every band this module
+    publishes must be the battery on top of THIS household's own free
+    behavior fix, and which fix that is follows the intake flag
+    household.has_ev -- scenario a (the EV charge reschedule) when true,
+    scenario c (the flexible house-load shift) when false.
+
+    dispatch_calibration() used to call behavior_rebuild.shift_ev()
+    unconditionally. On a household with no EV that returns the baseline
+    untouched, so mid_nominal collapsed onto pre_nominal, behavior_save was
+    0, and the whole compliance lever described a world that household never
+    enters. The module's own tie-out against battery_dispatch_policies.json
+    then refused the run outright.
+
+    BOTH branches are exercised here, on the real archive: the has_ev-true
+    household as it actually is (the positive control), and the same
+    household with behavior_rebuild's own EV_ANALYSIS predicate forced false,
+    which is the one input free_fix_shift() branches on.
+
+    The no-EV half checks ARITHMETIC, not a label: mid_nominal_single_pass
+    must equal an INDEPENDENT transcription of "scenario c, then the greedy
+    13.5 kWh dispatch, billed with the canonical engine", written out here
+    rather than read back from the function under test. A shift that quietly
+    moved nothing would still report scenario "c" and would still pass a
+    label-only check; it cannot pass this one, because it would land on
+    pre_nominal_single_pass instead."""
+    _require_archive()
+    import battery_dispatch_policies as bp  # lazy: needs private/household.yaml
+
+    calib_ev = _in_sandbox(up.dispatch_calibration)
+    assert calib_ev["free_fix_scenario"] == "a", (
+        "this checkout's household has an EV, so the free fix behind the "
+        "post-behavior side must be behavior scenario a", calib_ev["free_fix_scenario"])
+    assert calib_ev["kwh_moved"] > 0, calib_ev["kwh_moved"]
+    committed_mid = float(_committed("battery_dispatch_policies.json")
+                          ["post_behavior"]["mid"]["battery_marginal"])
+    assert abs(calib_ev["mid_nominal_single_pass"] - committed_mid) < 1.0, (
+        "the EV branch no longer reproduces the committed post-behavior "
+        "marginal", calib_ev["mid_nominal_single_pass"], committed_mid)
+
+    real_flag = br.EV_ANALYSIS
+    br.EV_ANALYSIS = False
+    try:
+        calib_noev = _in_sandbox(up.dispatch_calibration)
+
+        # the independent transcription, run under the same forced flag
+        def _reference():
+            d = br.load()
+            imp0 = d.Consumption.values.astype(float)
+            gen0 = d.Generation.values.astype(float)
+            sop_idx, sop_ts = br.build_sop_index(d)
+            ev, _sessions = br.detect_sessions(d)
+            # behavior_rebuild.main()'s own scenario-c arguments for a house
+            # with no charger: a quarter of each day's remaining on-peak
+            # non-EV import, capped at the largest 15-min import this meter
+            # has actually recorded. The fraction is written out as a literal
+            # so this reference does not simply follow whatever the generator
+            # decides scenario c means; the assertion below pins the two
+            # together.
+            imp_c, moved_c = br.shift_house(d, imp0, ev, 0.25,
+                                            sop_idx, sop_ts, float(np.max(imp0)))
+            i2, e2, _, _ = bp.run_batt(d, imp_c, gen0, up.CAP_KWH, "greedy",
+                                       charge_kw=bp.CHARGE_KW)
+            return (float(bp.billed(d, imp_c, gen0) - bp.billed(d, i2, e2)),
+                    float(moved_c))
+
+        ref_mid, ref_moved = _in_sandbox(_reference)
+    finally:
+        br.EV_ANALYSIS = real_flag
+
+    assert bp.HOUSE_SHIFT_FRAC == 0.25, (
+        "battery_dispatch_policies.HOUSE_SHIFT_FRAC changed; the literal in "
+        "the reference above has to change with it", bp.HOUSE_SHIFT_FRAC)
+    assert calib_noev["free_fix_scenario"] == "c", (
+        "with household.has_ev false the free fix must be behavior scenario c",
+        calib_noev["free_fix_scenario"])
+    assert abs(calib_noev["kwh_moved"] - ref_moved) < 0.01, (
+        "the no-EV free fix did not move what the scenario-c house shift moves",
+        calib_noev["kwh_moved"], ref_moved)
+    assert calib_noev["kwh_moved"] > 0, (
+        "the no-EV free fix moved nothing, so this case could not tell a "
+        "working shift from the unconditional-shift_ev defect", calib_noev)
+    # THE arithmetic check: the post-behavior marginal is the scenario-c one,
+    # not the untouched pre-behavior one.
+    assert abs(calib_noev["mid_nominal_single_pass"] - ref_mid) < 1.0, (
+        "the no-EV post-behavior marginal does not equal an independent "
+        "scenario-c-then-battery transcription",
+        calib_noev["mid_nominal_single_pass"], ref_mid)
+    assert abs(calib_noev["mid_nominal_single_pass"]
+               - calib_noev["pre_nominal_single_pass"]) > 1.0, (
+        "the no-EV post-behavior marginal equals the pre-behavior one: the "
+        "free fix moved nothing into the dispatch, which is exactly the "
+        "defect this case exists to catch", calib_noev)
+    assert calib_noev["behavior_save"] > 0, (
+        "the no-EV free fix saved nothing", calib_noev["behavior_save"])
+    return ("dispatch_calibration follows household.has_ev: this household "
+            f"(flag true) runs behavior scenario a ({calib_ev['kwh_moved']:.0f} "
+            "kWh) and reproduces the committed post-behavior marginal; with "
+            "the flag forced false it runs behavior scenario c "
+            f"({calib_noev['kwh_moved']:.0f} kWh) and its post-behavior "
+            f"marginal (${calib_noev['mid_nominal_single_pass']:.2f}) equals an "
+            f"independent scenario-c transcription (${ref_mid:.2f}), not the "
+            f"pre-behavior figure (${calib_noev['pre_nominal_single_pass']:.2f})")
+
+
+@case
 def case_dispatch_calibration_fits_a_real_third_surplus_point_distinct_from_loss():
     """Issue #89 AC1/AC3: a real THIRD dispatch rerun at the mirrored surplus
     scenario (gen_scale=1+lossB) must now exist alongside the nominal and

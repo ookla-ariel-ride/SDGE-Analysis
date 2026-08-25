@@ -47,6 +47,15 @@ Coverage model:
 Household side: SDG&E Green Button 15-min usage.csv (same file the bill-validated
 models use), EV sessions re-detected with the exact algorithm from behavior_rebuild.py.
 
+Households with no EV (household.has_ev false, the intake applicability flag):
+every EV-domain figure publishes as an explicit {"not_applicable": true,
+"reason": ...} stub rather than as the 0.0 the arithmetic would produce -- a
+zero here would read as "moving this household's charging saves no carbon",
+which is a measured claim this household's data cannot make. The GRID and METER
+figures are unaffected and stay real numbers, including the annual window means
+that say how much cleaner midday is than overnight on CAISO. See the
+applicability block below for the exact boundary and the two-way validator.
+
 ORDERING CONTRACT (this script runs SECOND):
   behavior_rebuild.py  ->  carbon_fullyear.py, in the SAME working directory.
   The cost_note quotes behavior scenario 'a' (or, on a household whose intake
@@ -227,6 +236,131 @@ MIDDAY = list(range(10, 14))      # 10:00-14:00
 COVERAGE_MIN = 350                # >=350 covered days -> "measured"; <350 -> abort
 
 
+# --------------------------------------------------------------- applicability
+# A household with no EV has no mistimed charging to move, so every EV-domain
+# figure below is ABSENT, not zero. Serialized as a bare 0.0 it reads as a
+# measured finding -- "moving this household's charging saves no carbon" --
+# which is a different claim from "this household has no charging to move", and
+# CLAUDE.md 0 forbids publishing the second as the first. So the EV-domain
+# fields carry the SAME explicit marker the rest of this repo already uses:
+# behavior_rebuild.py's and extended_findings.py's {"not_applicable": True,
+# "reason": ...}, read by report_tokens.py's _applicability(). No new
+# vocabulary, and every consumer of this artifact can use the reader it has.
+#
+# THE BOUNDARY (get this wrong in either direction and the artifact lies):
+#   * EV-DEPENDENT -- any figure whose value is a function of the detected EV
+#     kWh. On a no-EV household every one of them collapses to zero (or, for
+#     the b/c scenario footprints, to a_current_imports) purely because the
+#     multiplier is zero. These become stubs.
+#   * GRID-MEASURED -- any figure computed from CAISO intensity and/or this
+#     household's own meter, with no EV term. The whole intensity section, the
+#     current-import footprint, the import/export kWh and the avoided-export
+#     carbon are measured for EVERY household and stay real numbers. In
+#     particular intensity_kg_per_mwh.window_means_annual still states how much
+#     cleaner midday is than overnight ON THE GRID (kg CO2/MWh) -- withholding
+#     that because this house has no EV would be the opposite error.
+def _not_applicable(what, see=""):
+    """Explicit stub for one EV-domain figure in a household the intake says has
+    no EV. not_applicable, NOT not_determined: the intake DID determine the
+    answer -- the domain does not exist for this household. Same contract and
+    wording as behavior_rebuild.py's own _not_applicable(), which governs the
+    same flag on the artifact this script reads."""
+    return {
+        "not_applicable": True,
+        "reason": ("household.has_ev is false (intake applicability flag, "
+                   "DATA-SOURCES-CHEATSHEET.md) — %s does not apply to this "
+                   "household; set the flag true and complete the intake "
+                   "(charger.kw) to compute it" % what)
+                  + (f". {see}" if see else ""),
+    }
+
+
+# Where the grid-side version of the midday-vs-overnight question still lives,
+# quoted into the stubs that would otherwise look like the only place it was
+# ever answered.
+_SEE_WINDOW_MEANS = (
+    "The GRID-side comparison this figure applies EV load to is measured for "
+    "every household and is published unchanged at "
+    "intensity_kg_per_mwh.window_means_annual (sop_overnight_00_06 vs "
+    "solar_midday_10_14, kg CO2/MWh); only the household-EV application of it "
+    "is absent here")
+
+# One inventory of both classes, so the writer in main() and the validator that
+# checks its own output cannot drift apart -- and so a future edit that adds an
+# EV figure has one obvious place to declare it.
+EV_DEPENDENT_FIELDS = (
+    ("household_inputs", "ev_kwh_detected"),
+    ("household_inputs", "ev_kwh_mistimed_on_off_peak"),
+    ("footprints_kg_co2_per_yr", "b_mistimed_ev_moved_to_sop_00_06"),
+    ("footprints_kg_co2_per_yr", "c_mistimed_ev_moved_to_midday_10_14"),
+    ("footprints_kg_co2_per_yr", "detail", "mistimed_ev_kg_at_current_hours"),
+    ("footprints_kg_co2_per_yr", "detail", "mistimed_ev_kg_if_charged_00_06"),
+    ("footprints_kg_co2_per_yr", "detail", "mistimed_ev_kg_if_charged_10_14"),
+    ("footprints_kg_co2_per_yr", "detail", "delta_b_vs_a"),
+    ("footprints_kg_co2_per_yr", "detail", "delta_c_vs_a"),
+    ("footprints_kg_co2_per_yr", "detail", "midday_cleaner_than_overnight_by"),
+    ("old_vs_new", "ev_shift_delta_to_sop_kg"),
+    ("old_vs_new", "ev_shift_delta_to_midday_kg"),
+    ("old_vs_new", "midday_cleaner_than_overnight_by_kg"),
+)
+GRID_MEASURED_FIELDS = (
+    ("intensity_kg_per_mwh", "window_means_annual", "sop_overnight_00_06"),
+    ("intensity_kg_per_mwh", "window_means_annual", "solar_midday_10_14"),
+    ("intensity_kg_per_mwh", "window_means_annual", "on_peak_16_21"),
+    ("household_inputs", "imports_kwh"),
+    ("household_inputs", "exports_kwh"),
+    ("footprints_kg_co2_per_yr", "a_current_imports"),
+    ("solar_exports_avoided_kg_co2_per_yr",),
+)
+
+
+def _ev_field(value, ev_applies, what, see=""):
+    """One EV-domain figure: the computed value on a household the intake says
+    has an EV, the explicit not-applicable stub on one it says has none. The
+    caller always computes `value` -- the arithmetic is harmless and the
+    branch stays a single expression -- but on a no-EV household that value is
+    the zero this stub exists to keep out of the artifact."""
+    return value if ev_applies else _not_applicable(what, see)
+
+
+def _dig(doc, path):
+    for k in path:
+        doc = doc[k]
+    return doc
+
+
+def _validate_applicability(results, ev_applies):
+    """Fail closed if the artifact's own applicability does not match the flag.
+
+    Two directions, both real failure modes: an EV field published as a number
+    on a no-EV household is the false measurement this guard exists to stop,
+    and a GRID field published as a stub withholds a figure that is measured
+    for every household. A partial edit that converts some EV fields and not
+    others fails here rather than shipping a half-marked artifact."""
+    for path in EV_DEPENDENT_FIELDS:
+        v = _dig(results, path)
+        stub = isinstance(v, dict) and v.get("not_applicable") is True
+        if ev_applies and stub:
+            raise SystemExit(
+                f"{'.'.join(path)}: published as not_applicable but "
+                "household.has_ev is not false — refusing to publish")
+        if not ev_applies and not stub:
+            raise SystemExit(
+                f"{'.'.join(path)}: household.has_ev is false but the field "
+                f"carries the value {v!r} — an absent EV figure must publish "
+                "the explicit not_applicable marker, never a computed zero")
+        if stub and not str(v.get("reason", "")).strip():
+            raise SystemExit(f"{'.'.join(path)}: not_applicable stub with no "
+                             "reason — refusing to publish")
+    for path in GRID_MEASURED_FIELDS:
+        v = _dig(results, path)
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            raise SystemExit(
+                f"{'.'.join(path)}: is grid/meter-measured for every household "
+                f"but published as {v!r} — refusing to withhold a measured "
+                "figure over a question about the EV domain")
+
+
 def hourly_intensity(day):
     """kg CO2/MWh for each hour of one CAISO day (identical math to carbon_timing.py)."""
     co2 = pd.read_csv(f"{CAISO_DIR}/caiso_co2_{day}.csv")
@@ -362,6 +496,12 @@ def main():
             mh_mean.loc[dt_.month].sort_index().values
 
     # ---------- household 15-min data + EV detection (identical to behavior_rebuild) ----------
+    # ONE predicate for the whole EV domain, read from behavior_rebuild at call
+    # time rather than re-derived here: the intake FLAG is the authority, and
+    # "ev.sum() == 0" would be an inference from data, which CLAUDE.md 0 bans.
+    # br.detect_sessions() keys off the same global, so the detector and the
+    # artifact's applicability can never disagree.
+    ev_applies = br.EV_ANALYSIS
     d = br.load()
     ev, _sessions = br.detect_sessions(d)
     d = d.assign(ev=ev, hr=d.dt.dt.hour, day=d.dt.dt.normalize())
@@ -403,6 +543,12 @@ def main():
     # in case a future edit ever reorders these two blocks.
     label = ("measured" if n_cov >= COVERAGE_MIN
              else f"estimated ({n_cov} days sampled)")
+
+    def ev_field(value, what, see=""):
+        """_ev_field bound to THIS run's applicability, so the thirteen call
+        sites below cannot each re-decide it."""
+        return _ev_field(value, ev_applies, what, see)
+
     results = {
         "source": {
             "name": "CAISO Today's Outlook (official ISO data)",
@@ -455,19 +601,46 @@ def main():
             "window": f"{YEAR_START} .. {YEAR_END} (365 days)",
             "imports_kwh": round(float(imp.sum()), 1),
             "exports_kwh": round(float(exp.sum()), 1),
-            "ev_kwh_detected": round(float(ev.sum()), 1),
-            "ev_kwh_mistimed_on_off_peak": round(mistimed_kwh, 1)},
+            "ev_kwh_detected": ev_field(
+                round(float(ev.sum()), 1), "detected EV charging energy"),
+            "ev_kwh_mistimed_on_off_peak": ev_field(
+                round(mistimed_kwh, 1),
+                "EV charging energy mistimed into on/off-peak hours")},
         "footprints_kg_co2_per_yr": {
             "a_current_imports": round(base_kg, 1),
-            "b_mistimed_ev_moved_to_sop_00_06": round(foot_sop, 1),
-            "c_mistimed_ev_moved_to_midday_10_14": round(foot_mid, 1),
+            # b and c are the SAME number as a on a no-EV household -- two
+            # distinct scenario footprints that coincide only because there is
+            # nothing to move. Publishing them would read as "moving charging
+            # changes nothing", so they are stubs instead.
+            "b_mistimed_ev_moved_to_sop_00_06": ev_field(
+                round(foot_sop, 1),
+                "the footprint with mistimed EV charging moved to 00:00-06:00"),
+            "c_mistimed_ev_moved_to_midday_10_14": ev_field(
+                round(foot_mid, 1),
+                "the footprint with mistimed EV charging moved to 10:00-14:00"),
             "detail": {
-                "mistimed_ev_kg_at_current_hours": round(mistimed_kg_now, 1),
-                "mistimed_ev_kg_if_charged_00_06": round(kg_to_sop, 1),
-                "mistimed_ev_kg_if_charged_10_14": round(kg_to_mid, 1),
-                "delta_b_vs_a": round(foot_sop - base_kg, 1),
-                "delta_c_vs_a": round(foot_mid - base_kg, 1),
-                "midday_cleaner_than_overnight_by": round(foot_sop - foot_mid, 1)}},
+                "mistimed_ev_kg_at_current_hours": ev_field(
+                    round(mistimed_kg_now, 1),
+                    "the carbon carried by mistimed EV charging at its current hours"),
+                "mistimed_ev_kg_if_charged_00_06": ev_field(
+                    round(kg_to_sop, 1),
+                    "the carbon of that same EV energy charged 00:00-06:00"),
+                "mistimed_ev_kg_if_charged_10_14": ev_field(
+                    round(kg_to_mid, 1),
+                    "the carbon of that same EV energy charged 10:00-14:00"),
+                "delta_b_vs_a": ev_field(
+                    round(foot_sop - base_kg, 1),
+                    "the footprint change from moving EV charging to 00:00-06:00"),
+                "delta_c_vs_a": ev_field(
+                    round(foot_mid - base_kg, 1),
+                    "the footprint change from moving EV charging to 10:00-14:00"),
+                # EV-DEPENDENT despite the name: this is the two destination
+                # windows priced on THIS HOUSEHOLD'S mistimed EV kWh, so it
+                # scales to zero with the EV, not with the grid.
+                "midday_cleaner_than_overnight_by": ev_field(
+                    round(foot_sop - foot_mid, 1),
+                    "the midday-vs-overnight carbon gap on this household's "
+                    "mistimed EV charging", _SEE_WINDOW_MEANS)}},
         "solar_exports_avoided_kg_co2_per_yr": round(export_avoided_kg, 1),
         "old_vs_new": {
             "old_basis": "4 seasonal sample days (carbon_results.json)",
@@ -483,15 +656,23 @@ def main():
                 "new": round(export_avoided_kg, 1),
                 "delta": round(export_avoided_kg
                                - old["solar_exports_avoided_kg_co2_per_yr"], 1)},
-            "ev_shift_delta_to_sop_kg": {
+            # The whole old-vs-new COMPARISON goes, not just its "new" side: an
+            # "old" EV-shift delta left standing beside an absent "new" one
+            # would publish an EV figure for a household with no EV, one level
+            # down.
+            "ev_shift_delta_to_sop_kg": ev_field({
                 "old": of["detail"]["delta_b_vs_a"],
                 "new": round(foot_sop - base_kg, 1)},
-            "ev_shift_delta_to_midday_kg": {
+                "the old-vs-new comparison of the EV-shift delta to 00:00-06:00"),
+            "ev_shift_delta_to_midday_kg": ev_field({
                 "old": of["detail"]["delta_c_vs_a"],
                 "new": round(foot_mid - base_kg, 1)},
-            "midday_cleaner_than_overnight_by_kg": {
+                "the old-vs-new comparison of the EV-shift delta to 10:00-14:00"),
+            "midday_cleaner_than_overnight_by_kg": ev_field({
                 "old": of["detail"]["midday_cleaner_than_overnight_by"],
-                "new": round(foot_sop - foot_mid, 1)}},
+                "new": round(foot_sop - foot_mid, 1)},
+                "the old-vs-new comparison of the midday-vs-overnight gap on "
+                "this household's mistimed EV charging", _SEE_WINDOW_MEANS)},
         "cost_note": (
             ("On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and "
              "00:00-06:00 are BOTH super-off-peak at the same price; the netting-"
@@ -522,9 +703,10 @@ def main():
             "displacement assumption).",
             "CAISO CO2 includes estimated import emissions (can be negative when "
             "exporting); on sunny spring days midday hourly intensity goes slightly "
-            "negative under this accounting, which the 4-day version never sampled.",
-            "Moved EV energy assumed spread uniformly across the destination window on its "
-            "own day.",
+            "negative under this accounting, which the 4-day version never sampled."]
+           # a method caveat for a computation this household never ran
+           + (["Moved EV energy assumed spread uniformly across the destination "
+               "window on its own day."] if ev_applies else []) + [
             "DST transition days are a documented, narrow approximation, not a full "
             "redesign, on both 2025-11-02 (fall-back) and 2026-03-08 (spring-forward) -- "
             "unlike the household meter, which genuinely has two distinct 01:00 "
@@ -553,6 +735,9 @@ def main():
               "household_inputs", "footprints_kg_co2_per_yr",
               "solar_exports_avoided_kg_co2_per_yr", "old_vs_new"):
         assert k in results, f"results section missing: {k}"
+    # Applicability is validated BEFORE either temp file is written, so a
+    # mis-marked artifact never reaches disk (the atomic-write contract above).
+    _validate_applicability(results, ev_applies)
 
     tmp_csv, tmp_json = f"{HOURLY_CSV}.tmp", f"{RESULTS_JSON}.tmp"
     tab.to_csv(tmp_csv, index=False)
@@ -582,10 +767,20 @@ def main():
     print(f"coverage: {n_cov}/365 days ({100 * n_cov / 365:.1f}%) -> label: {label}")
     print("annual avg intensity by hour (kg/MWh):")
     print("  " + " ".join(f"{h:02d}:{annual[h]:.0f}" for h in range(24)))
-    print(f"footprint now: {base_kg:.0f} kg | to SOP: {foot_sop:.0f} | to midday: {foot_mid:.0f}")
-    print(f"midday cleaner than overnight by {foot_sop - foot_mid:.0f} kg/yr")
+    if ev_applies:
+        print(f"footprint now: {base_kg:.0f} kg | to SOP: {foot_sop:.0f} | to midday: {foot_mid:.0f}")
+        print(f"midday cleaner than overnight by {foot_sop - foot_mid:.0f} kg/yr")
+    else:
+        # the same rule as the artifact: no EV -> no EV figure, not a zero
+        print(f"footprint now: {base_kg:.0f} kg | the moved-EV scenarios do not "
+              "apply (household.has_ev is false)")
+        wm = results["intensity_kg_per_mwh"]["window_means_annual"]
+        print(f"grid intensity (measured, EV-independent): overnight 00-06 "
+              f"{wm['sop_overnight_00_06']:.0f} vs midday 10-14 "
+              f"{wm['solar_midday_10_14']:.0f} kg/MWh")
     print(f"solar exports avoided: {export_avoided_kg:.0f} kg/yr")
-    print(f"mistimed EV kWh: {mistimed_kwh:.0f}")
+    if ev_applies:
+        print(f"mistimed EV kWh: {mistimed_kwh:.0f}")
 
 
 if __name__ == "__main__":

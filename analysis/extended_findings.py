@@ -270,15 +270,23 @@ gen0 = d.Generation.values.astype(float)
 base_bill = bp.billed(d, imp0, gen0)
 
 # ---- battery dispatch savings: COMPUTED, never hard-coded -------------------
-ev, sessions = br.detect_sessions(d)
+ev, _sessions = br.detect_sessions(d)
 POL_SAVE = {}
 for _pol in ("evening", "twowin", "greedy"):
     _i, _e, _, _ = bp.run_batt(d, imp0, gen0, 13.5, _pol, charge_kw=bp.CHARGE_KW)
     POL_SAVE[_pol] = base_bill - bp.billed(d, _i, _e)
 G = POL_SAVE["greedy"]
-# post-behavior marginal (EV shift first, then battery — bp's integrated pipeline)
-_sop_idx, _sop_ts = br.build_sop_index(d)
-_imp_sh, _ = br.shift_ev(d, ev, sessions, [True] * len(sessions), _sop_idx, _sop_ts)
+# post-behavior marginal: THIS household's free behavior fix first, then the
+# battery on the shifted year — battery_dispatch_policies.py's own integrated
+# pipeline, reached through its own free_fix_shift() so the branch has ONE
+# implementation. Which fix runs is not a constant: it follows the intake flag
+# household.has_ev (scenario a, the EV charge reschedule, when true; scenario c,
+# the flexible house-load shift, when false). This used to call br.shift_ev()
+# unconditionally, which is a NO-OP on a household with no EV — G_POST was then
+# the battery on the bare baseline while the artifact's post_behavior.mid.
+# battery_marginal was correctly the scenario-c figure, and the tie-out assert
+# below fired on a correctly regenerated chain (issue #147).
+_imp_sh, _, _ = bp.free_fix_shift(d, imp0)
 _b_sh = bp.billed(d, _imp_sh, gen0)
 _i3, _e3, _, _ = bp.run_batt(d, _imp_sh, gen0, 13.5, "greedy", charge_kw=bp.CHARGE_KW)
 G_POST = _b_sh - bp.billed(d, _i3, _e3)

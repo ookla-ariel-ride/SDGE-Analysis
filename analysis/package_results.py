@@ -41,6 +41,14 @@ ORDERING CONTRACT (this script runs THIRD):
   CLAUDE.md's section 9 regeneration gate already runs behavior_rebuild.py
   and battery_dispatch_policies.py before this script.
 
+ONE FREE FIX ACROSS ALL THREE PACKAGES. packages.LOW is one behavior scenario on
+its own; packages.MID/HIGH are that scenario PLUS the battery, from
+battery_dispatch_policies.py's post_behavior block. Which scenario depends on the
+intake flag household.has_ev (a with an EV, c without), and both generators now
+publish the one they used -- packages.LOW.free_fix_scenario here,
+post_behavior.free_fix_scenario there. A disagreement is refused, not composed:
+see the check beside `pb` below.
+
 Run AFTER behavior_rebuild.py and battery_dispatch_policies.py.
 """
 import json, pathlib
@@ -236,12 +244,50 @@ else:
                 "flexible on-peak house load off peak, into the super-off-peak "
                 f"window: 25% of it = ${c:,}; stretch (50%) = ${d:,}")
 pb = bp["post_behavior"]
+
+# The two artifacts must be composing the SAME free fix.
+#
+# packages.MID and packages.HIGH are read out of post_behavior, which
+# battery_dispatch_policies.py produces by applying one behavior scenario and
+# THEN dispatching the battery, re-billed end to end. packages.LOW is that same
+# behavior scenario on its own. If the two generators picked different scenarios,
+# MID stops being "LOW plus the battery" and becomes a composite spliced from two
+# different pipelines -- the failure CLAUDE.md §9's one-pipeline-per-package-
+# figure rule exists to prevent, and the one the cohort check above already
+# guards in its cross-RUN form. Both generators now publish the scenario they used, so this
+# is a comparison of two recorded facts, never a re-derivation of the branch.
+#
+# A missing key on either side is a mismatch too: it means one artifact predates
+# the field, so it was written by a generator that could not have made this
+# choice deliberately.
+_dispatch_scenario = pb.get("free_fix_scenario")
+if _dispatch_scenario != low_scenario:
+    raise SystemExit(
+        "free-fix scenario mismatch between the two upstream artifacts: "
+        f"{DISPATCH_JSON} (written by battery_dispatch_policies.py) says its "
+        f"post_behavior block sits on top of behavior scenario "
+        f"{_dispatch_scenario!r}, while {BEHAVIOR_JSON} (written by "
+        f"behavior_rebuild.py) makes packages.LOW behavior scenario "
+        f"{low_scenario!r}. Composing packages.MID/HIGH from a different "
+        "behavior scenario than packages.LOW splices one package figure out of "
+        "two pipelines (CLAUDE.md §9: one integrated simulation, re-billed "
+        "end-to-end). Regenerate both from ONE run, in order: behavior_rebuild.py "
+        "-> battery_dispatch_policies.py -> package_results.py, in the same "
+        "working directory.")
+
+# Which free fix precedes the battery in the MID/HIGH runs. Named in the artifact's
+# own `basis` line and in the MID/HIGH notes, so each is true for an EV household
+# and a no-EV one alike -- "EV shift" is a false description of a run that shifted
+# flexible house load instead. EVERY place this artifact names the first stage of
+# the integrated pipeline reads this one value; none of them spells the phrase out.
+FREE_FIX_PHRASE = {"a": "EV shift", "c": "flexible house-load shift"}[low_scenario]
+
 batt_alone = bp["pw3"]["greedy"]["save"]             # baseline battery marginal (see battery_dispatch_policies.json)
-batt_post = pb["mid"]["battery_marginal"]            # 2245 post-EV-fix marginal
+batt_post = pb["mid"]["battery_marginal"]            # battery marginal after the free fix
 evening = bp["pw3"]["evening"]["save"]               # evening-only variant
 
 out = {
-    "basis": ("integrated pipeline: behavior_rebuild.py EV shift -> "
+    "basis": (f"integrated pipeline: behavior_rebuild.py {FREE_FIX_PHRASE} -> "
               "battery_dispatch_policies.py price-aware dispatch -> rates.bill_nem "
               "(canonical bill-derived rates, NBC on gross imports); baseline "
               f"${base:,} at 6/1/2026 rates; actual 365-day billed baseline $3,282 "
@@ -272,15 +318,18 @@ out = {
             "battery_alone_payback_post_fix_yr": round(PW3_COST / batt_post, 1),
             "battery_alone_payback_evening_only_yr": round(PW3_COST / evening, 1),
             "projected_bill_current_rates_yr": pb["mid"]["bill"],
-            "note": ("single integrated run: EV shift then price-aware PW3 dispatch, "
-                     "re-billed end-to-end"),
+            "note": (f"single integrated run: {FREE_FIX_PHRASE} then price-aware "
+                     "PW3 dispatch, re-billed end-to-end"),
         },
         "HIGH": {
             "cost": HIGH_COST,
             "savings_yr": pb["high"]["combined_save"],
             "marginal_vs_mid_yr": pb["high"]["combined_save"] - pb["mid"]["combined_save"],
             "projected_bill_current_rates_yr": pb["high"]["bill"],
-            "note": (f"post-behavior expansion marginal "
+            # The free fix is named here for the same reason it is named in MID:
+            # "post-behavior" alone does not say WHICH behavior, and the two
+            # households' answers differ.
+            "note": (f"post-behavior ({FREE_FIX_PHRASE}) expansion marginal "
                      f"${pb['high']['combined_save'] - pb['mid']['combined_save']}/yr "
                      f"(~{round(EXPANSION_COST / (pb['high']['combined_save'] - pb['mid']['combined_save']))}"
                      f"-yr marginal payback on ${EXPANSION_COST:,}) — outage "

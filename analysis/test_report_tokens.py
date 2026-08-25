@@ -8825,6 +8825,421 @@ def case_the_free_fix_guard_refuses_a_package_that_cannot_name_its_own_scenario(
             "package pricing a scenario its own source publishes as not applicable")
 
 
+# ===========================================================================
+# THE MARKUP AROUND THE TOKENS (ISSUE #147, CODEX ADVERSARIAL REVIEW).
+#
+# Every case above this point checks a token VALUE. That is exactly half of
+# what the reader sees, and the half that was already right: issue #147's
+# first pass made seven tokens render truthfully for a household whose intake
+# says household.has_ev is false, and the page stayed false anyway, because
+# report-template.html went on asserting an EV in the fixed markup AROUND
+# them --
+#
+#   <div class="big">{{EV_FIX_SAVINGS_100}}/yr</div>
+#   <div class="lbl">Free win: fully super-off-peak EV charging ...</div>
+#   <h3>1 · Reprogram charging (this week, $0)</h3>
+#
+# -- a "/yr" welded onto a token that now renders a SENTENCE, a label
+# announcing a free EV-charging win, and a Monday instruction to reprogram a
+# charger the household does not own, sitting directly above an S15_VERDICT
+# the same issue had already fixed to say "moving flexible house load".
+#
+# A token-level case cannot see any of that. So the two cases below assert on
+# the RENDERED LINE -- template markup with its tokens substituted -- and the
+# second one generalises the defect rather than pinning the three sites: no
+# live line may weld a unit onto ANY token that can render a not-applicable
+# sentence, including the tokens nobody has written yet.
+# ===========================================================================
+def _live_template_text():
+    """report-template.html with every comment, <script> and <style> body
+    blanked out -- the fixed markup a reader actually sees. Same masking
+    _template_token_positions uses, so "live" means one thing in this file."""
+    text = rt.TEMPLATE.read_text()
+    buf = list(text)
+    for m in _MASKED_RE.finditer(text):
+        for i in range(*m.span()):
+            if buf[i] != "\n":
+                buf[i] = " "
+    return "".join(buf)
+
+
+def _rendered_live_template():
+    """The live template with every resolvable token substituted -- the words
+    a reader actually sees, as opposed to the token values every case above
+    checks in isolation. The five KNOWN_GAPS keep their {{...}} (nothing
+    resolves them by design); any OTHER refusal is left to raise, because a
+    token that cannot resolve is a household that gets no report."""
+    def sub(m):
+        spec = rt.TOKENS.get(m.group(1))
+        if spec is None or spec.get("kind") == "gap":
+            return m.group(0)
+        return rt.resolve_token(m.group(1))
+    return rt._TOKEN_RE.sub(sub, _live_template_text())
+
+
+_H2_ID_RE = re.compile(r'<h2 id="([^"]+)"')
+
+
+def _rendered_sections():
+    """{section id: that section's rendered markup}, split at each <h2 id>."""
+    doc = _rendered_live_template()
+    hits = list(_H2_ID_RE.finditer(doc))
+    return {m.group(1): doc[m.start():(hits[i + 1].start() if i + 1 < len(hits)
+                                       else len(doc))]
+            for i, m in enumerate(hits)}
+
+
+# THE SITES ARE LOCATED STRUCTURALLY, NOT BY THE TOKENS THAT NOW FILL THEM.
+# Anchoring on {{S0_FREE_WIN_CARD_FIGURE}} would make this case fail with
+# "re-anchor me" if someone put the literal markup back -- guidance, not a
+# finding, and re-anchoring would then let the defect ship. A section id and
+# an element class survive the revert, so the revert fails on what is WRONG
+# with it (issue #147, and the tests-must-fail-on-their-own-defect rule).
+_CARD_RE = re.compile(r'<div class="card">.*?</div></div>', re.S)
+_H3_RE = re.compile(r"<h3\b[^>]*>(.*?)</h3>", re.S)
+# "EV-TOU-5" IS A TARIFF NAME, NOT A CLAIM ABOUT THE HOUSEHOLD. SDG&E calls
+# the plan that whoever is on it drives, the name comes from
+# private/household.yaml rather than from any artifact, and section 0's
+# best-plan card carries it. Everything else here is a statement that this
+# house charges a car.
+_EV_VOCABULARY = re.compile(r"\bEVs?\b(?!-TOU)|\bcharger\b|\bcharging\b|"
+                            r"\breprogram\w*\b|\bplug-?in\b", re.I)
+
+# What this household -- which HAS an EV -- must go on publishing to the
+# character. These four strings are report-template.html's own fixed prose as
+# it read before issue #147 tokenized any of it, so the change that makes a
+# no-EV report true is proved not to have moved this one.
+_EV_HOUSEHOLD_LITERALS = (
+    ("section 0's free-win card",
+     '<div class="card"><div class="big">~$1,221/yr</div><div class="lbl">Free win: '
+     'fully super-off-peak EV charging (session-level, 100% compliance)</div></div>'),
+    ("the Monday appendix's first instruction",
+     "<h3>1 · Reprogram charging (this week, $0)</h3>"),
+    ("the Monday appendix's success-metrics heading",
+     '<h3>3 · Pre-registered success metrics for the EV fix '
+     '<span class="pill y">modeled targets</span></h3>'),
+    ("section 9's charging subsection",
+     "<h3>EV charging report card</h3>"),
+)
+
+
+@case
+def case_the_markup_around_the_no_ev_tokens_names_no_ev_either():
+    """ISSUE #147 (Codex adversarial review). Issue #147's first pass made
+    seven tokens render truthfully for a household whose intake says
+    household.has_ev is false. The page stayed false anyway, because the
+    FIXED MARKUP around them still asserted an EV -- a "/yr" welded onto a
+    token that now renders a sentence, a card label announcing a free
+    EV-charging win, a Monday instruction to reprogram a charger, a section-9
+    report card for a car that is not there. No token-level case can see any
+    of that, which is exactly how it shipped.
+
+    So this case reads the RENDERED page. The no-EV household is the whole
+    one -- behavior_rebuild.json's four not-applicable stubs and the
+    package_results.json that prices scenario c beside them -- because a
+    half-stubbed pair is a state the free-fix guard deliberately refuses, and
+    refusing is not what this is about.
+
+    SCOPED TO THE REGIONS THE ARTIFACTS DECIDE (section 0's cards, the Monday
+    appendix's headings, section 9's headings) rather than to the whole
+    document: the fixture swaps three ARTIFACTS and leaves
+    private/household.yaml alone, so the rest of the page still carries
+    household-sourced EV facts -- the plan really is called EV-TOU-5 -- which
+    are not this defect and never were."""
+    # 1. THE CONTROL. The EV household's four sites, unchanged to the
+    #    character. Located by their own text, so putting the literal markup
+    #    back does not break the control -- it is the no-EV half below that
+    #    such a revert has to fail.
+    published = _rendered_live_template()
+    for what, literal in _EV_HOUSEHOLD_LITERALS:
+        assert literal in published, (
+            f"{what} no longer renders what report-template.html published before "
+            f"issue #147 tokenized it:\n  {literal}\n"
+            "Tokenizing a site is only allowed to change what a DIFFERENT household "
+            "reads. If an artifact legitimately moved this household's figure, re-pin "
+            "the literal here and say which regeneration moved it.")
+
+    with _patched(rt, "_json", _no_ev_household()):
+        sections = _rendered_sections()
+
+    checked = 0
+
+    # 2. SECTION 0'S CARDS. Six cards; none may tell a household with no EV
+    #    about an EV, and every headline cell is a FIGURE, never a sentence
+    #    wearing a unit -- "{{EV_FIX_SAVINGS_100}}/yr" published "not
+    #    applicable to this household -- household.has_ev is false .../yr" in
+    #    a <div class="big"> exactly that way.
+    cards = _CARD_RE.findall(sections["s0"])
+    assert len(cards) >= 5, f"only {len(cards)} card(s) found in section 0"
+    for card in cards:
+        checked += 1
+        hit = _EV_VOCABULARY.search(card)
+        assert not hit, (
+            f"a section-0 card tells a household with no EV about an EV "
+            f"({hit.group(0)!r}): {card!r}")
+        big = re.search(r'<div class="big[^"]*">(.*?)</div>', card)
+        assert big, card
+        assert len(big.group(1)) <= 40 and "not applicable" not in big.group(1), (
+            "a section-0 card's headline cell is a SENTENCE, not a figure -- the "
+            f"template is decorating a token that refused: {big.group(1)!r}")
+        lbl = re.search(r'<div class="lbl">(.*?)</div>', card)
+        assert lbl, card
+        # The cap is applied to the label THIS change owns, not to all six:
+        # CLAUDE.md section 10 puts it on a section's LEAD sentence, and the
+        # other five card labels are older markup that reads as a caption
+        # (the best-plan card spends two asides on the scenarios it beat).
+        if re.match(r"(Free win|No modeled saving|Costs money here):", lbl.group(1)):
+            _assert_within_density_cap("the section-0 free-win card label",
+                                       lbl.group(1), "a household with no EV")
+
+    # 3. THE MONDAY APPENDIX'S HEADINGS. This is the one instruction list in
+    #    the report, so a heading naming hardware the household does not own
+    #    is an instruction that cannot be carried out.
+    s15 = _H3_RE.findall(sections["s15"])
+    assert len(s15) >= 3, f"only {len(s15)} h3(s) found in the Monday appendix"
+    for h3 in s15:
+        checked += 1
+        hit = _EV_VOCABULARY.search(h3)
+        assert not hit, (
+            f"a 'What to do Monday' heading tells a household with no EV to act on "
+            f"an EV ({hit.group(0)!r}): {h3!r}")
+        _assert_within_density_cap("a Monday appendix heading",
+                                   re.sub(r"<[^>]+>", "", h3),
+                                   "a household with no EV")
+    step1 = re.sub(r"<[^>]+>", "", s15[0])
+    assert "flexible house load" in step1, (
+        f"the first Monday instruction does not name the load this household can "
+        f"actually move: {step1!r}")
+    assert "(this week, $0)" in step1, (
+        f"the first Monday instruction lost the fact that makes it FREE: {step1!r}")
+
+    # 4. SECTION 9'S HEADINGS. The EV subsection's six tokens all render
+    #    "not applicable" here, and the heading over them has to say so too
+    #    rather than announcing a report card for a car that is not there.
+    ev_headings = [h for h in _H3_RE.findall(sections["s9"])
+                   if _EV_VOCABULARY.search(h)]
+    assert len(ev_headings) == 1, (
+        f"expected exactly one section-9 heading about charging, found "
+        f"{len(ev_headings)}: {ev_headings}")
+    checked += 1
+    assert "not applicable" in ev_headings[0], (
+        f"section 9 still announces a charging report card for a household with no "
+        f"car to report on: {ev_headings[0]!r}")
+
+    # 5. Nothing anywhere in the three regions is malformed.
+    for region in (sections["s0"], sections["s15"], sections["s9"]):
+        for label, pattern in _MALFORMED_RENDER:
+            hit = pattern.search(region)
+            assert not hit, f"a checked region rendered {label}: {hit.group(0)!r}"
+
+    return (f"all {len(_EV_HOUSEHOLD_LITERALS)} artifact-driven markup sites render "
+            f"their EV-household literal unchanged, and {checked} rendered element(s) "
+            f"across sections 0, 9 and 15 name no EV on a household without one "
+            f"(first Monday instruction: '{step1}')")
+
+
+_UNIT_SUFFIX_RE = re.compile(r"^\s*(/yr|/mo|/kWh|/day|%|¢|×|x\b|kWh|kW\b|therms?\b|"
+                             r"years?\b|yr\b|hours?\b|h\b)")
+_SIGIL_PREFIX_RE = re.compile(r"[$~¢+\-±]\s*$")
+
+
+@case
+def case_no_live_markup_welds_a_unit_onto_a_token_that_can_state_it_does_not_apply():
+    """THE CLASS, NOT THE THREE INSTANCES (issue #147, Codex adversarial
+    review). "{{EV_FIX_SAVINGS_100}}/yr" was true markup right up to the
+    moment that token learned to answer "not applicable to this household --
+    household.has_ev is false ...", and then it published a sentence with an
+    annual unit stuck on the end of it, inside the report's most prominent
+    cell.
+
+    The rule that generalises it: a template may not supply a unit or a sigil
+    for a token that can render prose, because the template cannot know which
+    of the two it got. The token owns its own unit -- issue #129's rule,
+    applied to the seam between a token and the markup beside it -- and the
+    tokens that can refuse are DISCOVERED here rather than listed, so one
+    added next year is swept without editing this case.
+
+    Discovery is by resolution, not by declaration: the two applicability
+    fixtures this suite already carries (no EV, no gas) are driven, and every
+    token whose value comes back saying it does not apply is a token no
+    template line may decorate."""
+    refusable, aborts = set(), {}
+
+    def sweep(stub, label):
+        with _patched(rt, "_json", stub):
+            for name, spec in rt.TOKENS.items():
+                if spec.get("kind") == "gap":
+                    continue
+                try:
+                    value = rt.resolve_token(name)
+                except SystemExit as e:
+                    aborts.setdefault(name, f"{label}: {e}")
+                    continue
+                if "not applicable" in value:
+                    refusable.add(name)
+
+    sweep(_no_ev_household(), "no EV")
+
+    def no_gas(doc):
+        doc.clear()
+        doc.update({"applicable": False, "reason": "household.has_gas is false"})
+
+    for artifact in ("all_electric_endgame.json", "heat_pump_conversion.json"):
+        sweep(_stub_for(artifact, no_gas), f"no gas ({artifact})")
+
+    # The sweep must have FOUND something, or every assertion below passes on
+    # an empty set -- the "guard reporting success while covering nothing"
+    # failure this suite names elsewhere.
+    assert len(refusable) >= 15, (
+        f"only {len(refusable)} token(s) were found able to say they do not apply "
+        f"({sorted(refusable)}) -- the discovery step broke, and this case is now "
+        "checking nothing")
+
+    text = _live_template_text()
+    offences = []
+    for m in rt._TOKEN_RE.finditer(text):
+        name = m.group(1)
+        if name not in refusable:
+            continue
+        after = text[m.end():m.end() + 12]
+        before = text[max(0, m.start() - 4):m.start()]
+        if _UNIT_SUFFIX_RE.match(after):
+            offences.append((name, "a unit welded on after it", repr(after)))
+        if _SIGIL_PREFIX_RE.search(before):
+            offences.append((name, "a sigil in front of it", repr(before)))
+    assert not offences, (
+        "report-template.html decorates a token that can render 'not applicable to "
+        "this household' as though it were always a number, so that household's "
+        "report publishes a sentence wearing a unit: "
+        + "; ".join(f"{n} has {why} ({ctx})" for n, why, ctx in offences)
+        + ". Move the unit into the token, the way S0_FREE_WIN_CARD_FIGURE owns "
+          "its '/yr'")
+    note = ""
+    if aborts:
+        # NOT ASSERTED ON, and deliberately: a token that aborts under one of
+        # these fixtures is a real finding of the same family (a leaf token
+        # reading past a shape a generator legitimately writes), but it is a
+        # DIFFERENT cause from the markup seam this case guards, and silently
+        # folding one into the other is how a guard stops naming what it
+        # caught. It is reported so the next reader sees it.
+        note = (f"; {len(aborts)} token(s) abort outright under one of these "
+                f"fixtures and need their own fix: {sorted(aborts)}")
+    return (f"no live template line decorates any of the {len(refusable)} token(s) "
+            f"that can state they do not apply{note}")
+
+
+@case
+def case_the_free_win_card_stops_calling_it_a_win_when_the_artifacts_say_it_is_not():
+    """The card's label is a CLAIM ABOUT THE SIGN of the figure printed
+    directly above it, so "Free win" over a modeled loss is the same class of
+    falsehood as "EV charging" over a household with no car -- fixed prose
+    contradicting the number beside it.
+
+    Three states, the same three _free_fix_clause carries, driven by moving
+    BOTH artifacts together: packages.LOW.savings_yr is literally
+    round(scenarios[k].saved), and swapping one alone builds a pair no run
+    produces and tests the drift guard instead of the card."""
+    scen = rt._json("behavior_rebuild.json")["scenarios"]
+    got = {}
+
+    def free_win_card():
+        """Section 0's free-win card, located by the one thing that survives
+        every branch: it is the card whose label states what the free
+        behavior fix is worth."""
+        cards = [c for c in _CARD_RE.findall(_rendered_sections()["s0"])
+                 if re.search(r'<div class="lbl">(Free win|No modeled saving|'
+                              r'Costs money here):', c)]
+        assert len(cards) == 1, (
+            f"expected exactly one free-win card in section 0, found {len(cards)}")
+        return cards[0]
+
+    def priced_at(amount):
+        def behavior(doc):
+            doc["scenarios"]["a"]["saved"] = float(amount)
+
+        def package(doc):
+            doc["packages"]["LOW"]["savings_yr"] = round(amount)
+        return _stub_for_many({"behavior_rebuild.json": behavior,
+                               "package_results.json": package})
+
+    for label, amount, forbidden, wanted in (
+            ("zero", 0.0, "Free win", "No modeled saving"),
+            ("a loss", -812.0, "Free win", "Costs money here")):
+        with _patched(rt, "_json", priced_at(amount)):
+            got[label] = free_win_card()
+        assert forbidden not in got[label], (
+            f"section 0's card calls a free fix worth {amount}/yr a {forbidden!r}: "
+            f"{got[label]!r}")
+        assert wanted in got[label], (
+            f"section 0's card does not state what {amount}/yr actually is: "
+            f"{got[label]!r}")
+        for name, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(got[label]), f"{label} rendered {name}: {got[label]}"
+
+    # The positive control: the same card on the same household at a real
+    # positive saving DOES sell it, or "never says Free win" would pass on a
+    # card that never says anything.
+    assert "Free win" in free_win_card(), (
+        "the card withholds 'Free win' from a fix the artifacts price at "
+        f"${round(scen['a']['saved']):,}/yr")
+
+    def _cells(card):
+        return (re.search(r'<div class="big[^"]*">(.*?)</div>', card).group(1),
+                re.search(r'<div class="lbl">([^:]*):', card).group(1))
+
+    return ("section 0's free-win card states a zero and a loss as themselves "
+            f"({_cells(got['zero'])} / {_cells(got['a loss'])}) and still sells a "
+            "real saving")
+
+
+@case
+def case_the_third_free_fix_naming_renders_a_heading_and_a_label_of_its_own():
+    """_free_fix_move returns THREE names, and only two of them are reachable
+    from the artifacts any generator writes today: analysis/package_results.py
+    picks scenario "a" for a household with an EV and "c" for one without, so
+    "EV-and-house-load" -- scenario c on a household that DOES have an EV --
+    is a branch no case above ever renders.
+
+    It is still a branch the markup depends on: the Monday appendix's first
+    heading looks its imperative up by that name and REFUSES a name it has no
+    instruction for, and CLAUDE.md section 10's density cap governs every
+    branch rather than the one that renders today. A branch nothing exercises
+    is where the next KeyError lives."""
+    scen = rt._json("behavior_rebuild.json")["scenarios"]
+
+    def prices_scenario_c(doc):
+        low = doc["packages"]["LOW"]
+        low["free_fix_scenario"] = "c"
+        low["savings_yr"] = round(scen["c"]["saved"])
+
+    with _patched(rt, "_json", _stub_for("package_results.json", prices_scenario_c)):
+        heading = _renders("S15_STEP1_HEADING")
+        label = _renders("S0_FREE_WIN_CARD_LABEL")
+        short = _renders("FREE_FIX_SHORT_NAME")
+        figure = _renders("S0_FREE_WIN_CARD_FIGURE")
+
+    # It moves BOTH, so both are named: an instruction that mentioned only the
+    # charger would leave the house-load half of the move unstated, and one
+    # that mentioned only the load would drop the half this household is
+    # already doing.
+    assert "charging" in heading and "flexible house load" in heading, (
+        f"the first Monday instruction does not name both halves of the move "
+        f"packages.LOW prices: {heading!r}")
+    assert "EV charging and flexible house load" in label, (
+        f"section 0's card does not name both halves of the move: {label!r}")
+    assert short == "EV-and-house-load", short
+    assert re.fullmatch(r"~?-?\$[\d,]+/yr", figure), figure
+    _assert_within_density_cap("S15_STEP1_HEADING", heading, "scenario c with an EV")
+    _assert_within_density_cap("S0_FREE_WIN_CARD_LABEL", label, "scenario c with an EV")
+    for name, value in (("S15_STEP1_HEADING", heading),
+                        ("S0_FREE_WIN_CARD_LABEL", label),
+                        ("S0_FREE_WIN_CARD_FIGURE", figure)):
+        for what, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(value), f"{name} rendered {what}: {value}"
+    return (f"the third free-fix naming renders '{heading}' / '{label}' "
+            f"({figure}) instead of refusing a branch no committed artifact reaches")
+
+
 def _night_floor_readers():
     """Every non-gap token whose resolution ACTUALLY READS
     data/quiet_night_floor.json, discovered by the loader's own record.

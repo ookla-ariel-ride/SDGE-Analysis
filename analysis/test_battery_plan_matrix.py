@@ -96,18 +96,56 @@ _SHIFT_PROBE = """
 import json, sys
 sys.path.insert(0, {tmp!r})
 import behavior_rebuild as br, rates as R
-from battery_dispatch_policies import run_batt, CHARGE_KW
+from battery_dispatch_policies import run_batt, free_fix_shift, CHARGE_KW
 d = br.load().copy()
 d["p"] = [R.period_at(t) for t in d.dt]
 ev, sessions = br.detect_sessions(d)
-sop_idx, sop_ts = br.build_sop_index(d)
-imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
+imp0 = d.Consumption.values.astype(float)
+imp_sh, moved, scenario = free_fix_shift(d, imp0)
 imp_p, exp_p, _, _ = run_batt(d, imp_sh, d.Generation.values.astype(float), 13.5,
                               "greedy", charge_kw=CHARGE_KW)
 print(json.dumps({{"imp_p": [float(x) for x in imp_p],
                    "exp_p": [float(x) for x in exp_p],
-                   "moved": float(moved), "n_sessions": len(sessions)}}))
+                   "moved": float(moved), "n_sessions": len(sessions),
+                   "scenario": scenario}}))
 """
+
+
+def _noev_household_yaml():
+    """test_scripts_runnable.SYNTH_HOUSEHOLD with household.has_ev set false and
+    the charger block removed -- behavior_rebuild.py refuses a declared charger
+    alongside a false flag, so both edits are needed for a household that is
+    genuinely EV-free rather than merely quiet.
+
+    Every edit asserts it took. A string-surgery fixture that silently matched
+    nothing would leave the EV household in place and make the no-EV cases below
+    pass for the wrong reason (see the forcing-fixtures lesson: a helper that
+    FORCES a precondition must prove it forced it)."""
+    hh = TSR.SYNTH_HOUSEHOLD
+    assert "charger:\n  kw: 11.5\n" in hh, "SYNTH_HOUSEHOLD no longer declares a charger"
+    assert "household:\n  pto_date: 2019-12-01\n" in hh, \
+        "SYNTH_HOUSEHOLD's household block no longer has the shape this edit expects"
+    hh = hh.replace("household:\n  pto_date: 2019-12-01\n",
+                    "household:\n  pto_date: 2019-12-01\n  has_ev: false\n")
+    hh = hh.replace("charger:\n  kw: 11.5\n", "")
+    assert "has_ev: false" in hh and "charger:" not in hh, hh
+    return hh
+
+
+def _noev_root(tmp):
+    """A throwaway repo root whose household genuinely has no EV, with
+    behavior_rebuild.py already run in it (its scenarios.c is the independent
+    cross-check target for what the free fix should move)."""
+    TSR._build_throwaway_root(tmp, synthetic=True)
+    (tmp / "private" / "household.yaml").write_text(_noev_household_yaml())
+    r = subprocess.run([sys.executable, "behavior_rebuild.py"], cwd=tmp,
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, f"behavior_rebuild.py failed: {r.stderr[-2000:]}"
+    br_json = json.loads((tmp / "behavior_rebuild.json").read_text())
+    assert br_json["scenarios"]["a"].get("not_applicable") is True, (
+        "the no-EV fixture did not actually produce an EV-free household: "
+        f"scenarios.a is {br_json['scenarios']['a']!r}")
+    return br_json
 
 
 def _independent_ref_and_dispatch(tmp):
@@ -139,9 +177,10 @@ def _independent_ref_and_dispatch(tmp):
     exp_battery_value = round(ref["EV-TOU-5"] - with_b5)
 
     # Step 1b (issue #200): the mid PACKAGE reference — the same integrated
-    # shift-then-battery series the generator itself builds (behavior_rebuild
-    # scenario a, all sessions, then the 13.5 kWh greedy dispatch), billed with
-    # the SAME independent transcription per plan. The generator's new
+    # shift-then-battery series the generator itself builds (this household's
+    # own free fix via battery_dispatch_policies.free_fix_shift, then the
+    # 13.5 kWh greedy dispatch), billed with the SAME independent transcription
+    # per plan. The generator's new
     # mid-package crosscheck also demands a post_behavior.mid block in the
     # dispatch artifact, so every case's tie-out fixture needs these figures.
     r3 = subprocess.run([sys.executable, "-c", _SHIFT_PROBE.format(tmp=str(tmp))],
@@ -149,7 +188,8 @@ def _independent_ref_and_dispatch(tmp):
     assert r3.returncode == 0, f"shift probe failed: {r3.stderr[-2000:]}"
     s = json.loads(r3.stdout)
     imp_p, exp_p = np.array(s["imp_p"]), np.array(s["exp_p"])
-    pkg_ref = {"moved": s["moved"], "n_sessions": s["n_sessions"], "plans": {}}
+    pkg_ref = {"moved": s["moved"], "n_sessions": s["n_sessions"],
+               "scenario": s["scenario"], "plans": {}}
     for p in _PLANS:
         pb = _ref_bill(p, seas, per, imp_p, exp_p)
         pkg_ref["plans"][p] = {"package_bill": pb,
@@ -314,6 +354,12 @@ def case_mid_package_on_plans_on_a_synthetic_house():
     mp = out["mid_package_on_plans"]
     assert mp["kwh_moved"] == round(pkg_ref["moved"]), (
         mp["kwh_moved"], pkg_ref["moved"])
+    # Positive control for the no-EV case below (issue #147): a household that
+    # HAS an EV must still get scenario a, and the arithmetic must still be the
+    # EV shift's own kWh, not the house shift's.
+    assert pkg_ref["scenario"] == "a", pkg_ref["scenario"]
+    assert mp["free_fix_scenario"] == "a", mp
+    assert "EV shift scenario a" in mp["method"], mp["method"]
     for plan in _PLANS:
         got, exp = mp["plans"][plan], pkg_ref["plans"][plan]
         assert abs(got["package_bill"] - round(exp["package_bill"])) <= 1, (
@@ -369,12 +415,82 @@ def case_mid_package_crosscheck_fails_closed_on_divergent_dispatch_artifact():
             "artifact is written")
 
 
+def case_mid_package_uses_the_house_shift_when_the_household_has_no_ev():
+    """issue #147: on a household whose intake says household.has_ev is false,
+    the mid-package row must be behavior scenario c (the flexible house-load
+    shift) THEN the battery -- the same pipeline package_results.py's MID uses
+    for that household.
+
+    The generator used to call behavior_rebuild.shift_ev() unconditionally.
+    That moves nothing here, so kwh_moved was 0 and the "package" row was the
+    battery-only row wearing a package label, while packages.LOW/MID for the
+    same household were scenario c: two pipelines under one name, which
+    CLAUDE.md section 9 forbids.
+
+    Two independent things are checked, deliberately: the LABEL
+    (free_fix_scenario == "c" and a method sentence naming scenario c) and the
+    ARITHMETIC (kwh_moved equals behavior_rebuild.json's OWN
+    scenarios.c.house_kwh_moved, computed by a different script from a
+    different entry point, and the per-plan bills equal an independent
+    transcription of the shifted-then-dispatched year). A label without the
+    arithmetic would pass on a generator that stamps "c" on an unshifted
+    year."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        br_json = _noev_root(tmp)
+        ref, with_b5, exp_battery_value, pkg_ref = _independent_ref_and_dispatch(tmp)
+        assert pkg_ref["scenario"] == "c", (
+            "free_fix_shift did not select scenario c on the no-EV fixture", pkg_ref)
+        assert pkg_ref["moved"] > 0, (
+            "the no-EV free fix moved nothing, so this case could not tell a "
+            "working shift from the unconditional-shift_ev defect", pkg_ref)
+
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(
+            _dispatch_fixture(ref, exp_battery_value, pkg_ref))
+
+        r = subprocess.run([sys.executable, "battery_plan_matrix.py"], cwd=tmp,
+                           capture_output=True, text=True, timeout=600)
+        assert r.returncode == 0, f"battery_plan_matrix.py failed: {r.stderr[-2000:]}"
+        out = json.loads((tmp / "data" / "battery_plan_matrix.json").read_text())
+
+    scen_c = br_json["scenarios"]["c"]
+    mp = out["mid_package_on_plans"]
+    assert mp["free_fix_scenario"] == "c", mp
+    assert "scenario c" in mp["method"], mp["method"]
+    assert "EV shift scenario a" not in mp["method"], mp["method"]
+    # the arithmetic: what the generator moved is scenario c's own house shift
+    assert mp["kwh_moved"] == round(scen_c["house_kwh_moved"]), (
+        "mid-package kwh_moved does not equal behavior_rebuild scenarios.c's "
+        "own house_kwh_moved", mp["kwh_moved"], scen_c["house_kwh_moved"])
+    assert mp["kwh_moved"] > 0, (
+        "mid-package kwh_moved is zero on a no-EV household -- the free fix "
+        "did not run", mp)
+    for plan in _PLANS:
+        got, exp = mp["plans"][plan], pkg_ref["plans"][plan]
+        assert abs(got["package_bill"] - round(exp["package_bill"])) <= 1, (
+            plan, got, exp)
+        assert abs(got["package_save"] - exp["package_save"]) <= 2, (
+            plan, got, exp)
+        # and the package must be worth strictly MORE than the battery alone:
+        # a degenerate (unshifted) package row would equal the battery row
+        assert got["package_save"] > out["plans"][plan]["battery_value"], (
+            f"{plan}: the package saves no more than the battery alone, so the "
+            "free fix contributed nothing", got, out["plans"][plan])
+    return ("on a household with household.has_ev false, "
+            "mid_package_on_plans runs behavior scenario c (the house-load "
+            f"shift, {mp['kwh_moved']} kWh — behavior_rebuild's own "
+            "scenarios.c.house_kwh_moved) before the battery, records "
+            "free_fix_scenario \"c\", names scenario c in its method, and "
+            "beats the battery-alone row on every plan")
+
+
 CASES = [
     case_battery_plan_matrix_end_to_end_on_a_synthetic_house,
     case_disagreeing_current_run_dispatch_artifact_wins_and_is_announced,
     case_malformed_current_run_dispatch_artifact_fails_closed,
     case_mid_package_on_plans_on_a_synthetic_house,
     case_mid_package_crosscheck_fails_closed_on_divergent_dispatch_artifact,
+    case_mid_package_uses_the_house_shift_when_the_household_has_no_ev,
 ]
 
 

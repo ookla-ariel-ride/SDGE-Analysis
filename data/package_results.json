@@ -29,7 +29,7 @@
    "savings_yr": 3675,
    "marginal_vs_mid_yr": 216,
    "projected_bill_current_rates_yr": 1229,
-   "note": "post-behavior expansion marginal $216/yr (~27-yr marginal payback on $5,900) \u2014 outage endurance is the reason to buy it"
+   "note": "post-behavior (EV shift) expansion marginal $216/yr (~27-yr marginal payback on $5,900) \u2014 outage endurance is the reason to buy it"
   }
  },
  "superseded": "additive cross-model splicing (behavior + battery from different engines) replaced by the integrated pipeline; package payback framings that credit free behavior to hardware remain invalid"

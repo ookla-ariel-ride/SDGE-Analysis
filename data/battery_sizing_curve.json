@@ -535,6 +535,7 @@
    "ratio_null_note": "power_elasticity is a true (or floating-point-noise) zero in this scenario's reference neighborhood once charge is held fixed -- save_usd does not measurably change with discharge power there -- so there is no local sensitivity to form a ratio against; the ratio fields are null rather than a large number produced by dividing by noise. energy binds; power does not measurably bind at all in this neighborhood.",
    "charge_held_fixed_diagnostic_note": "the published energy_elasticity's flanking point above the 13.5 kWh reference (15 kWh) correctly uses the real with-expansion charge rate (8 kW) for that capacity, while the reference point itself uses the bare-unit rate (5 kW) -- a small second variable (charge rate) moving alongside the intended one (capacity) in that one derivative (Codex adversarial review, fourth pass). energy_elasticity_charge_held_fixed_diagnostic re-derives the SAME local elasticity a second way, with the 15 kWh flanking point's charge rate counterfactually held at 5 kW instead of 8 kW -- diagnostic only, does NOT change energy_sweep_at_11.5kw's own rows (still correct, real per-product hardware) or the published energy_elasticity above. See TECHNICAL.md for the comparison and why the qualitative energy-binds-far-more-than-power conclusion is unaffected."
   },
-  "ev_kwh_moved": 2618
+  "free_fix_kwh_moved": 2618,
+  "free_fix_scenario": "a"
  }
 }

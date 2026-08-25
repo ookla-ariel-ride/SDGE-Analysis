@@ -5746,6 +5746,240 @@ def case_template_fixed_prose_lines_all_appear_in_the_published_page():
     return _fixed_prose_gate(TEMPLATE_HTML, HTML)
 
 
+# The section-7 one-pipeline sentence, read OUT of the template instead of
+# typed into the mutation table below.
+#
+# The sentence names the free fix that runs before the battery, and issue #147
+# made that name a token ({{FREE_FIX_SHORT_NAME}}: "EV" here, "house-load" for
+# a household with no EV), because the literal "EV" asserted a vehicle the
+# household may not own. A mutation anchored on the literal sentence therefore
+# stopped matching the moment the template was tokenized -- and the mutation's
+# uniqueness assert would have reported that as "re-anchor it", which is what
+# this pattern does once and for all: the fix's NAME is a wildcard, the rest of
+# the sentence -- the claim the guard is about -- is matched exactly. A rename
+# of the token, or a second household name for the fix, keeps the anchor; an
+# edit to the pipeline claim itself still breaks it loudly, which is correct,
+# because the mutation below exists to prove that exact claim is guarded.
+_S7_PIPELINE_SENTENCE_RE = re.compile(
+    r"behavior and battery are simulated in ONE integrated pipeline "
+    r"\(\{\{[A-Z0-9_]+\}\} shift first, then battery, re-billed end-to-end\), "
+    r"so nothing is double-counted\.")
+
+
+def _s7_pipeline_sentence():
+    """The live s7 one-pipeline sentence, exactly as the template spells it.
+    Asserts it appears EXACTLY once, so the mutation built on it still edits
+    one known line rather than silently zero or several."""
+    hits = _S7_PIPELINE_SENTENCE_RE.findall(TEMPLATE_HTML)
+    assert len(hits) == 1, (
+        "the section-7 one-pipeline sentence no longer appears exactly once in "
+        f"report-template.html ({len(hits)} matches for "
+        f"{_S7_PIPELINE_SENTENCE_RE.pattern!r}) -- the fixed-prose guard's "
+        "mutation is anchored on it; re-anchor the mutation, do not delete it")
+    return hits[0]
+
+
+# ---------------------------------------------------------------------------
+# ISSUE #147: LIVE TEMPLATE MARKUP MAY NOT NAME A FREE FIX THIS HOUSEHOLD
+# DOES NOT HAVE.
+#
+# Seven tokens were taught to render truthfully for a household whose intake
+# says household.has_ev is false, and the page stayed false anyway, because the
+# FIXED MARKUP around those tokens went on asserting an EV in its own voice: a
+# <h3> reading "success metrics for the EV fix", a section-7 paragraph reading
+# "EV shift first, then battery". A token cannot correct a sentence it does not
+# appear in, so the property worth guarding is not the wording of any one
+# sentence -- it is that live markup never spells a household-specific EV fact
+# at all. Every such fact belongs to a token (resolved from the artifacts) or
+# to a TODO block (written from the artifacts); neither is fixed markup.
+#
+# TWO HALVES, and they catch different defects:
+#   (1) a VOCABULARY sweep over all live markup -- fixed prose may not contain
+#       an EV-asserting word anywhere, so a new sentence added tomorrow is
+#       covered without anyone adding a case for it;
+#   (2) a SEMANTIC check on the one-pipeline claim -- the fix it names must be
+#       token-owned AND the token's value must agree with what the committed
+#       artifacts say the free fix moves. Half (1) alone would pass a template
+#       that hard-codes "house-load shift first" over a household WITH an EV,
+#       which is the same lie pointing the other way.
+#
+# WHAT IS DELIBERATELY NOT IN THE VOCABULARY: "charge", "recharge", "charge
+# cap". Those are battery words in this report ("solar recharge", "continuous
+# charge caps") and banning them would fire on prose that asserts nothing about
+# a vehicle. "charger" and "plug-in" ARE banned -- in this report they name EV
+# hardware and nothing else, so a live mention of either is the same claim as
+# "EV" itself.
+_EV_ASSERTING_LITERALS = (
+    (re.compile(r"\bEVs?\b"), 'the abbreviation "EV"'),
+    (re.compile(r"electric vehicles?", re.I), 'the phrase "electric vehicle"'),
+    (re.compile(r"\bchargers?\b", re.I), 'EV hardware ("charger")'),
+    (re.compile(r"\bplug-ins?\b", re.I), 'an EV habit ("plug-in")'),
+)
+
+# The one-pipeline claim with the FIX NAME left open, so the check reads what
+# the template actually put there instead of assuming a token is there.
+_S7_PIPELINE_FIX_RE = re.compile(
+    r"integrated pipeline \(([^()]*?) shift first, then battery")
+
+_TOKEN_REF_ONLY_RE = re.compile(r"^\{\{([A-Z0-9_]+)\}\}$")
+
+
+def _blank_keeping_lines(m):
+    """Replacement that deletes a span but keeps the file's line numbering, so
+    a violation can be reported at the line a maintainer will open."""
+    return "\n" * m.group(0).count("\n")
+
+
+def _live_template_markup():
+    """report-template.html as the PUBLISHED page carries it: <script>/<style>
+    bodies dropped, HTML comments (every TODO block) dropped, and {{TOKEN}}
+    references dropped -- a token's NAME is a reference to a value, never a
+    claim the markup makes, so {{EV_FIX_SAVINGS_100}} must not read as one.
+    Line numbers are preserved."""
+    doc = _FIXED_PROSE_SCRIPT_STYLE_RE.sub(_blank_keeping_lines, TEMPLATE_HTML)
+    doc = _FIXED_PROSE_COMMENT_RE.sub(_blank_keeping_lines, doc)
+    return _FIXED_PROSE_TOKEN_RE.sub("", doc)
+
+
+def _free_fix_moves_ev():
+    """Whether the committed artifacts say the free behavior fix moves EV
+    charging at all -- recomputed here from the two artifacts rather than by
+    calling report_tokens, so a bug in that module's naming branch fails this
+    case too instead of being confirmed by it.
+
+    behavior_rebuild.py's scenario ladder: a and b shift EV sessions; c and d
+    shift flexible house load, and carry the EV shift as well wherever an EV
+    exists. Which rung the LOW package IS comes from the generator's own
+    statement of it (packages.LOW.free_fix_scenario), never re-derived; whether
+    an EV exists comes from the detector block, which behavior_rebuild.py
+    replaces with a {"not_applicable": true} stub for a household whose intake
+    says it has none."""
+    pk = json.loads((ROOT / "data" / "package_results.json").read_text())
+    scenario = pk["packages"]["LOW"].get("free_fix_scenario")
+    assert scenario in ("a", "b", "c", "d"), (
+        "data/package_results.json:packages.LOW.free_fix_scenario is "
+        f"{scenario!r}, which is not one of behavior_rebuild.py's four shift "
+        "scenarios -- nothing here can say what the free fix moves")
+    has_ev = BEHAVIOR["detection"].get("not_applicable") is not True
+    return scenario, (True if scenario in ("a", "b") else has_ev)
+
+
+def _live_markup_ev_assertions(doc):
+    """[(line number, label, line)] for every EV-asserting literal in live
+    markup. A pure function of the document so the guard case below can feed it
+    a mutated copy."""
+    out = []
+    for n, line in enumerate(doc.splitlines(), 1):
+        for rx, label in _EV_ASSERTING_LITERALS:
+            if rx.search(line):
+                out.append((n, label, line.strip()))
+    return out
+
+
+def case_live_template_markup_never_names_a_free_fix_the_household_lacks():
+    """No fixed markup in report-template.html asserts an EV, and the
+    section-7 one-pipeline sentence names the same free fix the committed
+    artifacts do (issue #147)."""
+    doc = _live_template_markup()
+    assertions = _live_markup_ev_assertions(doc)
+    assert not assertions, (
+        "live report-template.html markup asserts an EV in its own voice -- a "
+        "household whose intake says household.has_ev is false gets a page that "
+        "is false no matter how its tokens render. Move the fact into a token "
+        "(resolved from the artifacts) or into a TODO block:\n"
+        + "\n".join(f"  line {n}: {label} in: {line[:160]}"
+                    for n, label, line in assertions))
+
+    # (2) The one-pipeline claim: token-owned, and the token agrees with the
+    # artifacts about what the free fix actually moves.
+    named = _S7_PIPELINE_FIX_RE.findall(doc)
+    assert len(named) == 1, (
+        "the section-7 one-pipeline sentence ('... integrated pipeline (X shift "
+        f"first, then battery ...') appears {len(named)} times in live template "
+        "markup, expected exactly once -- CLAUDE.md section 9's one-pipeline "
+        "claim is stated there and this case checks WHICH fix it names")
+    # {{TOKEN}} references were stripped from `doc`, so a token-owned name
+    # leaves an empty slot here; anything else is fixed markup naming the fix.
+    assert named[0] == "", (
+        f"the section-7 one-pipeline sentence names its free fix as {named[0]!r}, "
+        "which is fixed markup, not a token -- whichever household the artifacts "
+        "describe, a literal there is a claim the template makes on its own. Use "
+        "the token the Monday appendix's success-metrics heading already uses")
+    m = _S7_PIPELINE_FIX_RE.search(
+        _FIXED_PROSE_COMMENT_RE.sub(_blank_keeping_lines, TEMPLATE_HTML))
+    token_ref = _TOKEN_REF_ONLY_RE.match(m.group(1).strip())
+    assert token_ref, (
+        "the section-7 one-pipeline sentence's free-fix slot is not a single "
+        f"{{{{TOKEN}}}} reference: {m.group(1)!r}")
+    token = token_ref.group(1)
+
+    import report_tokens as rt
+    assert token in rt.TOKENS, (
+        f"the section-7 one-pipeline sentence names its free fix with "
+        f"{{{{{token}}}}}, which report_tokens.py does not declare")
+    rendered = rt.resolve_token(token, rt.TOKENS[token])
+    scenario, moves_ev = _free_fix_moves_ev()
+    says_ev = bool(re.search(r"\bEV\b", str(rendered)))
+    assert says_ev == moves_ev, (
+        f"section 7 says the integrated pipeline runs the {rendered!r} shift "
+        f"first, but the artifacts say the free fix "
+        f"{'does' if moves_ev else 'does NOT'} move EV charging "
+        f"(data/package_results.json:packages.LOW.free_fix_scenario = "
+        f"{scenario!r}; data/behavior_rebuild.json:detection is "
+        f"{'a not-applicable stub' if BEHAVIOR['detection'].get('not_applicable') is True else 'a real detector run'})")
+    return (f"live template markup asserts no EV ({len(doc.splitlines())} lines "
+            f"swept for {len(_EV_ASSERTING_LITERALS)} EV-asserting literals) and "
+            f"section 7's one-pipeline sentence names the free fix through "
+            f"{{{{{token}}}}} = {rendered!r}, which agrees with scenario "
+            f"{scenario!r}")
+
+
+def case_the_free_fix_naming_guard_rejects_the_claims_it_exists_to_catch():
+    """The guard above, fed the two defect shapes issue #147 is about, in
+    memory: (1) the EV literal put back into live markup, (2) the fix named by
+    fixed markup rather than a token. A guard trusted on plausibility has
+    already shipped a silent no-op in this file (tests-must-fail memory)."""
+    clean = _live_template_markup()
+    assert not _live_markup_ev_assertions(clean), (
+        "positive control: the unmutated template must be clean before this "
+        "case can prove the guard catches anything")
+
+    # (1) the literal EV assertion, in the exact site issue #147 found.
+    ev_literal = clean.replace(
+        "integrated pipeline ( shift first",
+        "integrated pipeline (EV shift first")
+    assert ev_literal != clean, "mutation 1 was a no-op -- re-anchor it"
+    caught = _live_markup_ev_assertions(ev_literal)
+    assert caught and any('the abbreviation "EV"' == label for _n, label, _l in caught), (
+        "the vocabulary sweep did NOT catch a live 'EV shift first' in section 7")
+
+    # (1b) the same defect worded differently, to prove the sweep is a
+    # vocabulary check and not a second pin on one sentence.
+    charger = clean.replace(
+        "Logged before the change",
+        "Reprogram the charger, then logged before the change")
+    assert charger != clean, "mutation 1b was a no-op -- re-anchor it"
+    caught_b = _live_markup_ev_assertions(charger)
+    assert caught_b and any('charger' in label for _n, label, _l in caught_b), (
+        "the vocabulary sweep did NOT catch live markup naming an EV charger")
+
+    # (2) the fix named by fixed markup instead of a token -- worded so the
+    # vocabulary sweep CANNOT see it, which is why half (2) exists.
+    literal_fix = clean.replace(
+        "integrated pipeline ( shift first",
+        "integrated pipeline (house-load shift first")
+    assert literal_fix != clean, "mutation 2 was a no-op -- re-anchor it"
+    assert not _live_markup_ev_assertions(literal_fix), (
+        "mutation 2 must be invisible to the vocabulary sweep, or it does not "
+        "prove the semantic half catches anything")
+    named = _S7_PIPELINE_FIX_RE.findall(literal_fix)
+    assert named == ["house-load"], (
+        "the semantic half did NOT see a fixed-markup free-fix name in the "
+        f"section-7 one-pipeline sentence: {named!r}")
+    return ("the free-fix naming guard catches an EV literal, an EV-charger "
+            "literal, and a fixed-markup fix name the vocabulary sweep cannot see")
+
+
 def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
     """The three defect shapes issue #201 names, plus a fourth (an edit to an
     ALLOWLISTED line that keeps the entry's substring), reintroduced one at a
@@ -5755,9 +5989,7 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
     baseline_checked, baseline_drift = _template_fixed_prose_drift(TEMPLATE_HTML, HTML)
     mutations = [
         ("s7 overlap-deduction wording resurrected",
-         "behavior and battery are simulated in ONE integrated pipeline "
-         "(EV shift first, then battery, re-billed end-to-end), so nothing "
-         "is double-counted.",
+         _s7_pipeline_sentence(),
          "behavior/battery interaction is modeled so nothing is double-counted "
          "(overlap: {{OVERLAP_DEDUCTION}}/yr).",
          "s7", "double-counted"),
@@ -6355,6 +6587,8 @@ CASES = [
     case_degradation_naive_band_contains_every_estimator_it_is_built_from,
     case_glossary_figures_match_the_artifacts_that_derive_them,
     case_template_fixed_prose_lines_all_appear_in_the_published_page,
+    case_live_template_markup_never_names_a_free_fix_the_household_lacks,
+    case_the_free_fix_naming_guard_rejects_the_claims_it_exists_to_catch,
     case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch,
     case_every_published_export_figure_names_its_treatment,
     case_stored_kwh_costs_match_the_dispatch_artifact,

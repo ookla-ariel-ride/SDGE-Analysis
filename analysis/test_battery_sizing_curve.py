@@ -15,6 +15,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_battery_sizing_curve.p
 import glob
 import json
 import pathlib
+import subprocess
 import sys
 import tempfile
 
@@ -39,6 +40,7 @@ import rates as R                            # noqa: E402
 import behavior_rebuild as br                 # noqa: E402
 from battery_dispatch_policies import run_batt, billed  # noqa: E402
 import battery_sizing_curve as bsc            # noqa: E402
+import test_scripts_runnable as TSR           # noqa: E402  (synthetic-fixture machinery)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 USAGE_GLOB = str(ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")
@@ -801,6 +803,127 @@ def case_committed_artifact_power_sweep_confound_fix_is_reflected():
             "(power_elasticity 0.0025 current / ~0 post, correct null-ratio "
             "handling) and the energy-elasticity diagnostic is within 2% of "
             "published in both scenarios")
+
+
+# ---------------------------------------------------------------------------
+# issue #147 -- the post-behavior sweep sits on top of THIS household's own
+# free behavior fix, chosen by battery_dispatch_policies.free_fix_shift():
+# scenario a (the EV charge reschedule) with an EV, scenario c (the flexible
+# house-load shift) without. main() used to call behavior_rebuild.shift_ev()
+# unconditionally, which moves nothing on a household with no EV -- so the
+# whole post_behavior block was the battery on the BARE baseline, published
+# under a post-behavior label (CLAUDE.md section 9's one-pipeline rule).
+# Both cases below run the REAL generator end to end in a throwaway repo root.
+# ---------------------------------------------------------------------------
+def _noev_household_yaml():
+    """test_scripts_runnable.SYNTH_HOUSEHOLD with household.has_ev set false and
+    the charger block removed -- behavior_rebuild.py refuses a declared charger
+    alongside a false flag, so both edits are needed for a household that is
+    genuinely EV-free rather than merely quiet.
+
+    Every edit asserts it took: a string-surgery fixture that silently matched
+    nothing would leave the EV household in place and let the no-EV case below
+    pass for the wrong reason."""
+    hh = TSR.SYNTH_HOUSEHOLD
+    assert "charger:\n  kw: 11.5\n" in hh, "SYNTH_HOUSEHOLD no longer declares a charger"
+    assert "household:\n  pto_date: 2019-12-01\n" in hh, \
+        "SYNTH_HOUSEHOLD's household block no longer has the shape this edit expects"
+    hh = hh.replace("household:\n  pto_date: 2019-12-01\n",
+                    "household:\n  pto_date: 2019-12-01\n  has_ev: false\n")
+    hh = hh.replace("charger:\n  kw: 11.5\n", "")
+    assert "has_ev: false" in hh and "charger:" not in hh, hh
+    return hh
+
+
+def _run_sizing_curve_on(tmp, household_yaml=None):
+    """Build a throwaway repo root, optionally replace its household.yaml, run
+    behavior_rebuild.py and then the REAL battery_sizing_curve.py in it, and
+    return (behavior_rebuild.json, battery_sizing_curve.json)."""
+    TSR._build_throwaway_root(tmp, synthetic=True)
+    if household_yaml is not None:
+        (tmp / "private" / "household.yaml").write_text(household_yaml)
+    for script in ("behavior_rebuild.py", "battery_sizing_curve.py"):
+        r = subprocess.run([sys.executable, script], cwd=tmp,
+                           capture_output=True, text=True, timeout=900)
+        assert r.returncode == 0, f"{script} failed: {r.stderr[-2000:]}"
+    return (json.loads((tmp / "behavior_rebuild.json").read_text()),
+            json.loads((tmp / "data" / "battery_sizing_curve.json").read_text()))
+
+
+@case
+def case_post_behavior_sweep_uses_the_house_shift_when_the_household_has_no_ev():
+    """A household whose intake says household.has_ev is false must get
+    behavior scenario c under its post_behavior sweep, not a no-op EV shift.
+
+    Label and arithmetic are checked separately on purpose. The LABEL is
+    free_fix_scenario == "c". The ARITHMETIC is free_fix_kwh_moved equal to
+    behavior_rebuild.json's OWN scenarios.c.house_kwh_moved -- a figure a
+    different script computed from a different entry point -- plus a strictly
+    cheaper post_behavior baseline bill than current_behavior. A generator that
+    stamped "c" on an unshifted year would pass the label check and fail both
+    arithmetic checks."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        br_json, art = _run_sizing_curve_on(tmp, _noev_household_yaml())
+
+    assert br_json["scenarios"]["a"].get("not_applicable") is True, (
+        "the no-EV fixture did not actually produce an EV-free household",
+        br_json["scenarios"]["a"])
+    post = art["post_behavior"]
+    # compact context: post_behavior carries the whole 16-row sweep, and dumping
+    # it into an assertion message buries the one field that is wrong
+    seen = {k: post.get(k) for k in
+            ("free_fix_scenario", "free_fix_kwh_moved", "ev_kwh_moved")}
+    assert post["free_fix_scenario"] == "c", seen
+    assert "ev_kwh_moved" not in post, (
+        "the EV-specific key is still published on a household with no EV", seen)
+    scen_c = br_json["scenarios"]["c"]
+    assert post["free_fix_kwh_moved"] == round(scen_c["house_kwh_moved"]), (
+        "post_behavior.free_fix_kwh_moved does not equal behavior_rebuild "
+        "scenarios.c's own house_kwh_moved",
+        post["free_fix_kwh_moved"], scen_c["house_kwh_moved"])
+    assert post["free_fix_kwh_moved"] > 0, (
+        "nothing was shifted -- the free fix did not run", seen)
+    delta = (art["current_behavior"]["baseline_bill_current_rates"]
+             - post["baseline_bill_current_rates"])
+    assert delta > 0, (
+        "the post-behavior baseline is not cheaper than the current-behavior "
+        "baseline, so the sweep ran on the bare baseline under a "
+        "post-behavior label", delta)
+    return ("with household.has_ev false the post_behavior sweep runs behavior "
+            f"scenario c first ({post['free_fix_kwh_moved']} kWh, equal to "
+            "behavior_rebuild's own scenarios.c.house_kwh_moved), records "
+            f"free_fix_scenario \"c\", and bills ${delta} cheaper at baseline")
+
+
+@case
+def case_post_behavior_sweep_still_uses_the_ev_shift_when_the_household_has_one():
+    """Positive control for the case above: a household WITH an EV must still
+    get scenario a, and free_fix_kwh_moved must be the EV shift's own kWh
+    (behavior_rebuild scenarios.a.kwh_moved), not the house shift's."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        br_json, art = _run_sizing_curve_on(tmp)
+
+    assert br_json["detection"].get("not_applicable") is not True, (
+        "the EV fixture produced an EV-free household, so this control is "
+        "vacuous", br_json["detection"])
+    scen_a, scen_c = br_json["scenarios"]["a"], br_json["scenarios"]["c"]
+    assert scen_a["kwh_moved"] > 0, scen_a
+    # the two shifts must be distinguishable at all, or neither check below bites
+    assert round(scen_a["kwh_moved"]) != round(scen_c["house_kwh_moved"]), (
+        "the EV shift and the house shift move the same kWh on this fixture, "
+        "so this case cannot tell them apart", scen_a, scen_c)
+    post = art["post_behavior"]
+    seen = {k: post.get(k) for k in
+            ("free_fix_scenario", "free_fix_kwh_moved", "ev_kwh_moved")}
+    assert post["free_fix_scenario"] == "a", seen
+    assert post["free_fix_kwh_moved"] == round(scen_a["kwh_moved"]), (
+        "post_behavior.free_fix_kwh_moved is not the EV shift's own kWh",
+        post["free_fix_kwh_moved"], scen_a["kwh_moved"])
+    return ("with an EV declared, the post_behavior sweep still runs scenario "
+            f"a ({post['free_fix_kwh_moved']} kWh, equal to behavior_rebuild's "
+            "own scenarios.a.kwh_moved) and records free_fix_scenario \"a\"")
 
 
 # ---------------------------------------------------------------------------

@@ -22,23 +22,32 @@ now agree on which days take weekend windows; what still separates this column
 from the canonical figures is the rate basis (published tables here, bill-derived
 there). Both are recorded in the artifact (canonical_crosscheck, asserted against
 the resolved dispatch artifact — see ORDERING CONTRACT below). The same
-shared-window reasoning covers the mid-package EV shift below:
-behavior_rebuild.shift_ev selects source and destination intervals by TOU period
-LABEL only (on/off -> sop), so one shifted import series serves all three plans
-exactly as the one dispatch trace does.
+shared-window reasoning covers the mid-package free-fix shift below: both
+behavior_rebuild.shift_ev and behavior_rebuild.shift_house select source and
+destination intervals by TOU period LABEL only (on/off -> sop), so one shifted
+import series serves all three plans exactly as the one dispatch trace does.
 
 MID PACKAGE (issue #200): the artifact also prices the report's mid package —
-EV shift scenario a (all sessions) FIRST, then the same 13.5 kWh greedy
+this household's free behavior fix FIRST, then the same 13.5 kWh greedy
 dispatch on the shifted year — under EACH plan, so a household whose ranking
 favors a different plan can read what the package is worth on that plan. This
 is ONE integrated pipeline re-billed end-to-end per plan (shift, then dispatch,
 then bill the whole modified year under the plan's own table rates) — never a
 sum of separately modeled deltas (CLAUDE.md section 9's one-pipeline rule).
 Baseline: the SAME plan's modeled no-package year (the no_battery column), same
-published-table rate basis, one rate vintage. A household with no EV
-(household.has_ev false) degenerates cleanly: detect_sessions returns an
-EV-free year, kwh_moved records 0, and the package row equals the battery row —
-the artifact still generates.
+published-table rate basis, one rate vintage.
+
+WHICH free fix that is comes from battery_dispatch_policies.free_fix_shift()
+(issue #147) — scenario a, the EV charge reschedule, when household.has_ev;
+scenario c, the flexible house-load shift, when it is false — so this script
+cannot drift onto a different branch from the two artifacts that already use
+that function. It used to call behavior_rebuild.shift_ev() unconditionally,
+which on a household with no EV moves nothing: kwh_moved was 0 and the "mid
+package" row was the battery-only row wearing a package label, while
+package_results.py's MID for the same household was scenario c THEN the
+battery. Two pipelines under one name is precisely what CLAUDE.md section 9
+forbids. The applied scenario key is published as
+mid_package_on_plans.free_fix_scenario.
 
 ORDERING CONTRACT (this script runs AFTER the dispatch generator):
   battery_dispatch_policies.py  ->  battery_plan_matrix.py, in the SAME working
@@ -63,7 +72,35 @@ import pandas as pd
 
 import rates as R                 # canonical TOU assignment
 import behavior_rebuild as br
-from battery_dispatch_policies import run_batt, CHARGE_KW
+from battery_dispatch_policies import (run_batt, free_fix_shift, CHARGE_KW,
+                                       FREE_FIX_SCENARIO_EV, FREE_FIX_SCENARIO_NO_EV)
+
+# What the mid-package row actually did, per free-fix scenario. The row is one
+# integrated shift-then-dispatch run re-billed per plan either way; only the
+# NAME of the shift that led it differs, so the method sentence has to name the
+# fix that really ran rather than assert the EV one on every household.
+_MID_PACKAGE_METHOD = {
+    FREE_FIX_SCENARIO_EV:
+        ("integrated mid package: EV shift scenario a (all sessions, "
+         "behavior_rebuild.shift_ev) FIRST, then the price-aware PW3 "
+         "greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
+         "on the shifted year, and the WHOLE modified year re-billed "
+         "end-to-end under each plan's own published-table rates — one "
+         "pipeline, never a sum of separately modeled deltas. Baseline "
+         "= the same plan's modeled no-package year (the no_battery "
+         "column), same published-table rate basis, one rate vintage."),
+    FREE_FIX_SCENARIO_NO_EV:
+        ("integrated mid package: house-load shift scenario c "
+         "(behavior_rebuild.shift_house — household.has_ev is false, so the "
+         "free fix that precedes the battery is the flexible on-peak house "
+         "load, not the EV charge reschedule) FIRST, then the price-aware PW3 "
+         "greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
+         "on the shifted year, and the WHOLE modified year re-billed "
+         "end-to-end under each plan's own published-table rates — one "
+         "pipeline, never a sum of separately modeled deltas. Baseline "
+         "= the same plan's modeled no-package year (the no_battery "
+         "column), same published-table rate basis, one rate vintage."),
+}
 
 # ---- published rate-table values (ranking-only; identical to analyze*.py) ----
 WFNBC_DWR = 0.00591
@@ -238,19 +275,28 @@ if __name__ == "__main__":
         print(f"{plan:9s} no-batt ${no_b:8,.0f}  with PW3 ${with_b:8,.0f}  "
               f"battery value ${no_b - with_b:6,.0f}/yr")
 
-    # ---- mid package (EV shift scenario a, then the 13.5 kWh battery), per plan
+    # ---- mid package (this household's free fix, then the 13.5 kWh battery), per plan
     # One integrated pipeline (CLAUDE.md section 9): shift first (exactly as
     # battery_dispatch_policies.py's post_behavior block does), dispatch on the
     # shifted year, then re-bill the WHOLE modified year under each plan's own
     # table rates. Never a sum of separately modeled deltas. The shift is
-    # plan-independent for the same reason the single dispatch trace is: shift_ev
-    # selects intervals by TOU period label only (on/off -> sop) and all three
-    # plans share the 2026 three-period windows. With household.has_ev false,
-    # detect_sessions returns an EV-free year, moved is 0.0, and the package row
-    # degenerates to the battery row — no crash, no refusal.
-    ev, sessions = br.detect_sessions(d)
-    sop_idx, sop_ts = br.build_sop_index(d)
-    imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
+    # plan-independent for the same reason the single dispatch trace is: both
+    # br.shift_ev and br.shift_house select source and destination intervals by
+    # TOU period label only (on/off -> sop) and all three plans share the 2026
+    # three-period windows.
+    #
+    # WHICH fix runs comes from battery_dispatch_policies.free_fix_shift(), the
+    # single implementation of that branch: scenario a (the EV charge
+    # reschedule) when household.has_ev, scenario c (the flexible house-load
+    # shift) when it is false. This used to call br.shift_ev() unconditionally,
+    # and on a household with no EV that is a NO-OP -- moved was 0.0 and the
+    # "mid package" row silently equalled the battery-only row while still
+    # carrying a package label. package_results.py's MID for the same household
+    # is scenario c THEN the battery, so the two artifacts described different
+    # pipelines under the same name. Now the row is the real free fix plus the
+    # battery on every household, and mid_package_on_plans.free_fix_scenario
+    # records which fix it was.
+    imp_sh, moved, fix_scenario = free_fix_shift(d, imp0)
     imp_p, exp_p, _, _ = run_batt(d, imp_sh, gen0, 13.5, "greedy", charge_kw=CHARGE_KW)
     pkg = {}
     for plan in PLANS:
@@ -302,15 +348,12 @@ if __name__ == "__main__":
                       "NEM netting, canonical holiday rule; the published EV-TOU-5 "
                       "battery economics")},
         "mid_package_on_plans": {
-            "method": ("integrated mid package: EV shift scenario a (all sessions, "
-                       "behavior_rebuild.shift_ev) FIRST, then the price-aware PW3 "
-                       "greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
-                       "on the shifted year, and the WHOLE modified year re-billed "
-                       "end-to-end under each plan's own published-table rates — one "
-                       "pipeline, never a sum of separately modeled deltas. Baseline "
-                       "= the same plan's modeled no-package year (the no_battery "
-                       "column), same published-table rate basis, one rate vintage."),
+            "method": _MID_PACKAGE_METHOD[fix_scenario],
             "kwh_moved": round(moved),
+            # WHICH free fix the kwh_moved and every package_save below sit on
+            # top of, straight from free_fix_shift() rather than re-derived
+            # here from an intake flag this artifact's readers cannot see.
+            "free_fix_scenario": fix_scenario,
             "plans": pkg,
             "canonical_crosscheck_ev_tou_5": {
                 "combined_save": canon_mid["combined_save"],

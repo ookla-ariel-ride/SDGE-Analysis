@@ -19,11 +19,22 @@ A later group of cases covers _read_scenario_a's no-EV branch (issue #147): on a
 household whose intake says household.has_ev is false, behavior_rebuild.py
 publishes scenarios.a as an explicit not-applicable stub, which is a VALID
 artifact and must not abort the carbon run -- while every genuinely malformed
-shape must keep aborting. The last of them checks the rendered cost_note, so it
-needs the real Green Button archive and SKIPs without it.
+shape must keep aborting.
+
+A final group covers the same household's ARTIFACT (issue #147, adversarial
+round). Not aborting was only half the job: the EV-domain figures still came out
+as numeric zeros, which read as a measured finding ("moving this household's
+charging saves no carbon") rather than as "this household has no charging to
+move". They now carry the repo's {"not_applicable": true, "reason": ...} marker.
+These cases check BOTH sides of the boundary -- every EV-dependent field marked,
+every grid/meter-measured field still a real number, and an EV household's
+figures untouched -- by RUNNING main() and reading what it wrote, so they need
+the real Green Button archive and SKIP without it. The validator case needs no
+private data and runs everywhere.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_carbon_fullyear.py
 """
+import copy
 import glob
 import json
 import os
@@ -487,6 +498,268 @@ def case_read_scenario_a_fails_closed_on_every_malformed_shape():
             "(only the explicit not_applicable:true marker is tolerated)")
 
 
+def _shaped_intensity_rows(days):
+    """A synthetic 365-day intensity table with a real grid's diurnal SHAPE --
+    dirty overnight, clean midday. A FLAT table would make the window-means
+    comparison identically zero for every household, which is exactly the thing
+    the grid-boundary case below has to be able to see, so a flat fixture would
+    let that case pass against a script that had withheld the figure. The three
+    numbers are invented fixture values; no published figure comes from them."""
+    def kg(hour):
+        if hour < 6 or hour >= 22:
+            return 280.0                    # overnight: gas-heavy
+        if 10 <= hour < 14:
+            return 110.0                    # solar midday: cleanest
+        return 190.0
+    return [(d.strftime("%Y-%m-%d"), h, kg(h)) for d in days for h in range(24)]
+
+
+_CARBON_RUNS = {}
+
+
+def _carbon_artifact(ev_applies):
+    """The artifact carbon_fullyear.main() ACTUALLY WRITES for a household with
+    (True) or without (False) an EV, cached per household kind.
+
+    Nothing about the carbon artifact is hand-mocked. The no-EV household is
+    made no-EV the way a real one is: behavior_rebuild's own EV_ANALYSIS
+    predicate (household.has_ev false) is switched off, so its detector returns
+    an EV-free year and carbon_fullyear reads that same predicate -- and the
+    behavior artifact in the working directory carries the matching
+    not-applicable stub, so the fixture is one coherent household rather than a
+    no-EV artifact beside an EV detection.
+
+    main() reaches these fields only after the household 15-minute pipeline, so
+    this needs the real Green Button archive and SKIPs without it, like the
+    merge case above.
+    """
+    if ev_applies in _CARBON_RUNS:
+        return _CARBON_RUNS[ev_applies]
+    usage_files = sorted(glob.glob(
+        str(C.ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")))
+    if not usage_files:
+        raise SkipCase("the rendered-artifact checks run the full pipeline, "
+                       "which needs the real Green Button archive")
+    import behavior_rebuild as br
+    with tempfile.TemporaryDirectory() as td:
+        tdp = pathlib.Path(td)
+        days = pd.date_range(C.YEAR_START, C.YEAR_END, freq="D")
+        committed_csv = tdp / "hourly.csv"
+        pd.DataFrame(_shaped_intensity_rows(days),
+                     columns=["date", "hour", "kgco2_per_mwh"]).to_csv(
+                         committed_csv, index=False)
+        # _scenario_a_saved() prefers the CURRENT-RUN copy in the working
+        # directory, so put the matching artifact there and run from there.
+        run_dir = tdp / "run"
+        run_dir.mkdir()
+        _write_behavior(run_dir,
+                        {"saved": 1220.85} if ev_applies else dict(_NA_STUB))
+
+        old = (C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON, br.CSV, os.getcwd(),
+               br.EV_ANALYSIS)
+        C.CAISO_DIR = tdp / "no_raw_cache"          # absent: committed CSV only
+        C.HOURLY_CSV = committed_csv
+        C.RESULTS_JSON = tdp / "results.json"       # no prior baseline
+        br.CSV = usage_files[0]
+        br.EV_ANALYSIS = ev_applies
+        os.chdir(run_dir)
+        try:
+            C.main()
+            doc = json.loads(C.RESULTS_JSON.read_text())
+        finally:
+            (C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON, br.CSV) = old[:4]
+            os.chdir(old[4])
+            br.EV_ANALYSIS = old[5]
+    _CARBON_RUNS[ev_applies] = doc
+    return doc
+
+
+# The EV-domain fields the adversarial finding named, written out here rather
+# than read from C.EV_DEPENDENT_FIELDS: a case that took the list under test as
+# its own expectation would keep passing after someone shrank that list, which
+# is precisely the regression the marker exists to stop.
+_EV_FIELDS_FROM_THE_FINDING = {
+    "household_inputs.ev_kwh_detected",
+    "household_inputs.ev_kwh_mistimed_on_off_peak",
+    "footprints_kg_co2_per_yr.b_mistimed_ev_moved_to_sop_00_06",
+    "footprints_kg_co2_per_yr.c_mistimed_ev_moved_to_midday_10_14",
+    "footprints_kg_co2_per_yr.detail.mistimed_ev_kg_at_current_hours",
+    "footprints_kg_co2_per_yr.detail.mistimed_ev_kg_if_charged_00_06",
+    "footprints_kg_co2_per_yr.detail.mistimed_ev_kg_if_charged_10_14",
+    "footprints_kg_co2_per_yr.detail.midday_cleaner_than_overnight_by",
+    "old_vs_new.ev_shift_delta_to_sop_kg",
+    "old_vs_new.ev_shift_delta_to_midday_kg",
+    "old_vs_new.midday_cleaner_than_overnight_by_kg",
+}
+
+
+def _is_stub(v):
+    return isinstance(v, dict) and v.get("not_applicable") is True
+
+
+def _is_number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def case_no_ev_artifact_marks_every_ev_field_not_applicable():
+    """The rendered artifact, end to end: on a household with no EV, every
+    EV-domain figure must carry the explicit not-applicable marker instead of
+    the 0.0 the arithmetic produces.
+
+    A zero here is a FALSE MEASUREMENT. "0 kg saved by moving the charging"
+    reads as a finding -- the fix is worthless on this house -- when the truth
+    is that there is no charging to move (CLAUDE.md section 0: a determinate
+    "does not apply" is not a measured value). The b/c scenario footprints are
+    the sharpest version: they come out as two identical numbers, presented as
+    two distinct scenarios, identical only because the multiplier is zero.
+    """
+    doc = _carbon_artifact(False)
+    inventory = {".".join(p) for p in C.EV_DEPENDENT_FIELDS}
+    dropped = _EV_FIELDS_FROM_THE_FINDING - inventory
+    assert not dropped, (
+        f"these EV fields are no longer declared EV-dependent: {sorted(dropped)}")
+    bad = [(".".join(p), C._dig(doc, p)) for p in C.EV_DEPENDENT_FIELDS
+           if not _is_stub(C._dig(doc, p))]
+    assert not bad, (
+        "a household with no EV published these EV figures as values instead "
+        f"of not-applicable markers: {bad} -- a 0.0 here reads as a measured "
+        "finding, not as 'this household has no EV'")
+    for path in C.EV_DEPENDENT_FIELDS:
+        reason = str(C._dig(doc, path).get("reason", "")).strip()
+        assert reason, f"{'.'.join(path)}: stub with no reason"
+        assert "household.has_ev" in reason, (".".join(path), reason)
+    return (f"a no-EV household publishes all {len(C.EV_DEPENDENT_FIELDS)} "
+            "EV-domain carbon fields as not_applicable stubs naming "
+            "household.has_ev, never as a computed zero")
+
+
+def case_no_ev_artifact_keeps_the_grid_measured_figures():
+    """The boundary, in the SAFE direction. Withholding a figure that is
+    measured for every household is the same error as publishing a fake zero,
+    just pointing the other way -- so the grid-intensity section, the
+    current-import footprint, the metered import/export kWh and the avoided
+    export carbon must all still be real numbers on a household with no EV.
+
+    In particular intensity_kg_per_mwh.window_means_annual still answers "how
+    much cleaner is midday than overnight" -- that is a property of CAISO, not
+    of this house's charging habits. Only the EV-load APPLICATION of it
+    (footprints...detail.midday_cleaner_than_overnight_by) becomes a stub, and
+    that stub has to point the reader at the grid-side answer so the marker is
+    never read as "unknown".
+    """
+    doc = _carbon_artifact(False)
+    for path in C.GRID_MEASURED_FIELDS:
+        v = C._dig(doc, path)
+        assert _is_number(v), (
+            f"{'.'.join(path)} is measured for every household but came back "
+            f"{v!r} -- withholding a grid/meter figure over a question about "
+            "the EV domain is as wrong as publishing a fake zero")
+    hours = doc["intensity_kg_per_mwh"]["annual_avg_by_hour"]
+    assert len(hours) == 24 and all(_is_number(x) for x in hours), hours
+    wm = doc["intensity_kg_per_mwh"]["window_means_annual"]
+    gap = wm["sop_overnight_00_06"] - wm["solar_midday_10_14"]
+    assert gap != 0, (
+        "the grid's midday-vs-overnight comparison came back as a flat zero on "
+        f"a no-EV household: {wm}")
+    mid = doc["footprints_kg_co2_per_yr"]["detail"]["midday_cleaner_than_overnight_by"]
+    assert _is_stub(mid), (
+        "the EV-load application of the window comparison is not marked "
+        f"not-applicable on a household with no EV: {mid!r}")
+    reason = str(mid.get("reason", ""))
+    assert "window_means_annual" in reason, (
+        "the stub that replaced the EV application of the window comparison "
+        f"does not say where the grid-side answer still lives: {reason}")
+    return ("a no-EV household keeps every grid/meter-measured carbon figure as "
+            f"a real number (overnight {wm['sop_overnight_00_06']} vs midday "
+            f"{wm['solar_midday_10_14']} kg CO2/MWh, gap {gap:.1f}), and the "
+            "EV-application stub points at it")
+
+
+def case_ev_household_keeps_every_carbon_figure_a_real_number():
+    """Positive control. Without it the two cases above would pass just as
+    happily against a script that had started stubbing these fields for EVERY
+    household -- which would delete this household's actual carbon findings.
+
+    Checks the switch itself both ways, then the artifact main() writes for an
+    EV household: every field in the EV inventory comes back as a number (or,
+    for the three old-vs-new comparison nodes, a pair of numbers), the detected
+    EV energy is positive, and the two scenario footprints DIFFER -- the thing
+    they cannot do on a household with no EV.
+    """
+    assert C._ev_field(449.0, True, "x") == 449.0, "an EV household lost a figure"
+    assert not _is_stub(C._ev_field(0.0, True, "x")), "the marker leaked onto an EV household"
+    assert _is_stub(C._ev_field(0.0, False, "x")), "a no-EV household published a value"
+
+    doc = _carbon_artifact(True)
+    for path in C.EV_DEPENDENT_FIELDS:
+        v = C._dig(doc, path)
+        assert not _is_stub(v), (
+            f"{'.'.join(path)}: an EV household published the not-applicable "
+            "marker instead of its measured figure")
+        if isinstance(v, dict):                     # old_vs_new comparison node
+            assert set(v) == {"old", "new"}, (".".join(path), sorted(v))
+            for k in ("old", "new"):
+                assert _is_number(v[k]), (".".join(path), k, v[k])
+        else:
+            assert _is_number(v), (".".join(path), v)
+    hi = doc["household_inputs"]
+    assert hi["ev_kwh_detected"] > 0, hi["ev_kwh_detected"]
+    assert hi["ev_kwh_mistimed_on_off_peak"] > 0, hi["ev_kwh_mistimed_on_off_peak"]
+    f = doc["footprints_kg_co2_per_yr"]
+    assert (f["b_mistimed_ev_moved_to_sop_00_06"]
+            != f["c_mistimed_ev_moved_to_midday_10_14"]), (
+        "the two scenario footprints are identical on a household that HAS an "
+        "EV -- the EV term has been lost somewhere upstream")
+    return ("an EV household still publishes every EV-domain carbon figure as a "
+            f"real number ({hi['ev_kwh_detected']} kWh detected), so the "
+            "not-applicable marker has not leaked onto the measured path")
+
+
+def case_applicability_validator_refuses_a_half_marked_artifact():
+    """carbon_fullyear validates its OWN output before either temp file is
+    written, so a partial edit cannot ship an artifact that is half marked and
+    half zeros. Both directions, on the committed artifact for this household:
+    numbers declared no-EV, one field converted and the rest not, a stub
+    declared EV, a stub with no reason, and a grid figure withheld.
+
+    Needs no private data -- data/carbon_fullyear_results.json is committed --
+    so this case runs in CI, where the three above SKIP.
+    """
+    doc = json.loads((C.ROOT / "data" / "carbon_fullyear_results.json").read_text())
+    C._validate_applicability(doc, True)        # the committed artifact is consistent
+
+    def refused(results, ev_applies, want):
+        try:
+            C._validate_applicability(results, ev_applies)
+        except SystemExit as e:
+            assert want in str(e), (want, str(e))
+            return
+        raise AssertionError(f"accepted an artifact that should be refused ({want})")
+
+    refused(doc, False, "never a computed zero")
+    half = copy.deepcopy(doc)
+    half["household_inputs"]["ev_kwh_detected"] = C._not_applicable("x")
+    refused(half, False, "never a computed zero")
+    refused(half, True, "household.has_ev is not false")
+
+    marked = copy.deepcopy(doc)
+    for path in C.EV_DEPENDENT_FIELDS:
+        C._dig(marked, path[:-1])[path[-1]] = C._not_applicable("x")
+    C._validate_applicability(marked, False)    # fully marked: must NOT raise
+
+    no_reason = copy.deepcopy(marked)
+    no_reason["household_inputs"]["ev_kwh_detected"]["reason"] = "  "
+    refused(no_reason, False, "not_applicable stub with no reason")
+
+    withheld = copy.deepcopy(marked)
+    withheld["intensity_kg_per_mwh"]["window_means_annual"][
+        "solar_midday_10_14"] = C._not_applicable("x")
+    refused(withheld, False, "refusing to withhold a measured figure")
+    return ("the applicability validator refuses a half-marked artifact, a "
+            "reasonless stub, a stub on an EV household, and a withheld "
+            "grid-measured figure")
+
+
 def case_no_ev_cost_note_prices_nothing_instead_of_zero():
     """The rendered artifact, end to end: on a no-EV household the cost_note
     must SAY there is no mistimed-charging saving to price and name the flag
@@ -494,44 +767,8 @@ def case_no_ev_cost_note_prices_nothing_instead_of_zero():
     figure rendered as "$0.00" would read as a measured result showing the fix
     is worthless, which is a different claim from "the fix does not exist
     here" (CLAUDE.md section 0: not determined is not zero).
-
-    Runs main() against a fully-covered synthetic committed CSV (no raw cache)
-    with a no-EV behavior artifact in the working directory. main() reaches the
-    cost_note only after the household 15-minute pipeline, so this needs the
-    real Green Button archive and SKIPs without it, like the merge case above.
     """
-    usage_files = sorted(glob.glob(
-        str(C.ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")))
-    if not usage_files:
-        raise SkipCase("the rendered-cost_note check runs the full pipeline, "
-                       "which needs the real Green Button archive")
-    import behavior_rebuild as br
-    with tempfile.TemporaryDirectory() as td:
-        tdp = pathlib.Path(td)
-        days = pd.date_range(C.YEAR_START, C.YEAR_END, freq="D")
-        committed_csv = tdp / "hourly.csv"
-        pd.DataFrame([(d.strftime("%Y-%m-%d"), h, 200.0) for d in days
-                      for h in range(24)],
-                     columns=["date", "hour", "kgco2_per_mwh"]).to_csv(
-                         committed_csv, index=False)
-        # _scenario_a_saved() prefers the CURRENT-RUN copy in the working
-        # directory, so put the no-EV artifact there and run from there.
-        run_dir = tdp / "run"
-        run_dir.mkdir()
-        _write_behavior(run_dir, dict(_NA_STUB))
-
-        old = (C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON, br.CSV, os.getcwd())
-        C.CAISO_DIR = tdp / "no_raw_cache"          # absent: committed CSV only
-        C.HOURLY_CSV = committed_csv
-        C.RESULTS_JSON = tdp / "results.json"       # no prior baseline
-        br.CSV = usage_files[0]
-        os.chdir(run_dir)
-        try:
-            C.main()
-            note = json.loads(C.RESULTS_JSON.read_text())["cost_note"]
-        finally:
-            (C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON, br.CSV) = old[:4]
-            os.chdir(old[4])
+    note = _carbon_artifact(False)["cost_note"]
 
     assert "household.has_ev" in note, note
     low = note.lower()
@@ -560,6 +797,10 @@ CASES = [
     case_read_scenario_a_accepts_the_not_applicable_stub,
     case_read_scenario_a_still_returns_a_figure_for_an_ev_household,
     case_read_scenario_a_fails_closed_on_every_malformed_shape,
+    case_no_ev_artifact_marks_every_ev_field_not_applicable,
+    case_no_ev_artifact_keeps_the_grid_measured_figures,
+    case_ev_household_keeps_every_carbon_figure_a_real_number,
+    case_applicability_validator_refuses_a_half_marked_artifact,
     case_no_ev_cost_note_prices_nothing_instead_of_zero,
 ]
 
