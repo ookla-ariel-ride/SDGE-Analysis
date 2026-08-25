@@ -8452,17 +8452,184 @@ def _no_ev_package(c, d):
         low["note"] = ("household.has_ev is false (intake applicability flag), so "
                        "there is no EV charging to reschedule; the free fix here is "
                        "moving flexible on-peak house load off peak, into the "
-                       "super-off-peak window")
+                       f"super-off-peak window: 25% of it = ${round(c['saved']):,}; "
+                       f"stretch (50%) = ${round(d['saved']):,}")
     return edit
 
 
+# ---------------------------------------------------------------------------
+# THE OTHER TWO ARTIFACTS THE SAME FLAG REWRITES.
+#
+# The fixture above covered behavior_rebuild.json and package_results.json and
+# stopped there, and that boundary is not a design -- it is where the last
+# reader stopped looking. Two artifacts further downstream also read
+# household.has_ev and also publish not-applicable stubs when it is false, and
+# because neither was in the fixture, every token that reads them was resolved
+# against an EV-household document by every no-EV case in this file:
+#
+#   data/carbon_fullyear_results.json -- 13 EV-domain fields become stubs.
+#     SEC13_TEASER subscripted one of them (footprints_kg_co2_per_yr.detail.
+#     midday_cleaner_than_overnight_by) unconditionally, handed _figures a
+#     dict, and took the WHOLE REPORT down on a household with no EV.
+#   data/extended_results.json -- electrification_dividend and
+#     supercharge_delta become whole-section stubs.
+#
+# The shapes below are checked field-for-field against a genuinely generated
+# no-EV artifact set (both generators run end to end on a no-EV intake), not
+# written from a reading of the generators: the key sets, the stub contract
+# (`not_applicable` + `reason`), the two DIFFERENT reason tails the two
+# generators use, the extra `see` sentence carbon_fullyear.py appends to its
+# two midday-vs-overnight stubs, the caveat that disappears, and the cost_note
+# that changes. As above, the FIGURES stay this household's own; only the
+# SHAPE is the no-EV one.
+# ---------------------------------------------------------------------------
+
+# analysis/extended_findings.py:_not_applicable's tail. It is NOT
+# _NO_EV_INTAKE_TAIL: what is missing there is a whole section, not one
+# charger fact, so that generator asks for "the intake" rather than
+# "the intake (charger.kw)". A fixture that used the other tail would be
+# checking a string no generator writes.
+_NO_EV_SECTION_TAIL = ("; set the flag true and complete the intake to "
+                       "compute it")
+
+# analysis/carbon_fullyear.py:_SEE_WINDOW_MEANS, appended to the two stubs
+# whose grid-side half IS still measured -- the sentence that tells a reader
+# where the answer went, and the one SEC13_TEASER acts on.
+_NO_EV_SEE_WINDOW_MEANS = (
+    "The GRID-side comparison this figure applies EV load to is measured for "
+    "every household and is published unchanged at "
+    "intensity_kg_per_mwh.window_means_annual (sop_overnight_00_06 vs "
+    "solar_midday_10_14, kg CO2/MWh); only the household-EV application of it "
+    "is absent here")
+
+
+def _no_ev_section_stub(flag="household.has_ev"):
+    """extended_findings.py's whole-section stub, verbatim in shape."""
+    return {"not_applicable": True,
+            "reason": (f"{flag} is false (intake applicability flag, "
+                       "DATA-SOURCES-CHEATSHEET.md) — the section does not "
+                       "apply to this household" + _NO_EV_SECTION_TAIL)}
+
+
+def _no_ev_carbon_stub(what, see=""):
+    """carbon_fullyear.py's _not_applicable: _no_ev_stub's contract, plus the
+    optional trailing sentence naming where the grid-side figure still is.
+
+    `what` is the generator's own `what` argument, so the "does not apply to
+    this household" clause its format string supplies is added HERE rather
+    than typed into every entry of the inventory. It was left out of the
+    first draft of this fixture, and the resulting reason strings were
+    plausible English that no generator writes -- the same class of drift as
+    the fixture that stubbed only `detection`."""
+    stub = _no_ev_stub(f"{what} does not apply to this household")
+    if see:
+        stub["reason"] += f". {see}"
+    return stub
+
+
+# Every EV-domain field carbon_fullyear.py stubs when household.has_ev is
+# false, with the `what` clause each one carries. Written as an inventory
+# rather than thirteen assignments for the same reason the generator keeps
+# one: a field added on either side has one obvious place to appear.
+_NO_EV_CARBON_FIELDS = (
+    (("household_inputs", "ev_kwh_detected"),
+     "detected EV charging energy", ""),
+    (("household_inputs", "ev_kwh_mistimed_on_off_peak"),
+     "EV charging energy mistimed into on/off-peak hours", ""),
+    (("footprints_kg_co2_per_yr", "b_mistimed_ev_moved_to_sop_00_06"),
+     "the footprint with mistimed EV charging moved to 00:00-06:00", ""),
+    (("footprints_kg_co2_per_yr", "c_mistimed_ev_moved_to_midday_10_14"),
+     "the footprint with mistimed EV charging moved to 10:00-14:00", ""),
+    (("footprints_kg_co2_per_yr", "detail", "mistimed_ev_kg_at_current_hours"),
+     "the carbon carried by mistimed EV charging at its current hours", ""),
+    (("footprints_kg_co2_per_yr", "detail", "mistimed_ev_kg_if_charged_00_06"),
+     "the carbon of that same EV energy charged 00:00-06:00", ""),
+    (("footprints_kg_co2_per_yr", "detail", "mistimed_ev_kg_if_charged_10_14"),
+     "the carbon of that same EV energy charged 10:00-14:00", ""),
+    (("footprints_kg_co2_per_yr", "detail", "delta_b_vs_a"),
+     "the footprint change from moving EV charging to 00:00-06:00", ""),
+    (("footprints_kg_co2_per_yr", "detail", "delta_c_vs_a"),
+     "the footprint change from moving EV charging to 10:00-14:00", ""),
+    (("footprints_kg_co2_per_yr", "detail", "midday_cleaner_than_overnight_by"),
+     "the midday-vs-overnight carbon gap on this household's mistimed EV "
+     "charging", _NO_EV_SEE_WINDOW_MEANS),
+    (("old_vs_new", "ev_shift_delta_to_sop_kg"),
+     "the old-vs-new comparison of the EV-shift delta to 00:00-06:00", ""),
+    (("old_vs_new", "ev_shift_delta_to_midday_kg"),
+     "the old-vs-new comparison of the EV-shift delta to 10:00-14:00", ""),
+    (("old_vs_new", "midday_cleaner_than_overnight_by_kg"),
+     "the old-vs-new comparison of the midday-vs-overnight gap on this "
+     "household's mistimed EV charging", _NO_EV_SEE_WINDOW_MEANS),
+)
+
+# The method caveat carbon_fullyear.py emits only when the EV shift was
+# actually computed. It disappears with the EV, and a fixture that kept it
+# would publish a method note for a computation this household never ran.
+_NO_EV_CARBON_DROPPED_CAVEAT = ("Moved EV energy assumed spread uniformly "
+                                "across the destination window on its own day.")
+
+
+def _no_ev_carbon(doc):
+    """data/carbon_fullyear_results.json as carbon_fullyear.py writes it when
+    household.has_ev is false.
+
+    WHAT STAYS REAL IS THE POINT. intensity_kg_per_mwh is a CAISO measurement
+    -- what a MWh drawn overnight costs against one drawn at midday, whoever
+    draws it -- and so are the current-import footprint, the import/export
+    kWh, and the avoided-export carbon. Only the figures that APPLY an absent
+    EV load to that grid measurement become stubs. SEC13_TEASER's whole no-EV
+    branch stands on that distinction, so a fixture that blanked the intensity
+    section too would make the fixed token look broken and the broken one look
+    fine."""
+    for path, what, see in _NO_EV_CARBON_FIELDS:
+        node = doc
+        for key in path[:-1]:
+            node = node[key]
+        assert path[-1] in node, (
+            f"carbon_fullyear_results.json has no {'.'.join(path)} to stub -- the "
+            "artifact moved and this fixture now describes a document no "
+            "generator writes")
+        node[path[-1]] = _no_ev_carbon_stub(what, see)
+    doc["caveats"] = [c for c in doc["caveats"]
+                      if c != _NO_EV_CARBON_DROPPED_CAVEAT]
+    doc["cost_note"] = (
+        "This household has no EV (household.has_ev is false), so there is no "
+        "charge timing to fix and NO mistimed-charging dollar saving to price: "
+        "behavior_rebuild.json publishes scenario 'a' as an explicit "
+        "not-applicable stub rather than a figure. The carbon figures above "
+        "are unaffected -- they are measured on this household's own imports "
+        "and exports. Artifact reason: "
+        + _no_ev_stub("the EV-only shift scenario does not apply to this "
+                      "household")["reason"])
+
+
+def _no_ev_extended(doc):
+    """data/extended_results.json's two EV sections, as extended_findings.py
+    writes them for the same household. gas_decomposition is NOT touched: it
+    is governed by household.has_gas, a different flag and a different
+    fixture."""
+    for section in ("electrification_dividend", "supercharge_delta"):
+        assert section in doc, (
+            f"extended_results.json no longer carries {section} -- this fixture "
+            "describes a document no generator writes")
+        doc[section] = _no_ev_section_stub()
+
+
 def _no_ev_household():
-    """The consistent pair: behavior_rebuild.json and package_results.json as
-    ONE no-EV run writes them."""
+    """The consistent set: behavior_rebuild.json, package_results.json,
+    carbon_fullyear_results.json and extended_results.json as ONE no-EV run
+    writes them.
+
+    All four, because a household is not a document -- it is every artifact
+    the flag reaches, and a fixture that stops early does not test a narrower
+    household, it tests one that cannot exist. Two report-aborting defects on
+    this branch survived a 165-case suite for exactly that reason."""
     scen = rt._json("behavior_rebuild.json")["scenarios"]
     return _stub_for_many({
         "behavior_rebuild.json": _no_ev_behavior,
-        "package_results.json": _no_ev_package(scen["c"], scen["d"])})
+        "package_results.json": _no_ev_package(scen["c"], scen["d"]),
+        "carbon_fullyear_results.json": _no_ev_carbon,
+        "extended_results.json": _no_ev_extended})
 
 
 @case
@@ -8823,6 +8990,186 @@ def case_the_free_fix_guard_refuses_a_package_that_cannot_name_its_own_scenario(
     return (f"all {len(said)} free-fix contract violations fail closed across "
             "S0/S7/S15 -- a missing field, a key that is not a scenario, and a "
             "package pricing a scenario its own source publishes as not applicable")
+
+
+# The failures a COMPLETE no-EV artifact set is allowed to have, because they
+# are not the household's doing. Both reproduce identically on a household
+# that HAS an EV and on main: they read
+# battery_dispatch_policies.json:stored_kwh_cost.solar_surplus.by_period, and
+# a solar profile that puts no surplus in the midday TOU bucket leaves that
+# bucket absent. An empty bucket, not an absent car.
+#
+# The assertion below is a SUBSET test, not equality. A token that starts
+# passing must not fail this case -- an allow-list that has to be emptied by
+# hand is one a future reader edits to make the suite green -- but a NEW
+# failure must, and the message has to name it.
+_NO_EV_ALLOWED_TOKEN_FAILURES = frozenset({
+    "STORED_KWH_COST_SOLAR_MIDDAY",
+    "STORED_KWH_MIDDAY_SHARE",
+})
+
+# The four artifacts one no-EV run rewrites, and a token that reads each --
+# the witness that proves the fixture is not silently a no-op. There is no
+# witness for extended_results.json BECAUSE NO TOKEN READS IT TODAY: it is in
+# the fixture so the first one that does is swept from its first commit
+# rather than after it aborts someone's report, which is the whole lesson of
+# carbon_fullyear_results.json below.
+_NO_EV_ARTIFACT_WITNESS = {
+    "behavior_rebuild.json": "EV_SESSION_COUNT",
+    "package_results.json": "S0_VERDICT",
+    "carbon_fullyear_results.json": "SEC13_TEASER",
+    "extended_results.json": None,
+}
+
+
+@case
+def case_every_token_in_the_report_resolves_on_a_complete_no_ev_artifact_set():
+    """ISSUE #147, THE STRUCTURAL GUARD. Two regressions on this branch had
+    one cause, and it was not a hard token: it was a FIXTURE that stopped at
+    two artifacts.
+
+      1. SEC13_TEASER subscripted carbon_fullyear_results.json's
+         footprints_kg_co2_per_yr.detail.midday_cleaner_than_overnight_by,
+         which is a not-applicable stub when household.has_ev is false. It
+         raised SystemExit, and generate_report.run() blocks the write on any
+         non-gap token failure, so the household got NO REPORT AT ALL.
+      2. The same shape, one artifact over, in extended_findings.py.
+
+    Neither was caught by the 165 cases here. Every no-EV case in this file
+    patched behavior_rebuild.json and package_results.json and resolved a
+    NAMED handful of tokens against them; carbon_fullyear_results.json was
+    never in the fixture, so SEC13_TEASER was never exercised on a household
+    with no EV, and no list of token names could have included a token nobody
+    had thought about yet.
+
+    So this case names no tokens. It resolves EVERY token in TOKENS whose
+    kind is not "gap" -- 224 of them today, and whatever is added next year
+    without editing this case -- against a COMPLETE and CONSISTENT no-EV
+    artifact set, and asserts the set of failures is a subset of the two
+    pre-existing ones that reproduce identically on an EV household. A new
+    failure here is not a cosmetic defect: it is a household that gets no
+    report.
+
+    The positive half matters as much. A token can also survive by giving up
+    -- rendering a bare disclaimer where a conclusion belongs -- and that
+    passes any test that only asks whether resolution raised. SEC13_TEASER
+    and SEC9_TEASER are <summary> teasers, which CLAUDE.md section 10 makes
+    the ONLY permitted one-line conclusion for their sections, so both are
+    checked for a real measured figure and against not-applicable
+    boilerplate."""
+    stub = _no_ev_household()
+
+    # 0. THE FIXTURE ITSELF, BEFORE ANYTHING IS RESOLVED THROUGH IT. Each of
+    #    the four artifacts must actually come back CHANGED, or a mis-keyed
+    #    edit map would leave this case sweeping the EV household under a
+    #    no-EV name and passing for the wrong reason.
+    for artifact in _NO_EV_ARTIFACT_WITNESS:
+        assert stub(artifact) != rt._json(artifact), (
+            f"the no-EV fixture returns data/{artifact} unchanged, so this case is "
+            "resolving the EV household's artifacts under a no-EV label")
+
+    swept, gaps = {}, set()
+    failures, values = {}, {}
+    with _patched(rt, "_json", stub):
+        for name, spec in rt.TOKENS.items():
+            if spec.get("kind") == "gap":
+                gaps.add(name)
+                continue
+            swept[name] = spec
+            try:
+                values[name] = rt.resolve_token(name)
+            except SystemExit as e:
+                failures[name] = str(e)
+
+    # 1. NOTHING IS SMUGGLED OUT OF THE SWEEP. The only tokens skipped are the
+    #    declared gaps, which resolve for nobody by design; declaring a token
+    #    a gap to quiet this case would move it into KNOWN_GAPS, where
+    #    case_known_gaps_are_small_and_each_fails_closed_by_name is waiting.
+    assert gaps == set(rt.KNOWN_GAPS), (
+        f"the sweep skipped {sorted(gaps - set(rt.KNOWN_GAPS))} beyond KNOWN_GAPS")
+    assert len(swept) >= 200, (
+        f"only {len(swept)} token(s) were swept -- TOKENS did not load, and every "
+        "assertion below is passing on an empty set")
+
+    # 2. THE WHOLE POINT.
+    new = sorted(set(failures) - _NO_EV_ALLOWED_TOKEN_FAILURES)
+    assert not new, (
+        "a household whose intake says household.has_ev is false gets NO REPORT AT "
+        "ALL: generate_report.run() blocks the write on any non-gap token failure, "
+        f"and {len(new)} token(s) fail to resolve against a complete, consistent "
+        "no-EV artifact set -- "
+        + "; ".join(f"{n}: {failures[n]}" for n in new)
+        + ". Fix the token to read the not-applicable stub its artifact publishes "
+          "(see _applicability), the way SEC13_TEASER falls back to the grid-side "
+          "window means. Do NOT add it to _NO_EV_ALLOWED_TOKEN_FAILURES: that list "
+          "is for failures that reproduce identically on a household WITH an EV.")
+
+    # 3. THE FIXTURE REACHED THE TOKENS. Each witness resolves, and resolves
+    #    DIFFERENTLY from the EV household -- a stub that edited a key nothing
+    #    reads would satisfy step 0 and still leave the sweep blind.
+    for artifact, witness in _NO_EV_ARTIFACT_WITNESS.items():
+        if witness is None:
+            continue
+        assert witness in values, f"{witness} did not resolve: {failures.get(witness)}"
+        assert values[witness] != rt.resolve_token(witness), (
+            f"{witness} renders the same value with and without the no-EV fixture, "
+            f"so data/{artifact} is in the fixture but reaches no token")
+
+    # 4. SECTION 13'S TEASER STATES A MEASURED FINDING, NOT A DISCLAIMER.
+    #    intensity_kg_per_mwh.window_means_annual is a CAISO measurement --
+    #    what a MWh drawn overnight costs against one drawn at midday --
+    #    and it is identical on both households, which is exactly why the
+    #    teaser may state it when the EV-scaled swing above it cannot be.
+    windows = rt._json("carbon_fullyear_results.json")[
+        "intensity_kg_per_mwh"]["window_means_annual"]
+    gap_kg_mwh = (windows["sop_overnight_00_06"] - windows["solar_midday_10_14"])
+    sec13 = values["SEC13_TEASER"]
+    assert f"{gap_kg_mwh:,.0f} kg CO₂/MWh" in sec13, (
+        f"SEC13_TEASER does not state the measured overnight-vs-midday grid gap "
+        f"({gap_kg_mwh:,.0f} kg CO₂/MWh, from carbon_fullyear_results.json:"
+        f"intensity_kg_per_mwh.window_means_annual): {sec13!r}")
+    assert re.search(r"NEM 2\.0 worth \$[\d,]+–[\d,]+/yr", sec13), (
+        f"SEC13_TEASER lost the NEM clause, which never depended on an EV: {sec13!r}")
+    assert "not applicable" not in sec13 and "does not apply" not in sec13, (
+        f"SEC13_TEASER degraded section 13's ONE permitted conclusion into a "
+        f"not-applicable disclaimer: {sec13!r}")
+    # THE CONTROL: the same token on the same artifacts WITH the EV states the
+    # EV-scaled swing instead, in kg CO2/yr. Without this, "states the grid
+    # gap" would pass on a token that had simply stopped reading the swing.
+    with_ev = rt.resolve_token("SEC13_TEASER")
+    assert "kg CO₂/yr" in with_ev and "kg CO₂/MWh" not in with_ev, (
+        f"the EV household's SEC13_TEASER no longer states the EV-scaled carbon "
+        f"swing, so the no-EV branch above is not a branch: {with_ev!r}")
+
+    # 5. SECTION 9'S TEASER, the same rule one section up: the always-on
+    #    overnight floor is measured for every household, off an artifact that
+    #    knows nothing about EVs, so the teaser carries it when the charging
+    #    clause cannot.
+    sec9 = values["SEC9_TEASER"]
+    assert re.search(r"[\d,.]+\s*kWh", sec9) and re.search(r"\$[\d,]+", sec9), (
+        f"SEC9_TEASER lost the overnight-floor figures, so section 9 has no "
+        f"one-line conclusion left: {sec9!r}")
+    assert "not applicable" not in sec9, (
+        f"SEC9_TEASER degraded section 9's conclusion into not-applicable "
+        f"boilerplate: {sec9!r}")
+
+    # 6. Nothing anywhere in the swept set is blank or malformed. A token that
+    #    renders "$None/yr" or "nan" has not failed closed -- it has published
+    #    a defect, which is worse.
+    for name, text in values.items():
+        assert text.strip(), f"{name} rendered blank on a household with no EV"
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), (
+                f"{name} rendered {label} on a household with no EV: {text!r}")
+
+    allowed = sorted(set(failures) & _NO_EV_ALLOWED_TOKEN_FAILURES)
+    return (f"all {len(swept)} non-gap token(s) resolve against a complete no-EV "
+            f"artifact set (behavior_rebuild, package_results, "
+            f"carbon_fullyear_results, extended_results), none blank or malformed"
+            + (f"; {len(allowed)} pre-existing non-EV failure(s) allowed: {allowed}"
+               if allowed else "; zero failures, allowed or otherwise")
+            + f"; section 13's teaser states the measured grid gap "
+              f"({gap_kg_mwh:,.0f} kg CO₂/MWh) and section 9's the overnight floor")
 
 
 # ===========================================================================

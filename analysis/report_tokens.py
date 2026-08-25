@@ -1555,11 +1555,39 @@ _tok("SEC12_TEASER", kind="derived", get=_sec12_teaser,
 
 
 def _sec13_teaser(ctx):
+    """Section 13's <summary> teaser, and the same lesson _sec12_teaser records
+    one function above: a teaser that RAISES costs the household every other
+    section, because generate_report.run() blocks the write on any non-gap
+    token failure.
+
+    The carbon swing this used to state is EV-SCALED -- it prices THIS
+    household's mistimed charging at the midday-vs-overnight intensity gap --
+    so carbon_fullyear.py publishes it as an explicit not-applicable stub when
+    household.has_ev is false (issue #147). Subscripting it there handed
+    _figures a dict, which refused, which took the whole report down.
+
+    The GRID-side comparison underneath it is measured for EVERY household:
+    intensity_kg_per_mwh.window_means_annual states what a MWh drawn overnight
+    costs against one drawn at midday, whoever draws it. So the no-EV teaser
+    states that instead -- a real measured finding in kg CO2/MWh rather than
+    the kg CO2/yr an absent EV would have saved, and a conclusion rather than
+    a disclaimer, which is what CLAUDE.md section 10 requires of a <summary>.
+    The NEM clause never depended on an EV and is unchanged for everyone."""
     nem = _json("nem3_grandfathering.json")["grandfathering_value_range_usd_per_yr"]
-    swing = _json("carbon_fullyear_results.json")["footprints_kg_co2_per_yr"]["detail"][
+    carbon = _json("carbon_fullyear_results.json")
+    swing = carbon["footprints_kg_co2_per_yr"]["detail"][
         "midday_cleaner_than_overnight_by"]
     low, high = _amounts("SEC13_TEASER", "what NEM 2.0 grandfathering is worth",
                          grandfathering_low=nem["low"], grandfathering_high=nem["high"])
+    applies, _reason = _applicability(swing)
+    if not applies:
+        windows = carbon["intensity_kg_per_mwh"]["window_means_annual"]
+        night, midday = _quantities(
+            "SEC13_TEASER", "how much dirtier overnight grid power is than midday",
+            sop_overnight_00_06=windows["sop_overnight_00_06"],
+            solar_midday_10_14=windows["solar_midday_10_14"])
+        return (f"NEM 2.0 worth ${low:,.0f}–{high:,.0f}/yr; overnight grid power "
+                f"runs {night - midday:,.0f} kg CO₂/MWh dirtier than midday")
     swing, = _figures("SEC13_TEASER", "how much dirtier overnight grid power is",
                       midday_cleaner_than_overnight_by=swing)
     return (f"NEM 2.0 worth ${low:,.0f}–{high:,.0f}/yr; overnight grid "
@@ -1567,7 +1595,12 @@ def _sec13_teaser(ctx):
 
 
 _tok("SEC13_TEASER", kind="derived", get=_sec13_teaser,
-     sources=["data/nem3_grandfathering.json", "data/carbon_fullyear_results.json"])
+     sources=["data/nem3_grandfathering.json",
+              "data/carbon_fullyear_results.json:footprints_kg_co2_per_yr.detail."
+              "midday_cleaner_than_overnight_by (EV-scaled; a not-applicable stub "
+              "with no EV)",
+              "data/carbon_fullyear_results.json:intensity_kg_per_mwh."
+              "window_means_annual (grid-measured, every household)"])
 
 
 # ---- bottom line / bills ----------------------------------------------------
