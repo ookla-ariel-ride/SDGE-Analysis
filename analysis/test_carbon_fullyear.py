@@ -15,11 +15,20 @@ before a data source is retired, so a synthetic fixture would prove nothing.
 It SKIPs (not FAILs) when the real archive is absent, following the same
 private-archive-SKIP convention as test_bill_decomposition.py.
 
+A later group of cases covers _read_scenario_a's no-EV branch (issue #147): on a
+household whose intake says household.has_ev is false, behavior_rebuild.py
+publishes scenarios.a as an explicit not-applicable stub, which is a VALID
+artifact and must not abort the carbon run -- while every genuinely malformed
+shape must keep aborting. The last of them checks the rendered cost_note, so it
+needs the real Green Button archive and SKIPs without it.
+
 Run from the repo root:  ./.venv/bin/python analysis/test_carbon_fullyear.py
 """
 import glob
 import json
+import os
 import pathlib
+import re
 import sys
 import tempfile
 
@@ -363,6 +372,182 @@ def case_ac3_28day_reproduction_within_2pct():
             f"worst date {worst[0]} at {worst[1] * 100:.3f}%)")
 
 
+# The explicit not-applicable STUB behavior_rebuild.py publishes for scenarios.a
+# when the intake flag household.has_ev is false (issue #147). Copied from a
+# genuinely generated no-EV behavior_rebuild.json rather than invented: same two
+# keys, marker value True, same reason wording, and no "saved" key at all.
+_NA_REASON = ("household.has_ev is false (intake applicability flag, "
+              "DATA-SOURCES-CHEATSHEET.md) — the EV-only shift scenario does "
+              "not apply to this household; set the flag true and complete the "
+              "intake (charger.kw) to compute it")
+_NA_STUB = {"not_applicable": True, "reason": _NA_REASON}
+
+
+def _behavior_doc(scenario_a):
+    """A behavior_rebuild.json holding one scenarios.a node. carbon_fullyear.py
+    reads nothing else out of this artifact, so c/d are carried only to keep the
+    fixture the same SHAPE as the real thing."""
+    return json.dumps({"scenarios": {"a": scenario_a, "b": dict(_NA_STUB),
+                                     "c": {"saved": 428.83},
+                                     "d": {"saved": 857.66}}})
+
+
+def _write_behavior(td, scenario_a):
+    p = pathlib.Path(td) / "behavior_rebuild.json"
+    p.write_text(_behavior_doc(scenario_a))
+    return p
+
+
+def case_read_scenario_a_accepts_the_not_applicable_stub():
+    """Issue #147: on a no-EV household, behavior_rebuild.py publishes
+    scenarios.a as an explicit {"not_applicable": true, "reason": ...} stub.
+    That is not_applicable, NOT not_determined -- the intake DID determine the
+    answer -- so the stub is a VALID artifact and _read_scenario_a must return
+    (None, reason) rather than aborting the whole carbon run."""
+    with tempfile.TemporaryDirectory() as td:
+        p = _write_behavior(td, dict(_NA_STUB))
+        saved, reason = C._read_scenario_a(p)          # must not raise
+        assert saved is None, saved
+        assert reason, "the stub's reason was dropped, so the artifact cannot say why"
+        assert "household.has_ev" in reason, reason
+        # the words the NOTICE lines are built from must survive too
+        desc = C._describe_scenario_a((saved, reason))
+        assert "NOT APPLICABLE" in desc, desc
+        assert "$" not in desc, desc
+    return ("_read_scenario_a returns (None, reason) for the explicit "
+            "not-applicable stub instead of raising, and _describe_scenario_a "
+            "words it without inventing a dollar figure")
+
+
+def case_read_scenario_a_still_returns_a_figure_for_an_ev_household():
+    """Positive control for the case above: an ordinary artifact must still
+    come back as (float, "") -- a two-tuple, with an empty reason. Without
+    this, the stub case would pass just as happily against a function that had
+    been broken into returning None for everything."""
+    with tempfile.TemporaryDirectory() as td:
+        p = _write_behavior(td, {"saved": 1220.85})
+        v = C._read_scenario_a(p)
+        assert isinstance(v, tuple) and len(v) == 2, v
+        saved, reason = v
+        assert isinstance(saved, float) and abs(saved - 1220.85) < 1e-9, saved
+        assert reason == "", reason
+        assert "$1,220.85/yr" in C._describe_scenario_a(v), C._describe_scenario_a(v)
+    return ("_read_scenario_a returns (float, \"\") for an ordinary EV "
+            "household, so the stub branch has not swallowed the normal path")
+
+
+def case_read_scenario_a_fails_closed_on_every_malformed_shape():
+    """A stub is valid; MALFORMED is not, and must keep aborting. The
+    tolerated shape is the explicit marker, not "an a that cannot be read":
+    if the branch ever widened to any unreadable a, a genuinely broken
+    behavior artifact would be published as a no-EV household and the report
+    would quietly lose the mistimed-charging figure instead of failing."""
+    doc_variants = [
+        ("no scenarios block at all", json.dumps({"baseline": {"model_bill": 1}})),
+        ("scenarios with no a", json.dumps({"scenarios": {"c": {"saved": 1.0}}})),
+        ("unparseable JSON", "{not valid json"),
+    ]
+    node_variants = [
+        ("a with no saved and no marker", {"label": "a: EV only"}),
+        ("a that is not a dict", 1220.85),
+        ("an explicit not_applicable FALSE with no figure", {"not_applicable": False}),
+        # A NON-NUMERIC string. A numeric string ("1220.85") is coerced by
+        # float() and comes back as a figure -- long-standing behavior of this
+        # reader, unchanged by issue #147, and deliberately not asserted here
+        # in either direction so this case guards the stub/malformed boundary
+        # rather than pinning an unrelated coercion.
+        ("saved that is a string", {"saved": "one thousand"}),
+        ("saved that is null", {"saved": None}),
+    ]
+    with tempfile.TemporaryDirectory() as td:
+        tdp = pathlib.Path(td)
+        for label, text in doc_variants:
+            p = tdp / "b.json"
+            p.write_text(text)
+            try:
+                got = C._read_scenario_a(p)
+                raise AssertionError(f"{label}: accepted, returned {got!r}")
+            except SystemExit as e:
+                assert "cannot read scenarios.a.saved" in str(e), (label, str(e))
+        for label, node in node_variants:
+            p = _write_behavior(td, node)
+            try:
+                got = C._read_scenario_a(p)
+                raise AssertionError(f"{label}: accepted, returned {got!r}")
+            except SystemExit as e:
+                assert "cannot read scenarios.a.saved" in str(e), (label, str(e))
+        # a file that is not there at all
+        try:
+            got = C._read_scenario_a(tdp / "absent.json")
+            raise AssertionError(f"absent file: accepted, returned {got!r}")
+        except SystemExit as e:
+            assert "cannot read scenarios.a.saved" in str(e), str(e)
+    return (f"_read_scenario_a still fails closed on all "
+            f"{len(doc_variants) + len(node_variants) + 1} malformed shapes "
+            "(only the explicit not_applicable:true marker is tolerated)")
+
+
+def case_no_ev_cost_note_prices_nothing_instead_of_zero():
+    """The rendered artifact, end to end: on a no-EV household the cost_note
+    must SAY there is no mistimed-charging saving to price and name the flag
+    that decided it -- and must not carry a dollar figure at all. An absent
+    figure rendered as "$0.00" would read as a measured result showing the fix
+    is worthless, which is a different claim from "the fix does not exist
+    here" (CLAUDE.md section 0: not determined is not zero).
+
+    Runs main() against a fully-covered synthetic committed CSV (no raw cache)
+    with a no-EV behavior artifact in the working directory. main() reaches the
+    cost_note only after the household 15-minute pipeline, so this needs the
+    real Green Button archive and SKIPs without it, like the merge case above.
+    """
+    usage_files = sorted(glob.glob(
+        str(C.ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")))
+    if not usage_files:
+        raise SkipCase("the rendered-cost_note check runs the full pipeline, "
+                       "which needs the real Green Button archive")
+    import behavior_rebuild as br
+    with tempfile.TemporaryDirectory() as td:
+        tdp = pathlib.Path(td)
+        days = pd.date_range(C.YEAR_START, C.YEAR_END, freq="D")
+        committed_csv = tdp / "hourly.csv"
+        pd.DataFrame([(d.strftime("%Y-%m-%d"), h, 200.0) for d in days
+                      for h in range(24)],
+                     columns=["date", "hour", "kgco2_per_mwh"]).to_csv(
+                         committed_csv, index=False)
+        # _scenario_a_saved() prefers the CURRENT-RUN copy in the working
+        # directory, so put the no-EV artifact there and run from there.
+        run_dir = tdp / "run"
+        run_dir.mkdir()
+        _write_behavior(run_dir, dict(_NA_STUB))
+
+        old = (C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON, br.CSV, os.getcwd())
+        C.CAISO_DIR = tdp / "no_raw_cache"          # absent: committed CSV only
+        C.HOURLY_CSV = committed_csv
+        C.RESULTS_JSON = tdp / "results.json"       # no prior baseline
+        br.CSV = usage_files[0]
+        os.chdir(run_dir)
+        try:
+            C.main()
+            note = json.loads(C.RESULTS_JSON.read_text())["cost_note"]
+        finally:
+            (C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON, br.CSV) = old[:4]
+            os.chdir(old[4])
+
+    assert "household.has_ev" in note, note
+    low = note.lower()
+    assert "no mistimed-charging dollar saving to price" in low, note
+    assert "not-applicable stub" in low, note
+    # No dollar figure anywhere: not "$0.00", not "$0", not any amount at all.
+    money = re.search(r"\$\s*-?[\d,]+(?:\.\d+)?", note)
+    assert money is None, (
+        f"the no-EV cost_note prices the absent saving as {money.group(0)!r}; "
+        "an absent figure must never render as a dollar amount")
+    assert "scenario 'a'" in low, note      # it still says WHICH figure is absent
+    return ("the rendered no-EV cost_note names household.has_ev, states there "
+            "is no mistimed-charging saving to price, and carries no dollar "
+            "figure at all for the absent saving")
+
+
 CASES = [
     case_hourly_intensity_parses_a_raw_day,
     case_build_covered_from_raw_reads_the_cache_and_legacy_days,
@@ -372,6 +557,10 @@ CASES = [
     case_intensity_sanity_bounds_reject_garbage,
     case_coverage_below_350_fails_closed_and_names_the_missing_dates,
     case_ac3_28day_reproduction_within_2pct,
+    case_read_scenario_a_accepts_the_not_applicable_stub,
+    case_read_scenario_a_still_returns_a_figure_for_an_ev_household,
+    case_read_scenario_a_fails_closed_on_every_malformed_shape,
+    case_no_ev_cost_note_prices_nothing_instead_of_zero,
 ]
 
 

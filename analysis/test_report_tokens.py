@@ -8310,6 +8310,32 @@ def _stub_for(artifact, edit):
     return stubbed
 
 
+def _stub_for_many(edits):
+    """_stub_for, for a household that reads differently in MORE THAN ONE
+    artifact.
+
+    A household with no EV is the instance (issue #147): behavior_rebuild.py
+    stubs four of its own blocks AND package_results.py prices a different
+    scenario in packages.LOW, and a case that patched only one of the two
+    would be checking a pair of artifacts no run ever produces -- an
+    inconsistent pair is a state _free_fix_saving deliberately REFUSES, so
+    stubbing half of it tests the refusal rather than the household.
+
+    `edits` is {artifact: edit}; every other artifact is the real document,
+    and each edited one is a deep copy, so nothing here reaches rt._json_cache
+    or a later case."""
+    real = rt._json
+
+    def stubbed(name):
+        doc = real(name)
+        if name in edits:
+            doc = copy.deepcopy(doc)
+            edits[name](doc)
+        return doc
+
+    return stubbed
+
+
 def _renders(token):
     """resolve_token, with a REFUSAL turned into this case's own failure.
 
@@ -8324,6 +8350,119 @@ def _renders(token):
         raise AssertionError(
             f"{token} REFUSED an artifact state that is simply the other reading, "
             f"instead of rendering the sentence written for it: {e}")
+
+
+def _refuses(token):
+    """The mirror of _renders: resolve_token on artifacts that CONTRADICT each
+    other, with the refusal returned as its message and a render treated as
+    the failure.
+
+    _renders exists because a refusal on an ordinary household withholds the
+    whole report. This one exists because the opposite is just as bad: a
+    figure published off two artifacts that disagree about what it measures is
+    a number with no evidence behind it, which CLAUDE.md section 0 forbids
+    outright."""
+    try:
+        value = rt.resolve_token(token)
+    except SystemExit as e:
+        return str(e)
+    raise AssertionError(
+        f"{token} RENDERED {value!r} on artifacts that contradict each other about "
+        f"which scenario the free behavior fix IS, instead of failing closed")
+
+
+# ---------------------------------------------------------------------------
+# THE NO-EV HOUSEHOLD, IN THE SHAPE analysis/behavior_rebuild.py ACTUALLY
+# WRITES IT (issue #147).
+#
+# The fixture below used to stub `detection` and nothing else. Everything the
+# six section-9 EV tokens read was covered by that, so those six passed --
+# against a document no generator emits. scenarios a and b still carried real
+# `saved` figures; `battery` still carried the post-EV-shift pair; and
+# package_results.json still priced scenario a. SEVEN further tokens read
+# exactly the fields that fixture left intact, every one of them aborted the
+# ENTIRE report on a real no-EV household (generate_report.run() blocks the
+# write on any non-gap token failure), and no case could see it. That gap is
+# issue #147, and a fixture narrower than the generator's real output is the
+# mechanism by which it stayed invisible -- so the shape below is checked
+# field-for-field against a genuinely generated no-EV artifact set rather than
+# written from a reading of the generator.
+#
+# The FIGURES stay this household's own (scenarios c and d are real numbers
+# here and are pure house-load shifts in this branch); only the SHAPE is the
+# no-EV one.
+# ---------------------------------------------------------------------------
+_NO_EV_REASON = ("household.has_ev is false (intake applicability flag, "
+                 "DATA-SOURCES-CHEATSHEET.md) — ")
+_NO_EV_INTAKE_TAIL = ("; set the flag true and complete the intake (charger.kw) "
+                      "to compute it")
+
+
+def _no_ev_stub(what):
+    return {"not_applicable": True,
+            "reason": f"{_NO_EV_REASON}{what}{_NO_EV_INTAKE_TAIL}"}
+
+
+def _no_ev_behavior(doc):
+    """data/behavior_rebuild.json exactly as the generator writes it when the
+    intake says household.has_ev is false: FOUR explicit stubs, a battery
+    block that has lost its post-EV-shift pair and gained a stub in their
+    place, and a different top-level note."""
+    doc["detection"] = _no_ev_stub(
+        "EV charging detection does not apply to this household")
+    for key in ("a", "b"):
+        doc["scenarios"][key] = _no_ev_stub(
+            "the EV-only shift scenario does not apply to this household")
+    # c and d keep their figures and lose the EV half of their labels: with no
+    # EV rung under them they are the whole of the move, so every kWh they
+    # shift is house load.
+    for key, label in (("c", "c: 25% flexible house load"),
+                       ("d", "d: stretch - 50% house load")):
+        node = doc["scenarios"][key]
+        node["label"] = label
+        node["kwh_moved"] = node["house_kwh_moved"]
+    battery = doc["battery"]
+    battery.pop("marginal_after_scenario_a", None)
+    battery.pop("double_count_avoided", None)
+    battery["marginal_after_ev_shift"] = _no_ev_stub(
+        "the post-EV-shift battery marginal does not apply to this household")
+    battery["note"] = ("no EV shift to sit on top of, so there is no "
+                       "behavior/battery double-count to avoid")
+    doc["note"] = ("household.has_ev is false: the EV rungs (detection, scenarios "
+                   "a/b) are not applicable and scenarios c/d are pure house-load "
+                   "shifts. Report DELTAS between scenarios, not the absolute "
+                   "model bill.")
+
+
+def _no_ev_package(c, d):
+    """data/package_results.json's LOW package for that same household: the
+    free fix is scenario c, and savings_yr is its whole-dollar rounding.
+
+    Written as the generator writes it -- savings_yr IS round(c.saved),
+    free_fix_scenario says so, and the projected bill is that same scenario's
+    -- because _free_fix_saving checks that derivation, and a fixture that
+    only half-agreed would be testing the drift guard rather than the
+    household."""
+    def edit(doc):
+        low = doc["packages"]["LOW"]
+        low["free_fix_scenario"] = "c"
+        low["savings_yr"] = round(c["saved"])
+        low["savings_range"] = [round(c["saved"]), round(d["saved"])]
+        low["projected_bill_current_rates_yr"] = round(c["bill"])
+        low["note"] = ("household.has_ev is false (intake applicability flag), so "
+                       "there is no EV charging to reschedule; the free fix here is "
+                       "moving flexible on-peak house load off peak, into the "
+                       "super-off-peak window")
+    return edit
+
+
+def _no_ev_household():
+    """The consistent pair: behavior_rebuild.json and package_results.json as
+    ONE no-EV run writes them."""
+    scen = rt._json("behavior_rebuild.json")["scenarios"]
+    return _stub_for_many({
+        "behavior_rebuild.json": _no_ev_behavior,
+        "package_results.json": _no_ev_package(scen["c"], scen["d"])})
 
 
 @case
@@ -8468,18 +8607,97 @@ def case_a_legitimate_null_or_not_applicable_emission_renders_rather_than_aborts
     assert "%/yr" in got["null_r2"], got["null_r2"]
     assert got["no_reason"].startswith("not determined"), got["no_reason"]
 
-    # 4. behavior_rebuild.py's _not_applicable stub, for a household with no EV.
-    def no_ev(doc):
-        doc["detection"] = {"not_applicable": True,
-                            "reason": "household.has_ev is false (intake applicability flag)"}
+    # 4. THE WHOLE no-EV household, not one stubbed block of it (issue #147):
+    #    behavior_rebuild.py's four not-applicable stubs, the battery block
+    #    that swaps its post-EV-shift pair for a fifth, and the LOW package
+    #    that prices scenario c instead of scenario a. See _no_ev_behavior for
+    #    why the narrower fixture hid seven report-aborting tokens.
+    scen = rt._json("behavior_rebuild.json")["scenarios"]
+    low_yr = round(scen["c"]["saved"])
 
-    with _patched(rt, "_json", _stub_for("behavior_rebuild.json", no_ev)):
+    with _patched(rt, "_json", _no_ev_household()):
         for token in ("EV_SESSION_COUNT", "EV_ANNUAL_KWH", "EV_AVG_SESSION_KWH",
                       "EV_WINDOW_DECOMPOSITION", "EV_SOP_COMPLIANCE_PCT",
                       "EV_DETECTION_BASIS"):
             got[f"no_ev_{token}"] = _renders(token)
             assert "not applicable" in got[f"no_ev_{token}"], got[f"no_ev_{token}"]
             assert "has_ev" in got[f"no_ev_{token}"], got[f"no_ev_{token}"]
+
+        # 4a. The two EV shift-scenario figures. Both were leaf data_json
+        #     tokens digging scenarios.<k>.saved out of a stub that has no
+        #     such field; both now render the artifact's OWN stated reason.
+        for token in ("EV_FIX_SAVINGS_100", "EV_FIX_SAVINGS_80"):
+            value = got[f"no_ev_{token}"] = _renders(token)
+            assert "not applicable" in value, value
+            assert "has_ev" in value, value
+
+        # 4b. Section 9's <summary> teaser is that section's ONLY permitted
+        #     one-line conclusion (CLAUDE.md section 10 calls a section with
+        #     none a bug), so it may not degrade into a bare disclaimer: the
+        #     always-on overnight floor is measured for every household, off
+        #     an artifact that knows nothing about EVs, and it has to carry
+        #     the sentence on its own. Both halves of that clause are checked
+        #     -- the energy and the money -- because a teaser reduced to
+        #     "not applicable" would still be non-blank.
+        teaser = got["no_ev_SEC9_TEASER"] = _renders("SEC9_TEASER")
+        assert re.search(r"[\d,.]+\s*kWh", teaser), (
+            f"SEC9_TEASER lost the overnight-floor energy figure, so section 9 has "
+            f"no one-line conclusion left: {teaser!r}")
+        assert re.search(r"\$[\d,]+", teaser), (
+            f"SEC9_TEASER lost the overnight-floor cost figure: {teaser!r}")
+        assert "not applicable" not in teaser, (
+            f"SEC9_TEASER degraded section 9's conclusion into not-applicable "
+            f"boilerplate instead of dropping the EV clause: {teaser!r}")
+
+        # 4c. HOUSE_KWH_DAY lands in a <thead> cell, where prose has nowhere
+        #     to go, so the no-EV answer is the same arithmetic with the
+        #     subtraction at zero -- a NUMBER, never a sentence.
+        kwh_day = got["no_ev_HOUSE_KWH_DAY"] = _renders("HOUSE_KWH_DAY")
+        assert re.fullmatch(r"[\d,]+", kwh_day), (
+            f"HOUSE_KWH_DAY is a table-header figure and must render a number on a "
+            f"household with no EV, not prose: {kwh_day!r}")
+        assert "not applicable" not in kwh_day, kwh_day
+
+        # 4d. ...and the words BESIDE that number are the other half of the
+        #     same truth: "House minus EV" over a house with no EV is a false
+        #     claim standing on a correct figure, and no value the token
+        #     rendered could fix it.
+        header = got["no_ev_HOUSE_LOAD_COLUMN_HEADER"] = \
+            _renders("HOUSE_LOAD_COLUMN_HEADER")
+        assert "minus EV" not in header, (
+            f"HOUSE_LOAD_COLUMN_HEADER claims an EV subtraction on a household with "
+            f"no EV: {header!r}")
+        assert re.search(r"~[\d,]+ kWh/d", header), header
+        assert kwh_day in header, (f"the heading dropped its own figure: {header!r}")
+
+        # 4e. The three verdict sentences that reach _free_fix_saving. Each
+        #     must state the move this household can actually make -- naming
+        #     a charger is an instruction that cannot be carried out, and in
+        #     the Monday appendix it is the ONE instruction on the page --
+        #     and each stays inside CLAUDE.md section 10's density cap, which
+        #     governs every branch and not just the one index.html carries.
+        #     Sections 0 and 7 name the FIX ("the free load-shift fix"); the
+        #     Monday appendix names what to MOVE, because it is an
+        #     instruction rather than a valuation. Both come out of
+        #     _free_fix_move off the scenario packages.LOW prices, so each is
+        #     pinned to the phrase its own sentence is built from.
+        for token, names_the_move in (("S0_VERDICT", "free load-shift fix"),
+                                      ("S7_VERDICT", "free load-shift fix"),
+                                      ("S15_VERDICT", "flexible house load")):
+            value = got[f"no_ev_{token}"] = _renders(token)
+            low_value = value.lower()
+            assert "charger" not in low_value and "reprogram" not in low_value, (
+                f"{token} tells a household with no EV to reprogram a charger: "
+                f"{value!r}")
+            assert "EV-charging fix" not in value, value
+            assert names_the_move in value, (
+                f"{token} does not name the move packages.LOW actually prices "
+                f"(scenario c, a pure house-load shift): {value!r}")
+            _assert_within_density_cap(token, value, "a household with no EV")
+        for token in ("S0_VERDICT", "S7_VERDICT"):
+            assert f"${low_yr:,}/yr" in got[f"no_ev_{token}"], (
+                f"{token} does not quote packages.LOW.savings_yr (${low_yr:,}/yr): "
+                f"{got[f'no_ev_{token}']!r}")
 
     # 5. The two gas artifacts collapsing to {"applicable": False} for a
     #    household with no gas service.
@@ -8507,6 +8725,104 @@ def case_a_legitimate_null_or_not_applicable_emission_renders_rather_than_aborts
             assert not pattern.search(text), f"{name} rendered {label}: {text}"
     return (f"{len(got)} legitimate null / degenerate / not-applicable emission(s) render "
             "their own answer instead of aborting the report")
+
+
+@case
+def case_the_free_fix_guard_refuses_a_package_that_cannot_name_its_own_scenario():
+    """ISSUE #147. _free_fix_saving stopped RE-DERIVING which behavior_rebuild
+    scenario packages.LOW prices and started READING it, off
+    data/package_results.json:packages.LOW.free_fix_scenario. That field is a
+    contract between two generators, and the three ways it can fail to hold
+    all have to fail closed:
+
+      (a) the field is absent -- an artifact written before it existed. The
+          obvious fallback is "a", and on a household with no EV that
+          fallback points the whole-dollar rounding guard at a stub with no
+          `saved` field at all: the exact wrong-scenario check the field was
+          added to make impossible.
+      (b) it names something that is not one of the four shift scenarios, so
+          nothing here knows what the move shifts or what to call it.
+      (c) it names a scenario behavior_rebuild.json publishes as NOT
+          APPLICABLE. This is not a household with no EV -- it is two
+          committed artifacts contradicting each other about which rung the
+          LOW package IS, and either figure published off it would be a
+          number with no evidence behind it.
+
+    All three refusals were new and untested; (c) is the one a real mixed
+    fixture hits by accident. Every one is driven through all THREE sentences
+    that reach _free_fix_saving, because each of them alone blocks the whole
+    report, and a guard that fired in one of the three would still let the
+    other two publish the contradiction."""
+    tokens = ("S0_VERDICT", "S7_VERDICT", "S15_VERDICT")
+    said = {}
+
+    # (a) The artifact that predates the field.
+    def no_field(doc):
+        doc["packages"]["LOW"].pop("free_fix_scenario", None)
+
+    with _patched(rt, "_json", _stub_for("package_results.json", no_field)):
+        for token in tokens:
+            said[f"absent {token}"] = _refuses(token)
+            assert "analysis/package_results.py" in said[f"absent {token}"], (
+                f"the refusal does not tell the reader which generator writes the "
+                f"missing field: {said[f'absent {token}']!r}")
+
+    # (b) A key that is not one of behavior_rebuild.py's four scenarios. Both
+    #     an unknown letter and a plausible-looking non-scenario, so the guard
+    #     is a membership test rather than a spelling test.
+    for bogus in ("z", "a2"):
+        def wrong_key(doc, bogus=bogus):
+            doc["packages"]["LOW"]["free_fix_scenario"] = bogus
+
+        with _patched(rt, "_json", _stub_for("package_results.json", wrong_key)):
+            for token in tokens:
+                message = said[f"bogus {bogus} {token}"] = _refuses(token)
+                assert repr(bogus) in message, (
+                    f"the refusal does not quote the key it rejected: {message!r}")
+                assert "(a, b, c, d)" in message, (
+                    f"the refusal does not say what the four scenarios ARE, so the "
+                    f"reader cannot tell what a valid value looks like: {message!r}")
+
+    # (c) A package naming a scenario its own source says does not exist here:
+    #     behavior_rebuild.json read the no-EV way, package_results.json still
+    #     pricing the EV rung. Only this state proves the guard reads the
+    #     SCENARIO rather than merely the field.
+    def prices_the_ev_rung(doc):
+        doc["packages"]["LOW"]["free_fix_scenario"] = "a"
+
+    contradiction = _stub_for_many({
+        "behavior_rebuild.json": _no_ev_behavior,
+        "package_results.json": prices_the_ev_rung})
+    with _patched(rt, "_json", contradiction):
+        for token in tokens:
+            message = said[f"stubbed scenario {token}"] = _refuses(token)
+            assert "not applicable" in message, (
+                f"the refusal does not say that the named scenario is one the "
+                f"behavior artifact publishes as not applicable: {message!r}")
+            assert "has_ev" in message, (
+                f"the refusal does not carry behavior_rebuild.py's own reason: "
+                f"{message!r}")
+            assert "'a'" in message, (
+                f"the refusal does not name the scenario the package priced: "
+                f"{message!r}")
+
+    # Every refusal names the artifact whose field is wrong, so the reader is
+    # sent at a generator rather than at the line that raised.
+    for label, message in said.items():
+        # A REFUSAL, NOT A CRASH CONVERTED INTO ONE. resolve_token wraps any
+        # stray KeyError or TypeError in a SystemExit as well, so "failed to
+        # resolve token S0_VERDICT (derived): KeyError: 'z'" would satisfy a
+        # test that only checked that something was raised -- while telling
+        # the reader nothing about which artifact is wrong or which generator
+        # writes it. Each of these three states has a sentence of its own.
+        assert "failed to resolve token" not in message, (
+            f"{label}: the contradiction reached the reader as an unhandled "
+            f"exception rather than as a named refusal: {message!r}")
+        assert "package_results" in message, f"{label}: {message!r}"
+        assert "free_fix_scenario" in message, f"{label}: {message!r}"
+    return (f"all {len(said)} free-fix contract violations fail closed across "
+            "S0/S7/S15 -- a missing field, a key that is not a scenario, and a "
+            "package pricing a scenario its own source publishes as not applicable")
 
 
 def _night_floor_readers():

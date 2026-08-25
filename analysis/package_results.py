@@ -6,6 +6,11 @@ artifact regenerable by a committed script). It computes nothing new: every figu
 read from the two upstream artifacts that the integrated pipeline writes —
 
   data/behavior_rebuild.json            (behavior scenarios a–d, baseline bill)
+                                        — on a household whose intake says
+                                        household.has_ev is false, scenarios a
+                                        and b are explicit not-applicable stubs
+                                        with no figure, and the LOW package is
+                                        scenario c instead (see below)
   data/battery_dispatch_policies.json   (price-aware battery, post_behavior block)
 
 — and package costs, which are purchase-price constants from the battery research
@@ -184,13 +189,52 @@ def _check_cohort(specs):
             "left over from an unrelated session.")
 
 
+def _is_not_applicable(node):
+    """True when an upstream section is an explicit not-applicable STUB.
+
+    behavior_rebuild.py publishes {"not_applicable": True, "reason": ...} for a
+    section whose governing intake flag is false (its own _not_applicable()).
+    That is not_applicable, NOT not_determined: the intake DID determine the
+    answer, so the stub is a VALID artifact, never a broken one.
+
+    Read the ARTIFACT, which is what this script consumes -- never the flag
+    file, never charger.kw, and never a merely MISSING key. A missing key is a
+    malformed artifact and must keep failing loudly; only this explicit marker
+    means "the domain does not exist for this household".
+    """
+    return isinstance(node, dict) and node.get("not_applicable") is True
+
+
 _check_cohort([(BEHAVIOR_JSON, "behavior_rebuild.py"), (DISPATCH_JSON, "battery_dispatch_policies.py")])
 br = _resolve_artifact(BEHAVIOR_JSON, "behavior_rebuild.py")
 bp = _resolve_artifact(DISPATCH_JSON, "battery_dispatch_policies.py")
 
 base = round(br["baseline"]["model_bill"])           # modelled baseline at 6/1/2026 rates (see behavior_rebuild.json)
 sc = br["scenarios"]
-a, b, c, d = (round(sc[k]["saved"]) for k in ("a", "b", "c", "d"))
+# Scenarios c and d (flexible house-load shifts) exist for EVERY household.
+c, d = (round(sc[k]["saved"]) for k in ("c", "d"))
+# Scenarios a and b are the EV-only rungs. On a household whose intake says
+# household.has_ev is false, behavior_rebuild.py publishes them as explicit
+# not-applicable stubs with no "saved" figure at all -- so they must not be
+# computed here either. The LOW package is still a real, free behavior fix on
+# such a household: it becomes scenario c, the pure 25% flexible house-load
+# shift, so section 7 keeps its LOW/MID/HIGH structure.
+ev_shift_applies = not (_is_not_applicable(sc.get("a")) or _is_not_applicable(sc.get("b")))
+if ev_shift_applies:
+    a, b = (round(sc[k]["saved"]) for k in ("a", "b"))
+    low_scenario = "a"
+    low_savings = a
+    low_range = [b, c]
+    low_note = (f"EV-only 100% compliance; 80% = ${b:,}; +25% flexible house "
+                f"load = ${c:,}; stretch (50%) = ${d:,}")
+else:
+    low_scenario = "c"
+    low_savings = c
+    low_range = [c, d]
+    low_note = ("household.has_ev is false (intake applicability flag), so there "
+                "is no EV charging to reschedule; the free fix here is moving "
+                "flexible on-peak house load off peak, into the super-off-peak "
+                f"window: 25% of it = ${c:,}; stretch (50%) = ${d:,}")
 pb = bp["post_behavior"]
 batt_alone = bp["pw3"]["greedy"]["save"]             # baseline battery marginal (see battery_dispatch_policies.json)
 batt_post = pb["mid"]["battery_marginal"]            # 2245 post-EV-fix marginal
@@ -206,11 +250,18 @@ out = {
     "packages": {
         "LOW": {
             "cost": 0,
-            "savings_yr": a,
-            "savings_range": [b, c],
-            "note": (f"EV-only 100% compliance; 80% = ${b:,}; +25% flexible house "
-                     f"load = ${c:,}; stretch (50%) = ${d:,}"),
-            "projected_bill_current_rates_yr": base - a,
+            "savings_yr": low_savings,
+            "savings_range": low_range,
+            "note": low_note,
+            # Which behavior scenario this LOW is: savings_yr IS
+            # round(scenarios[free_fix_scenario].saved). Consumers
+            # (report_tokens._free_fix_saving) run a derived-from-one-another
+            # guard asserting exactly that, and they must read WHICH scenario
+            # fed it from the artifact rather than re-deriving the branch --
+            # otherwise the guard can check the wrong scenario and either pass
+            # vacuously or fire on a household it was never about.
+            "free_fix_scenario": low_scenario,
+            "projected_bill_current_rates_yr": base - low_savings,
         },
         "MID": {
             "cost": PW3_COST,

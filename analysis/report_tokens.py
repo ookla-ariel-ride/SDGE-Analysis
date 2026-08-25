@@ -1488,20 +1488,34 @@ def _sec9_teaser(ctx):
     # energy figure and a falsely annualized dollar figure in one clause. The
     # window itself is not restated here because the kWh half already states
     # it, immediately before, for the same nights.
-    br = _json("behavior_rebuild.json")
+    # AND THE SECTION STILL HAS TO STATE A CONCLUSION when the household has
+    # no EV (issue #147). This <summary> teaser is section 9's ONLY permitted
+    # one-line conclusion -- the section carries no <p class="verdict"> -- and
+    # CLAUDE.md section 10 calls a section with none a bug. So the EV clause
+    # is DROPPED rather than degraded to "not applicable", and the second
+    # clause carries the sentence on its own: the overnight floor is measured
+    # for every household, from an artifact that knows nothing about EVs, and
+    # it is a finding rather than a disclaimer. Six words say the EV rung is
+    # empty, in the voice of a result; the floor says what section 9 found.
     covers, _nights, _why = _night_floor_coverage()
-    sessions, = _figures(
-        "SEC9_TEASER", "how many charging sessions section 9 found",
-        ev_sessions=br["detection"]["sessions"])
+    det, _reason = _ev_detection()
+    if det is None:
+        lead = "no EV charging to shift here"
+    else:
+        sessions, = _figures(
+            "SEC9_TEASER", "how many charging sessions section 9 found",
+            ev_sessions=det["sessions"])
+        lead = f"{sessions} EV charging sessions logged"
     cost, = _amounts("SEC9_TEASER", "what the always-on overnight floor costs",
                      price_map_usd=_night_floor_pricing()["method_a_price_map"]["total_usd"])
-    return (f"{sessions} EV charging sessions logged; an always-on overnight floor of "
+    return (f"{lead}; an always-on overnight floor of "
             f"{_night_floor_annual_kwh(ctx)}, about ${cost:,.0f}"
             f"{'/yr' if covers else ''}")
 
 
 _tok("SEC9_TEASER", kind="derived", get=_sec9_teaser,
-     sources=["data/behavior_rebuild.json:detection.sessions",
+     sources=["data/behavior_rebuild.json:detection.sessions (or the "
+              "not-applicable stub, which drops the clause)",
               "data/quiet_night_floor.json:night_floor (median_kw, nights_total)",
               "data/quiet_night_floor.json:pricing.method_a_price_map.total_usd"])
 
@@ -1628,10 +1642,54 @@ _tok("BILL_COUNT", kind="derived",
      sources=["data/electric_bill_summary.csv"], fmt="num0")
 
 
-_tok("EV_FIX_SAVINGS_100", kind="data_json", file="behavior_rebuild.json",
-     path=("scenarios", "a", "saved"), fmt="usd0_tilde_signed")
-_tok("EV_FIX_SAVINGS_80", kind="data_json", file="behavior_rebuild.json",
-     path=("scenarios", "b", "saved"), fmt="usd0_signed")
+# ---- the free behavior fix's two compliance rungs -------------------------
+def _shift_scenario(key):
+    """(node, reason) for one of behavior_rebuild.json's shift scenarios.
+
+    Scenarios a and b are the EV-ONLY rungs of the ladder, and
+    behavior_rebuild.py replaces both of them with the same explicit
+    not-applicable stub it writes over the detection block when the intake
+    says household.has_ev is false (see _ev_detection, and the generator's own
+    "the EV rungs ... are not applicable" note). The stub carries a `reason`
+    and no `saved` field at all, so every reader of one has to branch.
+    Scenarios c and d always carry real figures: they are house-load shifts,
+    sitting on top of the EV shift where there is one and standing alone where
+    there is not."""
+    node = _json("behavior_rebuild.json")["scenarios"][key]
+    applies, reason = _applicability(node)
+    return (node if applies else None), reason
+
+
+def _shift_scenario_saving(key, fmt):
+    """One scenario's `saved` figure, or the artifact's own "no EV here".
+
+    A LEAF TOKEN CANNOT BRANCH (issue #147), which is why these two stopped
+    being kind="data_json". Declared as leaves they dug scenarios.<key>.saved
+    out of a stub that has no such field; resolve_all() failed, and
+    generate_report.py -- which blocks the whole write on any non-gap token
+    failure -- gave a household with no EV no index.html at all. Same
+    treatment the six section-9 EV tokens got: render behavior_rebuild.py's
+    OWN stated reason rather than withholding fifteen unrelated sections over
+    a rung this household does not have.
+
+    THE FORMATTER IS CALLED, NOT DECLARED as the token's `fmt`. Declaring it
+    would put resolve_token's finiteness gate in front of a value that is now
+    sometimes a sentence, and no numeric format spec has anything honest to
+    render for one. Calling it here keeps the figure's own refusal
+    (_no_sign_for_a_non_number) exactly where it was, on exactly the branch
+    that produces a figure."""
+    node, reason = _shift_scenario(key)
+    return _does_not_apply(reason) if node is None else fmt(node["saved"])
+
+
+_tok("EV_FIX_SAVINGS_100", kind="derived",
+     get=lambda ctx: _shift_scenario_saving("a", _usd0_tilde_signed),
+     sources=["data/behavior_rebuild.json:scenarios.a (saved, or the "
+              "not-applicable stub's reason)"])
+_tok("EV_FIX_SAVINGS_80", kind="derived",
+     get=lambda ctx: _shift_scenario_saving("b", _usd0_signed),
+     sources=["data/behavior_rebuild.json:scenarios.b (saved, or the "
+              "not-applicable stub's reason)"])
 
 _tok("BATTERY_SAVINGS_PRICE_AWARE", kind="data_json", file="battery_dispatch_policies.json",
      path=("pw3", "greedy", "save"), fmt="usd0_signed")
@@ -1928,15 +1986,55 @@ def _house_kwh_day(ctx):
     # SAM-8760-hourly-heuristic figure (44 vs 46) -- both are legitimate,
     # differently-scoped measurements of the same quantity; the gap is the
     # daily-average-vs-hourly-heuristic methodology difference, not an error.
+    #
+    # A HOUSEHOLD WITH NO EV HAS A CORRECT ANSWER HERE, and it is this same
+    # arithmetic with the subtraction at zero (issue #147): whole-home load
+    # per day. behavior_rebuild.py's not-applicable stub carries no
+    # ev_kwh_total to subtract, so the figure used to fail rather than render
+    # the number that was always available. What the column is CALLED changes
+    # with it -- "House minus EV" asserts an EV -- and that is
+    # HOUSE_LOAD_COLUMN_HEADER's job below, so this token stays a number and
+    # never a not-applicable sentence: it lands in a <thead> cell, where
+    # prose has nowhere to go.
     load = _annual_load_kwh(ctx)
-    ev = _json("behavior_rebuild.json")["detection"]["ev_kwh_total"]
+    det, _reason = _ev_detection()
+    ev = 0.0 if det is None else det["ev_kwh_total"]
     days = _json("behavior_rebuild.json")["window"]["days"]
     return round((load - ev) / days)
 
 
 _tok("HOUSE_KWH_DAY", kind="derived", get=_house_kwh_day,
      sources=["data/report_data.json", "data/enphase_daily_production.csv",
-              "data/behavior_rebuild.json:detection.ev_kwh_total"], fmt="num0")
+              "data/behavior_rebuild.json:detection.ev_kwh_total (zero where the "
+              "detection block is a not-applicable stub)"], fmt="num0")
+
+
+def _house_load_column_header(ctx):
+    """The whole second load column heading of the outage-endurance table --
+    the label AND the figure, because the two cannot be separated honestly.
+
+    THE TEMPLATE USED TO OWN THE LABEL: it hardcoded "House minus EV
+    (~{{HOUSE_KWH_DAY}} kWh/d)". On a household with no EV that heading is a
+    false claim standing over a correct number -- there is nothing being
+    subtracted and no EV to subtract -- and no value HOUSE_KWH_DAY could
+    render would fix it, because the falsehood is in the words beside it
+    (issue #147). This is issue #129's rule applied to a heading: the token
+    owns every word and every sigil of what it states, and the template
+    contributes none of them.
+
+    Both readings name the same tier battery_backup_sims.py simulates -- the
+    whole house less whatever the EV drew -- so the EV household's heading is
+    unchanged, to the character."""
+    kwh = _num0(_house_kwh_day(ctx))
+    det, _reason = _ev_detection()
+    label = "Whole-home load" if det is None else "House minus EV"
+    return f"{label} (~{kwh} kWh/d)"
+
+
+_tok("HOUSE_LOAD_COLUMN_HEADER", kind="derived", get=_house_load_column_header,
+     sources=["data/report_data.json", "data/enphase_daily_production.csv",
+              "data/behavior_rebuild.json:detection (ev_kwh_total, or the "
+              "not-applicable stub that renames the column)"])
 
 _tok("DISCOUNT_RATE", kind="data_json", file="tou_spread.json",
      path=("battery", "discount"), fmt="pct0")
@@ -4056,11 +4154,41 @@ def _battery_model_short():
     return re.sub(r"\s*\([^)]*\)", "", TOKENS["BATTERY_MODEL"]["value"]).strip()
 
 
+# WHAT THE FREE FIX ACTUALLY MOVES, per behavior_rebuild.py's own ladder.
+#
+# Scenarios a and b shift EV SESSIONS and nothing else. Scenarios c and d
+# shift flexible HOUSE load -- on top of the EV shift where the household has
+# an EV, and on their own where it does not, which is why the generator gives
+# them two labels ("c: EV + 25% flexible house load" against "c: 25% flexible
+# house load"). So naming the move takes the scenario key AND whether the EV
+# rungs exist at all, and the three answers are three different true
+# sentences rather than one hedged one.
+#
+# Each entry is (the adjective naming the fix, the noun naming what it
+# shifts, whether that includes EV charging). The adjective for key "a" is
+# load-bearing beyond prose: it is also the SUBJECT of the derived-from-one-
+# another refusal below, which test_report_tokens pins by string.
+def _free_fix_move(token, key):
+    """(fix_name, move_noun, moves_ev) for the scenario packages.LOW prices."""
+    if key in ("a", "b"):
+        return "EV-charging", "EV charging", True
+    if key in ("c", "d"):
+        det, _reason = _ev_detection()
+        if det is None:
+            return "load-shift", "flexible house load", False
+        return ("EV-and-house-load", "EV charging and flexible house load", True)
+    raise SystemExit(
+        f"report_tokens: {token} cannot name the free behavior fix -- "
+        f"data/package_results.json:packages.LOW.free_fix_scenario is {key!r}, which is "
+        f"not one of analysis/behavior_rebuild.py's four shift scenarios (a, b, c, d), "
+        f"so nothing here knows what the move actually shifts")
+
+
 def _free_fix_saving(token):
-    """(behavior_saving, package_saving, saves_money) for the free EV-charging
-    fix: data/behavior_rebuild.json:scenarios.a.saved, data/package_results.
-    json:packages.LOW.savings_yr, and whether the artifacts say the move is
-    worth making.
+    """(behavior_saving, package_saving, saves_money, move) for the free
+    behavior fix: data/behavior_rebuild.json:scenarios.<k>.saved,
+    data/package_results.json:packages.LOW.savings_yr, whether the artifacts
+    say the move is worth making, and _free_fix_move's naming of it.
 
     Three sentences pass through here, which is the point of it being one
     place: section 0 ("the free EV-charging fix saves a modeled $X/yr
@@ -4068,9 +4196,24 @@ def _free_fix_saving(token):
     modeled $X/yr") and the Monday appendix ("reprogramming the chargers this
     week ... captures the free savings").
 
+    WHICH SCENARIO IS READ OFF THE GENERATOR'S OWN STATEMENT OF IT, never
+    re-derived here (issue #147). analysis/package_results.py writes
+    `free_fix_scenario` beside `savings_yr` naming the scenario that figure is
+    the rounding of: "a" for a household with an EV, and "c" -- the pure
+    house-load shift, still free, still the LOW package -- for one whose
+    intake says household.has_ev is false, where scenarios a and b are
+    not-applicable stubs with no `saved` field at all. Re-deriving that branch
+    here (say, from whether scenario a is stubbed) would be a second
+    implementation of the generator's choice, free to disagree with it: the
+    guard below would then check a scenario that did not feed savings_yr and
+    either pass vacuously or fire on a household it was never about. Reading
+    the field is what makes the check impossible to point at the wrong
+    scenario.
+
     RELATIONSHIP: ONE DERIVED FROM THE OTHER. analysis/package_results.py
     reads behavior_rebuild.json and writes `savings_yr` as literally
-    `round(scenarios.a.saved)` -- one figure and its whole-dollar rounding,
+    `round(scenarios[free_fix_scenario].saved)` -- one figure and its
+    whole-dollar rounding,
     not two measurements to be cross-checked. The previous guard compared
     their SIGNS, so a household saving $0.37/yr had sign +1 against a rounded
     sign of 0, the pair read as "two committed artifacts contradicting each
@@ -4112,23 +4255,55 @@ def _free_fix_saving(token):
     loss) is cured by SAYING it loses money -- strictly more informative than
     withholding fifteen sections.
     """
-    saved = _json("behavior_rebuild.json")["scenarios"]["a"]["saved"]
-    low = _json("package_results.json")["packages"]["LOW"]["savings_yr"]
+    package = _json("package_results.json")["packages"]["LOW"]
+    # FAIL CLOSED ON AN ARTIFACT THAT PREDATES THE FIELD rather than falling
+    # back to "a". The fallback is what this reads instead of, and on a
+    # household with no EV it would send the guard at a stub -- the exact
+    # wrong-scenario check the field exists to make impossible.
+    if "free_fix_scenario" not in package:
+        raise SystemExit(
+            f"report_tokens: {token} cannot check what the free behavior fix is worth -- "
+            "data/package_results.json:packages.LOW carries no free_fix_scenario, so "
+            "nothing states which of behavior_rebuild.json's scenarios its savings_yr is "
+            "the rounding of. Regenerate it with analysis/package_results.py, which "
+            "writes that field beside savings_yr")
+    key = package["free_fix_scenario"]
+    fix_name, move_noun, moves_ev = _free_fix_move(token, key)
+    node, reason = _shift_scenario(key)
+    # The generator named a scenario it also published as a not-applicable
+    # stub. That is not this household having no EV -- it is the two artifacts
+    # contradicting each other about which rung the LOW package IS -- so it
+    # refuses rather than rendering either figure.
+    if node is None:
+        raise SystemExit(
+            f"report_tokens: {token} cannot say what the free behavior fix is worth -- "
+            f"data/package_results.json:packages.LOW.free_fix_scenario names scenario "
+            f"{key!r}, which data/behavior_rebuild.json publishes as not applicable "
+            f"({reason}), so the package prices a move its own source says does not "
+            "exist here. Regenerate both with analysis/behavior_rebuild.py then "
+            "analysis/package_results.py, in that order, from one run")
+    saved = node["saved"]
+    low = package["savings_yr"]
     _require_derived(
-        token, "what the free EV-charging fix is worth", saved, low,
+        token, f"what the free {fix_name} fix is worth", saved, low,
         _WHOLE_DOLLAR_ROUNDING,
         f"data/package_results.json:packages.LOW.savings_yr is {low!r}/yr, which is "
         f"not the whole-dollar rounding of the {saved!r}/yr its own generator reads "
-        "out of data/behavior_rebuild.json:scenarios.a.saved -- the two artifacts "
+        f"out of data/behavior_rebuild.json:scenarios.{key}.saved -- the two artifacts "
         "were composed from different runs")
     saves = _sign_claim(
-        token, "whether shifting EV charging is worth doing", low,
+        token, f"whether shifting {move_noun} is worth doing", low,
         f"data/package_results.json:packages.LOW.savings_yr is {low!r}/yr")
-    return saved, low, saves
+    return saved, low, saves, (fix_name, move_noun, moves_ev)
 
 
-def _free_fix_clause(saving, saves, sell):
+def _free_fix_clause(saving, saves, move_noun, sell):
     """One free-fix clause, in the sentence the state calls for.
+
+    `move_noun` names what the move actually shifts -- _free_fix_move's
+    reading of the scenario packages.LOW prices, so a household with no EV
+    reads "shifting flexible house load" rather than being told about a
+    charger it does not own (issue #147).
 
     `sell` is a CALLABLE returning the SUPPORTED wording (each section sells
     the move in its own words); the two SUPPORTED_OPPOSITE wordings are
@@ -4148,8 +4323,8 @@ def _free_fix_clause(saving, saves, sell):
     if saves:
         return sell()
     if saving == 0:
-        return "shifting EV charging adds no modeled saving"
-    return f"shifting EV charging costs a modeled {_usd0(-saving)}/yr"
+        return f"shifting {move_noun} adds no modeled saving"
+    return f"shifting {move_noun} costs a modeled {_usd0(-saving)}/yr"
 
 
 # The MID package's two battery-alone scenarios, in the order section 0's
@@ -4330,10 +4505,15 @@ def _s0_verdict(ctx):
     # The WHOLE-DOLLAR figure, in the branch test and in the sentence: it is
     # what _usd0 prints either way, and passing the unrounded one sent a
     # -$0.37 saving into the loss branch to render "costs a modeled $-0/yr".
-    _saved, low, free_fix_saves = _free_fix_saving("S0_VERDICT")
+    # The fix is NAMED from the scenario packages.LOW actually prices, not
+    # asserted: "the free EV-charging fix" over a house with no EV is a claim
+    # about hardware it does not own (issue #147). Every name the map can
+    # return is four words or fewer in this clause, so no branch moves the
+    # sentence off the 34 words it already spends.
+    _saved, low, free_fix_saves, (fix_name, move_noun, _ev) = _free_fix_saving("S0_VERDICT")
     fix_clause = _free_fix_clause(
-        low, free_fix_saves,
-        lambda: f"the free EV-charging fix saves a modeled {_usd0(low)}/yr "
+        low, free_fix_saves, move_noun,
+        lambda: f"the free {fix_name} fix saves a modeled {_usd0(low)}/yr "
                 "whatever you buy")
     # Whether the battery repays its own cost is decided in ONE place, off ONE
     # scenario, shared with section 7 and with the payback card -- the three
@@ -4398,7 +4578,9 @@ def _s0_verdict(ctx):
 
 
 _tok("S0_VERDICT", kind="derived", get=_s0_verdict,
-     sources=["data/behavior_rebuild.json:scenarios.a.saved",
+     sources=["data/package_results.json:packages.LOW.free_fix_scenario (which "
+              "behavior_rebuild.json scenario the free fix is)",
+              "data/behavior_rebuild.json:scenarios.<that scenario>.saved",
               "data/package_results.json:packages.LOW.savings_yr (sign guard)",
               "data/package_results.json:packages.MID.battery_alone_payback_yr",
               "data/package_results.json:packages.MID.battery_alone_payback_post_fix_yr",
@@ -5147,10 +5329,11 @@ def _s7_verdict(ctx):
     # LOSS reads as a loss rather than as a neutral non-event. Both inverted
     # clauses are SHORTER than the published one, so neither can push this
     # sentence -- already at section 10's 35-word cap -- over it.
-    _saved, low_savings, free_fix_saves = _free_fix_saving("S7_VERDICT")
+    _saved, low_savings, free_fix_saves, (fix_name, move_noun, _ev) = \
+        _free_fix_saving("S7_VERDICT")
     fix_clause = _free_fix_clause(
-        low_savings, free_fix_saves,
-        lambda: f"the free EV-charging fix is worth a modeled "
+        low_savings, free_fix_saves, move_noun,
+        lambda: f"the free {fix_name} fix is worth a modeled "
                 f"{_usd0(low_savings)}/yr whatever you buy")
     if low["cost"]:
         raise SystemExit(f"report_tokens: S7_VERDICT refuses to call the behavior package "
@@ -5243,7 +5426,9 @@ def _s7_verdict(ctx):
 
 _tok("S7_VERDICT", kind="derived", get=_s7_verdict,
      sources=["data/package_results.json:packages.LOW.savings_yr",
-              "data/behavior_rebuild.json:scenarios.a.saved (sign guard)",
+              "data/package_results.json:packages.LOW.free_fix_scenario (which "
+              "behavior_rebuild.json scenario the free fix is)",
+              "data/behavior_rebuild.json:scenarios.<that scenario>.saved (sign guard)",
               "data/package_results.json:packages.LOW.cost",
               "data/package_results.json:packages.MID.battery_alone_post_ev_fix_yr",
               "data/package_results.json:packages.MID.battery_alone_payback_post_fix_yr",
@@ -5368,24 +5553,50 @@ def _s15_verdict(ctx):
     # modeled loss as "adds no modeled saving" leaves the reader with no
     # reason not to spend the afternoon on it anyway. The loss branch tells
     # them to leave the schedules alone and quotes what moving them costs.
-    _saved, low, free_fix_saves = _free_fix_saving("S15_VERDICT")
+    # AND IT NAMES THE MOVE, which is the one instruction on the page (issue
+    # #147). "Reprogram the chargers" is not a softer version of the truth for
+    # a household with no charger -- it is an instruction that cannot be
+    # carried out, at the top of a list of things to do on Monday. The scenario
+    # packages.LOW actually prices says what there is to move, so the lead says
+    # that instead: the EV-only rungs keep the charger wording, and every other
+    # rung moves the load _free_fix_move names. Each branch is composed only on
+    # the state that renders it -- the loss wording interpolates a figure that
+    # exists only when the move loses money (issue #131 review round 5, part B).
+    _saved, low, free_fix_saves, (fix_name, move_noun, _ev) = _free_fix_saving("S15_VERDICT")
+    chargers = fix_name == "EV-charging"
+    window = _overnight_cheap_window()
     if free_fix_saves:
-        lead = (f"reprogramming the chargers this week to finish inside the "
-                f"{_overnight_cheap_window()} super-off-peak window captures the free savings")
+        lead = ((f"reprogramming the chargers this week to finish inside the "
+                 f"{window} super-off-peak window captures the free savings")
+                if chargers else
+                (f"moving {move_noun} into the {window} super-off-peak window "
+                 "this week captures the free savings"))
     elif low == 0:
-        lead = (f"reprogramming the chargers into the {_overnight_cheap_window()} "
-                "super-off-peak window adds no modeled saving here")
+        lead = ((f"reprogramming the chargers into the {window} "
+                 "super-off-peak window adds no modeled saving here")
+                if chargers else
+                (f"moving {move_noun} into the {window} super-off-peak window "
+                 "adds no modeled saving here"))
     else:
-        lead = (f"leave the charger schedules alone; moving them into the "
-                f"{_overnight_cheap_window()} super-off-peak window costs a modeled "
-                f"{_usd0(-low)}/yr here")
+        # "leave the load where it runs" rather than a second copy of
+        # move_noun: the longest name the map returns would put this branch at
+        # 36 words, over CLAUDE.md section 10's cap, and the cap governs every
+        # branch rather than the one that renders today.
+        lead = ((f"leave the charger schedules alone; moving them into the "
+                 f"{window} super-off-peak window costs a modeled {_usd0(-low)}/yr here")
+                if chargers else
+                (f"leave the load where it runs; moving it into the {window} "
+                 f"super-off-peak window costs a modeled {_usd0(-low)}/yr here"))
     return (f"{VERDICT_STEM}{lead}; everything else on the list is verification "
             "before spending money.")
 
 
 _tok("S15_VERDICT", kind="derived", get=_s15_verdict,
      sources=["analysis/rates.py:period() (sampled)",
-              "data/behavior_rebuild.json:scenarios.a.saved (sign guard)",
+              "data/package_results.json:packages.LOW.free_fix_scenario (which "
+              "behavior_rebuild.json scenario the free fix is, and so what the "
+              "lead tells the reader to move)",
+              "data/behavior_rebuild.json:scenarios.<that scenario>.saved (sign guard)",
               "data/package_results.json:packages.LOW.savings_yr (sign guard)"])
 
 
@@ -6193,7 +6404,20 @@ def _ev_window_kwh(token):
     missing window at all. A real failure here means the buckets no longer
     partition the series, which is precisely what makes the compliance share
     below meaningless."""
-    det, _reason = _ev_detection()
+    det, reason = _ev_detection()
+    # BOTH callers today reach here through _ev_or_not_applicable, so a stub is
+    # already answered before this runs and this branch is unreachable from
+    # them. It is here for the caller that does not exist yet: this is the one
+    # place left that indexes the detector block directly, and issue #147 was
+    # exactly a set of direct reads that were fine until they weren't. A named
+    # refusal beats the TypeError a bare det["ev_kwh_total"] would raise.
+    if det is None:
+        raise SystemExit(
+            f"report_tokens: {token} cannot split the year's EV charging across the "
+            f"tariff windows -- data/behavior_rebuild.json publishes the whole detection "
+            f"block as not applicable ({reason}). A caller that needs the windows has to "
+            "go through _ev_or_not_applicable, which answers that state instead of "
+            "reading fields the stub does not carry")
     total, sop, off, on = _quantities(
         token, "how the year's EV charging splits across the tariff windows",
         ev_kwh_total=det["ev_kwh_total"], ev_kwh_sop_already=det["ev_kwh_sop_already"],

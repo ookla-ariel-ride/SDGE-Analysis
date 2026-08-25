@@ -403,10 +403,10 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <h3>Outage endurance (simulated, 6pm start, solar recharge)</h3>
 <table>
-<thead><tr><th>Config</th><th>Essentials (~{{ESSENTIALS_KWH_DAY}} kWh/d)</th><th>House minus EV (~{{HOUSE_KWH_DAY}} kWh/d)</th></tr></thead>
+<thead><tr><th>Config</th><th>Essentials (~{{ESSENTIALS_KWH_DAY}} kWh/d)</th><th>{{HOUSE_LOAD_COLUMN_HEADER}}</th></tr></thead>
 <tbody>
 <tr class="win"><td>{{BATTERY_MODEL}}</td><td><b>{{ENDURANCE_ESSENTIALS}}</b></td><td>{{ENDURANCE_HOUSE}}</td></tr>
-<!-- TODO: one <tr> per config from the arbitrage table. -->
+<!-- TODO: one <tr> per config from the arbitrage table. The second load column's heading is one token because its LABEL varies with the household as well as its figure ({{HOUSE_LOAD_COLUMN_HEADER}}, built on the kWh/day figure {{HOUSE_KWH_DAY}}): "House minus EV" is a false claim over a house with no EV to subtract. -->
 </tbody>
 </table>
 </div>

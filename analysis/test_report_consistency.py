@@ -321,23 +321,46 @@ def case_every_lazy_chart_id_resolves_to_a_unique_canvas():
 def case_headline_figures_present_and_stale_ones_absent():
     """One pinned figure per artifact class, plus absence of the retired value:
     presence-anywhere alone cannot catch a partial re-base (the §3 failure), but
-    new-present AND old-absent catches every drift this branch actually had."""
+    new-present AND old-absent catches every drift this branch actually had.
+
+    TWO OF THE SIX PINS ARE EV FIGURES, AND ONE HOUSEHOLD IN N HAS NO EV
+    (issue #147). behavior_rebuild.py writes `detection` and `scenarios.a` as
+    explicit not-applicable stubs when the intake says household.has_ev is
+    false: neither carries the field this case subscripts, so it raised
+    KeyError -- not a FAIL naming a stale figure, an ERROR in a case that is
+    otherwise entirely about non-EV artifacts, taking its four sound pins down
+    with it. Those two are now gated on the artifact's own applicability flag
+    and the other four run everywhere.
+
+    THE EV HOUSEHOLD'S PINS ARE UNCHANGED. Where the artifact carries a real
+    detection block, both figures are asserted exactly as before: a checkout
+    whose report drops the session count or re-bases scenario a still fails
+    here. The gate reads the artifact, never the report, so it cannot be
+    satisfied by an index.html that simply stopped printing them."""
     BR = json.loads((ROOT / "data" / "behavior_rebuild.json").read_text())
     PK = json.loads((ROOT / "data" / "package_results.json").read_text())
     DP = json.loads((ROOT / "data" / "deep_results.json").read_text())
+    has_ev = not (BR["detection"].get("not_applicable")
+                  or BR["scenarios"]["a"].get("not_applicable"))
     current = [
-        f"{BR['detection']['sessions']} charging sessions",
-        f"${BR['scenarios']['a']['saved']:,.0f}/yr",
         f"${DISPATCH['pw3']['greedy']['save']:,}",
         f"${PK['packages']['MID']['savings_yr']:,}",
         f"${DISPATCH['baseline_bill_current_rates']:,}",
         f"median payback {DP['monte_carlo']['payback_median']:.1f} yr",
     ]
+    if has_ev:
+        current += [
+            f"{BR['detection']['sessions']} charging sessions",
+            f"${BR['scenarios']['a']['saved']:,.0f}/yr",
+        ]
     for new_form in current:
         assert new_form in HTML, f"current figure missing from the report: {new_form!r}"
     for old_form in RETIRED_FIGURES:
         assert old_form not in HTML, f"stale figure survives in the report: {old_form!r}"
-    return "headline figures per artifact class are present and their stale forms absent"
+    return (f"{len(current)} headline figures per artifact class are present and their "
+            "stale forms absent"
+            + ("" if has_ev else " (the two EV pins do not apply: "
+                                 "household.has_ev is false)"))
 
 
 def case_chart_and_dispatch_agree_on_non_super_off_peak():

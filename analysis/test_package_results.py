@@ -23,6 +23,13 @@ DISAGREEING -> the current run wins, announced loudly; (3) a malformed
 current-run copy -> fail closed, never silently falling back to the
 committed copy.
 
+A second group of cases covers the no-EV branch (issue #147): a household whose
+intake says household.has_ev is false gets scenarios a and b as explicit
+not-applicable STUBS, so the LOW package is read out of scenario c instead, and
+the new free_fix_scenario field must name whichever scenario actually fed
+savings_yr -- report_tokens._free_fix_saving cross-checks the two artifacts
+through that field, so a wrong name silently checks the wrong number.
+
 SkipCase matches test_parse_bills.py's typed-exception convention (issue #44
 AC4); there is no skip path in this file since the fixture is fully synthetic.
 """
@@ -62,6 +69,41 @@ def _dispatch_json(greedy_save, evening_save, mid_marginal, mid_combined,
     })
 
 
+# The explicit not-applicable STUB behavior_rebuild.py publishes for an EV-only
+# section when the intake flag household.has_ev is false (issue #147). Copied
+# from a genuinely generated no-EV behavior_rebuild.json rather than invented:
+# same two keys, same marker value True, same reason wording, and -- the part
+# that matters to package_results.py -- NO "saved" key at all.
+NA_REASON = ("household.has_ev is false (intake applicability flag, "
+             "DATA-SOURCES-CHEATSHEET.md) — the EV-only shift scenario does "
+             "not apply to this household; set the flag true and complete the "
+             "intake (charger.kw) to compute it")
+
+
+def _behavior_json_no_ev(model_bill, c, d):
+    """behavior_rebuild.json as the generator writes it for a household whose
+    intake says household.has_ev is false: scenarios a and b are explicit
+    not-applicable stubs carrying no figure, while c and d (pure house-load
+    shifts, which exist for every household) hold real savings."""
+    stub = {"not_applicable": True, "reason": NA_REASON}
+    return json.dumps({
+        "baseline": {"model_bill": model_bill},
+        "scenarios": {"a": dict(stub), "b": dict(stub),
+                      "c": {"saved": c}, "d": {"saved": d}},
+    })
+
+
+def _behavior_json_scenario_a(model_bill, a_node, b, c, d):
+    """Like _behavior_json but with scenarios.a set to an ARBITRARY node, so a
+    case can hand the script a malformed a (not a stub) and check that it still
+    fails loudly."""
+    return json.dumps({
+        "baseline": {"model_bill": model_bill},
+        "scenarios": {"a": a_node, "b": {"saved": b},
+                      "c": {"saved": c}, "d": {"saved": d}},
+    })
+
+
 # One canonical fixture pair, reused (with deliberate variants) across cases
 # so the expected package_results.json fields are hand-computable from these
 # same numbers in every case.
@@ -80,9 +122,28 @@ def _build_root(tmp):
     return tmp
 
 
+BASE_NOEV_BEHAVIOR = dict(model_bill=3173.79, c=428.83, d=857.66)
+"""The baseline/scenario figures a genuinely generated no-EV run produced.
+Deliberately un-rounded: round(428.83) = 429, so a case that asserts
+savings_yr == 429 fails against truncation as well as against the wrong
+scenario."""
+
+
 def _run(tmp):
     return subprocess.run([sys.executable, str(PACKAGE_RESULTS)], cwd=tmp,
                           capture_output=True, text=True, timeout=120)
+
+
+def _committed_only_root(td, behavior_text, dispatch_text=None):
+    """A repo-shaped root holding ONLY the committed copy of both upstream
+    artifacts -- the "operator already promoted" resolution path, which the
+    cases below use so artifact RESOLUTION (covered by its own cases above)
+    stays out of the way of what they are actually about."""
+    tmp = _build_root(pathlib.Path(td))
+    (tmp / "data" / "behavior_rebuild.json").write_text(behavior_text)
+    (tmp / "data" / "battery_dispatch_policies.json").write_text(
+        dispatch_text if dispatch_text is not None else _dispatch_json(**BASE_DISPATCH))
+    return tmp
 
 
 def case_no_current_run_copy_falls_back_to_committed_with_a_notice():
@@ -235,12 +296,145 @@ def case_neither_copy_exists_fails_closed_with_a_clear_message():
             "the missing artifact and its generator when neither copy exists")
 
 
+def case_no_ev_household_low_package_is_scenario_c():
+    """Issue #147: on a household whose intake says household.has_ev is false,
+    behavior_rebuild.py publishes scenarios a and b as explicit not-applicable
+    stubs with no figure at all. The LOW package must NOT vanish and must not
+    be read out of a stub -- it becomes scenario c, the pure 25% flexible
+    house-load shift, which is a real free fix for every household. Its range
+    becomes [c, d] and its note names the flag that decided it."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _committed_only_root(td, _behavior_json_no_ev(**BASE_NOEV_BEHAVIOR))
+
+        r = _run(tmp)
+        assert r.returncode == 0, (
+            "package_results.py failed on a valid no-EV artifact -- a "
+            f"not-applicable stub is a VALID artifact, not a broken one: {r.stderr[-2000:]}")
+
+        out = json.loads((tmp / "data" / "package_results.json").read_text())
+        low = out["packages"]["LOW"]
+        c, d = (round(BASE_NOEV_BEHAVIOR["c"]), round(BASE_NOEV_BEHAVIOR["d"]))
+        assert low["free_fix_scenario"] == "c", low
+        assert low["savings_yr"] == c, (low["savings_yr"], c)
+        assert low["savings_range"] == [c, d], low["savings_range"]
+        assert low["cost"] == 0, low["cost"]          # the free fix is still free
+        assert "household.has_ev" in low["note"], low["note"]
+        base = round(BASE_NOEV_BEHAVIOR["model_bill"])
+        assert low["projected_bill_current_rates_yr"] == base - c, low
+        # and nothing anywhere may quote a figure off the stubs
+        assert "not_applicable" not in json.dumps(out), out
+    return ("a no-EV household's LOW package is scenario c (savings_yr, "
+            "savings_range and projected bill all derived from c/d), is still "
+            "free, and names household.has_ev in its note")
+
+
+def case_ev_household_low_package_is_still_scenario_a():
+    """Positive control for the case above. An ordinary EV household still
+    gets the EV-only rung: LOW = scenario a, range [b, c], free_fix_scenario
+    "a". Without this, the no-EV case would pass just as happily against a
+    script that had been broken into always choosing c."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _committed_only_root(td, _behavior_json(**BASE_BEHAVIOR))
+
+        r = _run(tmp)
+        assert r.returncode == 0, f"package_results.py failed: {r.stderr[-2000:]}"
+
+        out = json.loads((tmp / "data" / "package_results.json").read_text())
+        low = out["packages"]["LOW"]
+        assert low["free_fix_scenario"] == "a", low
+        assert low["savings_yr"] == BASE_BEHAVIOR["a"], low
+        assert low["savings_range"] == [BASE_BEHAVIOR["b"], BASE_BEHAVIOR["c"]], low
+        assert low["cost"] == 0, low["cost"]
+        assert "EV-only" in low["note"], low["note"]
+        assert "household.has_ev" not in low["note"], low["note"]
+    return ("an EV household's LOW package is still scenario a with range "
+            "[b, c] and free_fix_scenario \"a\" -- the no-EV branch does not "
+            "capture the ordinary household")
+
+
+def case_low_savings_is_always_the_named_scenarios_rounded_saving():
+    """The load-bearing invariant behind the new free_fix_scenario field:
+
+        savings_yr == round(scenarios[free_fix_scenario].saved)
+
+    report_tokens._free_fix_saving cross-checks package_results.json against
+    behavior_rebuild.json by reading WHICH scenario fed savings_yr out of this
+    field. If the field ever names a scenario that did not feed savings_yr, that
+    consumer silently checks the wrong number -- it does not fail, it just stops
+    guarding anything. Assert it generically (look the value up by the name the
+    artifact itself gives) for BOTH households, off fractional savings so the
+    rounding is real work rather than an identity."""
+    ev = dict(model_bill=4903.61, a=1220.85, b=1008.72, c=1699.50, d=2178.83)
+    fixtures = [
+        ("EV", _behavior_json(**ev), "a"),
+        ("no-EV", _behavior_json_no_ev(**BASE_NOEV_BEHAVIOR), "c"),
+    ]
+    for label, behavior_text, expected_key in fixtures:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = _committed_only_root(td, behavior_text)
+            r = _run(tmp)
+            assert r.returncode == 0, f"{label}: {r.stderr[-2000:]}"
+
+            low = json.loads((tmp / "data" / "package_results.json").read_text()
+                             )["packages"]["LOW"]
+            named = low["free_fix_scenario"]
+            assert named == expected_key, (label, named, expected_key)
+            sc = json.loads(behavior_text)["scenarios"][named]
+            assert "saved" in sc, (
+                f"{label}: free_fix_scenario names {named!r}, which the behavior "
+                f"artifact publishes with no saved figure at all: {sc}")
+            assert low["savings_yr"] == round(sc["saved"]), (
+                f"{label}: savings_yr {low['savings_yr']} is not "
+                f"round(scenarios[{named!r}].saved) = {round(sc['saved'])} -- "
+                "free_fix_scenario names a scenario that did not feed it, so "
+                "report_tokens._free_fix_saving would cross-check the wrong number")
+    return ("savings_yr is round(scenarios[free_fix_scenario].saved) on both an "
+            "EV and a no-EV household, so the report-side cross-check reads the "
+            "scenario that actually fed the figure")
+
+
+def case_malformed_scenario_a_still_fails_loudly():
+    """A not-applicable STUB is a valid artifact; a MALFORMED scenarios.a is
+    not, and must keep failing. The distinction is the explicit marker, not
+    "a that cannot be read": if the branch ever widened to any unreadable a,
+    a genuinely broken behavior artifact would be published as a no-EV
+    household and the EV rung would silently disappear from the report.
+
+    Three shapes that are NOT the marker, all of which must abort before
+    package_results.json is written."""
+    variants = [
+        ("a dict with no saved figure and no marker", {"label": "a: EV only"}),
+        ("a that is not a dict at all", 1221),
+        ("an explicit not_applicable FALSE with no figure", {"not_applicable": False}),
+    ]
+    for label, a_node in variants:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = _committed_only_root(td, _behavior_json_scenario_a(
+                model_bill=BASE_BEHAVIOR["model_bill"], a_node=a_node,
+                b=BASE_BEHAVIOR["b"], c=BASE_BEHAVIOR["c"], d=BASE_BEHAVIOR["d"]))
+
+            r = _run(tmp)
+            assert r.returncode != 0, (
+                f"{label}: package_results.py accepted a malformed scenarios.a "
+                "-- a broken artifact was treated as a no-EV household")
+            assert not (tmp / "data" / "package_results.json").exists(), (
+                f"{label}: package_results.json was written from a malformed "
+                "behavior artifact")
+    return ("a malformed scenarios.a (no saved figure, not a dict, or "
+            "not_applicable false) still aborts the run -- only the explicit "
+            "not_applicable:true marker is read as a no-EV household")
+
+
 CASES = [
     case_no_current_run_copy_falls_back_to_committed_with_a_notice,
     case_disagreeing_current_run_copy_wins_and_is_announced_loudly,
     case_malformed_current_run_copy_fails_closed,
     case_mixed_source_cohort_fails_closed,
     case_neither_copy_exists_fails_closed_with_a_clear_message,
+    case_no_ev_household_low_package_is_scenario_c,
+    case_ev_household_low_package_is_still_scenario_a,
+    case_low_savings_is_always_the_named_scenarios_rounded_saving,
+    case_malformed_scenario_a_still_fails_loudly,
 ]
 
 

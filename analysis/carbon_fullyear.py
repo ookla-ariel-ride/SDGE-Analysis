@@ -49,7 +49,10 @@ models use), EV sessions re-detected with the exact algorithm from behavior_rebu
 
 ORDERING CONTRACT (this script runs SECOND):
   behavior_rebuild.py  ->  carbon_fullyear.py, in the SAME working directory.
-  The cost_note quotes behavior scenario 'a', and behavior_rebuild.py writes its
+  The cost_note quotes behavior scenario 'a' (or, on a household whose intake
+  says household.has_ev is false, states that there is no mistimed-charging
+  saving to price -- scenario 'a' is a not-applicable stub, not a broken
+  artifact, and never a computed $0.00), and behavior_rebuild.py writes its
   behavior_rebuild.json into the WORKING DIRECTORY; data/behavior_rebuild.json is
   only the last PROMOTED run. So the figure is read from this run's copy when one
   is there, from the committed copy otherwise, and a disagreement between the two
@@ -100,16 +103,35 @@ BEHAVIOR_JSON = "behavior_rebuild.json"    # written to the CWD by behavior_rebu
 
 
 def _read_scenario_a(path):
-    """scenarios.a.saved out of one behavior_rebuild.json.
+    """scenarios.a out of one behavior_rebuild.json, as (saved, reason).
 
-    Fail-closed: an unreadable or malformed copy is an ERROR, never a licence to
-    fall back to the other one. Falling back past a broken artifact is how a
-    stale figure gets published under a citation that looks current.
+    Two OUTCOMES, and they are different questions:
+
+      * (float, "")      -- the household has an EV; scenarios.a.saved is the
+                            netting-correct dollar saving for fixing mistimed
+                            charging, and the cost_note quotes it.
+      * (None, reason)   -- behavior_rebuild.py published scenarios.a as its
+                            explicit {"not_applicable": True, "reason": ...}
+                            stub because household.has_ev is false. That is
+                            not_applicable, NOT not_determined: the intake DID
+                            determine the answer, so the stub is a VALID
+                            artifact and must NOT raise. There is simply no
+                            mistimed-charging saving to price, and the
+                            cost_note says exactly that instead of a figure.
+
+    Fail-closed otherwise: an unreadable or malformed copy is still an ERROR,
+    never a licence to fall back to the other one. Falling back past a broken
+    artifact is how a stale figure gets published under a citation that looks
+    current. Only the explicit stub marker is tolerated -- a MISSING
+    scenarios.a, or an a with no "saved" and no marker, still aborts.
     """
     try:
         with open(path) as fh:
             doc = json.load(fh)
-        return float(doc["scenarios"]["a"]["saved"])
+        node = doc["scenarios"]["a"]
+        if isinstance(node, dict) and node.get("not_applicable") is True:
+            return None, str(node.get("reason", "")).strip()
+        return float(node["saved"]), ""
     except (OSError, ValueError, TypeError, KeyError) as e:
         raise SystemExit(
             f"{path}: cannot read scenarios.a.saved from the behavior artifact "
@@ -117,8 +139,20 @@ def _read_scenario_a(path):
             "this script will not fall back past a broken artifact.")
 
 
+def _describe_scenario_a(v):
+    """One artifact's scenario-a outcome, in words, for the NOTICE lines."""
+    saved, reason = v
+    if saved is None:
+        return ("scenario a NOT APPLICABLE (household.has_ev is false"
+                + (f": {reason}" if reason else "") + ")")
+    return f"scenario-a saving ${saved:,.2f}/yr"
+
+
 def _scenario_a_saved():
-    """Scenario-a dollar saving, taken from THIS run's behavior artifact.
+    """Scenario-a outcome, as (saved, reason), from THIS run's behavior artifact.
+
+    saved is None when behavior_rebuild.py published scenarios.a as its
+    not-applicable stub (household.has_ev false); see _read_scenario_a.
 
     The cost_note cites behavior_rebuild.json, so the figure is read rather than
     hardcoded -- a hardcoded copy here once went stale and contradicted the
@@ -147,31 +181,32 @@ def _scenario_a_saved():
                 "working directory first (see the ordering contract above).")
         v = _read_scenario_a(committed)
         print(f"NOTICE: no current-run {BEHAVIOR_JSON} in {pathlib.Path.cwd()}; "
-              f"scenario-a saving ${v:,.2f}/yr read from the committed "
+              f"{_describe_scenario_a(v)} read from the committed "
               f"{committed}. If this run's household inputs or EV detector "
               "changed, run behavior_rebuild.py here FIRST.")
         return v
     v = _read_scenario_a(run)
     if committed.exists() and run.samefile(committed):
-        print(f"NOTICE: scenario-a saving ${v:,.2f}/yr from {run} "
+        print(f"NOTICE: {_describe_scenario_a(v)} from {run} "
               "(the working directory IS the committed data/ directory).")
         return v
     if not committed.exists():
-        print(f"NOTICE: scenario-a saving ${v:,.2f}/yr from this run's {run} "
+        print(f"NOTICE: {_describe_scenario_a(v)} from this run's {run} "
               f"(no committed {committed} to compare against).")
         return v
     c = _read_scenario_a(committed)
     if c == v:
-        print(f"NOTICE: scenario-a saving ${v:,.2f}/yr from this run's {run} "
+        print(f"NOTICE: {_describe_scenario_a(v)} from this run's {run} "
               f"(agrees with the committed {committed}).")
         return v
     bar = "!" * 72
     print(bar)
     print("NOTICE -- STALE COMMITTED ARTIFACT: this run's "
-          f"{BEHAVIOR_JSON} says scenario a = ${v:,.2f}/yr, but the committed "
-          f"{committed} still says ${c:,.2f}/yr.")
-    print(f"  Using THIS RUN's ${v:,.2f}/yr. The committed copy has not been "
-          "promoted; CLAUDE.md's section 9 gate will fail until it is.")
+          f"{BEHAVIOR_JSON} says {_describe_scenario_a(v)}, but the committed "
+          f"{committed} says {_describe_scenario_a(c)}.")
+    print(f"  Using THIS RUN's {_describe_scenario_a(v)}. The committed copy "
+          "has not been promoted; CLAUDE.md's section 9 gate will fail until "
+          "it is.")
     print(bar)
     return v
 HOURLY_CSV = DATA / "caiso_hourly_intensity.csv"           # committed aggregate
@@ -282,7 +317,7 @@ def main():
         mode = f"committed CSV ({HOURLY_CSV})"
     # resolve the upstream behavior figure once, up front, so its NOTICE lands
     # before the run's own output rather than in the middle of it
-    scenario_a = _scenario_a_saved()
+    scenario_a, scenario_a_reason = _scenario_a_saved()
     # canonicalize to the committed CSV's 0.1 kg/MWh so both source modes are
     # bit-identical (the legacy 4 days were already stored at 0.1)
     covered = {k: np.round(v, 1) for k, v in covered.items()}
@@ -457,11 +492,24 @@ def main():
             "midday_cleaner_than_overnight_by_kg": {
                 "old": of["detail"]["midday_cleaner_than_overnight_by"],
                 "new": round(foot_sop - foot_mid, 1)}},
-        "cost_note": ("On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and "
-                      "00:00-06:00 are BOTH super-off-peak at the same price; the netting-"
-                      "correct dollar saving for fixing mistimed charging is scenario 'a' in "
-                      f"behavior_rebuild.json (${scenario_a:,.2f}/yr), unchanged "
-                      "by this carbon rerun."),
+        "cost_note": (
+            ("On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and "
+             "00:00-06:00 are BOTH super-off-peak at the same price; the netting-"
+             "correct dollar saving for fixing mistimed charging is scenario 'a' in "
+             f"behavior_rebuild.json (${scenario_a:,.2f}/yr), unchanged "
+             "by this carbon rerun.")
+            if scenario_a is not None else
+            # No EV: there is no charge timing to fix, so there is no dollar
+            # saving to quote. Say so, name the flag, and never let the absent
+            # figure read as a computed $0.00.
+            ("This household has no EV (household.has_ev is false), so there is "
+             "no charge timing to fix and NO mistimed-charging dollar saving to "
+             "price: behavior_rebuild.json publishes scenario 'a' as an explicit "
+             "not-applicable stub rather than a figure. The carbon figures above "
+             "are unaffected -- they are measured on this household's own imports "
+             "and exports."
+             + (f" Artifact reason: {scenario_a_reason}"
+                if scenario_a_reason else ""))),
         "caveats": ([
             f"Intensity measured on {n_cov} real CAISO days; the other "
             f"{365 - n_cov} day{'s' if 365 - n_cov != 1 else ''} "
