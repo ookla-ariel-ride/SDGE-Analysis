@@ -11528,12 +11528,16 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 # out of report-template.html, the values come from report_tokens' own
 # resolver, and all three rules are properties of the (value, surrounding
 # text) pair. A token added to the template tomorrow is checked tomorrow with
-# no edit here. _SEAM_ALLOWLIST carries five entries today, all of them class
-# 2's dimensionless counts and years, each naming ONE occurrence; the case
-# below asserts that every entry STILL HAS the seam it excuses and that no
-# entry pardons more than the one occurrence it names -- so an exception whose
-# seam has since been fixed cannot linger as a silent loophole, and one that
-# was written for a different line cannot cover a real defect.
+# no edit here. Every _SEAM_ALLOWLIST entry is one of class 2's dimensionless
+# counts and years, and each names ONE occurrence; the case below asserts that
+# every entry STILL HAS the seam it excuses and that no entry pardons more than
+# the one occurrence it names -- so an exception whose seam has since been fixed
+# cannot linger as a silent loophole, and one that was written for a different
+# line cannot cover a real defect. No count of the entries is written down
+# here: an earlier draft said "five" and the dict had six by the time anyone
+# read it again. The live number is reported on every run by
+# case_no_token_renders_a_broken_seam_in_its_own_template_context, which counts
+# _SEAM_ALLOWLIST rather than restating it.
 #
 # WHAT THESE RULES DELIBERATELY DO NOT FLAG. Each of the three is heuristic,
 # and the brief for this work is explicit that a conservative rule with a
@@ -11689,16 +11693,23 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     swapped. "A token whose value already contains the figure the template
 #     prints beside it" is direction-agnostic, so the rule is too.
 #     A short repeated number is not flagged, and neither is a figure repeated
-#     further down the same line. The live example of the latter is the
-#     lifetime table, which prints the first year's value in both the annual
-#     and the cumulative column (report-template.html:538) -- but be precise
-#     about WHICH rule spares it: today's FIRST_YEAR_VALUE is 7 characters, so
-#     _SEAM_MIN_ECHO excludes it before the gap rule is ever consulted. The
-#     gap between the two cells is len("</td><td>") == 9 against a threshold
-#     of 6, a margin of three characters. Omit the optional </td> closers --
-#     valid HTML5 -- and the gap falls to len("<td>") == 4, and a cumulative
-#     column repeating a value >= _SEAM_MIN_ECHO long WOULD false-positive.
-#     That is a tripwire, not a proof, on the same terms as class 2.
+#     in a DIFFERENT CONTAINER. The live example of the latter is the lifetime
+#     table, which prints the first year's value in both the annual and the
+#     cumulative cell (report-template.html:555) -- and be precise about WHICH
+#     rule spares it, because there are two and only one of them is load-
+#     bearing. Today's FIRST_YEAR_VALUE happens to be 7 characters, one under
+#     _SEAM_MIN_ECHO, so the length floor would exclude it anyway; that is an
+#     accident of this household's figure and it stops being true the moment
+#     the first year's value reaches five digits. What actually spares the row,
+#     at any length, is that the two cells are two CONTAINERS: the echo rule
+#     stops at the </td>, so the second cell is never in the comparison and no
+#     threshold is consulted. A character count could not have said that -- the
+#     </td> closer is optional in valid HTML5, and an author who omits it does
+#     not thereby print the figure once.
+#     case_the_lifetime_tables_cumulative_cell_is_not_an_echo pins the row with
+#     a value LONGER than the floor as well as today's, so neither rule can be
+#     mistaken for the other and a future threshold change cannot start
+#     flagging the row in silence.
 #   * Class 3 BLIND SPOT, the accepted cost of the trim above: trailing
 #     punctuation is stripped BEFORE the length floor is applied, so a value
 #     that clears _SEAM_MIN_ECHO only with its punctuation attached falls
@@ -11722,26 +11733,54 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     is caught only by the head half of the run pair (core[:length]). Values
 #     longer than the window are ordinary in this report --
 #     case_the_echo_rule_reads_both_ends_of_the_value counts them on the run.
-#   * Class 3 reads its two windows with every HTML TAG MASKED TO SPACES of
-#     the same length, so attribute text -- which a reader never sees -- is
-#     not mistaken for a printed figure. '<td data-sort="12,345.6 kWh">{{X}}'
-#     with X = "12,345.6 kWh" prints the figure ONCE and is not flagged; the
-#     sort key is markup. Masking to EQUAL-LENGTH spaces rather than deleting
-#     is what keeps _SEAM_ECHO_GAP measuring the distance a reader sees: the
-#     lifetime table's "</td><td>" is still 9 characters against a threshold
-#     of 6, exactly as the paragraph above computes it.
+#   * ALL THREE RULES READ THE TEXT A READER SEES, NOT THE SOURCE. The rules
+#     compare a rendered document, and the two things that stand between a
+#     serialized HTML line and the text on the page are TAGS and ENTITIES.
+#     Both are taken out first, in that order.
+#     TAGS, by what they do to the reader rather than by how long they are.
+#     _SEAM_INLINE_TAGS (b, i, span, a, br, ...) do not change the container:
+#     they are removed with ZERO WIDTH and the text closes up behind them, so
+#     "12</b>,345.6" is one figure and a <br> between two printings of the
+#     same figure is still two printings. _SEAM_CONTAINER_TAGS (td, th, tr, p,
+#     div, li, h1-h6, table, details, ...) do change it, and class 3 does not
+#     compare ACROSS one at all -- the next cell, paragraph or list item is a
+#     different run of text however close it sits in the file. Both sets are
+#     the HTML VOCABULARY, not this template's inventory: every text-level
+#     element is inline whether or not the template uses one. An element in
+#     NEITHER set is not guessed at -- the guard raises SeamTagUnclassified,
+#     names the tag and both sets, and stops, because a default in either
+#     direction has a victim (a "container" default hid `<mark>`, `<u>` and
+#     `<time>`, all three of which the previous rule caught). Comments,
+#     doctypes and other constructs with no element name print no characters,
+#     so they are zero width and take no lookup. See the policy comment on
+#     _SEAM_INLINE_TAGS for why length was rejected as the test.
+#     Class 2 is the one asymmetry, and it is deliberate: it reads THROUGH a
+#     container boundary (collapsed to one space) because the unit that saves
+#     a bare number is routinely in the next cell or the column header, so
+#     stopping at the wall would invent a missing unit rather than prevent an
+#     invented echo. Each rule takes whichever view keeps it quiet.
+#     ENTITIES, decoded after the tags come out. "&#36;{{X}}" supplies a "$",
+#     "{{X}}&#37;" supplies a "%", "&mdash;" is ONE character of gap and not
+#     seven, and "{{X}} &times; 335 W" is a figure followed by a multiplication
+#     sign rather than by a word called "times". Attribute text is gone with
+#     the tags either way: '<td data-sort="12,345.6 kWh">{{X}}' with
+#     X = "12,345.6 kWh" prints the figure ONCE and is not flagged.
+#     THE ORDER IS LOAD-BEARING. Decoding first would turn a template's own
+#     "&lt;p&gt;" -- prose ABOUT a tag, which a reader sees as three visible
+#     characters -- into a tag the mask then eats.
 #   * All three rules are scoped to ONE TEMPLATE LINE. This template puts one
 #     element per line, so a seam always has both of its sides on the same
 #     line; a value echoed across a line break is not looked for.
-#   * Values are compared ESCAPED, the way the generator writes them.
+#   * Values are substituted ESCAPED, the way the generator writes them.
 #     generate_report.render() substitutes html.escape(value, quote=True), so
-#     that is what _seam_render substitutes too. Escaping is neutral for class
-#     1 -- it never changes a leading or trailing sigil -- but NOT for class 3,
-#     which compares INTERNAL text: a template printing "PG&amp;E 2025" beside
-#     a token whose value is "PG&E 2025" renders the figure twice, and an
-#     unescaped comparison sees two different strings and reports nothing.
-#     Thirteen live token values change under escaping (ampersands and
-#     apostrophes), so this is the shipped path, not a hypothetical one.
+#     that is what _seam_render substitutes too, and the rules then decode both
+#     sides together -- the value and the window around it -- so the comparison
+#     happens in one alphabet. Thirteen live token values change under escaping
+#     (ampersands and apostrophes), so this is the shipped path, not a
+#     hypothetical one. Since the decode undoes the escape for ordinary text,
+#     the shape where escaping still changes the answer is narrow and named:
+#     a value that literally SPELLS an entity. That is the probe
+#     case_the_seam_guard_compares_the_values_the_generator_writes drives.
 #
 # CI. This runs with NO private archive. Where private/household.yaml is
 # absent, the household-sourced tokens are resolved against the committed
@@ -11886,6 +11925,204 @@ _SEAM_FMT_DIMENSIONS = _seam_fmt_dimensions()
 # than a bug fixed after it bit.
 _SEAM_TAG_RE = re.compile(r"""<(?:[^>"']|"[^"]*"|'[^']*')*>""")
 
+# The element name a tag opens or closes, lower-cased by _seam_tag_kind.
+_SEAM_TAG_NAME_RE = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9]*)")
+
+# CONSTRUCTS THAT ARE NOT ELEMENTS AND PRINT NOTHING: an HTML comment
+# `<!-- ... -->`, a doctype `<!DOCTYPE html>`, a CDATA section (which an HTML
+# parser treats as a bogus comment outside foreign content), an XML processing
+# instruction `<?xml ... ?>`. They carry no element name, so there is nothing
+# to classify and nothing to look up -- and they are NOT sent down the refusal
+# path, because the answer is already known: a reader sees NO CHARACTERS where
+# one sits. `12<!-- note -->,345.6` renders "12,345.6", one figure. They are
+# therefore ZERO WIDTH, kind "invisible", and the text closes up behind them
+# exactly as it does behind an inline element. The kind is named separately
+# from "inline" because the two are zero width for different reasons: an
+# inline element WRAPS visible text, an invisible construct CONTRIBUTES none.
+# `case_an_invisible_construct_is_zero_width_not_a_boundary` pins it.
+_SEAM_INVISIBLE_RE = re.compile(r"\A<[!?]")
+
+# HOW A TAG IS CLASSIFIED, AND WHY IT IS NOT BY LENGTH.
+#
+# THE RULE IS NOT HOW MANY CHARACTERS A TAG OCCUPIES, IT IS WHETHER A READER IS
+# STILL READING THE SAME RUN OF TEXT ON THE OTHER SIDE OF IT. The seam rules
+# compare what a reader sees, and a reader never sees a tag: `12</b>,345.6` is
+# one figure to them and `</td><td>` is the wall between two cells. Counting
+# the tag's source characters answers neither question -- it only says how much
+# markup the author happened to type, which is why the two designs that tried
+# it were rejected. Blanking a tag to its own length makes `12</b>,345.6` look
+# four characters apart when a reader sees none, and it makes the wall between
+# two cells exactly as wide as the author's optional `</td>` closer, which
+# valid HTML5 lets them omit.
+#
+# INLINE FORMATTING does not change the container. The run of text continues
+# straight through it, so these are masked to ZERO WIDTH and the text on either
+# side is joined: a figure split by `<b>` is one figure, and a repeat separated
+# by a `<br>` is still a repeat.
+#
+# `br` IS DELIBERATELY INLINE HERE, and it is the case that decides between
+# this design and a fixed-width barrier. It ends a LINE; it does not end the
+# run of text the reader is reading, and a template that prints the same figure
+# on two lines of one paragraph prints it twice. A barrier wide enough to keep
+# the next table cell out of range would go permanently blind to exactly that
+# defect. `case_a_line_break_does_not_end_the_run_a_reader_is_reading` pins it.
+#
+# THE SET IS THE HTML SPEC'S PHRASING VOCABULARY, NOT A LIST OF THE TAGS THIS
+# TEMPLATE HAPPENS TO USE. An earlier revision of this table listed twelve
+# names and let everything else fall to a default. The twelve were the ones
+# the live template carried, so the classification tracked one household's
+# markup instead of what a reader sees, and `<mark>`, `<u>` and `<time>` --
+# ordinary text-level elements, all three caught by the previous design --
+# went silently unread. Every text-level element below is inline whether or
+# not report-template.html has ever contained it, because a reader reads
+# straight through all of them.
+_SEAM_INLINE_TAGS = frozenset((
+    # Text-level semantics, the whole group: HTML's own definition of markup
+    # that formats a run of text without interrupting it.
+    "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "dfn",
+    "em", "i", "kbd", "mark", "q", "rp", "rt", "ruby", "s", "samp", "small",
+    "span", "strong", "sub", "sup", "time", "u", "var", "wbr",
+    # Edits. Phrasing when their content is, and both render in line: struck
+    # text and inserted text are still the run of text the reader is in.
+    "del", "ins",
+    # Phrasing that prints its own text INSIDE the surrounding run rather
+    # than inside a widget of its own.
+    "label", "output",
+    # Replaced content and the wrappers around it. `img` prints a box rather
+    # than text and the words on either side of it are one run; `picture`,
+    # `source` and `track` print nothing of their own at all.
+    "img", "picture", "source", "track",
+))
+
+# CONTAINER BOUNDARIES do change it. Two values in different cells, paragraphs
+# or list items are not one run of text however few characters of markup the
+# author put between them, so the echo rule does not compare ACROSS one at all
+# -- not "at a distance", not at all. That is what spares the lifetime table's
+# cumulative column (report-template.html:555, which prints FIRST_YEAR_VALUE in
+# both the annual and the cumulative cell) no matter how long that value grows,
+# and it does so without a second threshold to tune.
+#
+# LIKE THE INLINE SET, THIS IS A VOCABULARY AND NOT AN INVENTORY. It names
+# every element that ends the run of text a reader is in, in four groups:
+# markup that opens a new block, markup that opens a widget with its own
+# label, markup that embeds something that is not this document's text, and
+# markup whose contents are never printed at all. The last group is the one
+# worth stating out loud: a reader sees nothing of a <script> or a <title>,
+# so joining the text on either side of one would splice source that is not
+# on the page into a run that is. A boundary is the right answer there, not
+# an approximation of one.
+_SEAM_CONTAINER_TAGS = frozenset((
+    # Tabular data. Two cells are two runs, and so are two rows.
+    "table", "caption", "colgroup", "col", "thead", "tbody", "tfoot",
+    "tr", "td", "th",
+    # Grouping content: paragraphs, lists, quotes, rules.
+    "p", "div", "hr", "pre", "blockquote", "ol", "ul", "menu", "li",
+    "dl", "dt", "dd", "figure", "figcaption",
+    # Sections and headings.
+    "html", "body", "main", "article", "section", "nav", "aside",
+    "header", "footer", "hgroup", "search", "address",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    # Interactive containers.
+    "details", "summary", "dialog",
+    # Form controls. Each one prints its own text inside its own widget: the
+    # caption on a button is not the sentence beside the button. `label` and
+    # `output` are the exceptions and are inline above.
+    "form", "fieldset", "legend", "input", "button", "select", "datalist",
+    "optgroup", "option", "textarea", "progress", "meter",
+    # Embedded content. Whatever text is inside is the embedded document's,
+    # or a fallback that is printed only when the embed fails.
+    "iframe", "embed", "object", "video", "audio", "canvas", "map", "area",
+    "svg", "math",
+    # Content that is never printed. Splicing across one of these would join
+    # two visible runs through text that is not on the page.
+    "head", "title", "base", "link", "meta", "style", "script",
+    "noscript", "template", "slot",
+))
+
+
+class SeamTagUnclassified(AssertionError):
+    """The seam guard met an element name that is in neither tag set.
+
+    An AssertionError subclass so the suite runner reports it as the case
+    failure it is, and a named class so the case that drives the refusal can
+    tell it apart from an ordinary assertion inside the same fixture."""
+
+
+# THERE IS NO DEFAULT. AN UNCLASSIFIED ELEMENT REFUSES.
+#
+# The previous revision defaulted to "container" and called that the quiet
+# answer. It was not quiet, it was silently WRONG, and the measurement is the
+# argument: `_seam_echo("12,345.6 kWh", "", "<mark>12,345.6 kWh</mark>")`
+# reported the duplicate before that default existed -- the source `<mark>`
+# fits inside _SEAM_ECHO_GAP, so the old character-counting rule compared
+# straight through it -- and returned None after. `<u>` and `<time>` moved the
+# same way. Three ordinary text-level elements went from CAUGHT to MISSED, so
+# the "stated blind spot" the default bought was in fact a regression against
+# markup a prose pass introduces without thinking about it.
+#
+# The lesson is not that the other default is better. It is that BOTH defaults
+# are guesses, and each guess has a victim:
+#   * "container" hides a real echo behind any element this table has not
+#     heard of, which is what just happened.
+#   * "inline" joins two runs of text a reader sees separately and reports a
+#     figure that is printed once -- the false alarm this guard cannot
+#     survive, because a guard that refuses a legitimate state is how a
+#     household stops being able to publish its report.
+# Neither cost is worth paying for an answer nobody has looked up. So the
+# guard does not answer: it raises SeamTagUnclassified, names the tag, names
+# both sets, and stops. This is a TEST-ONLY guard, so the whole price of a
+# refusal is a red CI run and one word of classification by the author who
+# introduced the element -- not a household losing its report. That asymmetry
+# is the entire reason failing closed is affordable here.
+#
+# Constructs with no element name are NOT sent down this path: a comment, a
+# doctype, a CDATA section and a processing instruction print no characters,
+# so their kind is known without a lookup and _SEAM_INVISIBLE_RE answers
+# "invisible" for them above.
+#
+# case_an_unclassified_element_refuses_instead_of_guessing_its_kind drives the
+# refusal, and case_the_live_template_classifies_every_tag_it_scans keeps the
+# shipped template out of it.
+
+
+def _seam_tag_kind(tag):
+    """"inline", "container" or "invisible" for one matched HTML construct;
+    raises SeamTagUnclassified for an element name in neither set.
+
+    See _SEAM_INLINE_TAGS above for the policy: a tag is classified by whether
+    a reader is still reading the same run of text on the other side of it, not
+    by how many characters it occupies. "inline" and "invisible" are both ZERO
+    WIDTH; they differ in why, and _SEAM_INVISIBLE_RE says which."""
+    if _SEAM_INVISIBLE_RE.match(tag):
+        return "invisible"
+    m = _SEAM_TAG_NAME_RE.match(tag)
+    if m is None:
+        raise SeamTagUnclassified(
+            f"the seam guard cannot read {tag!r}: it carries no element name and is "
+            "not a comment, doctype, CDATA section or processing instruction either, "
+            "so there is nothing to classify and no reason to assume it prints "
+            "nothing. Either _SEAM_TAG_RE has started matching something that is not "
+            "markup, or the template contains a construct this guard has never seen. "
+            "Fix whichever it is; the guard will not guess whether a reader sees "
+            "characters here")
+    name = m.group(1).lower()
+    if name in _SEAM_INLINE_TAGS:
+        return "inline"
+    if name in _SEAM_CONTAINER_TAGS:
+        return "container"
+    raise SeamTagUnclassified(
+        f"the seam guard has no classification for the element {name!r} (in "
+        f"{tag!r}), and it will not guess one. Add the name to exactly ONE of "
+        "_SEAM_INLINE_TAGS (a reader reads straight through it, so it is removed at "
+        "zero width and the text closes up behind it: b, span, mark, time, ...) or "
+        "_SEAM_CONTAINER_TAGS (it ends the run of text, so the echo rule does not "
+        "compare across it at all: td, p, li, script, ...). Guessing either way has a "
+        "victim -- 'container' hides a real duplicated figure behind the element, "
+        "'inline' reports a figure that is printed once -- so this refuses instead. "
+        "It is a test-only guard: the cost of this failure is one word of "
+        "classification, not a report that cannot be published")
+
+
 # Characters trimmed off the ends of the "next word" before it is quoted back
 # in a class-2 message. Not a rule input: the word is TESTED for letters
 # before it is trimmed.
@@ -11930,10 +12167,15 @@ _SEAM_CLASSES = ("doubled-sigil", "missing-unit", "echoed-phrase")
 # marker matches NO seam as stale.
 #
 # ONE STATED LIMIT: a marker cannot separate two occurrences of the SAME token
-# on the SAME line. Five template lines print a token twice (line 234, 325,
-# 529, 538, 655); none of them is allowlisted, and an entry for one would
-# excuse both. Line numbers are the next granularity down and they do not
-# help here either.
+# on the SAME line. Several template lines print a token twice -- the lifetime
+# table's row (report-template.html:555, FIRST_YEAR_VALUE in both the annual
+# and the cumulative cell) is the one this file has reason to name elsewhere --
+# and none of them is allowlisted, so an entry for one would excuse both.
+# Line numbers are the next granularity down and they do not help here either.
+# No list of those lines is written down: the previous one named five lines by
+# number, every number was stale, and nothing failed. The live count is
+# asserted instead, one entry to one occurrence, by
+# case_no_token_renders_a_broken_seam_in_its_own_template_context.
 #
 # Every entry below is a bare number that is legitimately DIMENSIONLESS -- a
 # count or a year -- reported by class 2 because the word after it is an
@@ -12032,7 +12274,16 @@ def _seam_render(line, values):
 
 def _seam_doubled(value, head, tail):
     """Class 1: the sigil or unit on one side of the seam that the value
-    already carries at that end -- or None."""
+    already carries at that end -- or None.
+
+    Both sides are read as a READER sees them (_seam_visible_before /
+    _seam_visible_after) rather than as the file spells them, so an inline
+    `<b>` between the value and the sigil hides nothing and a template that
+    writes its sigil as an entity -- `&#36;{{X}}` -- supplies a "$" here just
+    as plainly as if it had typed one. The value is decoded for the same
+    reason: the two sides have to be compared in one alphabet."""
+    value = _seam_unescape(value)
+    head, tail = _seam_visible_before(head), _seam_visible_after(tail)
     if head and head[-1] in _SEAM_SIGILS and value.startswith(head[-1]):
         return f"template sigil {head[-1]!r} before a value already starting with it"
     for sigil in _SEAM_SIGILS:
@@ -12114,22 +12365,33 @@ def _seam_missing_unit(value, head, tail, fmt=None):
     and it has lost its dollar sign just as completely. A correctly formatted
     value cannot trip this test -- its formatter puts the sigil there
     unconditionally -- so widening past the shape guard costs no false
-    positives and catches the sign case for free."""
+    positives and catches the sign case for free.
+
+    Both sides are read as a reader sees them: entities decoded and inline
+    formatting removed. That is what keeps "{{X}} &times; 335 W" quiet -- the
+    reader's next "word" there is the multiplication sign, which carries no
+    letters and is therefore not a word claiming to be a unit, while the raw
+    source spells it "&times;" and looks like one."""
+    value = _seam_unescape(value)
     dimension = _SEAM_FMT_DIMENSIONS.get(fmt)
     if dimension is not None and dimension not in value \
-            and head[-1:] != dimension and tail[:1] != dimension:
+            and _seam_visible_before(head)[-1:] != dimension \
+            and _seam_visible_after(tail)[:1] != dimension:
         return (f"a {fmt!r} value renders {value!r}, which carries no {dimension!r} and "
                 f"has none immediately beside it; that format DECLARES the figure is "
                 f"measured in {dimension!r}, so this one lost its dimension -- whatever "
                 "unit follows it belongs to something else")
     if not _SEAM_BARE_NUMBER_RE.match(value):
         return None
-    # A sigil in front of a bare number IS its unit ("$14,500", "~2").
-    if head[-1:] in _SEAM_SIGILS:
+    # A sigil in front of a bare number IS its unit ("$14,500", "~2"), and the
+    # template may have written it as an entity or put an inline tag between
+    # the two, so the head is read the way a reader reads it.
+    if _seam_visible_before(head)[-1:] in _SEAM_SIGILS:
         return None
-    # Read THROUGH markup, as the block comment describes: tags become
-    # whitespace so the next word can be in the next table cell.
-    text = _SEAM_TAG_RE.sub(" ", tail).lstrip()
+    # Read THROUGH markup, as the block comment describes: container
+    # boundaries become whitespace so the next word can be in the next table
+    # cell, inline formatting vanishes, and entities are decoded.
+    text = _seam_visible_through(tail).lstrip()
     if not text:
         return None
     if _seam_unit_prefix(text) is not None:
@@ -12144,13 +12406,61 @@ def _seam_missing_unit(value, head, tail, fmt=None):
             "unit, so nothing beside the figure gives it one")
 
 
-def _seam_mask_tags(text):
-    """`text` with every HTML tag blanked to spaces OF THE SAME LENGTH.
+def _seam_unescape(text):
+    """`text` with HTML entities decoded -- what a reader sees, not what the
+    file spells.
 
-    Same trick as _seam_comment_mask, and for the same reason: every column
-    position in the masked copy is the position it had in the real text, so a
-    distance measured on the mask is a distance in the document."""
-    return _SEAM_TAG_RE.sub(lambda m: " " * len(m.group(0)), text)
+    ALWAYS CALLED AFTER THE TAGS ARE OUT, never before. Decoding first turns a
+    template's own `&lt;p&gt;` -- prose ABOUT a tag, which a reader sees as the
+    four characters "<p>" -- into a tag that the mask then eats, and it lets a
+    value's escaped "&amp;lt;" become markup in a document that contains none.
+    Tags are markup and entities are text; the markup comes out first."""
+    return _htmllib.unescape(text)
+
+
+def _seam_visible_before(head):
+    """The run of text a reader is reading immediately BEFORE the value:
+    everything after the last CONTAINER boundary in `head`, with the inline
+    formatting inside it removed and the entities decoded.
+
+    Truncating at the container is the whole of the fix for reading across a
+    cell wall: text in the previous <td>, <p> or <li> is not text a reader is
+    still reading, so no rule may compare against it."""
+    start = 0
+    for m in _SEAM_TAG_RE.finditer(head):
+        if _seam_tag_kind(m.group(0)) == "container":
+            start = m.end()
+    # Every construct left in the remainder is zero width by construction --
+    # inline or invisible, since an unclassified one would already have
+    # raised in the loop above -- so this removes exactly those.
+    return _seam_unescape(_SEAM_TAG_RE.sub("", head[start:]))
+
+
+def _seam_visible_after(tail):
+    """The run of text a reader is reading immediately AFTER the value: `tail`
+    up to the first CONTAINER boundary, with the inline formatting inside it
+    removed and the entities decoded. The mirror of _seam_visible_before."""
+    end = len(tail)
+    for m in _SEAM_TAG_RE.finditer(tail):
+        if _seam_tag_kind(m.group(0)) == "container":
+            end = m.start()
+            break
+    return _seam_unescape(_SEAM_TAG_RE.sub("", tail[:end]))
+
+
+def _seam_visible_through(text):
+    """`text` read THROUGH its container boundaries: inline tags removed, every
+    container boundary collapsed to one space, entities decoded, nothing cut.
+
+    CLASS 2 ONLY, and the asymmetry with the two helpers above is deliberate
+    rather than an oversight. Class 3 must not compare across a container
+    because doing so INVENTS an echo; class 2 reads across one because the
+    thing it is looking for -- a unit somewhere beside the figure -- is
+    routinely in the next cell or in the column header, and refusing to look
+    there would INVENT a missing unit. Both directions are the same trade: the
+    view that keeps the rule quiet is the one each rule takes."""
+    return _seam_unescape(_SEAM_TAG_RE.sub(
+        lambda m: " " if _seam_tag_kind(m.group(0)) == "container" else "", text))
 
 
 def _seam_echo(value, head, tail):
@@ -12171,15 +12481,24 @@ def _seam_echo(value, head, tail):
     the sides swapped, which a tail-only rule cannot see. The gap is measured
     from the near edge of the value in both directions.
 
-    Both windows have their HTML TAGS MASKED TO EQUAL-LENGTH SPACES first.
-    Attribute text is markup, not print: `<td data-sort="12,345.6 kWh">{{X}}`
-    with X = "12,345.6 kWh" shows the figure once, and reading the sort key as
-    a second printing is a false positive on a common table idiom. Masking to
-    the SAME LENGTH rather than deleting is what leaves _SEAM_ECHO_GAP
-    measuring the distance a reader sees -- the lifetime table's "</td><td>"
-    is 9 characters masked or not."""
-    core = value.rstrip(_SEAM_ECHO_TRIM)
-    seen_head, seen_tail = _seam_mask_tags(head), _seam_mask_tags(tail)
+    BOTH WINDOWS ARE THE TEXT A READER SEES, per _seam_visible_before /
+    _seam_visible_after: attribute text is gone, inline formatting is gone,
+    entities are decoded, and the window STOPS at the nearest container
+    boundary. Three consequences, each of them the point:
+      * Attribute text is markup, not print. `<td data-sort="12,345.6 kWh">`
+        beside {{X}} = "12,345.6 kWh" shows the figure once.
+      * Inline formatting is not a distance. `12</b>,345.6` is one figure to a
+        reader, so a template that splits its copy of the value with a <b> --
+        or separates two printings with a <br> -- is still printing it twice.
+      * A container boundary is not a distance either; it is the end of the
+        comparison. The next cell, paragraph or list item is not this run of
+        text, so _SEAM_ECHO_GAP is never even consulted across one. That is
+        what spares the lifetime table's cumulative column, and it spares it
+        for however long FIRST_YEAR_VALUE grows -- no character count involved.
+    _SEAM_ECHO_GAP therefore measures a gap a reader can actually see, which is
+    what it always claimed to measure."""
+    core = _seam_unescape(value).rstrip(_SEAM_ECHO_TRIM)
+    seen_head, seen_tail = _seam_visible_before(head), _seam_visible_after(tail)
     for side, window in (("later", seen_tail[:120]), ("earlier", seen_head[-120:])):
         for length in range(len(core), _SEAM_MIN_ECHO - 1, -1):
             # Either end of the value: the template can repeat the figure the
@@ -12208,7 +12527,8 @@ def _seam_scan(template_text, values):
     prove an excused occurrence still has the seam its entry excuses. It does
     read the rule tables and thresholds those rules are built from --
     _SEAM_CLASSES here, and _SEAM_SIGILS, _SEAM_UNITS, _SEAM_BARE_NUMBER_RE,
-    _SEAM_FMT_DIMENSIONS, _SEAM_TAG_RE, _SEAM_ECHO_TRIM, _SEAM_MIN_ECHO and
+    _SEAM_FMT_DIMENSIONS, _SEAM_TAG_RE, _SEAM_INLINE_TAGS,
+    _SEAM_CONTAINER_TAGS, _SEAM_INVISIBLE_RE, _SEAM_ECHO_TRIM, _SEAM_MIN_ECHO and
     _SEAM_ECHO_GAP inside the three rules -- plus report_tokens.TOKENS, for
     the one thing about a seam that is not visible in the rendered line: what
     dimension the token's declared format says the figure is measured in
@@ -13518,11 +13838,11 @@ def case_the_seam_rules_read_markup_the_way_a_reader_does():
 
     TWO, attribute text is not PRINTED. A value repeated in a sort key --
     `<td data-sort="12,345.6 kWh">{{X}}</td>` -- appears once to a reader, and
-    class 3 read it as twice. The windows are now masked, and masked to
-    EQUAL-LENGTH spaces rather than deleted, which the third assertion pins
-    from the other side: deleting tags instead would collapse the lifetime
-    table's "</td><td>" from 9 characters to nothing and false-positive on
-    every cumulative column that repeats the year's own figure.
+    class 3 read it as twice. The windows now carry only what a reader sees,
+    which the third assertion pins from the other side: the cell wall in the
+    lifetime table is a CONTAINER boundary and the echo rule stops there, so
+    the next cell's copy of a figure is out of the comparison entirely rather
+    than merely far enough away.
 
     Neither shape exists in report-template.html today -- no live tag has a
     '>' inside a quoted attribute, and the template carries no data-*
@@ -13543,9 +13863,13 @@ def case_the_seam_rules_read_markup_the_way_a_reader_does():
         "a value repeated in a sort ATTRIBUTE is reported as printed twice; attribute "
         "text is markup, and a reader sees the figure once")
     assert _seam_echo("12,345.6 kWh", "", "</td><td>12,345.6 kWh</td>") is None, (
-        "the next table cell's copy of a figure is reported as an echo: the tag mask "
-        "is deleting tags instead of blanking them to the same length, so "
-        "_SEAM_ECHO_GAP now measures a distance no reader sees")
+        "the next table cell's copy of a figure is reported as an echo. The cell wall "
+        "is a CONTAINER boundary, and the echo rule does not compare across one at "
+        "all -- not at a distance, not at all -- so this is _seam_visible_after "
+        "reading past a </td> or a <td>, either because the tag is no longer "
+        "classified as a container or because the window stopped being truncated "
+        "there. It is NOT about how many characters '</td><td>' occupies: the author "
+        "may omit the optional </td> and valid HTML5 still means one cell to a reader")
     # ...and the visible repeat, on both sides, is still reported -- so the
     # masking narrowed the rule to markup rather than switching it off.
     after = _seam_echo("12,345.6 kWh", "<td>", " — 12,345.6 kWh</td>")
@@ -13554,9 +13878,535 @@ def case_the_seam_rules_read_markup_the_way_a_reader_does():
     assert before and "earlier" in before, (
         f"a visible repeat ahead of the value was lost: {before!r}")
     return ("a '>' inside a quoted attribute no longer ends a tag for either rule, "
-            "attribute text is no longer read as printed by the echo rule, the tag mask "
-            "preserves the distances _SEAM_ECHO_GAP measures, and a visible repeat on "
+            "attribute text is no longer read as printed by the echo rule, the next "
+            "cell's copy of a figure is out of the comparison, and a visible repeat on "
             "either side is still reported")
+
+
+@case
+def case_a_tag_is_classified_by_the_container_it_changes_not_by_its_length():
+    """ISSUE #156. The rules read the text a READER sees, and the test applied
+    to a tag is whether the reader is still reading the same run of text on the
+    other side of it -- never how many characters the tag occupies.
+
+    THE DEFECT THIS CLOSES. Markup that splits a figure hid an exact visible
+    duplicate: `{{X}} <b>12</b>,345.6 kWh` with X = "12,345.6 kWh" prints the
+    same figure twice on the page and was reported by nothing, because the
+    source text between the two copies is not the source text of the value.
+    The same line with the markup AROUND the echo rather than through it was
+    caught, which is the tell: the rule was reading the serialization.
+
+    THE OTHER HALF is that a container boundary is not a small distance, it is
+    the end of the comparison. Text in the next <td>, <p> or <li> is not the
+    run of text the reader is in, so no gap threshold is consulted across one.
+
+    WHY NOT A CHARACTER COUNT, measured rather than argued. Blanking each tag
+    to its own width makes the two designs below indistinguishable from this
+    one on the shipped template and wrong on two shapes it does not carry yet:
+    `</td><td>` is 9 characters only while the author writes the OPTIONAL
+    </td> closer -- omit it, still valid HTML5, and the wall is 4 characters
+    and the next cell is inside _SEAM_ECHO_GAP. Both source widths are pinned
+    below so the argument cannot rot into an assertion."""
+    # 1. INLINE FORMATTING IS ZERO WIDTH -- the figure split through a <b>.
+    split = _seam_echo("12,345.6 kWh", "", " <b>12</b>,345.6 kWh</p>")
+    assert split and "later" in split, (
+        "a figure the template repeats WITH INLINE MARKUP THROUGH IT went unreported: "
+        f"{split!r} -- '12</b>,345.6' is one figure to a reader, so _SEAM_INLINE_TAGS "
+        "is no longer removed at zero width and the rule is back to reading the "
+        "serialized source instead of the page")
+    # ...and the same shape with the markup AROUND the echo, which the rule
+    # caught before this change and must still catch.
+    around = _seam_echo("12,345.6 kWh", "", " <b>12,345.6 kWh</b></p>")
+    assert around and "later" in around, (
+        f"a figure repeated inside inline markup went unreported: {around!r}")
+    # The control: inline masking must not make the rule fire on a DIFFERENT
+    # figure that happens to be split the same way.
+    assert _seam_echo("12,345.6 kWh", "", " <b>12</b>,999.9 kWh</p>") is None, (
+        "a different figure beside the value is reported as an echo of it")
+
+    # 2. A CONTAINER BOUNDARY ENDS THE COMPARISON, at any width. Both spellings
+    # of the cell wall, and both sides of the seam.
+    for tail in ("</td><td>12,345.6 kWh</td>",      # with the optional closer
+                 "<td>12,345.6 kWh"):               # without it -- valid HTML5
+        assert _seam_echo("12,345.6 kWh", "", tail) is None, (
+            f"the next table cell's copy of a figure is reported as an echo ({tail!r}); "
+            "a cell wall is a container boundary and the echo rule does not compare "
+            "across one")
+    assert _seam_echo("12,345.6 kWh", "<td>12,345.6 kWh</td><td>", "") is None, (
+        "the PREVIOUS cell's copy of a figure is reported as an echo; the head window "
+        "is no longer cut back to the last container boundary")
+    assert len("</td><td>") == 9 and len("<td>") == 4 and _SEAM_ECHO_GAP == 6, (
+        f"the two spellings of a cell wall are {len('</td><td>')} and {len('<td>')} "
+        f"source characters against a gap threshold of {_SEAM_ECHO_GAP}; the point of "
+        "this case is that one of them is inside the threshold and the classification "
+        "spares the row anyway, so if these numbers move re-argue it rather than "
+        "editing them")
+    # The positive control for the container half: the same repeat INSIDE one
+    # cell is still reported, so this is a narrowed rule and not a silenced one.
+    inside = _seam_echo("12,345.6 kWh", "<td>", " — 12,345.6 kWh</td>")
+    assert inside and "later" in inside, (
+        f"a repeat inside the SAME cell went unreported: {inside!r}")
+
+    # 3. THE OTHER TWO RULES READ THE SAME WAY. Class 1 sees a unit through an
+    # inline tag and does not see one across a cell wall; class 2's
+    # preceding-sigil exemption survives an inline tag between the two.
+    through = _seam_doubled("3,500 kWh", "", "</b> kWh/yr of output")
+    assert through and "'kWh'" in through, (
+        f"a doubled unit hidden behind an inline </b> went unreported: {through!r}")
+    assert _seam_doubled("3,500 kWh", "", "</td><td>kWh</td>") is None, (
+        "the next column's unit is reported as a doubling of the value's own; class 1 "
+        "is reading across a container boundary")
+    assert _seam_missing_unit("14,500", "<p>the pack costs $<b>", " of the total") is None, (
+        "a bare number whose sigil sits behind an inline <b> is reported as having "
+        "lost its unit; class 2's head is no longer read the way a reader reads it")
+    return ("a tag is classified by whether the reader is still in the same run of text "
+            f"({len(_SEAM_INLINE_TAGS)} inline names removed at zero width, "
+            f"{len(_SEAM_CONTAINER_TAGS)} container names ending the comparison), the "
+            "figure split through a <b> is reported, both spellings of a cell wall are "
+            "spared, and the repeat inside one cell still fires")
+
+
+@case
+def case_a_line_break_does_not_end_the_run_a_reader_is_reading():
+    """`br` IS INLINE, and it is the case that decides between classifying a
+    tag by its container and treating block markup as a fixed-width barrier.
+
+    A barrier design keeps the next table cell out of range by declaring block
+    tags wider than _SEAM_ECHO_GAP. It has to put `<br>` somewhere, and `<br>`
+    is 4 source characters -- exactly as many as `</p>`. Called a barrier, it
+    goes permanently blind to a template that prints the same figure on two
+    lines of ONE paragraph, which is a real defect and a common one in a report
+    full of stacked figures. Called inline, the run of text continues through
+    it and the repeat is reported, while `</p>` still ends the comparison.
+
+    That is the whole argument for classifying by CONTAINER rather than by
+    width: the two tags are the same size and mean opposite things."""
+    assert "br" in _SEAM_INLINE_TAGS, (
+        "`br` is no longer inline, so two printings of one figure separated by a line "
+        "break inside a single paragraph are no longer compared. A <br> ends a LINE, "
+        "not the run of text a reader is reading -- see the policy comment on "
+        "_SEAM_INLINE_TAGS")
+    assert len("<br>") == len("</p>") == 4, (
+        "the two tags this case contrasts are no longer the same source width, which "
+        "is the fact that makes a width-based classification impossible to state")
+    broken = _seam_echo("12,345.6 kWh", "", "<br>12,345.6 kWh</p>")
+    assert broken and "later" in broken, (
+        f"a figure printed again after a <br> went unreported: {broken!r} -- the run "
+        "of text continues through a line break, so this is the same figure twice")
+    assert _seam_echo("12,345.6 kWh", "", "</p><p>12,345.6 kWh</p>") is None, (
+        "the same figure in the NEXT paragraph is reported as an echo, so `p` has "
+        "stopped being a container boundary; a width rule cannot tell these two "
+        "fixtures apart and the classification has to")
+    return ("<br> and </p> are the same 4 source characters and are classified "
+            "oppositely: the repeat across the line break is reported, the repeat "
+            "across the paragraph boundary is not")
+
+
+@case
+def case_ordinary_text_level_markup_does_not_hide_an_echo():
+    """THE THREE SHAPES A DEFAULT REGRESSED, pinned by name.
+
+    `<mark>`, `<u>` and `<time>` are ordinary text-level elements. A revision
+    of this guard that classified only the twelve names the live template
+    happened to carry, and defaulted the rest to "container", turned all three
+    from CAUGHT to MISSED -- measured on
+    `_seam_echo("12,345.6 kWh", "", "<TAG>12,345.6 kWh</TAG>")`, which reported
+    the duplicate before that revision and returned None after. The three are
+    named here because they are the shapes that actually regressed.
+
+    They are not enough on their own: a set built by listing the three known
+    failures passes this case and stays wrong about the next element nobody
+    thought of. So the case also drives text-level elements NONE of the
+    reported failures named -- `kbd`, `var`, `data`, `dfn`, `s`, `q`, `bdi`,
+    `cite`, `samp`, `wbr` -- and the two edit elements. The claim under test is
+    that the inline set is HTML's phrasing vocabulary rather than an inventory
+    of this household's markup."""
+    regressed = ("mark", "u", "time")
+    # Not in the twelve names the old set listed, and not among the three
+    # above either: these are what stops the set from being a list of the
+    # failures somebody happened to report.
+    beyond = ("kbd", "var", "data", "dfn", "s", "q", "bdi", "cite", "samp",
+              "wbr", "del", "ins", "label", "output")
+    for name in regressed + beyond:
+        assert _seam_tag_kind(f"<{name}>") == "inline", (
+            f"`{name}` is no longer inline. A reader reads straight through a "
+            f"<{name}>, so the text on either side of it is one run; classifying it "
+            "as a boundary hides a figure the template prints twice, which is "
+            "exactly the regression this case exists to keep closed")
+        echoed = _seam_echo("12,345.6 kWh", "", f"<{name}>12,345.6 kWh</{name}>")
+        assert echoed and "later" in echoed, (
+            f"a figure printed twice with a <{name}> between the two copies went "
+            f"unreported: {echoed!r}. The reader sees '12,345.6 kWh12,345.6 kWh'")
+    # The control, on the same fixture shape: a CONTAINER between the two
+    # copies still ends the comparison, so this is a widened inline set and
+    # not a rule that has started reporting every repeat it sees.
+    assert _seam_echo("12,345.6 kWh", "", "</p><p>12,345.6 kWh</p>") is None, (
+        "the same figure in the NEXT paragraph is now reported as an echo, so the "
+        "inline set has swallowed a container name")
+    # And the sets stay disjoint: a name in both would make the answer depend
+    # on which lookup runs first.
+    both = _SEAM_INLINE_TAGS & _SEAM_CONTAINER_TAGS
+    assert not both, (
+        f"{sorted(both)} is in BOTH tag sets, so its kind depends on the order of two "
+        "lookups rather than on what a reader sees")
+    return (f"{len(regressed + beyond)} text-level elements are inline and report the "
+            "figure they sit between -- including the three (<mark>, <u>, <time>) a "
+            "container default regressed -- while a paragraph boundary still ends the "
+            "comparison")
+
+
+@case
+def case_an_unclassified_element_refuses_instead_of_guessing_its_kind():
+    """THERE IS NO DEFAULT TAG KIND, AND THAT IS THE POINT.
+
+    Both defaults are guesses and each guess has a victim. "container" hides a
+    real duplicated figure behind any element the table has not heard of --
+    which is what happened to `<mark>`, `<u>` and `<time>`, pinned in the case
+    above. "inline" joins two runs of text a reader sees separately and reports
+    a figure that is printed once, the false alarm this repo has been bitten by
+    repeatedly: a guard that refuses a legitimate state is how a household
+    stops being able to publish its report.
+
+    So the guard refuses. It raises SeamTagUnclassified, names the element and
+    names both sets, and the author who introduced the element classifies it.
+    That is affordable ONLY because this is a test-only guard: the cost of the
+    refusal is a red CI run and one word, not a report that cannot be built,
+    and the message has to say so or the next reader will read it as the
+    second kind of failure."""
+    global _SEAM_INLINE_TAGS               # rebound and restored below
+    probe = "flurb"
+    assert (probe not in _SEAM_INLINE_TAGS
+            and probe not in _SEAM_CONTAINER_TAGS), (
+        f"`{probe}` is classified now, so it is no longer a probe for the refusal; "
+        "pick an element name that is in neither set")
+    try:
+        got = _seam_tag_kind(f"<{probe} class='x'>")
+    except SeamTagUnclassified as exc:
+        message = str(exc)
+    else:
+        raise AssertionError(
+            f"an unclassified element was silently answered {got!r} instead of "
+            "refusing. A default in either direction is a guess: 'container' hides a "
+            "real echo, 'inline' invents one")
+    assert probe in message, (
+        f"the refusal does not name the element it could not classify: {message!r} -- "
+        "the author cannot act on it without reading the traceback")
+    for named in ("_SEAM_INLINE_TAGS", "_SEAM_CONTAINER_TAGS"):
+        assert named in message, (
+            f"the refusal does not name {named}, so it says what went wrong without "
+            f"saying where the one-word fix goes: {message!r}")
+    assert "test-only" in message, (
+        "the refusal does not say it is a TEST-ONLY guard, so it reads like a report "
+        f"that cannot be published rather than a word of classification: {message!r}")
+
+    # The refusal reaches the rules, not just the classifier: an unclassified
+    # element anywhere in either window stops the comparison loudly.
+    for head, tail in (("", f"<{probe}>12,345.6 kWh</{probe}>"),
+                       (f"<{probe}>12,345.6 kWh ", "")):
+        try:
+            _seam_echo("12,345.6 kWh", head, tail)
+        except SeamTagUnclassified:
+            pass
+        else:
+            raise AssertionError(
+                f"the echo rule answered for a window containing <{probe}> instead of "
+                f"refusing (head={head!r}, tail={tail!r}); the refusal is trapped in "
+                "the classifier and never reaches the rule that reads it")
+
+    # ...and classifying it really is one word, in either direction. Both are
+    # driven, because a refusal is only affordable if BOTH remedies work.
+    shipped = _SEAM_INLINE_TAGS
+    try:
+        _SEAM_INLINE_TAGS = shipped | {probe}
+        adopted = _seam_echo("12,345.6 kWh", "", f"<{probe}>12,345.6 kWh</{probe}>")
+    finally:
+        _SEAM_INLINE_TAGS = shipped
+    assert adopted and "later" in adopted, (
+        f"naming the element in _SEAM_INLINE_TAGS did not make its echo visible: "
+        f"{adopted!r} -- the refusal is only affordable because the fix is one word")
+    assert _SEAM_INLINE_TAGS is shipped, "the inline tag set was not restored"
+    return ("an unclassified element raises SeamTagUnclassified from the classifier "
+            "and from the echo rule, naming the element, both tag sets and the fact "
+            "that this is a test-only guard; naming it inline closes the refusal")
+
+
+@case
+def case_an_invisible_construct_is_zero_width_not_a_boundary():
+    """A COMMENT IS NOT AN ELEMENT AND IT IS NOT A BOUNDARY EITHER.
+
+    `<!-- ... -->`, `<!DOCTYPE html>`, `<![CDATA[...]]>` and `<?xml ... ?>`
+    carry no element name, so there is nothing for the two tag sets to answer
+    and the refusal above would have nothing to tell the author to classify.
+    They do not need one: a reader sees NO CHARACTERS where any of them sits.
+    `12<!-- note -->,345.6` renders "12,345.6", one figure, so the honest
+    answer is ZERO WIDTH -- kind "invisible" -- and the text closes up behind
+    it exactly as behind a <b>.
+
+    That is a decision about the reader, not a convenience. Calling a comment
+    a boundary would let a template hide a duplicated figure behind a comment
+    the reader cannot see, which is the same class of miss the container
+    default made. Calling it inline would be the right WIDTH under the wrong
+    name: an inline element wraps visible text and a comment contributes none.
+
+    The doctype is classified for completeness rather than because the choice
+    is reachable -- nothing can precede a doctype, so no run of text is ever
+    joined across one. CDATA is a bogus comment to an HTML parser outside
+    foreign content, which is where this template's markup lives."""
+    for construct in ("<!-- a comment -->", "<!DOCTYPE html>",
+                      "<![CDATA[ x ]]>", "<?xml version='1.0'?>"):
+        assert _seam_tag_kind(construct) == "invisible", (
+            f"{construct!r} is no longer classified 'invisible'. It carries no element "
+            "name, so it is neither a lookup nor a refusal -- it prints no characters, "
+            "and the only question is whether the guard agrees")
+    split = _seam_echo("12,345.6 kWh", "", " 12<!-- keep in sync -->,345.6 kWh</p>")
+    assert split and "later" in split, (
+        f"a figure the template repeats WITH A COMMENT THROUGH IT went unreported: "
+        f"{split!r} -- '12<!-- ... -->,345.6' renders as one figure, so a comment is "
+        "being given a width the reader never sees")
+    behind = _seam_echo("12,345.6 kWh", "", "<!-- the same figure again -->12,345.6 kWh")
+    assert behind and "later" in behind, (
+        f"a figure printed twice with a comment between the copies went unreported: "
+        f"{behind!r} -- a comment is not a container, so it cannot end the comparison")
+    # The control: the comment is zero width, not a licence to read anywhere.
+    # A container boundary INSIDE the comment span still does not apply, and a
+    # container boundary after it still does.
+    assert _seam_echo("12,345.6 kWh", "", "<!-- x --></td><td>12,345.6 kWh") is None, (
+        "the next cell's copy of a figure is reported as an echo once a comment "
+        "precedes the cell wall; the wall is still a container boundary")
+    assert _seam_missing_unit("3,500", "<p>", "<!-- unit --> kWh imported</p>") is None, (
+        "the unit behind a comment is reported missing; class 2 reads the printed "
+        "text, and a comment prints nothing")
+    return ("a comment, doctype, CDATA section and processing instruction are zero "
+            "width rather than boundaries -- the figure split through a comment and "
+            "the figure repeated behind one are both reported, and a cell wall after "
+            "a comment still ends the comparison")
+
+
+# Element names that appear in report-template.html but are NOT markup: a
+# placeholder inside a JavaScript comment, spelled `<season>` because that is
+# how the artifact's key is written (data/tou_spread.json's
+# delivery_spread.<season>.series). _SEAM_TAG_RE matches it, so the refusal
+# would fire on it -- but only if a {{TOKEN}} ever lands on the same line,
+# which is the condition the case below asserts is false. Adding a token to
+# that line is a red CI run naming `season`, not a wrong answer.
+_SEAM_TEMPLATE_NON_ELEMENTS = frozenset(("season",))
+
+
+@case
+def case_the_live_template_classifies_every_tag_it_scans():
+    """THE REFUSAL MUST NOT FIRE ON THE SHIPPED TEMPLATE. A guard that fails
+    closed is only usable if the live input is fully classified, so the
+    template's own tag inventory is checked here rather than discovered when
+    some other case walks a token line.
+
+    Two claims, and the second is the one that stops this from being a
+    tautology. First: every element name report-template.html contains is in
+    one of the two sets, apart from the named non-elements above. Second:
+    each of those named non-elements sits only on lines that carry no
+    {{TOKEN}}, so the seam rules never reach it -- which is why the exception
+    is safe rather than a hole punched in the check.
+
+    THE INVENTORY IS TAKEN LINE BY LINE, because that is how the rules read
+    the template (`_seam_render` is called per line) and the two answers are
+    not the same. Read as one string, the multi-line `<!-- ... -->` block
+    around line 700 swallows the `<season>` placeholder inside the script's
+    comment and it never surfaces as a tag at all; read line by line -- the
+    way the rules do -- it is a tag name in neither set. A whole-file scan
+    would report a clean inventory the rules do not actually see."""
+    template = rt.TEMPLATE.read_text()
+    names = {m.group(1).lower()
+             for line in template.splitlines()
+             for tag in _SEAM_TAG_RE.findall(line)
+             for m in [_SEAM_TAG_NAME_RE.match(tag)] if m}
+    assert len(names) > 20, (
+        f"only {len(names)} element names were found in report-template.html; the tag "
+        "inventory is not being read, so this case would pass on an empty set")
+    unclassified = sorted(names - _SEAM_INLINE_TAGS - _SEAM_CONTAINER_TAGS)
+    assert unclassified == sorted(_SEAM_TEMPLATE_NON_ELEMENTS), (
+        f"report-template.html carries element name(s) the seam guard cannot classify: "
+        f"{unclassified}. Every one of them raises SeamTagUnclassified the moment a "
+        "{{TOKEN}} shares its line. Add each to _SEAM_INLINE_TAGS or "
+        "_SEAM_CONTAINER_TAGS -- or, if it is not markup at all, to "
+        "_SEAM_TEMPLATE_NON_ELEMENTS with the reason")
+    # The exception is only safe while these names stay off token lines.
+    for name in _SEAM_TEMPLATE_NON_ELEMENTS:
+        on_token_lines = [n for n, line in enumerate(template.splitlines(), 1)
+                          if re.search(rf"</?\s*{re.escape(name)}\b", line)
+                          and _SEAM_TOKEN_RE.search(line)]
+        assert not on_token_lines, (
+            f"`{name}` is excused as a non-element, but it now shares line(s) "
+            f"{on_token_lines} with a {{{{TOKEN}}}}, so the seam rules DO reach it and "
+            "the guard refuses. Classify it or move it off the token's line")
+    # The positive control: the classifier really is exercised over the live
+    # markup, and answers for every name it found.
+    kinds = {_seam_tag_kind(f"<{name}>")
+             for name in names - _SEAM_TEMPLATE_NON_ELEMENTS}
+    assert kinds <= {"inline", "container"} and len(kinds) == 2, (
+        f"the live template's tags classify as {sorted(kinds)}; both kinds should be "
+        "present, and an 'invisible' answer here would mean _SEAM_TAG_NAME_RE matched "
+        "a construct that has no element name")
+    return (f"all {len(names)} element names in report-template.html classify "
+            f"({len(names & _SEAM_INLINE_TAGS)} inline, "
+            f"{len(names & _SEAM_CONTAINER_TAGS)} container), and the "
+            f"{len(_SEAM_TEMPLATE_NON_ELEMENTS)} excused non-element(s) "
+            f"({', '.join(sorted(_SEAM_TEMPLATE_NON_ELEMENTS))}) share no line with a "
+            "token, so the refusal cannot fire on the shipped template")
+
+
+@case
+def case_the_seam_rules_read_entities_the_way_a_reader_does():
+    """ISSUE #156. An HTML entity is TEXT, and the rules compared source
+    spellings, so every one of the three classes could be evaded -- or made to
+    cry wolf -- by writing an ordinary character as an entity.
+
+    Four shapes, all reproduced before the fix:
+      * `cost &#36;{{X}}` with X = "$14,500" prints "cost $$14,500" and the
+        doubled-sigil rule saw a ';' in front of the value.
+      * `{{X}}&#176;` and `{{X}}&#37;` are the same defect for a unit and for
+        a percent sign; the literal '°' and '%' spellings were caught, so the
+        rule's blind spot was the spelling and not the shape.
+      * `{{X}} &times; 335 W` with X = "30" was a FALSE POSITIVE: the reader's
+        next character there is a multiplication sign, and class 2 read the
+        source as a word called "times" that is not a unit.
+      * `{{X}}&mdash;12,345.6 kWh` hid an echo by costing 7 SOURCE characters
+        of gap against a threshold of 6, for a dash the reader sees as one.
+
+    THE ORDER IS THE DESIGN. Tags come out first and entities are decoded
+    second, so that a template's own `&lt;td&gt;` -- prose ABOUT a tag, which a
+    reader sees as four visible characters -- is never turned into markup that
+    the tag pass then eats. The last assertion drives exactly that."""
+    tok = _SEAM_PROBE_TOKEN
+    # 1. A sigil written as an entity is a sigil.
+    entity_sigil = _seam_doubled("$14,500", "<p>cost &#36;", "</p>")
+    assert entity_sigil and "'$'" in entity_sigil, (
+        f"a template sigil spelled '&#36;' in front of a value that already carries it "
+        f"went unreported: {entity_sigil!r} -- a reader sees '$$14,500'")
+    for value, entity, sign in (("72°", "&#176;", "'°'"), ("55%", "&#37;", "'%'")):
+        hit = _seam_doubled(value, "<p>", entity + "</p>")
+        assert hit and sign in hit, (
+            f"a template {sign} spelled {entity!r} behind a value already ending in it "
+            f"went unreported: {hit!r} -- the literal spelling is caught, so this is "
+            "the entity and not the shape")
+    # 2. The echo the entity spelling hid, end to end through _seam_render so
+    # the value is escaped exactly as the generator writes it.
+    fragment = "<p>{{%s}} (PG&#38;E 12,345.6)</p>" % tok
+    values = {tok: "PG&E 12,345.6"}
+    hits = _seam_defects(fragment, values)
+    assert any(c == "echoed-phrase" for _n, c, _w, _x in hits), (
+        f"a figure the template repeats with an entity inside it went unreported: "
+        f"{hits} -- rendered {_seam_render(fragment, values)[0]!r}")
+    # 3. The false positive: an entity is not a word.
+    assert _seam_missing_unit("30", "<p>", " &times; 335 W</p>") is None, (
+        "'{{X}} &times; 335 W' is reported as a bare number followed by a word that is "
+        "not a unit; the reader's next character is '×', which carries no letters and "
+        "claims to be nothing")
+    real_word = _seam_missing_unit("30", "<p>", " times 335 W</p>")
+    assert real_word and "'times'" in real_word, (
+        f"the same figure followed by the actual WORD 'times' went unreported: "
+        f"{real_word!r} -- without this control the assertion above passes on a rule "
+        "that reports nothing")
+    # 4. An entity costs its reader ONE character of gap, not its source width.
+    assert len("&mdash;") == 7 > _SEAM_ECHO_GAP, (
+        "'&mdash;' no longer exceeds _SEAM_ECHO_GAP in source characters, so this "
+        "fixture no longer measures what the decode buys")
+    dashed = _seam_echo("12,345.6 kWh", "", "&mdash;12,345.6 kWh</p>")
+    assert dashed and "later" in dashed, (
+        f"a figure repeated one em dash away went unreported: {dashed!r} -- the dash is "
+        "7 characters of source and one character to a reader, and the gap threshold "
+        "measures what the reader sees")
+    # 5. THE ORDER. The template prints '<td>' as visible prose by escaping it.
+    # Decode-first would turn that back into a container boundary and cut the
+    # window at it, losing the echo six characters further on.
+    prose = _seam_echo("12,345.6 kWh", "", " &lt;td&gt; 12,345.6 kWh</p>")
+    assert prose and "later" in prose, (
+        f"an echo behind a template's ESCAPED '<td>' went unreported: {prose!r} -- "
+        "entities are being decoded before the tags are masked, so prose about a tag "
+        "became a tag and the mask ate the text after it")
+    return ("a sigil, a degree sign and a percent sign spelled as entities are read as "
+            "the characters a reader sees, '&times;' is no longer a word that is not a "
+            "unit, an em dash costs one character of gap rather than seven, and the "
+            "tags come out before the entities are decoded")
+
+
+@case
+def case_the_lifetime_tables_cumulative_cell_is_not_an_echo():
+    """THE ONE LIVE REPEAT IN report-template.html, pinned so that a future
+    threshold change cannot start flagging it in silence.
+
+    The lifetime table prints the first year's value in both the annual and the
+    cumulative cell -- one figure, two columns, exactly what a cumulative column
+    is for on its first row. It is the only place the shipped template prints
+    one token's value twice on a line, and it is the false positive every
+    tightening of class 3 lands on first.
+
+    TWO RULES COULD SPARE IT AND ONLY ONE OF THEM IS LOAD-BEARING. Today's
+    FIRST_YEAR_VALUE is short enough that _SEAM_MIN_ECHO excludes it before the
+    echo search runs at all -- an accident of this household's arithmetic that
+    stops being true the moment the first year's value reaches five digits.
+    What spares the row at ANY length is that the two cells are two containers.
+    So the row is driven here with today's value AND with longer ones that
+    clear the floor, and a case that passed only because of the floor fails.
+
+    The line number is pinned too. Two comments in this file name
+    report-template.html:555 as this row; the last pair of comments to name a
+    line number here named five of them and every one was stale."""
+    text = rt.TEMPLATE.read_text()
+    row = _seam_template_line("FIRST_YEAR_VALUE", text)
+    lineno = text.splitlines().index(row) + 1
+    assert lineno == 555, (
+        f"the lifetime table's repeated-value row is report-template.html:{lineno}, "
+        "not 555. Update the two comments in this file that name that line -- the "
+        "class 3 paragraph in the block comment and the _SEAM_INLINE_TAGS policy "
+        "comment -- in the same edit, which is what this assertion exists to force")
+    assert row.count("{{FIRST_YEAR_VALUE}}") == 2, (
+        f"report-template.html:{lineno} no longer prints FIRST_YEAR_VALUE twice "
+        f"({row!r}); if the cumulative column is gone, this case and the comments that "
+        "cite the row are describing a template that no longer exists")
+
+    others = {"FIRST_FULL_YEAR": "2019", "FIRST_YEAR_PRODUCTION_KWH": "8,935"}
+    short, long_ = "~$5,600", ("~$15,600", "~$125,600.00")
+    assert len(short.rstrip(_SEAM_ECHO_TRIM)) < _SEAM_MIN_ECHO, (
+        f"{short!r} now clears _SEAM_MIN_ECHO, so it is no longer the short probe this "
+        "case contrasts the long ones against")
+    for probe in (short,) + long_:
+        values = dict(others, FIRST_YEAR_VALUE=probe)
+        hits = [(c, w) for n, c, w, _x in _seam_defects(row, values)
+                if n == "FIRST_YEAR_VALUE"]
+        assert not hits, (
+            f"the lifetime table's cumulative cell is reported as an echo of the annual "
+            f"cell with FIRST_YEAR_VALUE = {probe!r}: {hits}. The two cells are two "
+            "CONTAINERS and the echo rule does not compare across one; if a threshold "
+            "moved, that is not why this row is quiet and the fix is not to move it "
+            "back")
+        if probe in long_:
+            assert len(probe.rstrip(_SEAM_ECHO_TRIM)) >= _SEAM_MIN_ECHO, (
+                f"{probe!r} is under _SEAM_MIN_ECHO, so the assertion above passed on "
+                "the length floor and proves nothing about the container boundary")
+    # The positive control, on the same row: move the second printing INSIDE
+    # the annual cell and it is an echo again, so the quiet above is the cell
+    # wall and not a rule that stopped looking.
+    two_cells = "<td>{{FIRST_YEAR_VALUE}}</td><td>{{FIRST_YEAR_VALUE}}</td>"
+    one_cell = "<td>{{FIRST_YEAR_VALUE}} {{FIRST_YEAR_VALUE}}</td>"
+    same_cell = row.replace(two_cells, one_cell, 1)
+    assert same_cell != row, (
+        f"the row does not carry {two_cells!r}, so the substitution that moves the two "
+        "printings into one cell matched nothing and the control below would run "
+        f"against the unmodified row and prove nothing; the row reads {row!r}")
+    assert one_cell in same_cell and two_cells not in same_cell, (
+        f"the one-cell control is not the shape it claims to be: {same_cell!r}")
+    for probe in long_:
+        values = dict(others, FIRST_YEAR_VALUE=probe)
+        echoed = [c for n, c, _w, _x in _seam_defects(same_cell, values)
+                  if n == "FIRST_YEAR_VALUE"]
+        assert "echoed-phrase" in echoed, (
+            f"the same figure printed twice INSIDE one cell with FIRST_YEAR_VALUE = "
+            f"{probe!r} is not reported ({echoed or 'nothing'}); class 3 is not spared "
+            "by the container boundary here, it has stopped working")
+    return (f"report-template.html:{lineno}'s cumulative cell is quiet at "
+            f"{len((short,) + long_)} value lengths -- including "
+            f"{max(long_, key=len)!r}, well clear of _SEAM_MIN_ECHO = "
+            f"{_SEAM_MIN_ECHO} -- because a cell wall ends the comparison, and the "
+            "same repeat inside one cell is still reported")
 
 
 @case
@@ -13567,11 +14417,16 @@ def case_the_seam_guard_compares_the_values_the_generator_writes():
     Escaping is neutral for class 1 -- it never touches a leading or trailing
     sigil -- and the block comment used to generalise that into "escaping
     cannot hide a seam", which is FALSE for class 3, the one rule that compares
-    a value's INTERNAL text. A template printing "PG&amp;E 2025" beside a
-    token whose value is "PG&E 2025" prints the figure twice in the published
-    page, and an unescaped comparison sees two unequal strings and reports
-    nothing. Thirteen live token values change under escaping, so this is the
-    shipped path.
+    a value's INTERNAL text. Thirteen live token values change under escaping,
+    so this is the shipped path.
+
+    The rules now DECODE entities before they compare, which narrows what the
+    escaping itself is still buying and does not remove it. A plain "&" in a
+    value and a template's "&amp;" spelling of it meet in the middle after the
+    decode, so "PG&E 2025" -- the probe this case used to carry -- no longer
+    tells an escaped comparison from a raw one. A value that literally SPELLS
+    an entity still does, and that is the probe below; the comment beside it
+    says why it is the only shape left.
 
     The escaping is checked AGAINST THE GENERATOR rather than restated here:
     generate_report.render() is driven over the real template with one probe
@@ -13597,18 +14452,32 @@ def case_the_seam_guard_compares_the_values_the_generator_writes():
         f"the span the rules read is {rendered[start:end]!r}, not the written value")
 
     # The echo the unescaped comparison could not see, both halves.
-    echoed = {"A_TOKEN_THAT_DOES_NOT_EXIST_YET": "PG&E 2025"}
-    fragment = "<p>{{A_TOKEN_THAT_DOES_NOT_EXIST_YET}} PG&amp;E 2025</p>"
+    #
+    # WHY THIS PROBE AND NOT "PG&E 2025". The rules now decode entities before
+    # they compare (mask the tags, then unescape), so a plain "&" in a value
+    # and the template's "&amp;" spelling of it arrive in the same alphabet
+    # whether the value was escaped on the way in or not: "PG&E 2025" no longer
+    # separates the escaped comparison from the raw one, and a control built on
+    # it would pass on a guard that had stopped escaping. What still separates
+    # them is a value that ITSELF SPELLS AN ENTITY. html.escape turns its "&"
+    # into "&amp;", so the decode hands the rule the value's own text back --
+    # while the same value fed in raw decodes into a DIFFERENT character, and
+    # the template's copy of what a reader sees is then something the rule
+    # cannot find. It is the one shape where escaping still changes the answer,
+    # which is why it is the probe.
+    echoed = {"A_TOKEN_THAT_DOES_NOT_EXIST_YET": "&mdash; 12,345.6 kWh"}
+    fragment = "<p>{{A_TOKEN_THAT_DOES_NOT_EXIST_YET}} &amp;mdash; 12,345.6 kWh</p>"
     hits = _seam_defects(fragment, echoed)
     assert any(n == "A_TOKEN_THAT_DOES_NOT_EXIST_YET" and c == "echoed-phrase"
                for n, c, _w, _x in hits), (
         "a figure the template prints beside a token whose value renders to the same "
         f"escaped text went unreported: {hits} -- rendered "
         f"{_seam_render(fragment, echoed)[0]!r}")
-    assert _seam_echo("PG&E 2025", "", " PG&amp;E 2025</p>") is None, (
+    assert _seam_echo("&mdash; 12,345.6 kWh", "", " &amp;mdash; 12,345.6 kWh</p>") is None, (
         "the unescaped value already matches the escaped template text, so this case "
         "is no longer measuring what the escaping buys; pick a probe whose escaping "
-        "actually changes it")
+        "actually changes it -- since the rules decode entities, that now means a "
+        "value that literally spells one, not merely a value carrying an '&'")
     return ("the guard substitutes html.escape(value, quote=True), checked against "
             "generate_report.render() on the real template rather than restated, and "
             "the echoed figure that only the escaped comparison can see is reported")
