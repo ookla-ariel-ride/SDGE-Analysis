@@ -11667,17 +11667,33 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     rendering, a table that quietly comes back empty -- which is the same
 #     hole _SEAM_VOCABULARY_FLOOR exists for, closed the same way by
 #     _SEAM_FMT_DIMENSION_FLOOR.
-#     ITS BLIND SPOT, stated and counted rather than supposed: a token that
-#     formats ITSELF -- kind="derived" or "cited_constant" with fmt=None,
-#     building its own string by calling _usd3 or _cents1 inside its own
-#     lambda -- declares no format for this test to read, so its dimension is
-#     invisible here however plainly a reader sees it. The live template
-#     carries such tokens whose whole value is one sigil-carrying figure
-#     (SUMMER_ONPEAK_IMPORT_RATE is the shape: kind="derived", fmt=None,
-#     get=lambda ctx: _usd3(...)), and a regression inside one of those
-#     lambdas is caught by nothing here. The count is reported by the case
-#     rather than written down, so it tracks the registry instead of going
-#     stale. The remedy for any one of them is to declare its fmt.
+#     ITS BLIND SPOT WAS CLOSED IN ISSUE #163, and the shape of the hole is
+#     worth keeping because the fix is shaped around it. A token that formats
+#     ITSELF -- kind="derived" or "cited_constant" with fmt=None, building its
+#     own string by calling _usd3 or _cents1 inside its own lambda -- declared
+#     no format for this test to read, so its dimension was invisible here
+#     however plainly a reader saw it, and 18 live tokens whose whole value is
+#     one sigil-carrying figure sat in that state.
+#     A DERIVATION COULD NOT HAVE CLOSED IT. Reading the dimension off the
+#     value gets BILLED_GENERATION_RATES wrong in one direction (three "$"
+#     figures in one clause, and it is prose) and DAYBAND_ONPEAK_PRICE wrong
+#     in the other ("61-87¢" typed by hand, and it is one figure). So the
+#     token declares, in one of three ways, and _seam_declared_dimension reads
+#     the first two:
+#       * `fmt` -- the registry formats the value and the sigil is not typed
+#         at the token site at all. Preferred, and where an existing formatter
+#         fits, taken: nine of those 18 moved to one.
+#       * `dim="$"` -- the token formats itself and says what the figure is
+#         measured in. For the decorations, ranges and tolerances no single
+#         formatter call produces, and for the tokens that publish a figure on
+#         one branch and a sentence on the other (states_no_figure).
+#       * `phrase=True` -- the value is language, and the question does not
+#         apply. Read here only to keep the two apart.
+#     case_every_sigil_carrying_token_declares_what_it_is holds the whole
+#     population to declaring one of the three, and the undeclared count in
+#     case_a_declared_money_or_percent_token_that_loses_its_sigil_is_reported
+#     is still computed from the registry rather than written down -- it now
+#     reads 0, and is asserted at 0 rather than merely reported.
 #   * Class 3 requires the echo to contain a DIGIT, to be at least
 #     _SEAM_MIN_ECHO characters long, and to sit within _SEAM_ECHO_GAP
 #     characters of the value -- after trailing closing punctuation is
@@ -11820,6 +11836,30 @@ _SEAM_UNITS = ("cycles/day", "kWh/kW/yr", "kWh/yr", "per month", "per year",
                "/mo", "/yr", "yrs", "day", "kW", "yr", "%", "¢", "°", "h")
 
 _SEAM_BARE_NUMBER_RE = re.compile(r"\A\d[\d,]*(?:\.\d+)?\Z")
+
+# TWO numbers joined by a dash and nothing else -- "61-87", "2,103.58-2,455.64",
+# "0.45-2.4". A range is still ONE figure in ONE dimension: the token that
+# publishes "61-87¢" is quoting a single price that moves, not a sentence
+# carrying two unrelated quantities, and report_tokens' own `dim` docstring
+# names a range as a thing `dim` exists for. So the phrase audit has to read it
+# the same way it reads a lone number, or "phrase=True" on a range is a hole of
+# exactly the shape a unit suffix is.
+#
+# EXACTLY ONE separator, which is what keeps a date out. "2025-06-14" carries
+# two hyphens and does not match; "2026-08" would, and no token in this report
+# publishes a bare year-month wearing a money or percent sign. Both dash
+# characters this report really uses are accepted -- the en dash a formatter
+# writes and the hyphen a hand-typed range like "61-87¢" uses.
+_SEAM_RANGE_NUMBER_RE = re.compile(
+    r"\A\d[\d,]*(?:\.\d+)?[-–—]\d[\d,]*(?:\.\d+)?\Z")
+
+# The marks that say how a figure was arrived at rather than what it measures,
+# stripped before a value is asked whether it is one figure. "~" and "+" come
+# from _SEAM_SIGILS' own reading of the same distinction; "±" is here for the
+# tolerance shape report_tokens names in the same breath as the range
+# ("±2%"), and the space is here because a figure does not stop being one
+# figure for having been spaced.
+_SEAM_FIGURE_DECORATIONS = "~+± "
 
 # The sigils that are a DIMENSION rather than a decoration. A subset of
 # _SEAM_SIGILS on purpose: "~", "+" and "-" say how a figure was arrived at,
@@ -12332,8 +12372,125 @@ def _seam_unit_prefix(text):
     return None
 
 
-def _seam_missing_unit(value, head, tail, fmt=None):
-    """Class 2: a value that lost the dimension its format declares, or a bare
+def _seam_unit_suffix(text):
+    """The member of _SEAM_UNITS that `text` ENDS with, at a word boundary --
+    or None. The mirror of _seam_unit_prefix, reading the value's end instead
+    of the template's.
+
+    Same list, same boundary rule, for the same reason both of those exist:
+    the units this report really writes are already enumerated and already
+    held load-bearing by case_every_member_of_the_seam_constants_is_load_
+    bearing, so a second hand-rolled list would be one more thing to fall
+    behind _SEAM_UNITS. Longest match first, so "kWh/yr" is taken whole rather
+    than leaving a "kWh" behind, and the boundary is checked on the LEFT here
+    (a letter before the unit means the unit is the tail of a word): "control
+    years" ends in the unit "years", "the fresh" does not end in the unit "h".
+
+    No leading-hyphen allowance, unlike _seam_unit_prefix: a hyphen inside the
+    value is part of the value, and eating one here would turn the range
+    "61-87" into the number "61"."""
+    low = text.lower()
+    for unit in sorted(_SEAM_UNITS, key=len, reverse=True):
+        if not low.endswith(unit.lower()):
+            continue
+        if text[:len(text) - len(unit)][-1:].isalpha():
+            continue
+        return unit
+    return None
+
+
+def _seam_reduces_to_one_figure(value):
+    """True when `value` is ONE figure in ONE dimension and nothing else.
+
+    THE SHAPE TEST THE PHRASE AUDIT ASKS, and what makes it a test rather than
+    a regex is the normalisation in front of it. A figure in this report
+    arrives wearing up to three layers that are not part of what it measures:
+    an approximation or tolerance mark ("~", "+", "±"), a dimension sigil
+    ("$", "%", "¢"), and a unit suffix ("/yr", "/month", "/kWh"). Asking
+    _SEAM_BARE_NUMBER_RE before those come off answers a question about
+    decoration rather than about content -- "~$1,221/yr" reduced only for its
+    sigils leaves "1,221/yr", which is not a bare number, so the audit used to
+    accept the commonest figure shape in the whole report as language. That is
+    a hole the width of a unit suffix, and it fits every "/yr" and "/mo"
+    figure here.
+
+    THE OTHER DIRECTION IS THE ONE THAT COSTS MORE. Called on real prose this
+    must stay quiet, or the audit becomes a false alarm on the sentences it
+    exists to leave alone -- so the units come off ONE END, the value has to
+    reduce to a number (or a range) with NOTHING left over, and a value with
+    so much as one other word in it survives every layer of stripping:
+    "$10-51/yr across the 0.45-2.4%/month soiling bracket" still carries
+    "across ... soiling bracket" when the last suffix is gone. A sentence is
+    not reachable from here.
+
+    The unit loop runs to a fixed bound rather than `while`: a compound the
+    list spells in two pieces ("2.4%/month" -> "/month", then "%") needs more
+    than one pass, and a bound that cannot exceed the number of distinct units
+    keeps a pathological value from spinning."""
+    core = value.strip()
+    for _ in range(len(_SEAM_UNITS)):
+        unit = _seam_unit_suffix(core)
+        if unit is None:
+            break
+        core = core[:len(core) - len(unit)].rstrip()
+    core = "".join(c for c in core
+                   if c not in _SEAM_DIMENSION_SIGILS
+                   and c not in _SEAM_FIGURE_DECORATIONS)
+    return bool(_SEAM_BARE_NUMBER_RE.match(core)
+                or _SEAM_RANGE_NUMBER_RE.match(core))
+
+
+def _seam_phrase_offences(values, marked):
+    """[(token, value)] for every name in `marked` whose value carries a
+    dimension sigil and still reduces to one figure -- the phrase audit's
+    whole finding, factored out so a mutation case can drive it on a
+    declaration this repo does not ship."""
+    return [(name, values[name]) for name in marked
+            if any(s in values[name] for s in _SEAM_DIMENSION_SIGILS)
+            and _seam_reduces_to_one_figure(values[name])]
+
+
+def _seam_declared_dimension(name, fmt, value):
+    """The dimension sigil a token's figure is measured in, and where that
+    answer came from, as (sigil, source) -- or (None, None).
+
+    TWO PLACES DECLARE IT, and they are asked in this order (issue #163).
+
+      1. THE FORMAT SPEC, read by probing report_tokens.FORMATTERS. A token
+         whose `fmt` names a money, percent or cents format has its sigil put
+         on by the registry, so the declaration is as strong as the formatter.
+      2. THE TOKEN'S OWN `dim`, for a value no single formatter call can
+         produce -- a decorated figure ("~18.7%"), a figure carrying a period
+         the formatter does not own ("$233/yr"), a range ("61-87¢"), a
+         tolerance ("±2%") -- and for the tokens that publish a figure on one
+         branch and a sentence on the other.
+
+    report_tokens._tok refuses a token that declares both, so the two can
+    never disagree and the order is a fall-through, not a precedence rule.
+
+    THE ONE EXEMPTION IS ON THE `dim` PATH ONLY, and it is why the value is an
+    argument here. Several `dim` tokens render a figure only where the
+    household has the thing being priced; on the other branch they render this
+    module's own words for having no figure to state, and
+    report_tokens.states_no_figure is report_tokens answering for its own
+    output. A `fmt` token needs no such exemption: resolve_token's finiteness
+    gate stands in front of every formatter, so a formatted value is always a
+    figure.
+
+    A token this scan cannot name -- a synthetic fixture's invented token --
+    is in neither place and declares nothing, which leaves this half of class
+    2 inert exactly as it should be."""
+    derived = _SEAM_FMT_DIMENSIONS.get(fmt)
+    if derived is not None:
+        return derived, repr(fmt)
+    declared = rt.declared_dimension(name)
+    if declared is not None and not rt.states_no_figure(value):
+        return declared, f"dim={declared!r}"
+    return None, None
+
+
+def _seam_missing_unit(value, head, tail, fmt=None, name=None):
+    """Class 2: a value that lost the dimension its token declares, or a bare
     number that nothing beside it gives a unit to -- or None.
 
     A bare number followed by a WORD THAT IS NOT A UNIT is reported. The
@@ -12344,11 +12501,13 @@ def _seam_missing_unit(value, head, tail, fmt=None):
     the same way. See the block comment above for the whitelist, the
     exemptions, and the false positives the widening costs.
 
-    `fmt` is the token's DECLARED format spec, as report_tokens.TOKENS records
-    it, and None for a token that declares none or that this scan cannot name
-    (a synthetic fixture's invented token). It is what the first test below
-    reads, and it is passed in rather than looked up so this rule stays a
-    function of its arguments and the module tables, like the other two.
+    `fmt` is the token's DECLARED format spec and `name` is the token itself,
+    both as report_tokens.TOKENS records them, and both None for a token that
+    declares none or that this scan cannot name (a synthetic fixture's
+    invented token). They are what the first test below reads, through
+    _seam_declared_dimension, and they are passed in rather than looked up so
+    this rule stays a function of its arguments and the module tables, like
+    the other two.
 
     THE FIRST TEST IS NOT ABOUT THE PROSE, and it comes first because the
     prose test cannot answer it. A "usd0" value rendering "3,282" beside the
@@ -12373,12 +12532,12 @@ def _seam_missing_unit(value, head, tail, fmt=None):
     letters and is therefore not a word claiming to be a unit, while the raw
     source spells it "&times;" and looks like one."""
     value = _seam_unescape(value)
-    dimension = _SEAM_FMT_DIMENSIONS.get(fmt)
+    dimension, source = _seam_declared_dimension(name, fmt, value)
     if dimension is not None and dimension not in value \
             and _seam_visible_before(head)[-1:] != dimension \
             and _seam_visible_after(tail)[:1] != dimension:
-        return (f"a {fmt!r} value renders {value!r}, which carries no {dimension!r} and "
-                f"has none immediately beside it; that format DECLARES the figure is "
+        return (f"a {source} value renders {value!r}, which carries no {dimension!r} and "
+                f"has none immediately beside it; that declaration says the figure is "
                 f"measured in {dimension!r}, so this one lost its dimension -- whatever "
                 "unit follows it belongs to something else")
     if not _SEAM_BARE_NUMBER_RE.match(value):
@@ -12531,8 +12690,8 @@ def _seam_scan(template_text, values):
     _SEAM_CONTAINER_TAGS, _SEAM_INVISIBLE_RE, _SEAM_ECHO_TRIM, _SEAM_MIN_ECHO and
     _SEAM_ECHO_GAP inside the three rules -- plus report_tokens.TOKENS, for
     the one thing about a seam that is not visible in the rendered line: what
-    dimension the token's declared format says the figure is measured in
-    -- so identical arguments answer differently once one of
+    dimension the token declares the figure is measured in, through its format
+    spec or through its own `dim` -- so identical arguments answer differently once one of
     those is mutated. Measured, not assumed: dropping "cycles/day" from
     _SEAM_UNITS turns a clean "{{CYCLES_PER_DAY}} cycles/day" fragment into
     one missing-unit hit. That is not a defect to fix; it is what the probe
@@ -12551,11 +12710,14 @@ def _seam_scan(template_text, values):
             # than inside the rule so the rule stays a function of its
             # arguments; .get twice because a synthetic fixture's invented
             # token is not in the registry and declares nothing, which leaves
-            # that half of class 2 inert exactly as it should be.
+            # that half of class 2 inert exactly as it should be. The NAME
+            # goes with it because the format is only the first of the two
+            # places a dimension can be declared -- see
+            # _seam_declared_dimension.
             fmt = rt.TOKENS.get(name, {}).get("fmt")
             for label, why in zip(_SEAM_CLASSES,
                                   (_seam_doubled(value, head, tail),
-                                   _seam_missing_unit(value, head, tail, fmt),
+                                   _seam_missing_unit(value, head, tail, fmt, name),
                                    _seam_echo(value, head, tail))):
                 if why:
                     found.append((name, label, why,
@@ -12921,7 +13083,7 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
                 continue
             bare += 1
             fmt = rt.TOKENS.get(name, {}).get("fmt")
-            dimension = _SEAM_FMT_DIMENSIONS.get(fmt)
+            dimension, _source = _seam_declared_dimension(name, fmt, value)
             text = _SEAM_TAG_RE.sub(" ", tail).lstrip()
             if dimension is not None and dimension not in value \
                     and head[-1:] != dimension and tail[:1] != dimension:
@@ -12939,7 +13101,7 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
             else:
                 bucket = "reported"
             disposition[bucket] += 1
-            why = _seam_missing_unit(value, head, tail, fmt)
+            why = _seam_missing_unit(value, head, tail, fmt, name)
             assert (why is None) == (bucket in quiet), (
                 f"the bare-number disposition puts {name} on template line "
                 f"{line.strip()[:60]!r} in the {bucket!r} bucket, but "
@@ -13232,10 +13394,13 @@ def case_a_declared_money_or_percent_token_that_loses_its_sigil_is_reported():
     correct. A count that is genuinely dimensionless does not get declared
     usd0.
 
-    THE BLIND SPOT IS COUNTED HERE TOO, in the return line rather than as a
-    literal, because a token that formats itself (fmt=None, calling _usd3 or
-    _cents1 inside its own lambda) declares no dimension for any of this to
-    read. See the block comment above."""
+    THE BLIND SPOT IT USED TO COUNT IS NOW SWEPT AND ASSERTED (issue #163). A
+    token that formats itself declares its dimension with `dim` instead of a
+    format spec, so step 2b sweeps those occurrences the only way their defect
+    can be simulated -- by taking the sigil back out of the value -- and step
+    3's count of tokens declaring NOTHING is asserted at zero rather than
+    reported. Both numbers are still computed from the registry, so they track
+    it rather than going stale. See the block comment above."""
     values, _gaps = _seam_values()
     template = rt.TEMPLATE.read_text()
 
@@ -13307,16 +13472,67 @@ def case_a_declared_money_or_percent_token_that_loses_its_sigil_is_reported():
         "stopped printing money figures with a period behind them, or _SEAM_UNITS "
         "stopped containing '/yr' -- say which, here")
 
-    # 3. The stated blind spot, counted from the registry so it tracks it.
+    # 2b. THE OTHER HALF OF THE SWEEP, and the half this case did not have
+    #     (issue #163). A token that formats ITSELF declares its dimension
+    #     with `dim` rather than through a format spec, so there is no format
+    #     to slip -- the regression is the lambda dropping the sigil it types
+    #     by hand, and that is what is simulated here: the declared dimension
+    #     is taken back out of the value the token really publishes, and the
+    #     guard must report the occurrence.
+    #
+    #     Mutating the STRING rather than the declaration is a real weakening
+    #     against 2's method and it is the only mutation available, because
+    #     the sigil is not in a declaration to mutate; that is the whole
+    #     reason `dim` exists. What it still proves is the thing that was
+    #     previously proven for nothing at all: the seam this class of token
+    #     sits on now has a rule reading it.
+    dim_swept, dim_tokens = 0, set()
+    for line in template.splitlines():
+        rendered, spans = _seam_render(line, values)
+        for name, start, end in spans:
+            dim = rt.declared_dimension(name)
+            if dim is None or dim not in values[name]:
+                continue
+            dim_swept += 1
+            dim_tokens.add(name)
+            broken = values[name].replace(dim, "")
+            hits = _seam_defects(line, dict(values, **{name: broken}))
+            assert any(n == name and c == "missing-unit" for n, c, _w, _x in hits), (
+                f"{name} declares dim={dim!r} and would publish {broken!r} on template "
+                f"line {line.strip()[:70]!r} if the lambda that types that sigil by "
+                f"hand dropped it, and the seam guard reports "
+                f"{[(n, c) for n, c, _w, _x in hits] or 'nothing'}")
+    assert dim_tokens, (
+        "no token in report_tokens.TOKENS declares a `dim`, so this half of the sweep "
+        "checks nothing. Either every self-formatting figure learned a real format "
+        "spec -- say so here and delete this half -- or the declarations were dropped")
+
+    # 3. The blind spot this case used to COUNT is now an assertion (issue
+    #    #163). The counting formula is unchanged -- a token in the template
+    #    whose value is ONE figure wearing a dimension sigil -- and what
+    #    changed is that such a token now has two ways to say so and no way to
+    #    stay silent: a format spec the registry renders through, or its own
+    #    `dim`. `phrase` is read here as well, so a value that is a SENTENCE
+    #    carrying figures is excluded by declaration rather than by shape;
+    #    without that the count could only be driven to zero by pretending
+    #    every verdict line is a figure.
     seen = {name for line in template.splitlines()
             for name, _s, _e in _seam_render(line, values)[1]}
-    self_formatting = sorted(
+    undeclared = sorted(
         name for name in seen
         if rt.TOKENS.get(name, {}).get("fmt") not in _SEAM_FMT_DIMENSIONS
+        and rt.declared_dimension(name) is None
+        and not rt.is_phrase(name)
         and any(s in values[name] for s in _SEAM_DIMENSION_SIGILS)
         and _SEAM_BARE_NUMBER_RE.match(
             "".join(c for c in values[name]
                     if c not in _SEAM_DIMENSION_SIGILS and c not in "~+ ")))
+    assert not undeclared, (
+        f"{len(undeclared)} single-figure token(s) in the template format themselves "
+        f"and declare no dimension for this rule to read: {undeclared}. Each publishes "
+        "one figure wearing a money, percent or cents sign, and a regression inside its "
+        "own lambda is caught by nothing. Declare a `fmt` the registry can render it "
+        "through, or a `dim` saying which dimension the figure is measured in")
     return (f"all {swept} occurrence(s) of a token declaring a money, percent or cents "
             f"format are caught when that format slips to {plain!r}; the prose-only rule "
             f"caught {caught_before} of them, and {len(unit_fronted)} of the "
@@ -13324,8 +13540,259 @@ def case_a_declared_money_or_percent_token_that_loses_its_sigil_is_reported():
             f"({sorted({u for _n, _f, u in unit_fronted})}) sits where the sigil should "
             f"be. {len(_SEAM_FMT_DIMENSIONS)} format spec(s) classify as a dimension, "
             f"{len(_SEAM_FMT_DIMENSION_FLOOR)} of them held to the committed floor; "
-            f"{len(self_formatting)} single-figure token(s) in the template format "
+            f"{dim_swept} occurrence(s) of the {len(dim_tokens)} self-formatting token(s) "
+            f"declaring a `dim` are caught the same way when the sigil is taken out of "
+            f"the value; {len(undeclared)} single-figure token(s) in the template format "
             "themselves and declare no dimension for this to read")
+
+
+@case
+def case_every_sigil_carrying_token_declares_what_it_is():
+    """ISSUE #163. The seam guard's dimension test can only ask a question the
+    token answers, and before this there were three states a token could be in
+    and only two the guard could tell apart: a declared format (readable), a
+    sentence that happens to carry figures (nothing to read, and nothing to
+    read is correct), and a single figure whose lambda types its own sigil
+    (nothing to read, and nothing to read is a hole). The third looked exactly
+    like the second.
+
+    THE RULE THAT SEPARATES THEM IS A DECLARATION, NOT A SHAPE TEST, and the
+    two live tokens that make shape testing impossible are worth naming:
+    BILLED_GENERATION_RATES builds THREE "$" figures into one clause, and
+    DAYBAND_ONPEAK_PRICE writes "61-87¢" without calling a formatter at all --
+    a range, one dimension, one figure by any reading a guard could act on.
+    No inspection of the string tells those two apart. The token says which it
+    is.
+
+    SCOPED TO WHERE THE QUESTION IS ASKED. The dimension test fires on a value
+    carrying a "$", "%" or "¢", so those are the tokens held to declaring
+    something; a date, a script path or a kWh figure declares neither and is
+    not swept. Discovered from the live template and this run's resolved
+    values, never from a list -- a token added tomorrow whose value wears a
+    sigil is swept tomorrow, and the failure names it."""
+    values, _gaps = _seam_values()
+    seen = {name for line in rt.TEMPLATE.read_text().splitlines()
+            for name, _s, _e in _seam_render(line, values)[1]}
+    carrying = sorted(name for name in seen
+                      if any(s in values[name] for s in _SEAM_DIMENSION_SIGILS))
+    assert len(carrying) >= 40, (
+        f"only {len(carrying)} live token(s) render a value carrying a dimension sigil "
+        f"({carrying}); this template is full of money and percent figures, so the "
+        "discovery step broke and this case is now checking nothing")
+    by_state = {"a format spec": [], "its own dim": [], "phrase": [], "nothing": []}
+    for name in carrying:
+        fmt = rt.TOKENS.get(name, {}).get("fmt")
+        if fmt in _SEAM_FMT_DIMENSIONS:
+            by_state["a format spec"].append(name)
+        elif rt.declared_dimension(name) is not None:
+            by_state["its own dim"].append(name)
+        elif rt.is_phrase(name):
+            by_state["phrase"].append(name)
+        else:
+            by_state["nothing"].append(name)
+    assert not by_state["nothing"], (
+        f"{len(by_state['nothing'])} live token(s) publish a value wearing a money, "
+        f"percent or cents sign and declare nothing about it: {by_state['nothing']}. "
+        "The seam guard cannot tell whether each is a figure whose sigil it should be "
+        "checking or a sentence the question does not apply to. Declare one of the "
+        "three: a `fmt` the registry renders the figure through (preferred), a `dim` "
+        "for a figure the token formats itself, or phrase=True for language")
+    for state in ("a format spec", "its own dim", "phrase"):
+        assert by_state[state], (
+            f"not one live sigil-carrying token declares {state}, so this case is "
+            f"asserting a partition with an empty part. If that is a real change to "
+            "report_tokens, say which declaration replaced it")
+    return ("every one of the " + str(len(carrying)) + " live token(s) whose value wears "
+            "a dimension sigil declares what it is: "
+            + ", ".join(f"{len(v)} by {k}" for k, v in by_state.items() if k != "nothing"))
+
+
+@case
+def case_a_phrase_marker_cannot_be_used_to_hide_a_single_figure():
+    """The marker above has one abuse and this is it: phrase=True on a token
+    whose value really is one figure silences the dimension test for exactly
+    the token it was written for, and the suite stays green by having stopped
+    asking. That is the same failure the allowlist is held away from in
+    _seam_stale_allowlist, one declaration over.
+
+    So the two are checked against each other. `phrase` says the value is
+    language; _seam_reduces_to_one_figure says whether the value reduces to a
+    single figure once its unit suffix, its dimension sigil and its
+    approximation or tolerance marks come off. A token where those two
+    disagree is either mismarked or has changed what it publishes, and the
+    message says which way to resolve it.
+
+    THE STRIPPING IS WHAT MAKES THE AUDIT WORTH RUNNING. Read for sigils
+    alone, it saw "~$1,221/yr" as "1,221/yr", called that not-a-number and
+    passed -- so phrase=True switched the dimension check off for the single
+    commonest value shape in this report, and every "/yr" and "/mo" figure was
+    one word away from being unchecked with the suite still green. A range
+    ("61-87¢") and a tolerance ("±2%") escaped the same way. The mutation case
+    below drives all three shapes off live tokens.
+
+    THE SHAPE TEST IS SOUND HERE AND NOT IN THE GUARD, and the difference is
+    the direction of the error. Used to CLASSIFY, it gets
+    BILLED_GENERATION_RATES wrong and the guard silently mis-scopes. Used to
+    AUDIT a declaration a human wrote, its false positives are loud: it can
+    only complain about a token whose value is literally one number in one
+    dimension, which is a claim a reader can settle in one look."""
+    values, _gaps = _seam_values()
+    marked = sorted(name for name, spec in rt.TOKENS.items()
+                    if spec.get("phrase") and name in values)
+    assert marked, ("no token declares phrase=True, so this case checks nothing; "
+                    "report_tokens dropped the marker")
+    offences = _seam_phrase_offences(values, marked)
+    assert not offences, (
+        "phrase=True is declared on token(s) whose value is one figure and nothing "
+        "else, which turns the marker into a way of not being checked: "
+        + "; ".join(f"{n} renders {v!r}" for n, v in offences)
+        + ". Give each a `fmt` the registry renders it through, or a `dim`")
+    return (f"none of the {len(marked)} phrase-marked token(s) publishes a value that "
+            "reduces to a single figure")
+
+
+# The decorated shapes a single figure wears in this report, one live token
+# each, with the layer that used to carry the figure past the audit named.
+# LIVE TOKENS RATHER THAN SYNTHETIC STRINGS: a mutation case built on strings
+# I typed proves the regex matches strings I typed. These are the values the
+# report actually publishes, so a formatter that starts writing "1221 /yr" or
+# an en dash that becomes a word takes the probe with it and says so here.
+_SEAM_PHRASE_ABUSE_SHAPES = (
+    ("S0_FREE_WIN_CARD_FIGURE", "a '/yr' unit behind an approximated money figure"),
+    ("HPWH_NET_SAVINGS", "a '/yr' unit behind a plain money figure"),
+    ("SOILING_RATE_RANGE", "a '/month' unit behind a percent range"),
+    ("NEM_GRANDFATHER_VALUE_RANGE", "a money range with no unit at all"),
+    ("DAYBAND_ONPEAK_PRICE", "a hand-written cents range"),
+    ("PRODUCTION_AGREEMENT_PCT", "a tolerance mark on a percent"),
+)
+
+
+@case
+def case_the_phrase_audit_catches_a_decorated_figure_marked_as_language():
+    """THE MUTATION THE CASE ABOVE EXISTS TO FAIL ON, run rather than argued.
+
+    An anti-abuse guard is only worth the abuse it actually stops, and this
+    one shipped for a while stopping less than it read as stopping: its shape
+    test asked _SEAM_BARE_NUMBER_RE after stripping sigils and nothing else,
+    so any figure wearing a unit suffix, written as a range, or carrying a
+    tolerance mark could be declared phrase=True and the whole suite stayed
+    green. Flipping S0_FREE_WIN_CARD_FIGURE from dim="$" to phrase=True --
+    which switches off the dimension check on a headline saving -- was a
+    180/180 pass.
+
+    So every decorated shape this report really publishes is flipped here, one
+    live token at a time, and the audit above must report each one BY NAME.
+    Patching rt.TOKENS rather than calling the helper directly is what makes
+    this a test of the case and not of the regex: the discovery step, the
+    sigil filter and the message all run exactly as they would on a real
+    mis-declaration.
+
+    THE OTHER HALF IS THE FALSE ALARM, and it is checked in the same breath:
+    with nothing patched, the case passes. A stripping rule loose enough to
+    call one of the live phrase tokens a figure would fail there rather than
+    here, which is the direction that matters -- an audit that cries wolf on
+    real prose is worse than the hole it closed."""
+    values, _gaps = _seam_values()
+    audit = case_a_phrase_marker_cannot_be_used_to_hide_a_single_figure
+    audit()  # the unmutated registry, for the false alarm.
+
+    missed, caught = [], []
+    for name, shape in _SEAM_PHRASE_ABUSE_SHAPES:
+        spec = rt.TOKENS.get(name)
+        assert spec is not None and name in values, (
+            f"{name} is no longer a live token, so the {shape} it stands for is not "
+            "being driven. Name the token that publishes that shape now, or say why "
+            "the report stopped publishing it")
+        assert spec.get("dim") and not spec.get("phrase"), (
+            f"{name} no longer declares a `dim` of its own, so flipping it to "
+            f"phrase=True mutates nothing. Re-point this shape ({shape}) at a token "
+            "that does")
+        assert any(s in values[name] for s in _SEAM_DIMENSION_SIGILS), (
+            f"{name} renders {values[name]!r} here, which wears no dimension sigil, so "
+            f"the audit would not look at it and this probe ({shape}) tests nothing "
+            "against these inputs. Name a token that publishes the shape on this "
+            "household, or say why the report no longer publishes it")
+        mutated = dict(rt.TOKENS)
+        mutated[name] = {k: v for k, v in spec.items() if k != "dim"}
+        mutated[name]["phrase"] = True
+        with _patched(rt, "TOKENS", mutated):
+            try:
+                audit()
+            except AssertionError as exc:
+                assert name in str(exc), (
+                    f"the audit failed under {name} flipped to phrase=True but does "
+                    f"not name it: {exc}")
+                caught.append((name, shape, str(exc).splitlines()[0]))
+                continue
+        missed.append((name, values[name], shape))
+    assert not missed, (
+        "phrase=True hides a value that is one figure and nothing else, and the audit "
+        "passes anyway: "
+        + "; ".join(f"{n} renders {v!r} ({s})" for n, v, s in missed)
+        + ". _seam_reduces_to_one_figure stopped taking one of the layers off -- the "
+        "unit suffix, the dimension sigil, or the approximation/tolerance mark -- so "
+        "the marker is once again a way of not being checked")
+    return (f"the phrase audit reports each of the {len(caught)} decorated figure "
+            "shape(s) when a live token declaring it is flipped to phrase=True ("
+            + ", ".join(f"{n}: {s}" for n, s, _m in caught)
+            + "), and passes with nothing flipped")
+
+
+@case
+def case_a_dim_token_that_states_it_has_no_figure_is_not_reported():
+    """The false positive `dim` would otherwise ship with, driven rather than
+    argued.
+
+    Several tokens that declare a dimension publish a figure only where the
+    household has the thing being priced -- EV_FIX_SAVINGS_100 renders
+    "~$1,221" here and "not applicable to this household -- household.has_ev
+    is false ..." for a house with no car. A declaration that said "this value
+    carries a $" without qualification would report that sentence as a figure
+    that lost its dollar sign, in every report for every household the section
+    does not apply to.
+
+    report_tokens.states_no_figure is the qualification, and it is report_
+    tokens answering for ITS OWN two refusal wordings rather than the guard
+    guessing from the shape of a string. Both directions are driven here: the
+    refusal is quiet, and the same token with the sigil taken out of a real
+    figure is still reported -- or the exemption would be a way to disable the
+    rule by writing prose."""
+    refusing = {name for name, spec in rt.TOKENS.items()
+                if spec.get("dim") and spec.get("kind") != "gap"}
+    assert refusing, "no token declares a dim; this case checks nothing"
+
+    saying_nothing = []
+    with _patched(rt, "_json", _no_ev_household()):
+        for name in sorted(refusing):
+            try:
+                value = rt.resolve_token(name)
+            except SystemExit:
+                continue
+            if rt.states_no_figure(value):
+                saying_nothing.append((name, value))
+    assert saying_nothing, (
+        "not one dim-declaring token states it has no figure under the no-EV fixture, "
+        "so the exemption this case covers is unreachable and untested. Say which "
+        "fixture now drives it")
+
+    for name, value in saying_nothing:
+        dim = rt.declared_dimension(name)
+        assert dim not in value, (
+            f"{name}'s refusal {value!r} already carries its {dim!r}, so this case "
+            "cannot tell the exemption from the ordinary pass")
+        assert _seam_missing_unit(value, "<p>", "</p>", None, name) is None, (
+            f"the seam guard reports {name}'s own 'no figure here' sentence {value!r} "
+            f"as a figure that lost its {dim!r}; report_tokens.states_no_figure no "
+            "longer recognises this module's refusal wording")
+        # The other direction: the exemption must not be reachable by a value
+        # that IS a figure.
+        assert _seam_missing_unit("1,221", "<p>", "/yr</p>", None, name) is not None, (
+            f"a bare '1,221' published by {name}, which declares dim={dim!r}, is not "
+            "reported; the exemption is swallowing real figures too")
+    return (f"{len(saying_nothing)} dim-declaring token(s) state they have no figure "
+            f"under the no-EV fixture and are not reported for it "
+            f"({sorted(n for n, _v in saying_nothing)}), while a bare number published "
+            "by the same token still is")
 
 
 def _seam_comment_mask(text):

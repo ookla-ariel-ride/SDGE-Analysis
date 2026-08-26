@@ -1045,7 +1045,12 @@ def case_changing_one_token_regenerates_only_the_blocks_in_its_scope():
 
         original_spec = dict(rt.TOKENS["CLEANING_PRICE"])
         try:
-            rt.TOKENS["CLEANING_PRICE"] = dict(original_spec, get=lambda ctx: "$999")
+            # The NUMBER, not "$999": CLEANING_PRICE declares fmt="usd0" (issue
+            # #163), so the registry puts the sigil on and resolve_token's
+            # finiteness gate refuses a pre-formatted string. This fixture only
+            # needs the token's value to CHANGE, so what it hands over is
+            # whatever the token's own declaration accepts.
+            rt.TOKENS["CLEANING_PRICE"] = dict(original_spec, get=lambda ctx: 999)
             r2 = _run_full(cache_dir, dest_dir, manifest_path, fake)
         finally:
             rt.TOKENS["CLEANING_PRICE"] = original_spec

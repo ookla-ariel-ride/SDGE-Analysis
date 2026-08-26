@@ -1089,7 +1089,132 @@ TOKENS = {}
 def _tok(name, **spec):
     if name in TOKENS:
         raise SystemExit(f"report_tokens: token {name!r} declared twice in TOKENS")
+    dim, phrase = spec.get("dim"), spec.get("phrase")
+    if dim is not None and dim not in DIMENSION_SIGILS:
+        raise SystemExit(f"report_tokens: token {name!r} declares dim={dim!r}, which is "
+                          f"not one of the dimensions a figure can be measured in "
+                          f"{DIMENSION_SIGILS}")
+    if dim is not None and phrase:
+        raise SystemExit(f"report_tokens: token {name!r} declares BOTH dim={dim!r} and "
+                          "phrase=True. A value is one figure or it is language; it "
+                          "cannot be both, and the seam guard would have to pick one")
+    if dim is not None and spec.get("fmt") is not None:
+        raise SystemExit(f"report_tokens: token {name!r} declares dim={dim!r} alongside "
+                          f"fmt={spec['fmt']!r}. The format spec already says what "
+                          "dimension the figure carries; a second answer here can only "
+                          "disagree with it. Drop the dim")
+    if phrase and spec.get("fmt") is not None:
+        raise SystemExit(f"report_tokens: token {name!r} declares phrase=True alongside "
+                          f"fmt={spec['fmt']!r}. A value a numeric format spec renders is "
+                          "a figure, not language")
     TOKENS[name] = spec
+
+
+# ---------------------------------------------------------------------------
+# WHAT DIMENSION A TOKEN'S FIGURE IS MEASURED IN, AND WHICH TOKENS ARE NOT
+# FIGURES AT ALL (issue #163).
+#
+# The seam guard in test_report_tokens.py catches a formatter regression --
+# a money figure that loses its "$", a share that loses its "%" -- by asking
+# what dimension the token DECLARES and checking the rendered value still
+# carries it. It learns that from the token's `fmt`, by probing
+# FORMATTERS, which works for every token the registry formats and for no
+# token that formats itself. Before this, a token building its own string
+# (fmt=None, calling _usd3 or _cents1 inside its own lambda) declared nothing
+# for the guard to read, and 18 single-figure tokens in the live template were
+# in exactly that state: a slip inside one of those lambdas was caught by
+# nothing.
+#
+# The fix is two declarations, and the split between them is the whole point.
+#
+#   `fmt="usd0"` (etc.) -- THE REGISTRY FORMATS THE VALUE. The token's `get`
+#   returns the number and FORMATTERS renders it, so the sigil is not typed
+#   at the token site at all and cannot be dropped there. This is the
+#   preferred answer and every token that can take it now does.
+#
+#   `dim="$"` -- THE TOKEN FORMATS ITSELF, and says which dimension the
+#   figure it publishes is measured in. It exists for the values no single
+#   formatter call can produce, of which this template has four shapes:
+#     * a decorated figure -- "~18.7%", "+11.8%", "~51.1¢", "~4%";
+#     * a figure carrying a period the formatter does not own -- "$233/yr";
+#     * a RANGE, two numbers in one dimension -- "61–87¢",
+#       "$2,103.58–2,455.64", "0.45–2.4%/month";
+#     * a figure with a tolerance sign -- "±2%";
+#   and, decisively, for the tokens that publish a figure on one branch and a
+#   SENTENCE on another (EV_FIX_SAVINGS_100 renders "not applicable to this
+#   household -- household.has_ev is false ..." where there is no car). A
+#   numeric `fmt` cannot serve those at all: resolve_token's finiteness gate
+#   sits in front of every formatter, and no numeric format spec has anything
+#   honest to render for a sentence. See states_no_figure.
+#
+#   NO NEW FORMATTER WAS ADDED for the decorations. A "~" or a "+" or a "/yr"
+#   is presentation the token owns, not a new measurement: spelling each as
+#   its own format spec would grow the registry by pct0_tilde, pct1_tilde,
+#   pct1_plus, cents1_tilde, usd0_yr, usd0_tilde_yr and pct0_plus_minus to
+#   make three tokens' dimensions readable, and would still leave the
+#   conditionally-prose tokens and the ranges undeclared.
+#
+#   `phrase=True` -- THIS VALUE IS LANGUAGE. A verdict sentence, a teaser, a
+#   caveat, a heading, a multi-figure clause. It carries figures and it is not
+#   one, so "which dimension is it measured in" has no answer, and the guard
+#   must be able to tell that from "nobody has declared one yet" -- which is
+#   the state this whole block exists to make impossible. Declared at the
+#   token, never inferred from the value: inferring is what fails on
+#   BILLED_GENERATION_RATES (three "$" figures in one clause, indistinguishable
+#   by shape from one) and on DAYBAND_ONPEAK_PRICE (a range that writes its
+#   "¢" by hand and is a single figure all the same).
+#
+# SCOPE. `dim` and `phrase` answer the seam guard's question, so they are
+# required exactly where it asks one: a token whose rendered value carries a
+# dimension sigil. A token whose value carries none -- a date, a script path,
+# a kWh figure -- declares neither, and
+# test_report_tokens.case_every_sigil_carrying_token_declares_what_it_is
+# holds the population to that rule by name rather than by count.
+# ---------------------------------------------------------------------------
+DIMENSION_SIGILS = ("$", "%", "¢")
+
+
+def declared_dimension(name):
+    """The dimension sigil `name` declares its own figure is measured in, or
+    None.
+
+    Only for tokens that FORMAT THEMSELVES. A token whose `fmt` names a
+    registry formatter declares its dimension through that format spec
+    instead, and _tok refuses a token that tries to say it twice -- so the
+    caller reads the format first and falls through to here, and the two can
+    never disagree."""
+    return TOKENS.get(name, {}).get("dim")
+
+
+def is_phrase(name):
+    """True for a token whose value is LANGUAGE rather than one figure.
+
+    A flag, not a value scan, for the reason is_attribute_only is a flag: the
+    property is about what the token is for, and every rule that tried to read
+    it off the string got a clause carrying three dollar figures wrong in one
+    direction or a hand-written range wrong in the other."""
+    return bool(TOKENS.get(name, {}).get("phrase"))
+
+
+def states_no_figure(value):
+    """True when `value` is one of THIS MODULE'S OWN renderings for a figure
+    it cannot state: an inapplicable section (_does_not_apply) or an
+    unsettled question (_NOT_DETERMINED_VERDICT).
+
+    A `dim` token declares the dimension of the figure it publishes, and
+    several of them publish a figure only on the branch where the household
+    has the thing being priced. This is how a reader of that declaration --
+    the seam guard above all -- tells "the figure lost its dollar sign" from
+    "there is no figure on this branch, and the token said so in words".
+
+    It reads the module's own two literals, so it is report_tokens answering
+    for its own output rather than a caller guessing from the shape of a
+    string; a third refusal wording added later is added here."""
+    if not isinstance(value, str):
+        return False
+    stripped = value.lstrip()
+    return (stripped.startswith(_does_not_apply(""))
+            or stripped.startswith(_NOT_DETERMINED_VERDICT))
 
 
 def is_attribute_only(name):
@@ -1257,31 +1382,31 @@ _tok("CHEAP_WINDOW", kind="derived", get=lambda ctx: _cheap_window(),
      sources=["analysis/rates.py:period() (sampled)"])
 _tok("DAYBAND_SEASON_LABEL", kind="derived", get=lambda ctx: _season_label(),
      sources=["analysis/rates.py:SUMMER_MONTHS"])
-_tok("DAYBAND_SOP_PRICE", kind="derived", get=lambda ctx: _cents1(R.allin("S", "sop")),
-     sources=["analysis/rates.py:allin('S','sop')"])
+_tok("DAYBAND_SOP_PRICE", kind="derived", get=lambda ctx: R.allin("S", "sop"),
+     sources=["analysis/rates.py:allin('S','sop')"], fmt="cents1")
 _tok("DAYBAND_OFFPEAK_PRICE", kind="derived",
      get=lambda ctx: "~" + _cents1(R.allin("S", "off")),
-     sources=["analysis/rates.py:allin('S','off')"])
+     sources=["analysis/rates.py:allin('S','off')"], dim="¢")
 _tok("DAYBAND_ONPEAK_PRICE", kind="derived",
      get=lambda ctx: (lambda lo, hi: f"{round(lo * 100)}–{round(hi * 100)}¢")(
          min(R.allin("S", "on"), R.allin("W", "on")),
          max(R.allin("S", "on"), R.allin("W", "on"))),
-     sources=["analysis/rates.py:allin('S'/'W','on')"])
-_tok("SUPER_OFF_PEAK_RATE", kind="derived", get=lambda ctx: _cents1(R.allin("S", "sop")),
-     sources=["analysis/rates.py:allin('S','sop')"])
+     sources=["analysis/rates.py:allin('S'/'W','on')"], dim="¢")
+_tok("SUPER_OFF_PEAK_RATE", kind="derived", get=lambda ctx: R.allin("S", "sop"),
+     sources=["analysis/rates.py:allin('S','sop')"], fmt="cents1")
 _tok("SUMMER_ONPEAK_IMPORT_RATE", kind="derived",
-     get=lambda ctx: _usd3(R.allin("S", "on")),
-     sources=["analysis/rates.py:allin('S','on')"])
+     get=lambda ctx: R.allin("S", "on"),
+     sources=["analysis/rates.py:allin('S','on')"], fmt="usd3")
 _tok("SUMMER_ONPEAK_EXPORT_RATE", kind="derived",
-     get=lambda ctx: _usd3(R.credit("S", "on")),
-     sources=["analysis/rates.py:credit('S','on')"])
+     get=lambda ctx: R.credit("S", "on"),
+     sources=["analysis/rates.py:credit('S','on')"], fmt="usd3")
 _tok("RATES_EFFECTIVE_DATE", kind="derived",
      get=lambda ctx: _rates_effective_date().isoformat(),
      sources=["analysis/rates.py module docstring ('effective M/D/YYYY')"])
 _tok("BILLED_GENERATION_RATES", kind="derived",
      get=lambda ctx: (f"${R.CEA['S']['on']} on-peak / ${R.CEA['S']['off']} off-peak / "
                        f"${R.CEA['S']['sop']} super-off-peak (summer)"),
-     sources=["analysis/rates.py:CEA['S']"])
+     sources=["analysis/rates.py:CEA['S']"], phrase=True)
 
 
 # ---- report_data.json -------------------------------------------------------
@@ -1318,7 +1443,7 @@ _tok("PRODUCTION_SOURCE_COUNT", kind="cited_constant", value=2, fmt="num0",
             "data/pvoutput_daily.csv summed); a third independently-derived series "
             "the hand-authored report also cites is disclosed there as an "
             "unarchived workpaper, not artifact-backed, so it is not counted here")
-_tok("PRODUCTION_AGREEMENT_PCT", kind="derived",
+_tok("PRODUCTION_AGREEMENT_PCT", dim="%", kind="derived",
      get=lambda ctx: f"±{round(_production_agreement_pct(ctx))}%",
      sources=["data/enphase_daily_production.csv", "data/pvoutput_daily.csv"])
 
@@ -1358,7 +1483,8 @@ def _capacity_factor(ctx):
 
 
 _tok("CAPACITY_FACTOR", kind="derived", get=_capacity_factor,
-     sources=["data/enphase_daily_production.csv", "private/household.yaml:solar.kw_dc"])
+     sources=["data/enphase_daily_production.csv", "private/household.yaml:solar.kw_dc"],
+     dim="%")
 _tok("SPECIFIC_YIELD", kind="derived",
      get=lambda ctx: round(_annual_production_kwh(ctx) / hh1("solar.kw_dc")),
      sources=["data/enphase_daily_production.csv", "private/household.yaml:solar.kw_dc"], fmt="num0")
@@ -1376,7 +1502,7 @@ _tok("SOP_IMPORT_SHARE_PCT", kind="derived",
          _json("report_data.json")["periods_chart"]["order"].index("sop")] * 100),
      sources=["data/report_data.json:periods_chart"], fmt="num0")
 
-_tok("CHART_TITLE_PERIODS", kind="derived",
+_tok("CHART_TITLE_PERIODS", phrase=True, kind="derived",
      get=lambda ctx: (lambda pc, i: (
          f"{round(pc['import_share'][i] * 100)}% of imports happen on-peak, driving "
          f"{round(pc['import_cost'][i] / sum(pc['import_cost']) * 100)}% of gross "
@@ -1513,7 +1639,7 @@ def _sec9_teaser(ctx):
             f"{'/yr' if covers else ''}")
 
 
-_tok("SEC9_TEASER", kind="derived", get=_sec9_teaser,
+_tok("SEC9_TEASER", phrase=True, kind="derived", get=_sec9_teaser,
      sources=["data/behavior_rebuild.json:detection.sessions (or the "
               "not-applicable stub, which drops the clause)",
               "data/quiet_night_floor.json:night_floor (median_kw, nights_total)",
@@ -1549,7 +1675,7 @@ def _sec12_teaser(ctx):
     return f"the {sc['cleaning_date']} cleaning measured a {gain}% production gain"
 
 
-_tok("SEC12_TEASER", kind="derived", get=_sec12_teaser,
+_tok("SEC12_TEASER", phrase=True, kind="derived", get=_sec12_teaser,
      sources=["data/soiling_results.json:sanity_check_2024_cleaning",
               "private/household.yaml:cleaning_history"])
 
@@ -1594,7 +1720,7 @@ def _sec13_teaser(ctx):
             f"power runs {swing:.0f} kg CO₂/yr dirtier than midday for the same load")
 
 
-_tok("SEC13_TEASER", kind="derived", get=_sec13_teaser,
+_tok("SEC13_TEASER", phrase=True, kind="derived", get=_sec13_teaser,
      sources=["data/nem3_grandfathering.json",
               "data/carbon_fullyear_results.json:footprints_kg_co2_per_yr.detail."
               "midday_cleaner_than_overnight_by (EV-scaled; a not-applicable stub "
@@ -1718,11 +1844,11 @@ def _shift_scenario_saving(key, fmt):
 _tok("EV_FIX_SAVINGS_100", kind="derived",
      get=lambda ctx: _shift_scenario_saving("a", _usd0_tilde_signed),
      sources=["data/behavior_rebuild.json:scenarios.a (saved, or the "
-              "not-applicable stub's reason)"])
+              "not-applicable stub's reason)"], dim="$")
 _tok("EV_FIX_SAVINGS_80", kind="derived",
      get=lambda ctx: _shift_scenario_saving("b", _usd0_signed),
      sources=["data/behavior_rebuild.json:scenarios.b (saved, or the "
-              "not-applicable stub's reason)"])
+              "not-applicable stub's reason)"], dim="$")
 
 _tok("BATTERY_SAVINGS_PRICE_AWARE", kind="data_json", file="battery_dispatch_policies.json",
      path=("pw3", "greedy", "save"), fmt="usd0_signed")
@@ -2080,7 +2206,7 @@ def _pct0_from_fraction(v):
 FORMATTERS["pct0_frac"] = _pct0_from_fraction
 TOKENS["DISCOUNT_RATE"]["fmt"] = "pct0_frac"
 
-_tok("ESCALATION_HISTORICAL", kind="cited_constant", value="8%",
+_tok("ESCALATION_HISTORICAL", kind="cited_constant", value=8, fmt="pct0",
      source="one of the four escalation rungs battery_dispatch_policies.json's "
             "escalation_greedy_pw3_post_behavior tests (3/5/8/12%); chosen as "
             "'recent SDG&E history' because it sits inside this household's own "
@@ -2105,7 +2231,7 @@ _tok("NPV_AT_HISTORICAL_ESCALATION", kind="derived",
      # usd0_plus, not an inline "+$": npv10 is a discounted net present
      # value and goes negative on any escalation rung that does not carry the
      # pack, which the hardcoded plus rendered as "+$-3,000".
-     get=lambda ctx: _usd0_plus(_escalation_rung('8%')['npv10']),
+     get=lambda ctx: _escalation_rung('8%')['npv10'], fmt="usd0_plus",
      sources=["data/battery_dispatch_policies.json:escalation_greedy_pw3_post_behavior['8%']"])
 
 
@@ -3522,7 +3648,7 @@ def _s4_verdict_short(ctx):
             f"battery, and {stands(gap_with, None)} with one")
 
 
-_tok("S4_VERDICT_SHORT", kind="derived", get=_s4_verdict_short,
+_tok("S4_VERDICT_SHORT", phrase=True, kind="derived", get=_s4_verdict_short,
      sources=["data/battery_plan_matrix.json:plans"])
 
 
@@ -3559,14 +3685,14 @@ def _plan_margin_vs_runner_up(ctx):
     gap = (_runner_up("PLAN_MARGIN_VS_RUNNER_UP")[1]["no_battery"]
            - _bpm_best()[1]["no_battery"])
     _require_finite("PLAN_MARGIN_VS_RUNNER_UP", "what this plan's margin is", margin=gap)
-    return _usd0_signed(gap)
+    return gap
 
 
 _tok("PLAN_MARGIN_VS_RUNNER_UP", kind="derived", get=_plan_margin_vs_runner_up,
      sources=["data/battery_plan_matrix.json:plans (no-battery column; ties out to "
-              "data/plan_results.csv, asserted in-script)"])
+              "data/plan_results.csv, asserted in-script)"], fmt="usd0_signed")
 
-_tok("NEM_GRANDFATHER_VALUE_RANGE", kind="derived",
+_tok("NEM_GRANDFATHER_VALUE_RANGE", kind="derived", dim="$",
      get=lambda ctx: (lambda low, high: f"${low:,.2f}–{high:,.2f}")(
          *_amounts("NEM_GRANDFATHER_VALUE_RANGE",
                    "what NEM 2.0 grandfathering is worth",
@@ -3596,10 +3722,10 @@ def _s8_verdict_short(ctx):
             f"${low:,.0f}–{high:,.0f}/yr NEM 2.0 grandfathering")
 
 
-_tok("S8_VERDICT_SHORT", kind="derived", get=_s8_verdict_short,
+_tok("S8_VERDICT_SHORT", phrase=True, kind="derived", get=_s8_verdict_short,
      sources=["data/report_data.json:totals", "data/enphase_daily_production.csv",
               "data/nem3_grandfathering.json"])
-_tok("EXPANSION_VERDICT_SHORT", kind="derived",
+_tok("EXPANSION_VERDICT_SHORT", phrase=True, kind="derived",
      get=lambda ctx: (lambda exp_pct: f"No — already exports {exp_pct}% of "
                        "production at the wrong time of day")(
          round(_json("report_data.json")["totals"]["exp"] / _annual_production_kwh(ctx) * 100)),
@@ -3673,11 +3799,11 @@ _tok("PAYBACK_STATUS_SHORT", kind="derived",
      f"Payback expected {_crossover_season_year('gross')[0]} "
      f"{_crossover_season_year('gross')[1]}",
      sources=["data/lifetime_payback.json:crossover.gross", "system clock"])
-_tok("S11_VERDICT_SHORT", kind="derived",
+_tok("S11_VERDICT_SHORT", phrase=True, kind="derived",
      get=lambda ctx: "the solar array has already paid for itself" if _paid_off(ctx) else
      (lambda s, y, m: f"on pace to pay for itself by {s} {y}")(*_crossover_season_year("gross")),
      sources=["data/lifetime_payback.json:crossover.gross", "system clock"])
-_tok("PAYBACK_HEADLINE", kind="derived",
+_tok("PAYBACK_HEADLINE", phrase=True, kind="derived",
      get=lambda ctx: (lambda s, y, m, cost: (
          f"Paid off — cumulative value crossed the ${cost:,.0f} gross cost in {s} {y}."
          if _paid_off(ctx) else
@@ -3843,7 +3969,7 @@ def _cleaning_entry():
 
 
 _tok("CLEANING_PRICE", kind="derived",
-     get=lambda ctx: _usd0(_cleaning_entry()["cost_usd"]),
+     get=lambda ctx: _cleaning_entry()["cost_usd"], fmt="usd0",
      sources=["private/household.yaml:cleaning_history",
               "data/soiling_results.json:sanity_check_2024_cleaning"])
 _tok("CLEANING_YEAR", kind="derived",
@@ -3989,7 +4115,7 @@ def _cleaning_effect_pct(ctx):
     return f"{gain:+.1f}%"
 
 
-_tok("CLEANING_EFFECT_PCT", kind="derived", get=_cleaning_effect_pct,
+_tok("CLEANING_EFFECT_PCT", kind="derived", get=_cleaning_effect_pct, dim="%",
      sources=["data/soiling_results.json:sanity_check_2024_cleaning"
               ".known_cleaning_gain_pct",
               "private/household.yaml:cleaning_history"])
@@ -4096,7 +4222,7 @@ def _cleaning_effect_claim(ctx):
             "difference-in-differences vs the control years")
 
 
-_tok("CLEANING_EFFECT_CLAIM", kind="derived", get=_cleaning_effect_claim,
+_tok("CLEANING_EFFECT_CLAIM", phrase=True, kind="derived", get=_cleaning_effect_claim,
      sources=["data/soiling_results.json:sanity_check_2024_cleaning"
               ".known_cleaning_gain_pct",
               "private/household.yaml:cleaning_history"])
@@ -4160,7 +4286,7 @@ def _soiling_rate_range(ctx):
             f"the bracket is {_NOT_DETERMINED_VERDICT} — {reasons}")
 
 
-_tok("SOILING_RATE_RANGE", kind="derived", get=_soiling_rate_range,
+_tok("SOILING_RATE_RANGE", kind="derived", get=_soiling_rate_range, dim="%",
      sources=["data/soiling_results.json:annual_economics"])
 
 
@@ -4170,9 +4296,9 @@ def _metric_now(ctx):
 
 
 _tok("METRIC_NOW", kind="derived",
-     get=lambda ctx: f"{_metric_now(ctx)}%",
+     get=_metric_now, fmt="pct0",
      sources=["data/report_data.json:periods_chart (on-peak import share)"])
-_tok("METRIC_TARGET", kind="derived",
+_tok("METRIC_TARGET", kind="derived", dim="%",
      get=lambda ctx: (lambda dp, tot: f"~{round(dp['pw3']['onpeak_after_greedy'] / tot * 100)}%")(
          _json("battery_dispatch_policies.json"), _json("report_data.json")["totals"]["imp"]),
      sources=["data/battery_dispatch_policies.json:pw3.onpeak_after_greedy",
@@ -4451,7 +4577,7 @@ def _free_win_card_figure(ctx):
     return f"{_usd0_tilde_signed(saved)}/yr"
 
 
-_tok("S0_FREE_WIN_CARD_FIGURE", kind="derived", get=_free_win_card_figure,
+_tok("S0_FREE_WIN_CARD_FIGURE", dim="$", kind="derived", get=_free_win_card_figure,
      sources=["data/package_results.json:packages.LOW.free_fix_scenario (which "
               "behavior_rebuild.json scenario the free fix is)",
               "data/behavior_rebuild.json:scenarios.<that scenario>.saved",
@@ -4488,7 +4614,7 @@ def _free_win_card_label(ctx):
     return f"Costs money here: {what}"
 
 
-_tok("S0_FREE_WIN_CARD_LABEL", kind="derived", get=_free_win_card_label,
+_tok("S0_FREE_WIN_CARD_LABEL", phrase=True, kind="derived", get=_free_win_card_label,
      sources=["data/package_results.json:packages.LOW.free_fix_scenario (which "
               "behavior_rebuild.json scenario the free fix is, and so what the "
               "label says the figure is a saving on)",
@@ -4770,7 +4896,7 @@ def _s0_verdict(ctx):
     return f"{VERDICT_STEM}{plan_clause}, {fix_clause}, and {battery_clause}."
 
 
-_tok("S0_VERDICT", kind="derived", get=_s0_verdict,
+_tok("S0_VERDICT", phrase=True, kind="derived", get=_s0_verdict,
      sources=["data/package_results.json:packages.LOW.free_fix_scenario (which "
               "behavior_rebuild.json scenario the free fix is)",
               "data/behavior_rebuild.json:scenarios.<that scenario>.saved",
@@ -4943,7 +5069,7 @@ def _s1_verdict(ctx):
             f"{r:.4f} daily correlation.")
 
 
-_tok("S1_VERDICT", kind="derived", get=_s1_verdict,
+_tok("S1_VERDICT", phrase=True, kind="derived", get=_s1_verdict,
      sources=["data/tou_audit_summary.json:rules.as_billed.buckets",
               "data/tou_audit_summary.json:rules.as_billed.buckets_failing",
               "data/tou_audit_summary.json:rules.as_billed.max_abs_residual_kwh",
@@ -5380,7 +5506,7 @@ def _s2_verdict(ctx):
             f"{_cheap_window()} window{ev_clause}.")
 
 
-_tok("S2_VERDICT", kind="derived", get=_s2_verdict,
+_tok("S2_VERDICT", phrase=True, kind="derived", get=_s2_verdict,
      sources=["data/enphase_daily_production.csv (Total footer row)",
               "data/report_data.json:hourly_S.exp / hourly_W.exp",
               "data/report_data.json:totals.exp (rebuild check)",
@@ -5431,7 +5557,7 @@ def _s3_verdict(ctx):
     return VERDICT_STEM + claim
 
 
-_tok("S3_VERDICT", kind="derived", get=_s3_verdict,
+_tok("S3_VERDICT", phrase=True, kind="derived", get=_s3_verdict,
      sources=["data/plan_results.csv (the household provider's total column)",
               "private/household.yaml:household.plan", "private/household.yaml:household.cca"])
 
@@ -5480,7 +5606,7 @@ def _s5_verdict(ctx):
     return f"{VERDICT_STEM}the {_peak_window()} on-peak window takes {claim}"
 
 
-_tok("S5_VERDICT", kind="derived", get=_s5_verdict,
+_tok("S5_VERDICT", phrase=True, kind="derived", get=_s5_verdict,
      sources=["data/report_data.json:periods_chart.import_share",
               "data/report_data.json:onpeak.share_of_energy_cost",
               "analysis/rates.py:period() (sampled)"])
@@ -5525,7 +5651,7 @@ def _s6_verdict(ctx):
             f"evening-only schedule, {tail}.")
 
 
-_tok("S6_VERDICT", kind="derived", get=_s6_verdict,
+_tok("S6_VERDICT", phrase=True, kind="derived", get=_s6_verdict,
      sources=["data/battery_dispatch_policies.json:pw3.greedy.save",
               "data/battery_dispatch_policies.json:pw3.evening.save",
               "data/battery_dispatch_policies.json:pw3x.greedy.save"])
@@ -5635,7 +5761,7 @@ def _s7_verdict(ctx):
     return f"{VERDICT_STEM}{fix_clause}; {battery_clause}, {tail}."
 
 
-_tok("S7_VERDICT", kind="derived", get=_s7_verdict,
+_tok("S7_VERDICT", phrase=True, kind="derived", get=_s7_verdict,
      sources=["data/package_results.json:packages.LOW.savings_yr",
               "data/package_results.json:packages.LOW.free_fix_scenario (which "
               "behavior_rebuild.json scenario the free fix is)",
@@ -5719,7 +5845,7 @@ def _s10_verdict(ctx):
             f"({a['confidence']} · same-date bill rates, {a['days']} days){tail}")
 
 
-_tok("S10_VERDICT", kind="derived", get=_s10_verdict,
+_tok("S10_VERDICT", phrase=True, kind="derived", get=_s10_verdict,
      sources=["data/cca_bundled_counterfactual.json:direction_a_cca_repriced_at_bundled",
               "private/household.yaml:household.utility",
               "private/household.yaml:household.cca"])
@@ -5742,7 +5868,7 @@ def _s14_verdict(ctx):
             "confidence label with the few non-artifact-backed items named as such.")
 
 
-_tok("S14_VERDICT", kind="derived", get=_s14_verdict,
+_tok("S14_VERDICT", phrase=True, kind="derived", get=_s14_verdict,
      sources=["analysis/rates.py module docstring ('effective M/D/YYYY')"])
 
 
@@ -5803,7 +5929,7 @@ def _s15_verdict(ctx):
             "before spending money.")
 
 
-_tok("S15_VERDICT", kind="derived", get=_s15_verdict,
+_tok("S15_VERDICT", phrase=True, kind="derived", get=_s15_verdict,
      sources=["analysis/rates.py:period() (sampled)",
               "data/package_results.json:packages.LOW.free_fix_scenario (which "
               "behavior_rebuild.json scenario the free fix is, and so what the "
@@ -5848,7 +5974,7 @@ def _s15_step1_heading(ctx):
     return f"1 · {imperatives[fix_name]} (this week, $0)"
 
 
-_tok("S15_STEP1_HEADING", kind="derived", get=_s15_step1_heading,
+_tok("S15_STEP1_HEADING", phrase=True, kind="derived", get=_s15_step1_heading,
      sources=["data/package_results.json:packages.LOW.free_fix_scenario (which "
               "behavior_rebuild.json scenario the free fix is, and so what the "
               "heading tells the reader to move)",
@@ -5885,7 +6011,7 @@ def _data_sources_detail(ctx):
 
 _tok("DATA_SOURCES_DETAIL", kind="derived", get=_data_sources_detail,
      sources=["private/household.yaml:household.utility, monitoring[]"])
-_tok("RATE_SOURCES_DETAIL", kind="derived",
+_tok("RATE_SOURCES_DETAIL", phrase=True, kind="derived",
      get=lambda ctx: (
          f"{hh1('household.utility')} Total Rates Tables and {hh1('household.cca')} "
          f"Adopted Residential Rates, both effective {_rates_effective_date().isoformat()}; "
@@ -6370,13 +6496,13 @@ def _degradation_weather_caveat(ctx):
             f"soiling swing, {tail}")
 
 
-_tok("DEGRADATION_NAIVE_RANGE", kind="derived", get=_degradation_naive_range,
+_tok("DEGRADATION_NAIVE_RANGE", phrase=True, kind="derived", get=_degradation_naive_range,
      sources=["data/gross_import_decomposition.json:degradation "
               "(ols/cagr/theil_sen_pct_per_yr)"])
 _tok("ARRAY_EFFICIENCY_SERIES", kind="derived", get=_array_efficiency_series,
      sources=["data/gross_import_decomposition.json:degradation."
               "annual_efficiency_kwh_per_kw_day"])
-_tok("DEGRADATION_WEATHER_CAVEAT", kind="derived", get=_degradation_weather_caveat,
+_tok("DEGRADATION_WEATHER_CAVEAT", phrase=True, kind="derived", get=_degradation_weather_caveat,
      sources=["data/gross_import_decomposition.json:degradation "
               "(clearsky_annual_spread_pct, peak_to_trough_pct_2021_2025, "
               "single_event_soiling_swing_pct, total_change_pct_2021_2025)"])
@@ -6538,7 +6664,7 @@ _tok("PV_PEAK_BASIS", kind="derived", get=_pv_peak_or_not_applicable(_pv_peak_ba
               "why_not_the_observed_maximum)"])
 _tok("PV_PEAK_HEADROOM", kind="derived", get=_pv_peak_or_not_applicable(_pv_peak_headroom),
      sources=["data/service_headroom.json:gross_reconstruction.pv_ac_ceiling.corroboration"])
-_tok("PEAK_POWER_MULTIYEAR", kind="derived", get=_multiyear_peak,
+_tok("PEAK_POWER_MULTIYEAR", phrase=True, kind="derived", get=_multiyear_peak,
      sources=[f"data/{_CLEANING_PEAKS}", "private/household.yaml:solar.kw_ac"])
 
 
@@ -6603,10 +6729,10 @@ _tok("COOLING_SENSITIVITY_PER_100_CDD", kind="derived",
 # usd0_signed on both: these are modeled savings, whose sign the artifact
 # decides -- a pre-cooling shift that costs money on this tariff is a real
 # answer and belongs outside the sigil, not inside it.
-_tok("PRECOOL_SHIFT_VALUE", kind="derived",
+_tok("PRECOOL_SHIFT_VALUE", dim="$", kind="derived",
      get=lambda ctx: _usd0_signed(_weather()["precool_shift_value"]) + "/yr",
      sources=["data/weather_results.json:precool_shift_value"])
-_tok("SETPOINT_VALUE", kind="derived",
+_tok("SETPOINT_VALUE", dim="$", kind="derived",
      get=lambda ctx: _usd0_signed(_weather()["setpoint_value"]) + "/yr",
      sources=["data/weather_results.json:setpoint_value"])
 
@@ -6751,7 +6877,7 @@ _tok("EV_AVG_SESSION_KWH", kind="derived",
 _tok("EV_WINDOW_DECOMPOSITION", kind="derived",
      get=_ev_or_not_applicable(_ev_window_decomposition),
      sources=["data/behavior_rebuild.json:detection (ev_kwh_total and the three windows)"])
-_tok("EV_SOP_COMPLIANCE_PCT", kind="derived",
+_tok("EV_SOP_COMPLIANCE_PCT", dim="%", kind="derived",
      get=_ev_or_not_applicable(_ev_sop_compliance_pct),
      sources=["data/behavior_rebuild.json:detection (ev_kwh_total, ev_kwh_sop_already)"])
 
@@ -7049,32 +7175,32 @@ def _heat_pump_payback(ctx):
     return f"{head} ({tail}" + (f"; {never} never repay)" if never else ")")
 
 
-_tok("HPWH_INSTALL_COST", kind="derived",
+_tok("HPWH_INSTALL_COST", phrase=True, kind="derived",
      get=_gas_or_not_applicable("all_electric_endgame.json",
                                 lambda _n: _hpwh_install_cost(None)),
      sources=["data/all_electric_endgame.json:water_heater_conversion.install_cost"])
-_tok("HPWH_COST_BASIS", kind="derived",
+_tok("HPWH_COST_BASIS", phrase=True, kind="derived",
      get=_gas_or_not_applicable("all_electric_endgame.json",
                                 lambda _n: _hpwh_cost_basis(None)),
      sources=["data/all_electric_endgame.json:water_heater_conversion.install_cost.note"])
-_tok("HPWH_SHARE_CAVEAT", kind="derived",
+_tok("HPWH_SHARE_CAVEAT", phrase=True, kind="derived",
      get=_gas_or_not_applicable("all_electric_endgame.json",
                                 lambda _n: _hpwh_share_caveat(None)),
      sources=["data/all_electric_endgame.json:water_heater_conversion.not_verified_caveat",
               "data/all_electric_endgame.json:water_heater_conversion."
               "water_heater_share_sensitivity.basis"])
-_tok("HPWH_PAYBACK_SENSITIVITY", kind="derived",
+_tok("HPWH_PAYBACK_SENSITIVITY", phrase=True, kind="derived",
      get=_gas_or_not_applicable("all_electric_endgame.json",
                                 lambda _n: _hpwh_payback_sensitivity(None)),
      sources=["data/all_electric_endgame.json:water_heater_conversion."
               "water_heater_share_sensitivity.scenarios"])
-_tok("HPWH_SAVINGS_BOUND", kind="derived",
+_tok("HPWH_SAVINGS_BOUND", phrase=True, kind="derived",
      get=_gas_or_not_applicable("all_electric_endgame.json",
                                 lambda _n: _hpwh_savings_bound(None)),
      sources=["data/all_electric_endgame.json:water_heater_conversion.upper_bound_caveat",
               "data/all_electric_endgame.json:water_heater_conversion."
               "floor_savings_annual_usd"])
-_tok("HEAT_PUMP_COST_BASIS", kind="derived",
+_tok("HEAT_PUMP_COST_BASIS", phrase=True, kind="derived",
      get=_gas_or_not_applicable("heat_pump_conversion.json",
                                 lambda _n: _heat_pump_cost_basis(None)),
      sources=["data/heat_pump_conversion.json:install_cost (note, sensitivity_range_usd)"])
@@ -7088,13 +7214,13 @@ _tok("HPWH_PAYBACK", kind="derived",
                                _wh_headline_payback()["central_install"]))),
      sources=["data/all_electric_endgame.json:water_heater_conversion.payback"
               "[headline_uef].central_install.payback_years"])
-_tok("HPWH_NET_SAVINGS", kind="derived",
+_tok("HPWH_NET_SAVINGS", dim="$", kind="derived",
      get=_gas_or_not_applicable(
          "all_electric_endgame.json",
          lambda _n: _usd0_signed(_wh_headline_payback()["annual_net_savings_usd"]) + "/yr"),
      sources=["data/all_electric_endgame.json:water_heater_conversion.payback"
               "[headline_uef].annual_net_savings_usd"])
-_tok("HEAT_PUMP_INSTALL_COST", kind="derived",
+_tok("HEAT_PUMP_INSTALL_COST", dim="$", kind="derived",
      get=_gas_or_not_applicable("heat_pump_conversion.json",
                                 lambda node: _usd0(node["standalone_usd"]),
                                 "install_cost"),
@@ -7120,7 +7246,7 @@ def _heat_pump_marginal(field):
             else "never repays even as an upgrade at replacement time")
 
 
-_tok("HEAT_PUMP_MARGINAL_INSTALL_COST", kind="derived",
+_tok("HEAT_PUMP_MARGINAL_INSTALL_COST", dim="$", kind="derived",
      get=_gas_or_not_applicable("heat_pump_conversion.json",
                                 lambda _n: _heat_pump_marginal("cost")),
      sources=["data/heat_pump_conversion.json:install_cost."
@@ -7220,11 +7346,11 @@ def _electrification_incentives(ctx):
     return f"${usd:,.0f} (verified {when})"
 
 
-_tok("ELECTRIFICATION_SEQUENCE", kind="derived",
+_tok("ELECTRIFICATION_SEQUENCE", phrase=True, kind="derived",
      get=_gas_or_not_applicable("all_electric_endgame.json",
                                 lambda _n: _electrification_sequence(None)),
      sources=["data/all_electric_endgame.json:sequencing_and_paybacks.order"])
-_tok("ELECTRIFICATION_COMBINED_PAYBACK", kind="derived",
+_tok("ELECTRIFICATION_COMBINED_PAYBACK", phrase=True, kind="derived",
      get=_gas_or_not_applicable("all_electric_endgame.json",
                                 lambda _n: _electrification_combined_payback(None)),
      sources=["data/all_electric_endgame.json:sequencing_and_paybacks."
@@ -7254,7 +7380,7 @@ _tok("ELECTRIFICATION_METER_REMOVAL_CAVEAT", kind="derived",
                                 lambda _n: _electrification_meter_removal_caveat(None)),
      sources=["data/all_electric_endgame.json:sequencing_and_paybacks."
               "third_end_use_caveat"])
-_tok("ELECTRIFICATION_INCENTIVES", kind="derived",
+_tok("ELECTRIFICATION_INCENTIVES", phrase=True, kind="derived",
      get=_gas_or_not_applicable("heat_pump_conversion.json",
                                 lambda _n: _electrification_incentives(None)),
      sources=["data/heat_pump_conversion.json:incentives"])
@@ -7344,15 +7470,15 @@ def _midday_marginal_value_range(ctx):
             f"{hi_label} at the high end")
 
 
-_tok("MIDDAY_MARGINAL_VALUE_RANGE", kind="derived", get=_midday_marginal_value_range,
+_tok("MIDDAY_MARGINAL_VALUE_RANGE", phrase=True, kind="derived", get=_midday_marginal_value_range,
      sources=["analysis/rates.py: allin(season, 'sop') and credit(season, 'sop') "
               "for both seasons -- the four super-off-peak price-map cells"])
 _tok("CLEANING_BEST_MONTH", kind="derived", get=_cleaning_best_month,
      sources=["data/extra_results.json:cleaning[*].best1"])
-_tok("CLEANING_SINGLE_VALUE_RANGE", kind="derived",
+_tok("CLEANING_SINGLE_VALUE_RANGE", phrase=True, kind="derived",
      get=lambda ctx: _cleaning_value_range("CLEANING_SINGLE_VALUE_RANGE", "save1", ""),
      sources=["data/extra_results.json:cleaning[*].save1"])
-_tok("CLEANING_SECOND_MARGINAL_RANGE", kind="derived",
+_tok("CLEANING_SECOND_MARGINAL_RANGE", phrase=True, kind="derived",
      get=lambda ctx: _cleaning_value_range("CLEANING_SECOND_MARGINAL_RANGE", "marginal2nd",
                                            ", for the second cleaning of the year"),
      sources=["data/extra_results.json:cleaning[*].marginal2nd"])
@@ -7443,10 +7569,10 @@ def _spread_trend(token, season):
     return f"{pct:+,.2f}%/yr (95% CI {lo:+,.2f} to {hi:+,.2f}%/yr{fit}{tail})"
 
 
-_tok("SPREAD_TREND_SUMMER", kind="derived",
+_tok("SPREAD_TREND_SUMMER", phrase=True, kind="derived",
      get=lambda ctx: _spread_trend("SPREAD_TREND_SUMMER", "summer"),
      sources=["data/tou_spread.json:delivery_spread.summer"])
-_tok("SPREAD_TREND_WINTER", kind="derived",
+_tok("SPREAD_TREND_WINTER", phrase=True, kind="derived",
      get=lambda ctx: _spread_trend("SPREAD_TREND_WINTER", "winter"),
      sources=["data/tou_spread.json:delivery_spread.winter"])
 
@@ -7501,9 +7627,9 @@ def _battery_on_measured_spread(ctx):
     return " · ".join(parts)
 
 
-_tok("BATTERY_ON_MEASURED_SPREAD", kind="derived", get=_battery_on_measured_spread,
+_tok("BATTERY_ON_MEASURED_SPREAD", phrase=True, kind="derived", get=_battery_on_measured_spread,
      sources=["data/tou_spread.json:battery.per_period"])
-_tok("SPREAD_BATTERY_SEED_SAVING", kind="derived",
+_tok("SPREAD_BATTERY_SEED_SAVING", dim="$", kind="derived",
      get=lambda ctx: _usd0_signed(_json("tou_spread.json")["battery"]
                                   ["seed_year1_saving_usd"]) + "/yr",
      sources=["data/tou_spread.json:battery.seed_year1_saving_usd"])
@@ -7950,7 +8076,7 @@ def _phantom_method_discrepancy(ctx):
             "the other's rates or its constant-floor model")
 
 
-_tok("PHANTOM_METHOD_DISCREPANCY", kind="derived", get=_phantom_method_discrepancy,
+_tok("PHANTOM_METHOD_DISCREPANCY", phrase=True, kind="derived", get=_phantom_method_discrepancy,
      sources=["data/quiet_night_floor.json:pricing.method_a_price_map.total_usd",
               "data/quiet_night_floor.json:pricing.method_b_rebill.total_usd",
               "data/quiet_night_floor.json:pricing.reconciliation "
@@ -8024,7 +8150,7 @@ def _night_floor_pricing_basis(ctx):
             f"${dropped:,.0f} across the {nights:,.0f} nights measured, {why}")
 
 
-_tok("NIGHT_FLOOR_PRICING_BASIS", kind="derived", get=_night_floor_pricing_basis,
+_tok("NIGHT_FLOOR_PRICING_BASIS", phrase=True, kind="derived", get=_night_floor_pricing_basis,
      sources=["data/quiet_night_floor.json:confidence_labels.pricing",
               "data/quiet_night_floor.json:pricing.floor_assumption_violations"])
 _tok("NIGHT_FLOOR_MEDIAN", kind="derived",
@@ -8037,12 +8163,12 @@ _tok("NIGHT_FLOOR_SPREAD", kind="derived",
              "NIGHT_FLOOR_SPREAD", "how much the quiet-night floor varies",
              p10_kw=_night_floor()["p10_kw"], p90_kw=_night_floor()["p90_kw"])),
      sources=["data/quiet_night_floor.json:night_floor (p10_kw, p90_kw)"])
-_tok("NIGHT_FLOOR_SAMPLE", kind="derived", get=_night_floor_sample,
+_tok("NIGHT_FLOOR_SAMPLE", phrase=True, kind="derived", get=_night_floor_sample,
      sources=["data/quiet_night_floor.json:night_floor (quiet_nights, nights_total)"])
 _tok("NIGHT_FLOOR_ANNUAL_KWH", kind="derived", get=_night_floor_annual_kwh,
      sources=["data/quiet_night_floor.json:night_floor (median_kw, nights_total)",
               "data/quiet_night_floor.json:pricing.floor_kw_basis (the constant-load method)"])
-_tok("NIGHT_FLOOR_ANNUAL_COST", kind="derived", get=_night_floor_annual_cost,
+_tok("NIGHT_FLOOR_ANNUAL_COST", phrase=True, kind="derived", get=_night_floor_annual_cost,
      sources=["data/quiet_night_floor.json:pricing.method_a_price_map.total_usd",
               "data/quiet_night_floor.json:pricing.method_b_rebill.total_usd"])
 _tok("NIGHT_FLOOR_CYCLING", kind="derived",
@@ -8219,7 +8345,7 @@ def _night_floor_sensitivity(ctx):
             f"than a multiplier for any amount removed, since {spread}")
 
 
-_tok("NIGHT_FLOOR_SENSITIVITY_PER_100W", kind="derived", get=_night_floor_sensitivity,
+_tok("NIGHT_FLOOR_SENSITIVITY_PER_100W", phrase=True, kind="derived", get=_night_floor_sensitivity,
      sources=["data/quiet_night_floor.json:sensitivity_per_100w."
               "usd_per_100w_at_current_floor",
               "data/quiet_night_floor.json:sensitivity_per_100w.steps "
