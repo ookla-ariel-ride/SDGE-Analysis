@@ -7904,7 +7904,7 @@ _TOKENS_THAT_READ_NO_ARTIFACT = {
     "DAYBAND_ONPEAK_PRICE", "DAYBAND_SEASON_LABEL", "DAYBAND_SOP_PRICE",
     "MIDDAY_MARGINAL_VALUE_RANGE",
     "PEAK_WINDOW", "RATES_EFFECTIVE_DATE", "RECOMMENDED_PACKAGE_SUMMARY",
-    "REPORT_DATE", "S14_VERDICT", "SUMMER_ONPEAK_EXPORT_RATE",
+    "REPORT_VERSION", "S14_VERDICT", "SUMMER_ONPEAK_EXPORT_RATE",
     "SUMMER_ONPEAK_IMPORT_RATE", "SUPER_OFF_PEAK_RATE",
 }
 
@@ -11711,7 +11711,7 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     A short repeated number is not flagged, and neither is a figure repeated
 #     in a DIFFERENT CONTAINER. The live example of the latter is the lifetime
 #     table, which prints the first year's value in both the annual and the
-#     cumulative cell (report-template.html:555) -- and be precise about WHICH
+#     cumulative cell (report-template.html:556) -- and be precise about WHICH
 #     rule spares it, because there are two and only one of them is load-
 #     bearing. Today's FIRST_YEAR_VALUE happens to be 7 characters, one under
 #     _SEAM_MIN_ECHO, so the length floor would exclude it anyway; that is an
@@ -12038,7 +12038,7 @@ _SEAM_INLINE_TAGS = frozenset((
 # or list items are not one run of text however few characters of markup the
 # author put between them, so the echo rule does not compare ACROSS one at all
 # -- not "at a distance", not at all. That is what spares the lifetime table's
-# cumulative column (report-template.html:555, which prints FIRST_YEAR_VALUE in
+# cumulative column (report-template.html:556, which prints FIRST_YEAR_VALUE in
 # both the annual and the cumulative cell) no matter how long that value grows,
 # and it does so without a second threshold to tune.
 #
@@ -12208,7 +12208,7 @@ _SEAM_CLASSES = ("doubled-sigil", "missing-unit", "echoed-phrase")
 #
 # ONE STATED LIMIT: a marker cannot separate two occurrences of the SAME token
 # on the SAME line. Several template lines print a token twice -- the lifetime
-# table's row (report-template.html:555, FIRST_YEAR_VALUE in both the annual
+# table's row (report-template.html:556, FIRST_YEAR_VALUE in both the annual
 # and the cumulative cell) is the one this file has reason to name elsewhere --
 # and none of them is allowlisted, so an entry for one would excuse both.
 # Line numbers are the next granularity down and they do not help here either.
@@ -14815,14 +14815,14 @@ def case_the_lifetime_tables_cumulative_cell_is_not_an_echo():
     clear the floor, and a case that passed only because of the floor fails.
 
     The line number is pinned too. Two comments in this file name
-    report-template.html:555 as this row; the last pair of comments to name a
+    report-template.html:556 as this row; the last pair of comments to name a
     line number here named five of them and every one was stale."""
     text = rt.TEMPLATE.read_text()
     row = _seam_template_line("FIRST_YEAR_VALUE", text)
     lineno = text.splitlines().index(row) + 1
-    assert lineno == 555, (
+    assert lineno == 556, (
         f"the lifetime table's repeated-value row is report-template.html:{lineno}, "
-        "not 555. Update the two comments in this file that name that line -- the "
+        "not 556. Update the two comments in this file that name that line -- the "
         "class 3 paragraph in the block comment and the _SEAM_INLINE_TAGS policy "
         "comment -- in the same edit, which is what this assertion exists to force")
     assert row.count("{{FIRST_YEAR_VALUE}}") == 2, (

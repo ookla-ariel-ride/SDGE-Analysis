@@ -1763,8 +1763,15 @@ def _analysis_window_short(ctx):
 
 _tok("ANALYSIS_WINDOW_SHORT", kind="derived", get=_analysis_window_short,
      sources=["data/behavior_rebuild.json:window"])
-_tok("REPORT_DATE", kind="derived", get=lambda ctx: dt.date.today().isoformat(),
-     sources=["system clock at generation time"])
+# The date is the day the page was generated; the build is filled in AFTER the
+# page is written, by analysis/stamp_report_version.py (issue #251) -- a
+# fingerprint of the finished page cannot be known while the page is still
+# being filled, so the token deliberately renders the "unstamped" placeholder
+# that the stamper replaces.
+_tok("REPORT_VERSION", kind="derived",
+     get=lambda ctx: f"{dt.date.today().isoformat()} · build unstamped",
+     sources=["system clock at generation time",
+              "content fingerprint applied by analysis/stamp_report_version.py"])
 
 _tok("BEHAVIOR_MODEL_SCRIPT", kind="cited_constant", value="analysis/behavior_rebuild.py",
      source="the generator that writes data/behavior_rebuild.json")

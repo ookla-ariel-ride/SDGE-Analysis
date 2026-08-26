@@ -4572,6 +4572,35 @@ the prose numbers, then grep the HTML for the superseded figures (`CLAUDE.md` §
   carries the required "How this report was produced" statement — generation, independent
   review, adversarial review, rework. It must survive every regeneration.
 
+### 5.1 The Version row (`analysis/stamp_report_version.py`, issue #251)
+
+`index.html` is hand-authored, so nothing regenerates it and nothing dated it: the Window
+row's "report generated" clause came from a token that was resolved once and then sat
+unchanged while the figures beside it changed. The header ledger now carries a **Version**
+row directly after Window, `<span class="meta-v" id="report-version">YYYY-MM-DD · build
+0123456789</span>`, and one script owns its text.
+
+- **What is hashed.** `sha256` of the page's bytes with the whole inner text of that span
+  (date and build alike) replaced by a fixed placeholder; the first 10 hex digits are the
+  build. The span must be excluded or the stamp would change the bytes it digests. The date
+  is excluded on purpose: a restamp of unchanged content keeps the build and leaves the file
+  byte-identical, so `stamp` is idempotent. Every other byte is in the hash, so any edit
+  elsewhere on the page changes the build.
+- **Why not a git SHA.** The commit that writes the stamp changes `index.html`, so a stamp
+  can never equal the SHA of its own commit, and CI checks out at depth 1 with no history to
+  compare against. A fingerprint is computed from the file and checked from the file.
+- **The gate.** `stamp_report_version.py --check [PATH]` recomputes the build, prints
+  `STAMP OK <value>` and exits 0 when it matches, and exits 1 naming the expected and found
+  builds when it does not; it never writes. `analysis/test_stamp_report_version.py` runs it
+  against the committed `index.html` in CI, so a page edited without a restamp fails the
+  build. It also proves the guard fires (a one-byte edit outside the span changes the build),
+  that a date-only edit does not, that a page with no Version row is refused by both modes
+  rather than having one inserted, and that `--check` leaves bytes and mtime untouched.
+- **The generated page.** `report-template.html` carries the same row as `{{REPORT_VERSION}}`,
+  which `report_tokens.py` resolves to `<date> · build unstamped`; `generate_report.py` then
+  stamps the staged `index.generated.html` before promoting it, so the generated page carries a
+  real build too. Writes are atomic (temp file beside the page + `os.replace`).
+
 ---
 
 ## 6. Validation and known limitations
@@ -4828,7 +4857,9 @@ paragraph was wrong and nothing caught it before it shipped.
    `reusable-prompt.md` Phase D) and fill its `{{TOKEN}}` placeholders; when updating in
    place, replace every array in the `D = {...}` block from the new
    `report_data.json`/`monthly.csv`/dispatch output, then update the static tables and prose
-   figures; grep the HTML for each superseded number.
+   figures; grep the HTML for each superseded number. Either way, finish with
+   `./.venv/bin/python analysis/stamp_report_version.py` so the header's Version row
+   matches the page (§5.1); its test fails in CI otherwise.
 7. **Before committing anything**, run the PII grep required by `CLAUDE.md` §4 over every
    push-bound file (names, addresses, account/meter numbers, coordinates, system IDs, API
    keys) and confirm zero matches.

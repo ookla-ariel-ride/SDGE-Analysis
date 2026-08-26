@@ -131,6 +131,7 @@ import prose_lint             # noqa: E402
 import publish               # noqa: E402
 import report_blocks as rb   # noqa: E402
 import report_tokens as rt   # noqa: E402
+import stamp_report_version as srv  # noqa: E402
 
 ROOT = rt.ROOT
 DEFAULT_CACHE_DIR = ROOT / "private" / "report_cache"
@@ -1167,6 +1168,11 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
     with tempfile.TemporaryDirectory() as td:
         staged = pathlib.Path(td) / "index.generated.html"
         staged.write_text(rendered)
+        # Issue #251: the Version row's build is a fingerprint of the finished
+        # page, so it is applied to the staged file (before promotion, so the
+        # promoted page is stamped in the same crash-consistent step) and never
+        # to a token value. A template with no Version row is refused here.
+        srv.stamp(staged)
         publish.promote_set({"index.generated.html": str(staged)}, str(dest_dir))
 
     return {"wrote": True, "dry_run": False, "failures": []}
