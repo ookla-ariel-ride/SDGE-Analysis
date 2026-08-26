@@ -67,6 +67,7 @@ SUITES = [
     "test_rates_history", "test_report_blocks", "test_report_consistency",
     "test_report_tokens", "test_reprice_by_vintage", "test_scripts_runnable",
     "test_service_headroom", "test_soiling_analysis", "test_stage_private_data",
+    "test_stamp_report_version",
     "test_threeway_production_validation", "test_tou_audit", "test_tou_spread",
     "test_tou_structure_stress", "test_uncertainty_propagation",
 ]
@@ -86,7 +87,8 @@ ABORTS_ON_FIRST_FAILURE = {
     "test_all_electric_endgame", "test_dry_run", "test_egress_preflight",
     "test_generate_report", "test_gross_import_decomposition", "test_llm_providers",
     "test_prose_lint", "test_report_blocks", "test_report_tokens",
-    "test_reprice_by_vintage", "test_uncertainty_propagation",
+    "test_reprice_by_vintage", "test_stamp_report_version",
+    "test_uncertainty_propagation",
 }
 
 
