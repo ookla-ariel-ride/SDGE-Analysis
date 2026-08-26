@@ -11837,6 +11837,30 @@ _SEAM_UNITS = ("cycles/day", "kWh/kW/yr", "kWh/yr", "per month", "per year",
 
 _SEAM_BARE_NUMBER_RE = re.compile(r"\A\d[\d,]*(?:\.\d+)?\Z")
 
+# TWO numbers joined by a dash and nothing else -- "61-87", "2,103.58-2,455.64",
+# "0.45-2.4". A range is still ONE figure in ONE dimension: the token that
+# publishes "61-87¢" is quoting a single price that moves, not a sentence
+# carrying two unrelated quantities, and report_tokens' own `dim` docstring
+# names a range as a thing `dim` exists for. So the phrase audit has to read it
+# the same way it reads a lone number, or "phrase=True" on a range is a hole of
+# exactly the shape a unit suffix is.
+#
+# EXACTLY ONE separator, which is what keeps a date out. "2025-06-14" carries
+# two hyphens and does not match; "2026-08" would, and no token in this report
+# publishes a bare year-month wearing a money or percent sign. Both dash
+# characters this report really uses are accepted -- the en dash a formatter
+# writes and the hyphen a hand-typed range like "61-87¢" uses.
+_SEAM_RANGE_NUMBER_RE = re.compile(
+    r"\A\d[\d,]*(?:\.\d+)?[-–—]\d[\d,]*(?:\.\d+)?\Z")
+
+# The marks that say how a figure was arrived at rather than what it measures,
+# stripped before a value is asked whether it is one figure. "~" and "+" come
+# from _SEAM_SIGILS' own reading of the same distinction; "±" is here for the
+# tolerance shape report_tokens names in the same breath as the range
+# ("±2%"), and the space is here because a figure does not stop being one
+# figure for having been spaced.
+_SEAM_FIGURE_DECORATIONS = "~+± "
+
 # The sigils that are a DIMENSION rather than a decoration. A subset of
 # _SEAM_SIGILS on purpose: "~", "+" and "-" say how a figure was arrived at,
 # not what it measures, and a value that keeps its tilde while losing its
@@ -12346,6 +12370,84 @@ def _seam_unit_prefix(text):
         if low.startswith(unit.lower()) and not body[len(unit):len(unit) + 1].isalpha():
             return unit
     return None
+
+
+def _seam_unit_suffix(text):
+    """The member of _SEAM_UNITS that `text` ENDS with, at a word boundary --
+    or None. The mirror of _seam_unit_prefix, reading the value's end instead
+    of the template's.
+
+    Same list, same boundary rule, for the same reason both of those exist:
+    the units this report really writes are already enumerated and already
+    held load-bearing by case_every_member_of_the_seam_constants_is_load_
+    bearing, so a second hand-rolled list would be one more thing to fall
+    behind _SEAM_UNITS. Longest match first, so "kWh/yr" is taken whole rather
+    than leaving a "kWh" behind, and the boundary is checked on the LEFT here
+    (a letter before the unit means the unit is the tail of a word): "control
+    years" ends in the unit "years", "the fresh" does not end in the unit "h".
+
+    No leading-hyphen allowance, unlike _seam_unit_prefix: a hyphen inside the
+    value is part of the value, and eating one here would turn the range
+    "61-87" into the number "61"."""
+    low = text.lower()
+    for unit in sorted(_SEAM_UNITS, key=len, reverse=True):
+        if not low.endswith(unit.lower()):
+            continue
+        if text[:len(text) - len(unit)][-1:].isalpha():
+            continue
+        return unit
+    return None
+
+
+def _seam_reduces_to_one_figure(value):
+    """True when `value` is ONE figure in ONE dimension and nothing else.
+
+    THE SHAPE TEST THE PHRASE AUDIT ASKS, and what makes it a test rather than
+    a regex is the normalisation in front of it. A figure in this report
+    arrives wearing up to three layers that are not part of what it measures:
+    an approximation or tolerance mark ("~", "+", "±"), a dimension sigil
+    ("$", "%", "¢"), and a unit suffix ("/yr", "/month", "/kWh"). Asking
+    _SEAM_BARE_NUMBER_RE before those come off answers a question about
+    decoration rather than about content -- "~$1,221/yr" reduced only for its
+    sigils leaves "1,221/yr", which is not a bare number, so the audit used to
+    accept the commonest figure shape in the whole report as language. That is
+    a hole the width of a unit suffix, and it fits every "/yr" and "/mo"
+    figure here.
+
+    THE OTHER DIRECTION IS THE ONE THAT COSTS MORE. Called on real prose this
+    must stay quiet, or the audit becomes a false alarm on the sentences it
+    exists to leave alone -- so the units come off ONE END, the value has to
+    reduce to a number (or a range) with NOTHING left over, and a value with
+    so much as one other word in it survives every layer of stripping:
+    "$10-51/yr across the 0.45-2.4%/month soiling bracket" still carries
+    "across ... soiling bracket" when the last suffix is gone. A sentence is
+    not reachable from here.
+
+    The unit loop runs to a fixed bound rather than `while`: a compound the
+    list spells in two pieces ("2.4%/month" -> "/month", then "%") needs more
+    than one pass, and a bound that cannot exceed the number of distinct units
+    keeps a pathological value from spinning."""
+    core = value.strip()
+    for _ in range(len(_SEAM_UNITS)):
+        unit = _seam_unit_suffix(core)
+        if unit is None:
+            break
+        core = core[:len(core) - len(unit)].rstrip()
+    core = "".join(c for c in core
+                   if c not in _SEAM_DIMENSION_SIGILS
+                   and c not in _SEAM_FIGURE_DECORATIONS)
+    return bool(_SEAM_BARE_NUMBER_RE.match(core)
+                or _SEAM_RANGE_NUMBER_RE.match(core))
+
+
+def _seam_phrase_offences(values, marked):
+    """[(token, value)] for every name in `marked` whose value carries a
+    dimension sigil and still reduces to one figure -- the phrase audit's
+    whole finding, factored out so a mutation case can drive it on a
+    declaration this repo does not ship."""
+    return [(name, values[name]) for name in marked
+            if any(s in values[name] for s in _SEAM_DIMENSION_SIGILS)
+            and _seam_reduces_to_one_figure(values[name])]
 
 
 def _seam_declared_dimension(name, fmt, value):
@@ -13514,10 +13616,19 @@ def case_a_phrase_marker_cannot_be_used_to_hide_a_single_figure():
     _seam_stale_allowlist, one declaration over.
 
     So the two are checked against each other. `phrase` says the value is
-    language; the shape test says whether the value reduces to a single number
-    once its sigils and approximation marks come off. A token where those two
+    language; _seam_reduces_to_one_figure says whether the value reduces to a
+    single figure once its unit suffix, its dimension sigil and its
+    approximation or tolerance marks come off. A token where those two
     disagree is either mismarked or has changed what it publishes, and the
     message says which way to resolve it.
+
+    THE STRIPPING IS WHAT MAKES THE AUDIT WORTH RUNNING. Read for sigils
+    alone, it saw "~$1,221/yr" as "1,221/yr", called that not-a-number and
+    passed -- so phrase=True switched the dimension check off for the single
+    commonest value shape in this report, and every "/yr" and "/mo" figure was
+    one word away from being unchecked with the suite still green. A range
+    ("61-87¢") and a tolerance ("±2%") escaped the same way. The mutation case
+    below drives all three shapes off live tokens.
 
     THE SHAPE TEST IS SOUND HERE AND NOT IN THE GUARD, and the difference is
     the direction of the error. Used to CLASSIFY, it gets
@@ -13530,15 +13641,7 @@ def case_a_phrase_marker_cannot_be_used_to_hide_a_single_figure():
                     if spec.get("phrase") and name in values)
     assert marked, ("no token declares phrase=True, so this case checks nothing; "
                     "report_tokens dropped the marker")
-    offences = []
-    for name in marked:
-        value = values[name]
-        if not any(s in value for s in _SEAM_DIMENSION_SIGILS):
-            continue
-        core = "".join(c for c in value
-                       if c not in _SEAM_DIMENSION_SIGILS and c not in "~+ ")
-        if _SEAM_BARE_NUMBER_RE.match(core):
-            offences.append((name, value))
+    offences = _seam_phrase_offences(values, marked)
     assert not offences, (
         "phrase=True is declared on token(s) whose value is one figure and nothing "
         "else, which turns the marker into a way of not being checked: "
@@ -13546,6 +13649,93 @@ def case_a_phrase_marker_cannot_be_used_to_hide_a_single_figure():
         + ". Give each a `fmt` the registry renders it through, or a `dim`")
     return (f"none of the {len(marked)} phrase-marked token(s) publishes a value that "
             "reduces to a single figure")
+
+
+# The decorated shapes a single figure wears in this report, one live token
+# each, with the layer that used to carry the figure past the audit named.
+# LIVE TOKENS RATHER THAN SYNTHETIC STRINGS: a mutation case built on strings
+# I typed proves the regex matches strings I typed. These are the values the
+# report actually publishes, so a formatter that starts writing "1221 /yr" or
+# an en dash that becomes a word takes the probe with it and says so here.
+_SEAM_PHRASE_ABUSE_SHAPES = (
+    ("S0_FREE_WIN_CARD_FIGURE", "a '/yr' unit behind an approximated money figure"),
+    ("HPWH_NET_SAVINGS", "a '/yr' unit behind a plain money figure"),
+    ("SOILING_RATE_RANGE", "a '/month' unit behind a percent range"),
+    ("NEM_GRANDFATHER_VALUE_RANGE", "a money range with no unit at all"),
+    ("DAYBAND_ONPEAK_PRICE", "a hand-written cents range"),
+    ("PRODUCTION_AGREEMENT_PCT", "a tolerance mark on a percent"),
+)
+
+
+@case
+def case_the_phrase_audit_catches_a_decorated_figure_marked_as_language():
+    """THE MUTATION THE CASE ABOVE EXISTS TO FAIL ON, run rather than argued.
+
+    An anti-abuse guard is only worth the abuse it actually stops, and this
+    one shipped for a while stopping less than it read as stopping: its shape
+    test asked _SEAM_BARE_NUMBER_RE after stripping sigils and nothing else,
+    so any figure wearing a unit suffix, written as a range, or carrying a
+    tolerance mark could be declared phrase=True and the whole suite stayed
+    green. Flipping S0_FREE_WIN_CARD_FIGURE from dim="$" to phrase=True --
+    which switches off the dimension check on a headline saving -- was a
+    180/180 pass.
+
+    So every decorated shape this report really publishes is flipped here, one
+    live token at a time, and the audit above must report each one BY NAME.
+    Patching rt.TOKENS rather than calling the helper directly is what makes
+    this a test of the case and not of the regex: the discovery step, the
+    sigil filter and the message all run exactly as they would on a real
+    mis-declaration.
+
+    THE OTHER HALF IS THE FALSE ALARM, and it is checked in the same breath:
+    with nothing patched, the case passes. A stripping rule loose enough to
+    call one of the live phrase tokens a figure would fail there rather than
+    here, which is the direction that matters -- an audit that cries wolf on
+    real prose is worse than the hole it closed."""
+    values, _gaps = _seam_values()
+    audit = case_a_phrase_marker_cannot_be_used_to_hide_a_single_figure
+    audit()  # the unmutated registry, for the false alarm.
+
+    missed, caught = [], []
+    for name, shape in _SEAM_PHRASE_ABUSE_SHAPES:
+        spec = rt.TOKENS.get(name)
+        assert spec is not None and name in values, (
+            f"{name} is no longer a live token, so the {shape} it stands for is not "
+            "being driven. Name the token that publishes that shape now, or say why "
+            "the report stopped publishing it")
+        assert spec.get("dim") and not spec.get("phrase"), (
+            f"{name} no longer declares a `dim` of its own, so flipping it to "
+            f"phrase=True mutates nothing. Re-point this shape ({shape}) at a token "
+            "that does")
+        assert any(s in values[name] for s in _SEAM_DIMENSION_SIGILS), (
+            f"{name} renders {values[name]!r} here, which wears no dimension sigil, so "
+            f"the audit would not look at it and this probe ({shape}) tests nothing "
+            "against these inputs. Name a token that publishes the shape on this "
+            "household, or say why the report no longer publishes it")
+        mutated = dict(rt.TOKENS)
+        mutated[name] = {k: v for k, v in spec.items() if k != "dim"}
+        mutated[name]["phrase"] = True
+        with _patched(rt, "TOKENS", mutated):
+            try:
+                audit()
+            except AssertionError as exc:
+                assert name in str(exc), (
+                    f"the audit failed under {name} flipped to phrase=True but does "
+                    f"not name it: {exc}")
+                caught.append((name, shape, str(exc).splitlines()[0]))
+                continue
+        missed.append((name, values[name], shape))
+    assert not missed, (
+        "phrase=True hides a value that is one figure and nothing else, and the audit "
+        "passes anyway: "
+        + "; ".join(f"{n} renders {v!r} ({s})" for n, v, s in missed)
+        + ". _seam_reduces_to_one_figure stopped taking one of the layers off -- the "
+        "unit suffix, the dimension sigil, or the approximation/tolerance mark -- so "
+        "the marker is once again a way of not being checked")
+    return (f"the phrase audit reports each of the {len(caught)} decorated figure "
+            "shape(s) when a live token declaring it is flipped to phrase=True ("
+            + ", ".join(f"{n}: {s}" for n, s, _m in caught)
+            + "), and passes with nothing flipped")
 
 
 @case
