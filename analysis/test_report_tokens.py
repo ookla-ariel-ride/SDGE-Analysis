@@ -11744,9 +11744,16 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     same figure is still two printings. _SEAM_CONTAINER_TAGS (td, th, tr, p,
 #     div, li, h1-h6, table, details, ...) do change it, and class 3 does not
 #     compare ACROSS one at all -- the next cell, paragraph or list item is a
-#     different run of text however close it sits in the file. Anything in
-#     neither list is treated as a container, the quiet answer. See the policy
-#     comment on _SEAM_INLINE_TAGS for why length was rejected as the test.
+#     different run of text however close it sits in the file. Both sets are
+#     the HTML VOCABULARY, not this template's inventory: every text-level
+#     element is inline whether or not the template uses one. An element in
+#     NEITHER set is not guessed at -- the guard raises SeamTagUnclassified,
+#     names the tag and both sets, and stops, because a default in either
+#     direction has a victim (a "container" default hid `<mark>`, `<u>` and
+#     `<time>`, all three of which the previous rule caught). Comments,
+#     doctypes and other constructs with no element name print no characters,
+#     so they are zero width and take no lookup. See the policy comment on
+#     _SEAM_INLINE_TAGS for why length was rejected as the test.
 #     Class 2 is the one asymmetry, and it is deliberate: it reads THROUGH a
 #     container boundary (collapsed to one space) because the unit that saves
 #     a bare number is routinely in the next cell or the column header, so
@@ -11918,10 +11925,22 @@ _SEAM_FMT_DIMENSIONS = _seam_fmt_dimensions()
 # than a bug fixed after it bit.
 _SEAM_TAG_RE = re.compile(r"""<(?:[^>"']|"[^"]*"|'[^']*')*>""")
 
-# The element name a tag opens or closes, lower-cased by _seam_tag_kind. A
-# construct with no element name at all -- a comment, a doctype, a processing
-# instruction -- matches nothing here and takes the default below.
+# The element name a tag opens or closes, lower-cased by _seam_tag_kind.
 _SEAM_TAG_NAME_RE = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9]*)")
+
+# CONSTRUCTS THAT ARE NOT ELEMENTS AND PRINT NOTHING: an HTML comment
+# `<!-- ... -->`, a doctype `<!DOCTYPE html>`, a CDATA section (which an HTML
+# parser treats as a bogus comment outside foreign content), an XML processing
+# instruction `<?xml ... ?>`. They carry no element name, so there is nothing
+# to classify and nothing to look up -- and they are NOT sent down the refusal
+# path, because the answer is already known: a reader sees NO CHARACTERS where
+# one sits. `12<!-- note -->,345.6` renders "12,345.6", one figure. They are
+# therefore ZERO WIDTH, kind "invisible", and the text closes up behind them
+# exactly as it does behind an inline element. The kind is named separately
+# from "inline" because the two are zero width for different reasons: an
+# inline element WRAPS visible text, an invisible construct CONTRIBUTES none.
+# `case_an_invisible_construct_is_zero_width_not_a_boundary` pins it.
+_SEAM_INVISIBLE_RE = re.compile(r"\A<[!?]")
 
 # HOW A TAG IS CLASSIFIED, AND WHY IT IS NOT BY LENGTH.
 #
@@ -11947,9 +11966,33 @@ _SEAM_TAG_NAME_RE = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9]*)")
 # on two lines of one paragraph prints it twice. A barrier wide enough to keep
 # the next table cell out of range would go permanently blind to exactly that
 # defect. `case_a_line_break_does_not_end_the_run_a_reader_is_reading` pins it.
+#
+# THE SET IS THE HTML SPEC'S PHRASING VOCABULARY, NOT A LIST OF THE TAGS THIS
+# TEMPLATE HAPPENS TO USE. An earlier revision of this table listed twelve
+# names and let everything else fall to a default. The twelve were the ones
+# the live template carried, so the classification tracked one household's
+# markup instead of what a reader sees, and `<mark>`, `<u>` and `<time>` --
+# ordinary text-level elements, all three caught by the previous design --
+# went silently unread. Every text-level element below is inline whether or
+# not report-template.html has ever contained it, because a reader reads
+# straight through all of them.
 _SEAM_INLINE_TAGS = frozenset((
-    "b", "i", "span", "code", "em", "strong", "a", "sup", "sub", "small",
-    "abbr", "br"))
+    # Text-level semantics, the whole group: HTML's own definition of markup
+    # that formats a run of text without interrupting it.
+    "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "dfn",
+    "em", "i", "kbd", "mark", "q", "rp", "rt", "ruby", "s", "samp", "small",
+    "span", "strong", "sub", "sup", "time", "u", "var", "wbr",
+    # Edits. Phrasing when their content is, and both render in line: struck
+    # text and inserted text are still the run of text the reader is in.
+    "del", "ins",
+    # Phrasing that prints its own text INSIDE the surrounding run rather
+    # than inside a widget of its own.
+    "label", "output",
+    # Replaced content and the wrappers around it. `img` prints a box rather
+    # than text and the words on either side of it are one run; `picture`,
+    # `source` and `track` print nothing of their own at all.
+    "img", "picture", "source", "track",
+))
 
 # CONTAINER BOUNDARIES do change it. Two values in different cells, paragraphs
 # or list items are not one run of text however few characters of markup the
@@ -11958,39 +12001,126 @@ _SEAM_INLINE_TAGS = frozenset((
 # cumulative column (report-template.html:555, which prints FIRST_YEAR_VALUE in
 # both the annual and the cumulative cell) no matter how long that value grows,
 # and it does so without a second threshold to tune.
+#
+# LIKE THE INLINE SET, THIS IS A VOCABULARY AND NOT AN INVENTORY. It names
+# every element that ends the run of text a reader is in, in four groups:
+# markup that opens a new block, markup that opens a widget with its own
+# label, markup that embeds something that is not this document's text, and
+# markup whose contents are never printed at all. The last group is the one
+# worth stating out loud: a reader sees nothing of a <script> or a <title>,
+# so joining the text on either side of one would splice source that is not
+# on the page into a run that is. A boundary is the right answer there, not
+# an approximation of one.
 _SEAM_CONTAINER_TAGS = frozenset((
-    "td", "th", "tr", "p", "div", "li", "ul", "ol",
+    # Tabular data. Two cells are two runs, and so are two rows.
+    "table", "caption", "colgroup", "col", "thead", "tbody", "tfoot",
+    "tr", "td", "th",
+    # Grouping content: paragraphs, lists, quotes, rules.
+    "p", "div", "hr", "pre", "blockquote", "ol", "ul", "menu", "li",
+    "dl", "dt", "dd", "figure", "figcaption",
+    # Sections and headings.
+    "html", "body", "main", "article", "section", "nav", "aside",
+    "header", "footer", "hgroup", "search", "address",
     "h1", "h2", "h3", "h4", "h5", "h6",
-    "table", "thead", "tbody", "details", "summary", "section", "nav",
-    "figure", "blockquote"))
+    # Interactive containers.
+    "details", "summary", "dialog",
+    # Form controls. Each one prints its own text inside its own widget: the
+    # caption on a button is not the sentence beside the button. `label` and
+    # `output` are the exceptions and are inline above.
+    "form", "fieldset", "legend", "input", "button", "select", "datalist",
+    "optgroup", "option", "textarea", "progress", "meter",
+    # Embedded content. Whatever text is inside is the embedded document's,
+    # or a fallback that is printed only when the embed fails.
+    "iframe", "embed", "object", "video", "audio", "canvas", "map", "area",
+    "svg", "math",
+    # Content that is never printed. Splicing across one of these would join
+    # two visible runs through text that is not on the page.
+    "head", "title", "base", "link", "meta", "style", "script",
+    "noscript", "template", "slot",
+))
 
-# THE DEFAULT FOR ANYTHING IN NEITHER LIST IS "container", i.e. the echo rule
-# stops there. It is the QUIET answer, chosen on the same terms as every other
-# trade in this guard: a rule that stops looking has a stated blind spot, and a
-# rule that reads through an unknown element it should not have joins two runs
-# of text a reader sees separately and cries wolf. An inline element this file
-# has not heard of yet -- `<mark>`, `<u>`, `<time>` -- therefore hides an echo
-# until it is added to _SEAM_INLINE_TAGS, which is a one-word edit.
-# case_an_unknown_tag_stops_the_echo_rule_rather_than_crying_wolf drives that
-# default rather than leaving it to be inferred from these two tuples.
-_SEAM_UNKNOWN_TAG_KIND = "container"
+
+class SeamTagUnclassified(AssertionError):
+    """The seam guard met an element name that is in neither tag set.
+
+    An AssertionError subclass so the suite runner reports it as the case
+    failure it is, and a named class so the case that drives the refusal can
+    tell it apart from an ordinary assertion inside the same fixture."""
+
+
+# THERE IS NO DEFAULT. AN UNCLASSIFIED ELEMENT REFUSES.
+#
+# The previous revision defaulted to "container" and called that the quiet
+# answer. It was not quiet, it was silently WRONG, and the measurement is the
+# argument: `_seam_echo("12,345.6 kWh", "", "<mark>12,345.6 kWh</mark>")`
+# reported the duplicate before that default existed -- the source `<mark>`
+# fits inside _SEAM_ECHO_GAP, so the old character-counting rule compared
+# straight through it -- and returned None after. `<u>` and `<time>` moved the
+# same way. Three ordinary text-level elements went from CAUGHT to MISSED, so
+# the "stated blind spot" the default bought was in fact a regression against
+# markup a prose pass introduces without thinking about it.
+#
+# The lesson is not that the other default is better. It is that BOTH defaults
+# are guesses, and each guess has a victim:
+#   * "container" hides a real echo behind any element this table has not
+#     heard of, which is what just happened.
+#   * "inline" joins two runs of text a reader sees separately and reports a
+#     figure that is printed once -- the false alarm this guard cannot
+#     survive, because a guard that refuses a legitimate state is how a
+#     household stops being able to publish its report.
+# Neither cost is worth paying for an answer nobody has looked up. So the
+# guard does not answer: it raises SeamTagUnclassified, names the tag, names
+# both sets, and stops. This is a TEST-ONLY guard, so the whole price of a
+# refusal is a red CI run and one word of classification by the author who
+# introduced the element -- not a household losing its report. That asymmetry
+# is the entire reason failing closed is affordable here.
+#
+# Constructs with no element name are NOT sent down this path: a comment, a
+# doctype, a CDATA section and a processing instruction print no characters,
+# so their kind is known without a lookup and _SEAM_INVISIBLE_RE answers
+# "invisible" for them above.
+#
+# case_an_unclassified_element_refuses_instead_of_guessing_its_kind drives the
+# refusal, and case_the_live_template_classifies_every_tag_it_scans keeps the
+# shipped template out of it.
 
 
 def _seam_tag_kind(tag):
-    """"inline" or "container" for one matched HTML tag.
+    """"inline", "container" or "invisible" for one matched HTML construct;
+    raises SeamTagUnclassified for an element name in neither set.
 
     See _SEAM_INLINE_TAGS above for the policy: a tag is classified by whether
     a reader is still reading the same run of text on the other side of it, not
-    by how many characters it occupies."""
+    by how many characters it occupies. "inline" and "invisible" are both ZERO
+    WIDTH; they differ in why, and _SEAM_INVISIBLE_RE says which."""
+    if _SEAM_INVISIBLE_RE.match(tag):
+        return "invisible"
     m = _SEAM_TAG_NAME_RE.match(tag)
     if m is None:
-        return _SEAM_UNKNOWN_TAG_KIND
+        raise SeamTagUnclassified(
+            f"the seam guard cannot read {tag!r}: it carries no element name and is "
+            "not a comment, doctype, CDATA section or processing instruction either, "
+            "so there is nothing to classify and no reason to assume it prints "
+            "nothing. Either _SEAM_TAG_RE has started matching something that is not "
+            "markup, or the template contains a construct this guard has never seen. "
+            "Fix whichever it is; the guard will not guess whether a reader sees "
+            "characters here")
     name = m.group(1).lower()
     if name in _SEAM_INLINE_TAGS:
         return "inline"
     if name in _SEAM_CONTAINER_TAGS:
         return "container"
-    return _SEAM_UNKNOWN_TAG_KIND
+    raise SeamTagUnclassified(
+        f"the seam guard has no classification for the element {name!r} (in "
+        f"{tag!r}), and it will not guess one. Add the name to exactly ONE of "
+        "_SEAM_INLINE_TAGS (a reader reads straight through it, so it is removed at "
+        "zero width and the text closes up behind it: b, span, mark, time, ...) or "
+        "_SEAM_CONTAINER_TAGS (it ends the run of text, so the echo rule does not "
+        "compare across it at all: td, p, li, script, ...). Guessing either way has a "
+        "victim -- 'container' hides a real duplicated figure behind the element, "
+        "'inline' reports a figure that is printed once -- so this refuses instead. "
+        "It is a test-only guard: the cost of this failure is one word of "
+        "classification, not a report that cannot be published")
 
 
 # Characters trimmed off the ends of the "next word" before it is quoted back
@@ -12300,8 +12430,9 @@ def _seam_visible_before(head):
     for m in _SEAM_TAG_RE.finditer(head):
         if _seam_tag_kind(m.group(0)) == "container":
             start = m.end()
-    # Every tag left in the remainder is inline by construction, so this
-    # removes exactly the zero-width ones.
+    # Every construct left in the remainder is zero width by construction --
+    # inline or invisible, since an unclassified one would already have
+    # raised in the loop above -- so this removes exactly those.
     return _seam_unescape(_SEAM_TAG_RE.sub("", head[start:]))
 
 
@@ -12329,7 +12460,7 @@ def _seam_visible_through(text):
     there would INVENT a missing unit. Both directions are the same trade: the
     view that keeps the rule quiet is the one each rule takes."""
     return _seam_unescape(_SEAM_TAG_RE.sub(
-        lambda m: "" if _seam_tag_kind(m.group(0)) == "inline" else " ", text))
+        lambda m: " " if _seam_tag_kind(m.group(0)) == "container" else "", text))
 
 
 def _seam_echo(value, head, tail):
@@ -12397,7 +12528,7 @@ def _seam_scan(template_text, values):
     read the rule tables and thresholds those rules are built from --
     _SEAM_CLASSES here, and _SEAM_SIGILS, _SEAM_UNITS, _SEAM_BARE_NUMBER_RE,
     _SEAM_FMT_DIMENSIONS, _SEAM_TAG_RE, _SEAM_INLINE_TAGS,
-    _SEAM_CONTAINER_TAGS, _SEAM_UNKNOWN_TAG_KIND, _SEAM_ECHO_TRIM, _SEAM_MIN_ECHO and
+    _SEAM_CONTAINER_TAGS, _SEAM_INVISIBLE_RE, _SEAM_ECHO_TRIM, _SEAM_MIN_ECHO and
     _SEAM_ECHO_GAP inside the three rules -- plus report_tokens.TOKENS, for
     the one thing about a seam that is not visible in the rendered line: what
     dimension the token's declared format says the figure is measured in
@@ -13872,59 +14003,254 @@ def case_a_line_break_does_not_end_the_run_a_reader_is_reading():
 
 
 @case
-def case_an_unknown_tag_stops_the_echo_rule_rather_than_crying_wolf():
-    """_SEAM_INLINE_TAGS and _SEAM_CONTAINER_TAGS do not name every element,
-    and the DEFAULT for the rest is stated here rather than left to be read off
-    two tuples.
+def case_ordinary_text_level_markup_does_not_hide_an_echo():
+    """THE THREE SHAPES A DEFAULT REGRESSED, pinned by name.
 
-    Anything unrecognised counts as a CONTAINER, which is the quiet answer: the
-    echo rule stops there. The trade is the same one every rule in this guard
-    makes -- a stated blind spot beats a false alarm. An inline element this
-    file has not heard of yet hides an echo behind it until someone adds the
-    name, and the fix is one word in _SEAM_INLINE_TAGS; the opposite default
-    would read two runs of text a reader sees separately as one and report a
-    figure that is printed once.
+    `<mark>`, `<u>` and `<time>` are ordinary text-level elements. A revision
+    of this guard that classified only the twelve names the live template
+    happened to carry, and defaulted the rest to "container", turned all three
+    from CAUGHT to MISSED -- measured on
+    `_seam_echo("12,345.6 kWh", "", "<TAG>12,345.6 kWh</TAG>")`, which reported
+    the duplicate before that revision and returned None after. The three are
+    named here because they are the shapes that actually regressed.
 
-    Constructs with no element name at all -- comments, doctypes -- take the
-    same default for the same reason."""
+    They are not enough on their own: a set built by listing the three known
+    failures passes this case and stays wrong about the next element nobody
+    thought of. So the case also drives text-level elements NONE of the
+    reported failures named -- `kbd`, `var`, `data`, `dfn`, `s`, `q`, `bdi`,
+    `cite`, `samp`, `wbr` -- and the two edit elements. The claim under test is
+    that the inline set is HTML's phrasing vocabulary rather than an inventory
+    of this household's markup."""
+    regressed = ("mark", "u", "time")
+    # Not in the twelve names the old set listed, and not among the three
+    # above either: these are what stops the set from being a list of the
+    # failures somebody happened to report.
+    beyond = ("kbd", "var", "data", "dfn", "s", "q", "bdi", "cite", "samp",
+              "wbr", "del", "ins", "label", "output")
+    for name in regressed + beyond:
+        assert _seam_tag_kind(f"<{name}>") == "inline", (
+            f"`{name}` is no longer inline. A reader reads straight through a "
+            f"<{name}>, so the text on either side of it is one run; classifying it "
+            "as a boundary hides a figure the template prints twice, which is "
+            "exactly the regression this case exists to keep closed")
+        echoed = _seam_echo("12,345.6 kWh", "", f"<{name}>12,345.6 kWh</{name}>")
+        assert echoed and "later" in echoed, (
+            f"a figure printed twice with a <{name}> between the two copies went "
+            f"unreported: {echoed!r}. The reader sees '12,345.6 kWh12,345.6 kWh'")
+    # The control, on the same fixture shape: a CONTAINER between the two
+    # copies still ends the comparison, so this is a widened inline set and
+    # not a rule that has started reporting every repeat it sees.
+    assert _seam_echo("12,345.6 kWh", "", "</p><p>12,345.6 kWh</p>") is None, (
+        "the same figure in the NEXT paragraph is now reported as an echo, so the "
+        "inline set has swallowed a container name")
+    # And the sets stay disjoint: a name in both would make the answer depend
+    # on which lookup runs first.
+    both = _SEAM_INLINE_TAGS & _SEAM_CONTAINER_TAGS
+    assert not both, (
+        f"{sorted(both)} is in BOTH tag sets, so its kind depends on the order of two "
+        "lookups rather than on what a reader sees")
+    return (f"{len(regressed + beyond)} text-level elements are inline and report the "
+            "figure they sit between -- including the three (<mark>, <u>, <time>) a "
+            "container default regressed -- while a paragraph boundary still ends the "
+            "comparison")
+
+
+@case
+def case_an_unclassified_element_refuses_instead_of_guessing_its_kind():
+    """THERE IS NO DEFAULT TAG KIND, AND THAT IS THE POINT.
+
+    Both defaults are guesses and each guess has a victim. "container" hides a
+    real duplicated figure behind any element the table has not heard of --
+    which is what happened to `<mark>`, `<u>` and `<time>`, pinned in the case
+    above. "inline" joins two runs of text a reader sees separately and reports
+    a figure that is printed once, the false alarm this repo has been bitten by
+    repeatedly: a guard that refuses a legitimate state is how a household
+    stops being able to publish its report.
+
+    So the guard refuses. It raises SeamTagUnclassified, names the element and
+    names both sets, and the author who introduced the element classifies it.
+    That is affordable ONLY because this is a test-only guard: the cost of the
+    refusal is a red CI run and one word, not a report that cannot be built,
+    and the message has to say so or the next reader will read it as the
+    second kind of failure."""
     global _SEAM_INLINE_TAGS               # rebound and restored below
-    assert _SEAM_UNKNOWN_TAG_KIND == "container", (
-        f"the default tag kind is now {_SEAM_UNKNOWN_TAG_KIND!r}; an unrecognised "
-        "element that joins two runs of text makes the echo rule report figures that "
-        "are printed once, which is the failure mode this guard cannot survive")
-    assert "mark" not in _SEAM_INLINE_TAGS and "mark" not in _SEAM_CONTAINER_TAGS, (
-        "`mark` is classified now, so it is no longer a probe for the DEFAULT; pick an "
-        "element name that is in neither tuple")
-    assert _seam_tag_kind("<mark>") == "container"
-    assert _seam_tag_kind("<!-- a comment -->") == "container", (
-        "a comment is being classified as inline; it carries no element name, so it "
-        "takes the default")
-    # The default is what quiets this, and the positive control beside it is
-    # the SAME fixture with a classified inline tag in place of the unknown one.
-    assert _seam_echo("12,345.6 kWh", "", "<mark>12,345.6 kWh</mark>") is None, (
-        "an unrecognised element is being read through, so the echo rule now joins two "
-        "runs of text it cannot know are one")
-    known = _seam_echo("12,345.6 kWh", "", "<span>12,345.6 kWh</span>")
-    assert known and "later" in known, (
-        f"the same repeat behind a KNOWN inline tag went unreported: {known!r} -- "
-        "without this control the assertion above passes on a rule that reports "
-        "nothing at all")
-    # ...and the remedy really is one word: the same fixture, with the name
-    # classified inline for the length of this assertion.
+    probe = "flurb"
+    assert (probe not in _SEAM_INLINE_TAGS
+            and probe not in _SEAM_CONTAINER_TAGS), (
+        f"`{probe}` is classified now, so it is no longer a probe for the refusal; "
+        "pick an element name that is in neither set")
+    try:
+        got = _seam_tag_kind(f"<{probe} class='x'>")
+    except SeamTagUnclassified as exc:
+        message = str(exc)
+    else:
+        raise AssertionError(
+            f"an unclassified element was silently answered {got!r} instead of "
+            "refusing. A default in either direction is a guess: 'container' hides a "
+            "real echo, 'inline' invents one")
+    assert probe in message, (
+        f"the refusal does not name the element it could not classify: {message!r} -- "
+        "the author cannot act on it without reading the traceback")
+    for named in ("_SEAM_INLINE_TAGS", "_SEAM_CONTAINER_TAGS"):
+        assert named in message, (
+            f"the refusal does not name {named}, so it says what went wrong without "
+            f"saying where the one-word fix goes: {message!r}")
+    assert "test-only" in message, (
+        "the refusal does not say it is a TEST-ONLY guard, so it reads like a report "
+        f"that cannot be published rather than a word of classification: {message!r}")
+
+    # The refusal reaches the rules, not just the classifier: an unclassified
+    # element anywhere in either window stops the comparison loudly.
+    for head, tail in (("", f"<{probe}>12,345.6 kWh</{probe}>"),
+                       (f"<{probe}>12,345.6 kWh ", "")):
+        try:
+            _seam_echo("12,345.6 kWh", head, tail)
+        except SeamTagUnclassified:
+            pass
+        else:
+            raise AssertionError(
+                f"the echo rule answered for a window containing <{probe}> instead of "
+                f"refusing (head={head!r}, tail={tail!r}); the refusal is trapped in "
+                "the classifier and never reaches the rule that reads it")
+
+    # ...and classifying it really is one word, in either direction. Both are
+    # driven, because a refusal is only affordable if BOTH remedies work.
     shipped = _SEAM_INLINE_TAGS
     try:
-        _SEAM_INLINE_TAGS = shipped | {"mark"}
-        adopted = _seam_echo("12,345.6 kWh", "", "<mark>12,345.6 kWh</mark>")
+        _SEAM_INLINE_TAGS = shipped | {probe}
+        adopted = _seam_echo("12,345.6 kWh", "", f"<{probe}>12,345.6 kWh</{probe}>")
     finally:
         _SEAM_INLINE_TAGS = shipped
     assert adopted and "later" in adopted, (
         f"naming the element in _SEAM_INLINE_TAGS did not make its echo visible: "
-        f"{adopted!r} -- the blind spot this default accepts is only acceptable "
-        "because closing it is a one-word edit, so that has to work")
+        f"{adopted!r} -- the refusal is only affordable because the fix is one word")
     assert _SEAM_INLINE_TAGS is shipped, "the inline tag set was not restored"
-    return ("an unrecognised element defaults to a container boundary and hides the "
-            "echo behind it rather than inventing one, the same repeat behind a known "
-            "inline tag is reported, and naming the element inline closes the gap")
+    return ("an unclassified element raises SeamTagUnclassified from the classifier "
+            "and from the echo rule, naming the element, both tag sets and the fact "
+            "that this is a test-only guard; naming it inline closes the refusal")
+
+
+@case
+def case_an_invisible_construct_is_zero_width_not_a_boundary():
+    """A COMMENT IS NOT AN ELEMENT AND IT IS NOT A BOUNDARY EITHER.
+
+    `<!-- ... -->`, `<!DOCTYPE html>`, `<![CDATA[...]]>` and `<?xml ... ?>`
+    carry no element name, so there is nothing for the two tag sets to answer
+    and the refusal above would have nothing to tell the author to classify.
+    They do not need one: a reader sees NO CHARACTERS where any of them sits.
+    `12<!-- note -->,345.6` renders "12,345.6", one figure, so the honest
+    answer is ZERO WIDTH -- kind "invisible" -- and the text closes up behind
+    it exactly as behind a <b>.
+
+    That is a decision about the reader, not a convenience. Calling a comment
+    a boundary would let a template hide a duplicated figure behind a comment
+    the reader cannot see, which is the same class of miss the container
+    default made. Calling it inline would be the right WIDTH under the wrong
+    name: an inline element wraps visible text and a comment contributes none.
+
+    The doctype is classified for completeness rather than because the choice
+    is reachable -- nothing can precede a doctype, so no run of text is ever
+    joined across one. CDATA is a bogus comment to an HTML parser outside
+    foreign content, which is where this template's markup lives."""
+    for construct in ("<!-- a comment -->", "<!DOCTYPE html>",
+                      "<![CDATA[ x ]]>", "<?xml version='1.0'?>"):
+        assert _seam_tag_kind(construct) == "invisible", (
+            f"{construct!r} is no longer classified 'invisible'. It carries no element "
+            "name, so it is neither a lookup nor a refusal -- it prints no characters, "
+            "and the only question is whether the guard agrees")
+    split = _seam_echo("12,345.6 kWh", "", " 12<!-- keep in sync -->,345.6 kWh</p>")
+    assert split and "later" in split, (
+        f"a figure the template repeats WITH A COMMENT THROUGH IT went unreported: "
+        f"{split!r} -- '12<!-- ... -->,345.6' renders as one figure, so a comment is "
+        "being given a width the reader never sees")
+    behind = _seam_echo("12,345.6 kWh", "", "<!-- the same figure again -->12,345.6 kWh")
+    assert behind and "later" in behind, (
+        f"a figure printed twice with a comment between the copies went unreported: "
+        f"{behind!r} -- a comment is not a container, so it cannot end the comparison")
+    # The control: the comment is zero width, not a licence to read anywhere.
+    # A container boundary INSIDE the comment span still does not apply, and a
+    # container boundary after it still does.
+    assert _seam_echo("12,345.6 kWh", "", "<!-- x --></td><td>12,345.6 kWh") is None, (
+        "the next cell's copy of a figure is reported as an echo once a comment "
+        "precedes the cell wall; the wall is still a container boundary")
+    assert _seam_missing_unit("3,500", "<p>", "<!-- unit --> kWh imported</p>") is None, (
+        "the unit behind a comment is reported missing; class 2 reads the printed "
+        "text, and a comment prints nothing")
+    return ("a comment, doctype, CDATA section and processing instruction are zero "
+            "width rather than boundaries -- the figure split through a comment and "
+            "the figure repeated behind one are both reported, and a cell wall after "
+            "a comment still ends the comparison")
+
+
+# Element names that appear in report-template.html but are NOT markup: a
+# placeholder inside a JavaScript comment, spelled `<season>` because that is
+# how the artifact's key is written (data/tou_spread.json's
+# delivery_spread.<season>.series). _SEAM_TAG_RE matches it, so the refusal
+# would fire on it -- but only if a {{TOKEN}} ever lands on the same line,
+# which is the condition the case below asserts is false. Adding a token to
+# that line is a red CI run naming `season`, not a wrong answer.
+_SEAM_TEMPLATE_NON_ELEMENTS = frozenset(("season",))
+
+
+@case
+def case_the_live_template_classifies_every_tag_it_scans():
+    """THE REFUSAL MUST NOT FIRE ON THE SHIPPED TEMPLATE. A guard that fails
+    closed is only usable if the live input is fully classified, so the
+    template's own tag inventory is checked here rather than discovered when
+    some other case walks a token line.
+
+    Two claims, and the second is the one that stops this from being a
+    tautology. First: every element name report-template.html contains is in
+    one of the two sets, apart from the named non-elements above. Second:
+    each of those named non-elements sits only on lines that carry no
+    {{TOKEN}}, so the seam rules never reach it -- which is why the exception
+    is safe rather than a hole punched in the check.
+
+    THE INVENTORY IS TAKEN LINE BY LINE, because that is how the rules read
+    the template (`_seam_render` is called per line) and the two answers are
+    not the same. Read as one string, the multi-line `<!-- ... -->` block
+    around line 700 swallows the `<season>` placeholder inside the script's
+    comment and it never surfaces as a tag at all; read line by line -- the
+    way the rules do -- it is a tag name in neither set. A whole-file scan
+    would report a clean inventory the rules do not actually see."""
+    template = rt.TEMPLATE.read_text()
+    names = {m.group(1).lower()
+             for line in template.splitlines()
+             for tag in _SEAM_TAG_RE.findall(line)
+             for m in [_SEAM_TAG_NAME_RE.match(tag)] if m}
+    assert len(names) > 20, (
+        f"only {len(names)} element names were found in report-template.html; the tag "
+        "inventory is not being read, so this case would pass on an empty set")
+    unclassified = sorted(names - _SEAM_INLINE_TAGS - _SEAM_CONTAINER_TAGS)
+    assert unclassified == sorted(_SEAM_TEMPLATE_NON_ELEMENTS), (
+        f"report-template.html carries element name(s) the seam guard cannot classify: "
+        f"{unclassified}. Every one of them raises SeamTagUnclassified the moment a "
+        "{{TOKEN}} shares its line. Add each to _SEAM_INLINE_TAGS or "
+        "_SEAM_CONTAINER_TAGS -- or, if it is not markup at all, to "
+        "_SEAM_TEMPLATE_NON_ELEMENTS with the reason")
+    # The exception is only safe while these names stay off token lines.
+    for name in _SEAM_TEMPLATE_NON_ELEMENTS:
+        on_token_lines = [n for n, line in enumerate(template.splitlines(), 1)
+                          if re.search(rf"</?\s*{re.escape(name)}\b", line)
+                          and _SEAM_TOKEN_RE.search(line)]
+        assert not on_token_lines, (
+            f"`{name}` is excused as a non-element, but it now shares line(s) "
+            f"{on_token_lines} with a {{{{TOKEN}}}}, so the seam rules DO reach it and "
+            "the guard refuses. Classify it or move it off the token's line")
+    # The positive control: the classifier really is exercised over the live
+    # markup, and answers for every name it found.
+    kinds = {_seam_tag_kind(f"<{name}>")
+             for name in names - _SEAM_TEMPLATE_NON_ELEMENTS}
+    assert kinds <= {"inline", "container"} and len(kinds) == 2, (
+        f"the live template's tags classify as {sorted(kinds)}; both kinds should be "
+        "present, and an 'invisible' answer here would mean _SEAM_TAG_NAME_RE matched "
+        "a construct that has no element name")
+    return (f"all {len(names)} element names in report-template.html classify "
+            f"({len(names & _SEAM_INLINE_TAGS)} inline, "
+            f"{len(names & _SEAM_CONTAINER_TAGS)} container), and the "
+            f"{len(_SEAM_TEMPLATE_NON_ELEMENTS)} excused non-element(s) "
+            f"({', '.join(sorted(_SEAM_TEMPLATE_NON_ELEMENTS))}) share no line with a "
+            "token, so the refusal cannot fire on the shipped template")
 
 
 @case
