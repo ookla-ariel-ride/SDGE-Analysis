@@ -4590,7 +4590,10 @@ row directly after Window, `<span class="meta-v" id="report-version">YYYY-MM-DD 
   self-consistent pair that is left byte-identical, so the date stays the day the content
   last changed. Only an inconsistent row is rewritten, with today's date and the fingerprint
   computed for today's date. Every other byte is in the hash, so any edit elsewhere on the
-  page changes the build.
+  page changes the build. The row identifies a revision; it does not prove freshness. A
+  restored older page carries its own older stamp, and that stamp is still self-consistent,
+  so `--check` accepts it: the guard catches a page edited without a restamp, not a page
+  rolled back with one.
 - **Why not a git SHA.** The commit that writes the stamp changes `index.html`, so a stamp
   can never equal the SHA of its own commit, and CI checks out at depth 1 with no history to
   compare against. A fingerprint is computed from the file and checked from the file.

@@ -59,11 +59,18 @@ uses):
     stamp_report_version.py --check [PATH]   # exit 0 current, exit 1 stale/missing
 
 A page with no Version row is refused by both modes with exit 1: the row is
-part of the template and is never inserted silently. Writes are atomic (temp
-file beside the page + os.replace), like the repo's other writers, and keep
-the page's permission bits: mkstemp creates the temp file 0600, so without a
-chmod the replace would turn a 0644 tracked page into a 0600 one. Stdlib
-only.
+part of the template and is never inserted silently. So is a page with more
+than one: besides the exact-form row, two whitespace-, quote- and
+attribute-order-insensitive counts (Version labels with class meta-k, and
+elements with id="report-version") must each be exactly 1, so a second row
+written in a form the exact regex does not match is still refused. Writes are
+atomic (temp file beside the page + os.replace), like the repo's other
+writers, and keep the page's permission bits: mkstemp creates the temp file
+0600, so without a chmod the replace would turn a 0644 tracked page into a
+0600 one. Right before the replace the page is re-read and compared to the
+snapshot the new bytes were derived from; if it changed in between, the write
+is abandoned ("STAMP ABORTED ... rerun", exit 1) rather than discarding the
+edit. Stdlib only.
 """
 import argparse
 import datetime as dt
@@ -80,6 +87,18 @@ import tempfile
 ROW_RE = re.compile(
     rb'(<span class="meta-k">Version</span>'
     rb'<span class="meta-v" id="report-version">)([^<]*)(</span>)')
+
+# ROW_RE matches one exact byte form, so a second Version row written any other
+# way (different whitespace, reordered attributes, single quotes) would slip past
+# a count of its matches and the page would carry two rows with only one
+# managed. Two looser counts back it up, each insensitive to whitespace,
+# attribute order and quote style: every <span> whose class list holds "meta-k"
+# and whose text is "Version", and every element carrying id="report-version".
+# find_row refuses the page unless both counts are exactly 1.
+TAG_RE = re.compile(rb"<([A-Za-z][A-Za-z0-9-]*)\b([^>]*)>")
+ATTR_RE = re.compile(rb"""([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
+VERSION_LABEL_RE = re.compile(rb"<span\b([^>]*)>\s*Version\s*</span>")
+ROW_ID = b"report-version"
 
 # What the build digits are replaced with for hashing. Never appears on the page.
 PLACEHOLDER = b"@@REPORT_VERSION@@"
@@ -101,6 +120,10 @@ class StampError(Exception):
     """The page has no usable Version row (missing, duplicated, or malformed)."""
 
 
+class LostUpdate(StampError):
+    """The page changed on disk between the snapshot `stamp` read and the replace."""
+
+
 def _repo_root():
     """Nearest ancestor holding both analysis/ and data/ (matches parse_bills.py)."""
     for start in (pathlib.Path.cwd(), pathlib.Path(__file__).resolve().parent):
@@ -118,15 +141,52 @@ def default_page():
     return _repo_root() / "index.html"
 
 
+def _attrs(attr_bytes):
+    """{name (lower-cased): value} for one tag's attribute text, any quote style."""
+    out = {}
+    for m in ATTR_RE.finditer(attr_bytes):
+        name = m.group(1).lower()
+        out[name] = next(g for g in m.groups()[1:] if g is not None)
+    return out
+
+
+def count_version_labels(page_bytes):
+    """<span ...>Version</span> elements whose class list holds "meta-k",
+    however the tag is spaced, quoted or attribute-ordered."""
+    return sum(1 for m in VERSION_LABEL_RE.finditer(page_bytes)
+               if b"meta-k" in _attrs(m.group(1)).get(b"class", b"").split())
+
+
+def count_row_ids(page_bytes):
+    """Elements of any kind carrying id="report-version" (either quote style)."""
+    return sum(1 for m in TAG_RE.finditer(page_bytes)
+               if _attrs(m.group(2)).get(b"id") == ROW_ID)
+
+
 def find_row(page_bytes):
-    """The single Version-row match, or raise StampError naming what is wrong."""
+    """The single Version-row match, or raise StampError naming what is wrong.
+
+    Three counts must all be exactly 1: the canonical ROW_RE match, the
+    Version labels (count_version_labels) and the id="report-version" elements
+    (count_row_ids). The two looser counts catch a second row written in a
+    form ROW_RE does not match; the message names every count that is off."""
     matches = list(ROW_RE.finditer(page_bytes))
-    if not matches:
+    labels = count_version_labels(page_bytes)
+    ids = count_row_ids(page_bytes)
+    if not matches and labels == 0 and ids == 0:
         raise StampError(
             'no Version meta-row: expected exactly one <span class="meta-k">Version</span>'
             '<span class="meta-v" id="report-version">...</span> in the header ledger')
-    if len(matches) > 1:
-        raise StampError(f"{len(matches)} Version meta-rows found; expected exactly one")
+    wrong = []
+    if len(matches) != 1:
+        wrong.append(f"{len(matches)} Version meta-rows found")
+    if labels != 1:
+        wrong.append(f'{labels} Version labels (<span class="meta-k">Version</span>, '
+                     f"any spacing or attribute order) found")
+    if ids != 1:
+        wrong.append(f'{ids} elements with id="report-version" found')
+    if wrong:
+        raise StampError("; ".join(wrong) + "; expected exactly one of each")
     return matches[0]
 
 
@@ -192,11 +252,20 @@ def _umask():
     return um
 
 
-def _atomic_write(path, data):
+def _atomic_write(path, data, expected_bytes):
     """Write `data` to `path` via a temp file + os.replace, keeping `path`'s
     permission bits: mkstemp creates the temp file 0600, so a bare replace
     would strip group/other read from a tracked 0644 page. A path that does
-    not exist yet gets NEW_FILE_MODE masked by the process umask."""
+    not exist yet gets NEW_FILE_MODE masked by the process umask.
+
+    `expected_bytes` is the snapshot the caller derived `data` from (None when
+    the caller expects no file at `path`). Immediately before the replace the
+    destination is re-read and compared to it; a difference means an edit
+    landed between the snapshot and now, and replacing would silently discard
+    it. That raises LostUpdate (a StampError), deletes the temp file and leaves
+    the destination as it is -- the edited version, not the stale snapshot.
+    No lock is taken: the window between this read and the replace remains,
+    but it is microseconds rather than the whole run."""
     path = pathlib.Path(path)
     try:
         mode = stat.S_IMODE(os.stat(path).st_mode)
@@ -209,6 +278,12 @@ def _atomic_write(path, data):
             f.flush()
             os.fsync(f.fileno())
         os.chmod(tmp, mode)
+        try:
+            current = path.read_bytes()
+        except FileNotFoundError:
+            current = None
+        if current != expected_bytes:
+            raise LostUpdate("page changed during stamping; rerun")
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -234,7 +309,7 @@ def stamp(path, today=None):
     value = f"{today.isoformat()}{SEPARATOR}{fingerprint(page, today)}"
     old = m.group(2).decode("utf-8", errors="replace")
     new_page = page[:m.start(2)] + value.encode("utf-8") + page[m.end(2):]
-    _atomic_write(path, new_page)
+    _atomic_write(path, new_page, page)
     print(f"STAMPED {path}: {old!r} -> {value!r}")
     return value
 
@@ -272,6 +347,9 @@ def main(argv=None):
             return check(path)
         stamp(path)
         return 0
+    except LostUpdate as e:
+        print(f"STAMP ABORTED {path}: {e}")
+        return 1
     except StampError as e:
         print(f"STAMP ERROR {path}: {e}")
         return 1

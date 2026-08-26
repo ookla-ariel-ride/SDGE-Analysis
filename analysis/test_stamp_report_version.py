@@ -214,7 +214,7 @@ def case_the_atomic_write_keeps_the_page_mode():
         assert rc == 0 and "STAMPED" in out, out
         assert stat.S_IMODE(p.stat().st_mode) == 0o640, oct(p.stat().st_mode)
         fresh = pathlib.Path(td) / "new.html"
-        srv._atomic_write(fresh, b"x")
+        srv._atomic_write(fresh, b"x", None)
         um = os.umask(0)
         os.umask(um)
         assert stat.S_IMODE(fresh.stat().st_mode) == (0o644 & ~um), oct(fresh.stat().st_mode)
@@ -247,6 +247,150 @@ def case_a_duplicated_version_row_is_refused():
         rc, out = _run([str(p)])
         assert rc == 1 and "2 Version meta-rows" in out, out
     return "two Version rows: both modes exit 1 rather than guessing which one to manage"
+
+
+def _refused_by_both_modes(td, text, needle):
+    """The page at `text` (whose row would otherwise stamp) is refused by
+    --check and by stamp with exit 1, the message names `needle`, and nothing
+    is written: bytes and directory listing are unchanged."""
+    p = _write(td, text)
+    before = p.read_bytes()
+    rc, out = _run(["--check", str(p)])
+    assert rc == 1, out
+    assert needle in out, (needle, out)
+    rc, out = _run([str(p)])
+    assert rc == 1, out
+    assert needle in out, (needle, out)
+    assert p.read_bytes() == before, "a refused page was written"
+    assert sorted(os.listdir(td)) == ["page.html"], os.listdir(td)
+    return out
+
+
+@case
+def case_a_second_version_label_in_another_form_is_refused():
+    """ROW_RE matches one exact byte form; a second label with a space before
+    its value span and no id is not a ROW_RE match, so only the loose label
+    count sees it (finding: duplicate rows in a different format evaded find_row)."""
+    extra = ('  <div class="meta-row"><span class="meta-k">Version</span> '
+             '<span class="meta-v">v2</span></div>\n')
+    with tempfile.TemporaryDirectory() as td:
+        text = _page() + extra
+        page = text.encode("utf-8")
+        assert len(srv.ROW_RE.findall(page)) == 1, "the extra row must NOT be a ROW_RE match"
+        assert srv.count_version_labels(page) == 2
+        assert srv.count_row_ids(page) == 1
+        out = _refused_by_both_modes(td, text, "2 Version labels")
+        assert "1 Version meta-rows" not in out and "elements with id" not in out, out
+    # A label whose class list holds meta-k among others, spaced and reordered.
+    extra2 = ('<span  data-x="1"   class="x meta-k y" >\n  Version\n</span>')
+    with tempfile.TemporaryDirectory() as td:
+        page = (_page() + extra2).encode("utf-8")
+        assert srv.count_version_labels(page) == 2
+        _refused_by_both_modes(td, _page() + extra2, "2 Version labels")
+    # A "Version" span WITHOUT meta-k is not a label and is left alone.
+    with tempfile.TemporaryDirectory() as td:
+        p = _write(td, _page() + '<span class="meta-v">Version</span>')
+        assert srv.count_version_labels(p.read_bytes()) == 1
+        rc, out = _run([str(p)])
+        assert rc == 0 and "STAMPED" in out, out
+    return ("a second <span class=meta-k>Version</span> in a form ROW_RE cannot match is "
+            "refused by both modes naming the label count; nothing is written")
+
+
+@case
+def case_a_second_report_version_id_in_another_form_is_refused():
+    """Single quotes, attributes reordered, extra whitespace, a different tag:
+    none of it is a ROW_RE match, all of it is a second id="report-version"."""
+    variants = [
+        "<span id='report-version' class=\"meta-v\">x</span>",
+        "<span   class='meta-v'  id = 'report-version'>x</span>",
+        '<div id="report-version">x</div>',
+        "<p class=\"a\" id=report-version>x</p>",
+    ]
+    for extra in variants:
+        with tempfile.TemporaryDirectory() as td:
+            page = (_page() + extra).encode("utf-8")
+            assert len(srv.ROW_RE.findall(page)) == 1, extra
+            assert srv.count_version_labels(page) == 1, extra
+            assert srv.count_row_ids(page) == 2, extra
+            out = _refused_by_both_modes(td, _page() + extra,
+                                         '2 elements with id="report-version"')
+            assert "Version labels" not in out, out
+    # A near-miss id is not counted.
+    with tempfile.TemporaryDirectory() as td:
+        p = _write(td, _page() + '<span id="report-version-2">x</span>')
+        assert srv.count_row_ids(p.read_bytes()) == 1
+        rc, out = _run([str(p)])
+        assert rc == 0 and "STAMPED" in out, out
+    return (f"{len(variants)} forms of a second id=report-version element (quotes, order, "
+            "spacing, tag) are refused by both modes naming the id count; nothing is written")
+
+
+@case
+def case_the_canonical_single_row_page_passes_all_three_counts():
+    page = _page().encode("utf-8")
+    assert len(srv.ROW_RE.findall(page)) == 1
+    assert srv.count_version_labels(page) == 1
+    assert srv.count_row_ids(page) == 1
+    assert srv.find_row(page).group(2) == "2026-01-01 · build unstamped".encode("utf-8")
+    real = (ANALYSIS.parent / "index.html").read_bytes()
+    assert (len(srv.ROW_RE.findall(real)), srv.count_version_labels(real),
+            srv.count_row_ids(real)) == (1, 1, 1)
+    return "the synthetic page and index.html each count exactly 1 row, 1 label, 1 id"
+
+
+@case
+def case_a_page_edited_between_snapshot_and_replace_is_not_overwritten():
+    """Lost update: stamp() snapshots the page in inspect(), then _atomic_write
+    replaces it. An edit that lands in between must not be discarded. The
+    pre-replace re-read is the guard: here pathlib.Path.read_bytes is wrapped
+    so that, on the page's SECOND read (the one inside _atomic_write), an edit
+    is written to the page first and the real read then sees it."""
+    with tempfile.TemporaryDirectory() as td:
+        p = _write(td, _page())
+        snapshot = p.read_bytes()
+        edited = snapshot.replace(b"$1,669/yr", b"$1,939/yr")
+        assert edited != snapshot
+        original = pathlib.Path.read_bytes
+        reads = []
+
+        def racing_read_bytes(self):
+            if pathlib.Path(self) == p:
+                reads.append(self)
+                if len(reads) == 2:
+                    with open(p, "wb") as f:      # the intervening edit
+                        f.write(edited)
+            return original(self)
+
+        pathlib.Path.read_bytes = racing_read_bytes
+        try:
+            rc, out = _run([str(p)])
+        finally:
+            pathlib.Path.read_bytes = original
+        assert len(reads) == 2, f"expected the snapshot read and one pre-replace read, got {len(reads)}"
+        assert rc == 1, out
+        assert out.strip() == f"STAMP ABORTED {p}: page changed during stamping; rerun", out
+        assert "STAMPED" not in out, out
+        assert p.read_bytes() == edited, "the stale snapshot overwrote the intervening edit"
+        assert sorted(os.listdir(td)) == ["page.html"], f"temp file left behind: {os.listdir(td)}"
+        # Direct form, no monkeypatch: a snapshot that does not match the file.
+        try:
+            srv._atomic_write(p, b"new", snapshot)
+        except srv.StampError as e:
+            assert isinstance(e, srv.LostUpdate), type(e)
+            assert "page changed during stamping" in str(e), e
+        else:
+            raise AssertionError("_atomic_write replaced a page that differed from its snapshot")
+        assert p.read_bytes() == edited
+        assert sorted(os.listdir(td)) == ["page.html"], os.listdir(td)
+        # With the race gone, the same page stamps and the edit survives in it.
+        rc, out = _run([str(p)])
+        assert rc == 0 and "STAMPED" in out, out
+        assert b"$1,939/yr" in p.read_bytes()
+        rc, _ = _run(["--check", str(p)])
+        assert rc == 0
+    return ("an edit between the snapshot and the replace aborts the stamp (exit 1, STAMP "
+            "ABORTED), keeps the edited page, leaves no temp file; a rerun stamps it")
 
 
 @case
