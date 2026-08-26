@@ -367,7 +367,7 @@ schema and pipeline in depth.
 | `analysis/report_blocks.py` | Parses every actionable TODO block out of `report-template.html` and classifies each as `data` (mechanical row-builder over a committed artifact), `human` (needs a fact this repo has never measured), or `prose` (answerable from `report_tokens.py`'s own token map) |
 | `analysis/report_tokens.py` | Parses every `{{TOKEN}}` in `report-template.html` and resolves each against a committed, explicit source map (`data/*.json`, `data/*.csv`, `analysis/rates.py`, or public-ok `private/household.yaml` fields only) — raising `SystemExit` naming any token whose source goes missing rather than inventing a value |
 | `analysis/llm_providers.py` | Vendor-native REST adapters (Anthropic, OpenAI, Gemini) for the report-generation LLM calls, funneling every outbound request through one chokepoint for egress auditing, with credentials loaded from a hand-parsed `.env` and never accepted as a CLI argument |
-| `analysis/stamp_report_version.py` | Writes the header ledger's Version row (`YYYY-MM-DD · build <sha256[:10]>`): the date the stamp was applied plus a fingerprint of every other byte of the page. `--check` recomputes it without writing and exits 1 when `index.html` was edited and not restamped; `generate_report.py` stamps `index.generated.html` the same way |
+| `analysis/stamp_report_version.py` | Writes the header ledger's Version row (`YYYY-MM-DD · build <sha256[:10]>`): the date the content last changed plus a fingerprint of the page as dated, with only the build digits normalized. `--check` recomputes it for the row's date without writing and exits 1 when `index.html` was edited and not restamped; `generate_report.py` stamps `index.generated.html` the same way |
 | `analysis/prose_lint.py` | Mechanical linter gating `generate_report.py`'s LLM-generated prose: flags `CLAUDE.md`'s banned process-narrative phrases, negative parallelisms, filler transitions, and promotional adjectives; any violation hard-fails that block rather than publishing it |
 | `analysis/privacy_tiers.py` | Enforces `CLAUDE.md` §4's private-only/secret intake tiers mechanically: parses field tiers from `DATA-SOURCES-CHEATSHEET.md`, resolves each to its `private/household.yaml` path, and scans every tracked file for private-only values — run via `.githooks/pre-commit` as the actual enforcement gate |
 | `analysis/dry_run.py` | Asks what a generator WOULD write into `data/` without letting it write anything: copies the tracked tree and the whole `private/` archive into a throwaway sandbox outside the checkout, runs the generator's own write path there, and diffs the sandbox's `data/` against the repo's (JSON by changed top-level key, CSV by changed rows). `--check` exits 1 if an artifact would change — the non-mutating counterpart of the `CLAUDE.md` §9 regeneration gate. A crash, a run that writes nothing, or a sandbox the generator's root walk-up could escape is reported as a failure, never as "no changes" |
@@ -443,9 +443,10 @@ unrelated repository.
 4. Regenerate the report from `report-template.html` per `reusable-prompt.md` Phase D, or
    paste `reusable-prompt.md` into a Claude Cowork session and let it redo everything.
 5. Restamp the page: `./.venv/bin/python analysis/stamp_report_version.py`. The header's
-   Version row carries the date and a fingerprint of the page's content;
-   `analysis/test_stamp_report_version.py` fails in CI when `index.html` was edited without
-   this step. `--check` reports the state without writing.
+   Version row carries the date and a fingerprint of the page's content, date included, so
+   editing either by hand goes stale; a row that already matches is left alone, on any later
+   day. `analysis/test_stamp_report_version.py` fails in CI when `index.html` was edited
+   without this step. `--check` reports the state without writing.
 
 ## License
 

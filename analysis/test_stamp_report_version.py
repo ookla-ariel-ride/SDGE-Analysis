@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Tests for stamp_report_version.py (issue #251): the Version row's build must
-track the page's content, a restamp must be idempotent, the date must be
-outside the fingerprint, a page without the row must be refused, `--check`
-must never write, and the COMMITTED index.html must pass `--check` -- that
-last case is what fails in CI when someone edits the page without restamping.
+track the page's content, a restamp must be idempotent (on a later day too),
+the date must be INSIDE the fingerprint so a hand-edited date or a malformed
+one goes stale, the atomic write must keep the page's permission bits, a page
+without the row must be refused, `--check` must never write, and the
+COMMITTED index.html must pass `--check` -- that last case is what fails in
+CI when someone edits the page without restamping.
 
 Every case but the last works on temp copies of a small synthetic page; the
 real index.html is read and never written. Needs no private/ and no git.
@@ -11,10 +13,12 @@ real index.html is read and never written. Needs no private/ and no git.
 Run from the repo root:  ./.venv/bin/python analysis/test_stamp_report_version.py
 """
 import contextlib
+import datetime as dt
 import io
 import os
 import pathlib
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -115,7 +119,9 @@ def case_an_edit_outside_the_span_changes_the_fingerprint_and_fails_check():
 
 
 @case
-def case_changing_only_the_date_keeps_the_fingerprint_and_check_passes():
+def case_changing_only_the_date_goes_stale_and_a_restamp_repairs_it():
+    """The date is part of the hashed content: the row's build was computed for
+    the date beside it, so a hand-edited date no longer matches."""
     with tempfile.TemporaryDirectory() as td:
         p = _write(td, _page())
         _run([str(p)])
@@ -125,14 +131,95 @@ def case_changing_only_the_date_keeps_the_fingerprint_and_check_passes():
         p.write_text(text.replace(f"{date} · build {build}", f"{other} · build {build}"),
                      encoding="utf-8")
         assert _value(p) == f"{other} · build {build}"
-        assert srv.fingerprint(p.read_bytes()) == build
+        expected = srv.fingerprint(p.read_bytes())          # for the row's (edited) date
+        assert expected != build, "a date-only edit left the fingerprint unchanged"
+        rc, out = _run(["--check", str(p)])
+        assert rc == 1, out
+        assert "STAMP STALE" in out and f"expected build {expected}" in out, out
+        assert f"found {build}" in out, out
+        rc, out = _run([str(p)])
+        assert rc == 0 and "STAMPED" in out, out
+        new_date, new_build = _value(p).split(" · build ")
+        assert new_date == dt.date.today().isoformat(), new_date
+        assert new_build == srv.fingerprint(p.read_bytes()), "restamped build is not the fingerprint"
+        assert new_build != expected, "the restamp kept the build computed for the edited date"
+        # Nothing but the date was edited, and the restamp dates the page today
+        # again, so the build the row had before the edit comes back.
+        assert (new_date, new_build) == (date, build), ((new_date, new_build), (date, build))
         rc, out = _run(["--check", str(p)])
         assert rc == 0, out
-        before = p.read_bytes()
+    return ("the date is in the hash: a date-only edit fails --check naming expected vs found, "
+            "and a restamp writes today's date with the build for today's date")
+
+
+@case
+def case_a_malformed_date_is_not_a_stamp_and_fails_check():
+    with tempfile.TemporaryDirectory() as td:
+        p = _write(td, _page())
+        _run([str(p)])
+        date, build = _value(p).split(" · build ")
+        text = p.read_text(encoding="utf-8")
+        p.write_text(text.replace(f"{date} · build {build}", f"9999-99-99 · build {build}"),
+                     encoding="utf-8")
+        assert _value(p) == f"9999-99-99 · build {build}"
+        assert srv.parse_value(_value(p).encode("utf-8")) == (None, None)
+        rc, out = _run(["--check", str(p)])
+        assert rc == 1, out
+        assert "STAMP STALE" in out and "found no stamp" in out, out
         rc, out = _run([str(p)])
+        assert rc == 0 and "STAMPED" in out, out
+        new_date, _ = _value(p).split(" · build ")
+        assert new_date == dt.date.today().isoformat(), new_date
+        rc, _ = _run(["--check", str(p)])
+        assert rc == 0
+    return "9999-99-99 is rejected as malformed: --check exits 1 (no stamp), a restamp repairs it"
+
+
+@case
+def case_a_consistent_row_dated_in_the_past_is_left_alone():
+    """Idempotent across days: the date is the day the content last changed,
+    not the day the script last ran."""
+    with tempfile.TemporaryDirectory() as td:
+        p = _write(td, _page())
+        past = dt.date(2020, 2, 29)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            value = srv.stamp(p, today=past)
+        assert value.startswith("2020-02-29 · build "), value
+        assert _value(p) == value
+        before = p.read_bytes()
+        rc, out = _run(["--check", str(p)])
+        assert rc == 0 and out.startswith("STAMP OK 2020-02-29"), out
+        rc, out = _run([str(p)])                              # today != 2020-02-29
         assert rc == 0 and "STAMP CURRENT" in out, out
-        assert p.read_bytes() == before, "a stamp on a date-only change rewrote the file"
-    return "the date is outside the hash: a date-only edit keeps the build and passes --check"
+        assert p.read_bytes() == before, "a restamp on a later day rewrote a consistent row"
+        assert _value(p).startswith("2020-02-29"), _value(p)
+    return "a self-consistent row dated 2020-02-29 survives a restamp today byte-identically"
+
+
+@case
+def case_the_atomic_write_keeps_the_page_mode():
+    """mkstemp creates the temp file 0600; the replace must not hand that mode
+    to a tracked 0644 page (the finding: the worktree's index.html went 0600)."""
+    with tempfile.TemporaryDirectory() as td:
+        p = _write(td, _page())
+        os.chmod(p, 0o644)
+        rc, out = _run([str(p)])
+        assert rc == 0 and "STAMPED" in out, out
+        assert stat.S_IMODE(p.stat().st_mode) == 0o644, oct(p.stat().st_mode)
+        os.chmod(p, 0o640)
+        text = p.read_text(encoding="utf-8")
+        p.write_text(text.replace("$1,669/yr", "$1,939/yr"), encoding="utf-8")   # stale again
+        rc, out = _run([str(p)])
+        assert rc == 0 and "STAMPED" in out, out
+        assert stat.S_IMODE(p.stat().st_mode) == 0o640, oct(p.stat().st_mode)
+        fresh = pathlib.Path(td) / "new.html"
+        srv._atomic_write(fresh, b"x")
+        um = os.umask(0)
+        os.umask(um)
+        assert stat.S_IMODE(fresh.stat().st_mode) == (0o644 & ~um), oct(fresh.stat().st_mode)
+        assert sorted(os.listdir(td)) == ["new.html", "page.html"], os.listdir(td)
+    return "a 0644 page stays 0644, a 0640 page stays 0640, a new file gets 0644 & ~umask"
 
 
 @case

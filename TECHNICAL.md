@@ -4580,26 +4580,37 @@ unchanged while the figures beside it changed. The header ledger now carries a *
 row directly after Window, `<span class="meta-v" id="report-version">YYYY-MM-DD · build
 0123456789</span>`, and one script owns its text.
 
-- **What is hashed.** `sha256` of the page's bytes with the whole inner text of that span
-  (date and build alike) replaced by a fixed placeholder; the first 10 hex digits are the
-  build. The span must be excluded or the stamp would change the bytes it digests. The date
-  is excluded on purpose: a restamp of unchanged content keeps the build and leaves the file
-  byte-identical, so `stamp` is idempotent. Every other byte is in the hash, so any edit
-  elsewhere on the page changes the build.
+- **What is hashed.** `sha256` of the page's bytes with only the build digits of that span
+  replaced by a fixed placeholder (the span is normalized to `<date> · build
+  @@REPORT_VERSION@@`); the first 10 hex digits are the build. The build digits must be
+  excluded or the stamp would change the bytes it digests. The date is IN the hash: the
+  build is a digest of the page as dated, so a hand-edited date fails `--check` as surely as
+  a hand-edited figure. `stamp` is still idempotent, on a later day too: it first recomputes
+  the fingerprint for the date the row already holds, and a row whose build equals it is a
+  self-consistent pair that is left byte-identical, so the date stays the day the content
+  last changed. Only an inconsistent row is rewritten, with today's date and the fingerprint
+  computed for today's date. Every other byte is in the hash, so any edit elsewhere on the
+  page changes the build.
 - **Why not a git SHA.** The commit that writes the stamp changes `index.html`, so a stamp
   can never equal the SHA of its own commit, and CI checks out at depth 1 with no history to
   compare against. A fingerprint is computed from the file and checked from the file.
-- **The gate.** `stamp_report_version.py --check [PATH]` recomputes the build, prints
-  `STAMP OK <value>` and exits 0 when it matches, and exits 1 naming the expected and found
-  builds when it does not; it never writes. `analysis/test_stamp_report_version.py` runs it
-  against the committed `index.html` in CI, so a page edited without a restamp fails the
-  build. It also proves the guard fires (a one-byte edit outside the span changes the build),
-  that a date-only edit does not, that a page with no Version row is refused by both modes
-  rather than having one inserted, and that `--check` leaves bytes and mtime untouched.
+- **The gate.** `stamp_report_version.py --check [PATH]` parses the row's date (a real
+  calendar date per `datetime.date.fromisoformat`; `9999-99-99` is malformed and stale),
+  recomputes the build for that date, prints `STAMP OK <value>` and exits 0 when it matches,
+  and exits 1 naming the expected and found builds when it does not; it never writes.
+  `analysis/test_stamp_report_version.py` runs it against the committed `index.html` in CI,
+  so a page edited without a restamp fails the build. It also proves the guard fires (a
+  one-byte edit outside the span changes the build), that a date-only edit and a malformed
+  date go stale too, that a consistent row dated in the past survives a restamp
+  byte-identically, that the atomic write keeps the page's permission bits (`mkstemp` creates
+  the temp file 0600; without a `chmod` the replace would turn the tracked 0644 page into a
+  0600 one), that a page with no Version row is refused by both modes rather than having one
+  inserted, and that `--check` leaves bytes and mtime untouched.
 - **The generated page.** `report-template.html` carries the same row as `{{REPORT_VERSION}}`,
   which `report_tokens.py` resolves to `<date> · build unstamped`; `generate_report.py` then
   stamps the staged `index.generated.html` before promoting it, so the generated page carries a
-  real build too. Writes are atomic (temp file beside the page + `os.replace`).
+  real build too. Writes are atomic (temp file beside the page + `os.replace`) and preserve
+  the page's mode; a page that did not exist gets 0644 masked by the process umask.
 
 ---
 
