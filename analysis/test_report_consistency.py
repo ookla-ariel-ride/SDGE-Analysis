@@ -777,21 +777,30 @@ def case_export_netting_definition_is_stated_once():
         f"section 8 (char {hits[0].start()}, section 8 spans {s8}-{s9}) -- the "
         "definition's home is the section that derives it")
 
-    elsewhere = [m for m in re.finditer(re.escape(_NETTING_FIGURE), HTML)
-                 if not s8 < m.start() < s9]
-    assert len(elsewhere) >= 3, (
-        f"only {len(elsewhere)} occurrences of {_NETTING_FIGURE} outside section 8 -- "
-        "the collapsed sites (section 0's midday bullet, section 5's export bullet, "
-        "the Monday appendix) are expected to keep the figure, so this case is "
-        "probably no longer looking at the right string")
-    for m in elsewhere:
-        block = _enclosing_block(m.start())
+    # Named passages, not a count: an occurrence count is satisfiable by
+    # unrelated text while an intended site quietly loses its figure (Codex
+    # adversarial review, PR #261, pass 1 -- proven by mutating one site's
+    # 10.4 to 10.5 and appending an unrelated linked paragraph).
+    collapsed = {
+        "section 0's midday bullet": "Exploit the 10am–2pm weekday window",
+        "section 5's export bullet": "Midday exports earn little",
+        "the Monday appendix's midday habit": "Build the home-day midday habit",
+    }
+    for where, lead in collapsed.items():
+        i = HTML.find(lead)
+        assert i != -1, (
+            f"{where} was not found by its lead {lead!r}; if the lead was reworded, "
+            "update this case rather than dropping the site from it")
+        block = _enclosing_block(i)
+        visible = re.sub(r"<[^>]+>", " ", block)
+        assert _NETTING_FIGURE in block, (
+            f"{where} gave up the netted-rate definition but no longer carries "
+            f"{_NETTING_FIGURE}: {visible[:200]!r}")
         assert 'href="#s8"' in block, (
-            f"a {_NETTING_FIGURE} figure outside section 8 sits in a passage with no "
-            "link to section 8, so a reader who wants the derivation cannot reach "
-            f"it: {re.sub(r'<[^>]+>', ' ', block)[:200]!r}")
-    return (f"the netted-export-rate definition is stated once, inside section 8; all "
-            f"{len(elsewhere)} sites elsewhere keep {_NETTING_FIGURE} and link section 8")
+            f"{where} carries {_NETTING_FIGURE} with no link to section 8, so a reader "
+            f"who wants the derivation cannot reach it: {visible[:200]!r}")
+    return ("the netted-export-rate definition is stated once, inside section 8; "
+            f"all {len(collapsed)} collapsed sites keep {_NETTING_FIGURE} and link section 8")
 
 
 def case_rate_source_inventory_keeps_every_source_across_its_split():
