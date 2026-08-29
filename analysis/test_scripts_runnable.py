@@ -140,6 +140,7 @@ MANIFEST = {
     "llm_providers.py": "library",
     "report_blocks.py": "library",
     "generate_report.py": "library",
+    "prose_blocks.py": "library",
     "prose_lint.py": "library",
     "stamp_report_version.py": "library",
     # tooling, not analysis: runs a generator in a throwaway sandbox and reports

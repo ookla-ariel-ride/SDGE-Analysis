@@ -62,8 +62,8 @@ SUITES = [
     "test_heat_pump_conversion", "test_household", "test_irreducible_bill",
     "test_lifetime_payback", "test_llm_providers", "test_nem3_grandfathering",
     "test_package_results", "test_parse_bills", "test_perfect_foresight_dispatch",
-    "test_privacy_tiers", "test_private_egress", "test_prose_lint",
-    "test_publish", "test_quiet_night_floor", "test_rates",
+    "test_privacy_tiers", "test_private_egress", "test_prose_blocks",
+    "test_prose_lint", "test_publish", "test_quiet_night_floor", "test_rates",
     "test_rates_history", "test_report_blocks", "test_report_consistency",
     "test_report_tokens", "test_reprice_by_vintage", "test_scripts_runnable",
     "test_service_headroom", "test_soiling_analysis", "test_stage_private_data",
@@ -86,7 +86,7 @@ ENTRY = {
 ABORTS_ON_FIRST_FAILURE = {
     "test_all_electric_endgame", "test_dry_run", "test_egress_preflight",
     "test_generate_report", "test_gross_import_decomposition", "test_llm_providers",
-    "test_prose_lint", "test_report_blocks", "test_report_tokens",
+    "test_prose_blocks", "test_prose_lint", "test_report_blocks", "test_report_tokens",
     "test_reprice_by_vintage", "test_stamp_report_version",
     "test_uncertainty_propagation",
 }
