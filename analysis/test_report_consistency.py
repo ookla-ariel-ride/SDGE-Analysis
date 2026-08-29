@@ -3171,9 +3171,9 @@ def case_s2_key_architectural_fact_matches_the_artifacts():
     (report-template.html carries only a TODO there) -- lock its export share,
     its 10am-2pm export share and its EV-charging night count to the artifacts
     that measure them, and hold each percentage to its own referent."""
-    m = re.search(r'<p class="small">That last split is the key architectural fact'
+    m = re.search(r'<p class="small">That last split is the fact behind every recommendation'
                   r'.*?</p>', HTML, re.S)
-    assert m, "§2's 'key architectural fact' paragraph not found in index.html"
+    assert m, "§2's 'fact behind every recommendation' paragraph not found in index.html"
     para = m.group(0)
 
     export_pct = _export_share_pct()
@@ -4186,9 +4186,9 @@ def case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim():
         "whole export share exactly as the retired wording did, and it passes every "
         f"substring §2 checks -- the guard reports {leading!r}")
 
-    published = re.search(r'<p class="small">That last split is the key architectural '
-                          r"fact.*?</p>", HTML, re.S)
-    assert published, "§2's 'key architectural fact' paragraph not found in index.html"
+    published = re.search(r'<p class="small">That last split is the fact behind every '
+                          r"recommendation.*?</p>", HTML, re.S)
+    assert published, "§2's 'fact behind every recommendation' paragraph not found in index.html"
     assert _referent_guard_rejects(published.group(0)) is None, (
         "§2's published paragraph attaches a time of day to the export share: "
         f"{_referent_guard_rejects(published.group(0))}")
@@ -4306,8 +4306,8 @@ def case_the_referent_guard_reads_across_a_sentence_boundary():
         "rejected may now be available -- re-measure it before keeping the "
         "figure-free-run rule, and delete this assertion if it is adopted")
 
-    for where, pattern in (("§2", r'<p class="small">That last split is the key '
-                                  r"architectural fact.*?</p>"),
+    for where, pattern in (("§2", r'<p class="small">That last split is the fact behind '
+                                  r"every recommendation.*?</p>"),
                            ("§8", r"<p><b>More panels: .*?</p>"),
                            ("§0", r"<li><b>More solar\? No\.</b>.*?</li>")):
         m = re.search(pattern, HTML, re.S)
