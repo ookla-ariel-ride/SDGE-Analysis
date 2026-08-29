@@ -313,7 +313,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <div>
 <h3>Hardware</h3>
 <ul>
-<li><b>Array:</b> {{SYSTEM_SIZE_KW_DC}} kW DC nameplate — <b>size verified</b>: {{PANEL_COUNT}} × {{PANEL_MODEL_WATTS}} modules, per {{SIZE_VERIFICATION_SOURCE}}</li>
+<li><b>Array:</b> {{SYSTEM_SIZE_KW_DC}} kW DC nameplate, <b>size verified</b>: {{PANEL_COUNT}} × {{PANEL_MODEL_WATTS}} modules, per {{SIZE_VERIFICATION_SOURCE}}</li>
 <li><b>Inverters:</b> {{INVERTER_DESCRIPTION}} ≈ {{AC_CEILING_KW}} kW AC max</li>
 <li><!-- TODO: gateway/metering configuration — note whether consumption metering exists (it is what makes whole-home-load and battery analysis possible) --></li>
 <li><!-- TODO: monitoring platforms in use --></li>
@@ -327,7 +327,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><b>Specific yield:</b> {{SPECIFIC_YIELD}} kWh/kW/yr · capacity factor {{CAPACITY_FACTOR}}</li>
 <li><!-- TODO: daily range — mean ({{DAILY_PRODUCTION_MEAN}}), best ({{DAILY_PRODUCTION_BEST}}), worst ({{DAILY_PRODUCTION_WORST}}). --></li>
 <li><!-- TODO: health signal — the naive multi-year output trend ({{DEGRADATION_NAIVE_RANGE}}), and one clause saying the weather-corrected rate is not determined, with §9 named as where the workup lives. No per-panel claim: nothing committed records per-module output, so a laggard-panel check has no evidence here and must not be asserted either way. --></li>
-<li><b>Where it goes:</b> covers {{SOLAR_COVERAGE_PCT}} of the home's {{ANNUAL_LOAD_KWH}} kWh/yr load — {{SELF_CONSUMED_SHARE}} self-consumed, {{EXPORTED_SHARE}} exported</li>
+<li><b>Where it goes:</b> covers {{SOLAR_COVERAGE_PCT}} of the home's {{ANNUAL_LOAD_KWH}} kWh/yr load: {{SELF_CONSUMED_SHARE}} self-consumed, {{EXPORTED_SHARE}} exported</li>
 </ul>
 </div>
 </div>
@@ -416,7 +416,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <h2 id="s7">7 · The decision: three packages</h2>
 <p class="verdict">{{S7_VERDICT}}</p>
-<p>All packages keep <b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}} <b>Baseline = your actual bills: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). No year-end lump-sum shortcuts; behavior and battery are simulated in ONE integrated pipeline ({{FREE_FIX_SHORT_NAME}} shift first, then battery, re-billed end-to-end), so nothing is double-counted.</p>
+<p>All packages keep <b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}} <b>Baseline = your actual bills: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). No year-end lump-sum shortcuts; behavior and battery are simulated in one integrated pipeline ({{FREE_FIX_SHORT_NAME}} shift first, then battery, re-billed end-to-end), so nothing is double-counted.</p>
 
 <div class="grid3">
 <div class="pkg">
@@ -425,7 +425,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><!-- TODO: the free behavior fix with savings at 100%/80% compliance and where the energy currently lands. --></li>
 <li><!-- TODO: the stretch add-on (shifting flexible house load) and its value. --></li>
 <li><!-- TODO: projected bill at constant current rates vs no-changes counterfactual. --></li>
-<li><b>ROI: infinite</b> — no hardware; do this regardless of the battery decision.</li>
+<li><b>ROI: infinite.</b> No hardware; do this regardless of the battery decision.</li>
 <li>Backup capability: none (grid-tied solar shuts off in outages).</li>
 </ul>
 </div>
@@ -452,7 +452,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <h2 id="s15">What to do Monday — the implementation appendix</h2>
 <p class="verdict">{{S15_VERDICT}}</p>
-<p>The whole analysis reduces to this short checklist. Nothing here is new analysis — each item cites the section that justifies it.</p>
+<p>The whole analysis reduces to this short checklist. Nothing here is new analysis; each item cites the section that justifies it.</p>
 <!-- TODO: content-only appendix (reusable-prompt.md Phase D spec) — no new analysis, no new artifacts; every item cites its justifying section. Four parts: -->
 <h3>{{S15_STEP1_HEADING}}</h3>
 <ul>

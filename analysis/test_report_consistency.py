@@ -5467,14 +5467,14 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
     ("s1", "Every 15-minute interval of the last"): ("50ada813f528",
         "index derives whole-home load in prose (29,914 kWh energy balance, CT-meter "
         "cross-check); no tokens exist for those figures"),
-    ("s2", "kW DC nameplate"): ("f3f0614b3626",
+    ("s2", "kW DC nameplate"): ("702b1ea21f42",
         "index adds module arithmetic and mount/orientation facts no token renders"),
     ("s2", "<b>In service since:</b>"): ("848ed58632f5",
         "index words the NEM grandfathering span (~20 years) with no token for it"),
     ("s2", "<b>Production:</b>"): ("b2b724534b3c",
         "index names the concrete sources (CT meter; PVOutput) the template keeps "
         "monitoring-agnostic per CLAUDE.md section 7"),
-    ("s2", "<b>Where it goes:</b>"): ("715f92125d33",
+    ("s2", "<b>Where it goes:</b>"): ("0b67c10d01b8",
         "index adds MWh splits and share-of-production parentheticals with no tokens"),
     ("s5", "the behaviors behind them"): ("4c9586423c95",
         "index counts the behaviors (four); the count has no token"),
@@ -5775,7 +5775,7 @@ def case_template_fixed_prose_lines_all_appear_in_the_published_page():
 # edit to the pipeline claim itself still breaks it loudly, which is correct,
 # because the mutation below exists to prove that exact claim is guarded.
 _S7_PIPELINE_SENTENCE_RE = re.compile(
-    r"behavior and battery are simulated in ONE integrated pipeline "
+    r"behavior and battery are simulated in one integrated pipeline "
     r"\(\{\{[A-Z0-9_]+\}\} shift first, then battery, re-billed end-to-end\), "
     r"so nothing is double-counted\.")
 
