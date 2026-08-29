@@ -138,6 +138,11 @@ HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 # is not a false alarm. Two-letter forms are deliberately absent: the
 # three-or-more rule cannot reach them.
 ACRONYMS = frozenset({
+    # Hyphenated domain tokens. CAPS_RE reads a hyphenated chain as ONE word
+    # (a shout survives hyphens), so each rate plan and file name that really
+    # is written this way is named here rather than loosening the pattern.
+    "TOU-DR", "TOU-DR1", "TOU-DR2", "TOU-DR-P", "TOU-ELEC", "EV-TOU-5",
+    "EV-TOU-2", "DATA-SOURCES-CHEATSHEET",
     # utilities, tariffs, programs, regulators
     "SDGE", "SDG", "CAISO", "CPUC", "CEC", "CCA", "CEA", "NEM", "NBT", "NBC",
     "PCIA", "UDC", "TOU", "IOU", "VNEM", "SGIP", "DSGS", "ELRP", "PSPS", "VPP",
@@ -224,7 +229,11 @@ TAIL_RE = re.compile(
 # 3. A run of three or more capitals standing alone. The lookbehind and
 #    lookahead keep the run from being a slice of a longer token: EV-TOU-5,
 #    kWh/HDD and SDG&E are single words, not emphasis.
-CAPS_RE = re.compile(r"(?<![A-Za-z0-9$§/&\-])([A-Z]{3,})(?![A-Za-z0-9\-])")
+# A run of capitals, or a hyphenated chain of them ("THIS-WORD-IS-SHOUTED"),
+# which every single-run pattern rejected because each part touches a hyphen
+# (Codex review, PR #262). A chain is reported as one word, so a domain token
+# like EV-TOU-5 is exempted by naming it in ACRONYMS, not by the pattern.
+CAPS_RE = re.compile(r"(?<![A-Za-z0-9$§/&\-])([A-Z]{3,}(?:-[A-Z0-9]{1,})*)(?![A-Za-z0-9])")
 # 4. The intensifiers, from prose_lint's shared word list.
 INTENSIFIER_RE = re.compile(
     r"\b(" + "|".join(sorted(prose_lint.INTENSIFIERS, key=len, reverse=True)) + r")\b",
@@ -427,11 +436,11 @@ def check(html_text, tier="all", limits=None):
     m = measure(html_text, tier, lim["max_block_chars"])
     out = []
     if m["em_per_1k"] > lim["em_per_1k"]:
-        out.append(f"{tier} tier: em dashes {m['em_per_1k']:.1f} per 1,000 words "
+        out.append(f"{tier} tier: em dashes {m['em_per_1k']:.3g} per 1,000 words "
                    f"(limit {lim['em_per_1k']:.1f}; {m['em_dashes']} in {m['prose_words']} "
                    f"non-heading words)")
     if m["tails_per_1k"] > lim["tails_per_1k"]:
-        out.append(f"{tier} tier: 'X, not Y' tails {m['tails_per_1k']:.1f} per 1,000 words "
+        out.append(f"{tier} tier: 'X, not Y' tails {m['tails_per_1k']:.3g} per 1,000 words "
                    f"(limit {lim['tails_per_1k']:.1f}; {m['tails']} in {m['words']} words)")
     if len(m["caps"]) > lim["caps"]:
         out.append(f"{tier} tier: {len(m['caps'])} ALL-CAPS emphasis word(s) "

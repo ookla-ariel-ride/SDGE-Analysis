@@ -713,6 +713,55 @@ def case_bare_prose_in_a_semantic_container_is_measured():
             "extracted and measured, the 800-character cap included")
 
 
+@case
+def case_a_nested_block_separates_its_parents_text_fragments():
+    """Codex review, PR #262: text either side of a nested block joined into one
+    token, so <section>NEVER<aside>..</aside>AGAIN</section> measured as
+    NEVERAGAIN and neither shout was seen."""
+    html = ("<section>NEVER<aside>clean child words here now</aside>AGAIN</section>\n"
+            + _filler(1000))
+    m = prose_rhythm.measure(html)
+    assert sorted(m["caps"]) == ["AGAIN", "NEVER"], m["caps"]
+    return "a nested block ends the parent's text fragment: NEVER and AGAIN are two words, not one"
+
+
+@case
+def case_prose_in_any_standard_block_container_is_measured():
+    """Codex review, PR #262: an unlisted container hid its own direct prose
+    from every metric, so a valid HTML refactor could switch the gate off."""
+    for tag in ("figure", "address", "hgroup", "fieldset", "form", "dl", "ol", "ul", "body"):
+        html = f"<{tag}>NEVER honest, and this, not that</{tag}>\n" + _filler(1000)
+        m = prose_rhythm.measure(html)
+        assert m["caps"] == ["NEVER"] and m["intensifiers"] == ["honest"], (tag, m)
+    return ("direct prose inside figure, address, hgroup, fieldset, form, dl, ol, ul or body "
+            "is extracted and measured")
+
+
+@case
+def case_hyphenated_shouting_counts_as_one_word():
+    """Codex review, PR #262: every capital run in THIS-WORD-IS-SHOUTED touches a
+    hyphen, so the single-run pattern rejected all of them and the caps gate
+    passed. A chain is one word now, and the page's real hyphenated tokens
+    (TOU-DR-P, EV-TOU-5) are named in ACRONYMS rather than pattern-exempted."""
+    html = "<p>THIS-WORD-IS-SHOUTED in running prose here now</p>\n" + _filler(1000)
+    assert prose_rhythm.measure(html)["caps"] == ["THIS-WORD-IS-SHOUTED"], prose_rhythm.measure(html)["caps"]
+    for token in ("TOU-DR-P", "EV-TOU-5", "TOU-ELEC"):
+        ok = f"<p>the {token} plan is priced against this year of usage</p>\n" + _filler(1000)
+        assert prose_rhythm.measure(ok)["caps"] == [], (token, prose_rhythm.measure(ok)["caps"])
+    return ("a hyphenated chain of capitals is one shouted word; the rate-plan names stay "
+            "exempt by being named, not by a looser pattern")
+
+
+@case
+def case_a_rate_just_over_its_limit_says_so():
+    """Codex review, PR #262: one decimal place printed `3.0 (limit 3.0)` for a
+    rate of 3.0211, so the failure contradicted itself."""
+    html = "".join("<p>" + ("w " * 99) + ("— " if i < 3 else "") + "</p>" for i in range(10))
+    (violation,) = prose_rhythm.check(html, "all")
+    assert "3.02 per 1,000 words (limit 3.0" in violation, violation
+    return "a rate of 3.0211 prints as 3.02 against its 3.0 limit, not as 3.0"
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

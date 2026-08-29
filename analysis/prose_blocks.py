@@ -85,6 +85,7 @@ BLOCK_TAGS = frozenset({
     # invisible to every metric, so an ordinary HTML refactor could switch
     # the gate off for real prose (Codex adversarial review, PR #262).
     "section", "article", "aside", "main", "header", "footer", "details",
+    "figure", "address", "hgroup", "fieldset", "form", "dl", "ol", "ul", "body",
     # "details" is here for the same reason and one more: prose written
     # directly under <details id="advanced"> is the advanced tier's own
     # text, and without a block for it the advanced measurement read zero
@@ -265,6 +266,13 @@ class _Extractor(_Positions, HTMLParser):
         is_block = not self.skip_depth and tag in BLOCK_TAGS
         if is_block:
             self._implicit_close(tag)
+            # A nested block renders as a box, so the parent's text before
+            # it and after it are not one word. Without this separator
+            # <section>NEVER<aside>..</aside>AGAIN</section> measured as
+            # NEVERAGAIN and no metric saw either word (Codex review, #262).
+            parent = self._current_block()
+            if parent is not None:
+                parent.parts.append(" ")
         line, col = self.getpos()
         self.stack.append(_Frame(tag, starts_skip, is_block, line,
                                  self._offset(line, col),
