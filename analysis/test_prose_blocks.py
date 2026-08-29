@@ -235,12 +235,17 @@ def case_unclosed_p_ends_at_a_table():
 @case
 def case_unclosed_p_ends_at_a_section_and_at_details_summary():
     section = "<p>one two three four five<section>six seven eight nine ten</section>"
-    assert _shape(section) == [("p", "one two three four five", 23, 1)], _shape(section)
+    # <section> both ends the open <p> AND is a block of its own since PR #262:
+    # bare prose directly inside a semantic container used to belong to no block
+    # at all, which made every rhythm metric read zero for it.
+    assert _shape(section) == [("p", "one two three four five", 23, 1),
+                               ("section", "six seven eight nine ten", 24, 1)], _shape(section)
     details = ("<p>one two three four five<details><summary>six seven eight nine ten</summary>"
                "eleven twelve thirteen fourteen fifteen</details>")
     assert _shape(details) == [("p", "one two three four five", 23, 1),
                                ("summary", "six seven eight nine ten", 24, 1)], _shape(details)
-    return "<section> and <details><summary> end an unclosed <p>; their bare text is not its text"
+    return ("<section> and <details><summary> end an unclosed <p>; the section's own bare "
+            "text is its own block, and never the paragraph's")
 
 
 @case

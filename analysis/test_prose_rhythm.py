@@ -669,6 +669,50 @@ def case_h5_and_h6_are_visible_blocks_like_any_other_heading():
             "em dashes are exempt like every other heading's")
 
 
+@case
+def case_a_non_ly_adverb_does_not_hide_the_copula():
+    """Adversarial review, pass 3: the predicate run covered -ly adverbs and a
+    closed list, so `is now HIGH` and `is often HIGH` read as package names."""
+    for lead in ("is now", "is often", "was never", "is always", "seems once more",
+                 "is now really", "remains far more"):
+        for word in sorted(prose_rhythm.PACKAGE_LABELS):
+            html = _CARDS + f"<p>the winter cost {lead} {word} on this tariff</p>\n" + _filler(980)
+            assert prose_rhythm.measure(html)["caps"] == [word], (lead, word)
+    for name in ("is 7.9% of", "saves more than", "is the recommendation for"):
+        html = _CARDS + f"<p>the winter cost {name} LOW on this tariff</p>\n" + _filler(980)
+        assert prose_rhythm.measure(html)["caps"] == [], (name, prose_rhythm.measure(html)["caps"])
+    return ("a copula plus non-ly adverbs still reads as predicate position ('is now HIGH', "
+            "'is often HIGH'), while 'is 7.9% of LOW' stays a name")
+
+
+@case
+def case_a_spaced_en_dash_counts_and_a_range_does_not():
+    """Adversarial review, pass 3: excluding the en dash outright to protect
+    numeric ranges let the same dash rhythm return under another code point."""
+    spaced = "<p>" + ("alpha – beta " * 60) + "</p>\n" + _filler(200)
+    assert prose_rhythm.measure(spaced)["em_dashes"] == 60, prose_rhythm.measure(spaced)["em_dashes"]
+    assert "em dashes" in _kinds(prose_rhythm.check(spaced)), prose_rhythm.check(spaced)
+    ranges = "<p>" + ("the 6–9pm and 2024–2025 and 22.9–25.7¢ window here " * 30) + "</p>\n" + _filler(200)
+    assert prose_rhythm.measure(ranges)["em_dashes"] == 0, prose_rhythm.measure(ranges)["em_sites"]
+    return ("a spaced en dash counts as the rhetorical dash it is (60 of them fail the rate); "
+            "compact ranges like 6–9pm and 2024–2025 never count")
+
+
+@case
+def case_bare_prose_in_a_semantic_container_is_measured():
+    """Adversarial review, pass 3: BLOCK_TAGS held no semantic flow container,
+    so visible text directly inside <section>/<article>/<aside>/<main> produced
+    no block at all and every metric read zero for it."""
+    for tag in ("section", "article", "aside", "main", "header", "footer"):
+        html = f"<{tag}>NEVER honest, and this, not that</{tag}>\n" + _filler(1000)
+        m = prose_rhythm.measure(html)
+        assert m["caps"] == ["NEVER"] and m["intensifiers"] == ["honest"] and m["tails"] == 1, (tag, m)
+        long_one = f"<{tag}>{'x' * 801}</{tag}>\n" + _filler(1000)
+        assert len(prose_rhythm.measure(long_one)["long_blocks"]) == 1, tag
+    return ("bare prose directly inside section, article, aside, main, header or footer is "
+            "extracted and measured, the 800-character cap included")
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

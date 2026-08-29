@@ -81,6 +81,10 @@ from html.parser import HTMLParser
 BLOCK_TAGS = frozenset({
     "p", "li", "figcaption", "summary", "blockquote", "dd", "dt",
     "h1", "h2", "h3", "h4", "h5", "h6", "div",
+    # Semantic flow containers. Bare text directly inside one of these was
+    # invisible to every metric, so an ordinary HTML refactor could switch
+    # the gate off for real prose (Codex adversarial review, PR #262).
+    "section", "article", "aside", "main", "header", "footer",
 })
 SKIP_TAGS = frozenset({
     "script", "style", "nav", "table", "svg", "canvas", "button", "select",

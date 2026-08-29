@@ -185,7 +185,12 @@ PACKAGE_CARD_RE = re.compile(r"^([A-Z]{3,})\s*—\s*\S")
 # the label in a NAME position, which is what the page's 19 real uses are.
 _MODIFIER = (r"(?:\w+ly|not|yet|still|even|also|again|already|almost|nearly|"
              r"about|only|just|quite|very|so|too|really|rather|somewhat|fairly|"
-             r"unusually|extremely|especially|particularly|notably|consistently)")
+             r"unusually|extremely|especially|particularly|notably|consistently|"
+             # Common adverbs with no -ly: temporal, frequency and degree. Without
+             # these, "is now HIGH" and "is often HIGH" walked past the rule
+             # (Codex adversarial review, PR #262, pass 3).
+             r"now|then|often|never|always|sometimes|seldom|rarely|soon|once|twice|"
+             r"ever|far|much|more|most|less|least|well|quite|pretty|somewhat)")
 EMPHASIS_LEAD_RE = re.compile(
     r"\b(?:is|are|was|were|be|been|being|am|seems?|seemed|stays?|stayed|"
     r"remains?|remained|looks?|looked|runs?|ran|gets?|got|feels?|felt|"
@@ -205,7 +210,12 @@ _NORMALIZE = str.maketrans({c: "—" for c in LONG_DASHES})
 #    and a numeric range ("2024-2025") never match: the substitute needs
 #    whitespace on both sides. Every other long dash is already an em dash by
 #    the time this runs.
-EM_DASH_RE = re.compile(r"—|(?<=\s)--(?=\s)")
+# 2. A SPACED en dash is the same rhetorical dash by another character, and
+#    counts. A compact one is a range ("6–9pm", "2024–2025", "22.9–25.7¢"),
+#    which this report writes 196 times, and never counts. Excluding the en
+#    dash outright let the same dash-heavy rhythm come back under a
+#    different code point (Codex adversarial review, PR #262, pass 3).
+EM_DASH_RE = re.compile(r"—|(?<=\s)--(?=\s)|(?<=\s)–(?=\s)")
 # 2. The "X, not Y" tail and its "rather than" twin. A closing quote may stand
 #    between the comma and the "not" (`"measured," not "modeled"`); it is the
 #    same tail, and reading it as a different one is how the rule was evaded.
