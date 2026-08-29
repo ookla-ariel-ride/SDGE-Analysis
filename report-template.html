@@ -265,7 +265,7 @@
 <li><b>Am I on the best electric rate plan?</b> (§3)</li>
 <li><b>Does adding a battery change which plan is best?</b> (§4)</li>
 <li><b>What behavior changes are worth real money?</b> (§5, §9, §13)</li>
-<li><b>Does a home battery pay — which one, dispatched how, honest payback?</b> (§6, §7)</li>
+<li><b>Does a home battery pay: which one, dispatched how, at what payback?</b> (§6, §7)</li>
 <li><b>Should I add/upgrade panels or microinverters?</b> (§8)</li>
 <li><b>Should I electrify gas appliances?</b> (§10)</li>
 <li><b>Has the solar system paid for itself?</b> (§11)</li>
@@ -280,7 +280,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <h2 id="s0">Bottom line</h2>
 <p class="verdict">{{S0_VERDICT}}</p>
 <div class="rec">
-<b>All dollar figures below are anchored to your ACTUAL bills</b> — a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods): <b>{{ACTUAL_ANNUAL_BILL}}/yr electric (~{{ACTUAL_MONTHLY_BILL}}/mo)</b>. Savings below are model <i>differences</i> at current rates, computed by physically moving energy between intervals and re-billing with the bill-validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>).<br><br>
+<b>All dollar figures below are anchored to your actual bills</b>, a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods): <b>{{ACTUAL_ANNUAL_BILL}}/yr electric (~{{ACTUAL_MONTHLY_BILL}}/mo)</b>. Savings below are model <i>differences</i> at current rates, computed by physically moving energy between intervals and re-billing with the bill-validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>).<br><br>
 <ol class="hang">
 <li><!-- TODO item 1 — PLAN VERDICT: which rate plan the artifacts price cheapest, with and without a battery; this house's margin against the runner-up; note whether the utility's own comparison tool agrees. THE STANDING IS NOT YOURS TO ASSERT. S0_BEST_PLAN_CARD and S0_VERDICT are among the values above and they state it — this house's plan may be the cheapest priced, may tie, may be beaten — so follow them, and never recommend staying on a plan the card says is beaten. The margin is SIGNED: a lead only where it is positive, and the amount this plan is behind where it is negative, so "clear of the runner-up" and "widens its lead" are claims to check before writing, not phrases to reuse. Reference voice for a house whose card says its plan is cheapest in every scenario tested: "Plan: stay on {{BEST_PLAN}} — cheapest with or without a battery ({{PLAN_MARGIN_VS_RUNNER_UP}}/yr against the runner-up), and a battery does not change that." Where the card or the verdict says otherwise, invert that sentence rather than softening it: name the plan, say plainly that it is not the cheapest priced here, keep the same signed margin figure, and send the reader to §3 for the ranking. --></li>
 <li><!-- TODO item 2 — FREE BEHAVIOR FIX: EV/large-load charging timing; session counts and kWh from session-level detection; savings at 100% and 80% compliance ({{EV_FIX_SAVINGS_100}} / {{EV_FIX_SAVINGS_80}}); call out where the money actually is (which TOU windows). THE HOUSEHOLD MAY HAVE NO EV. Both savings tokens then render behavior_rebuild.py's own "not applicable — household.has_ev is false" instead of a figure, and so do the session count and every other EV token: read them before writing, and never weld a unit ("/yr") onto a token that can render a sentence. The free fix on such a household is the one section 0's own card and verdict line name — shifting flexible house load — so write THAT item, cite the card's figure ({{S0_FREE_WIN_CARD_FIGURE}}) rather than an EV saving, and mention no charger. --></li>
@@ -294,11 +294,11 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <div class="cards">
   <div class="card"><div class="big">{{BEST_PLAN}}</div><div class="lbl">{{S0_BEST_PLAN_CARD}}</div></div>
-  <div class="card"><div class="big blue">~{{ACTUAL_MONTHLY_BILL}}/mo</div><div class="lbl">Actual electric bill — {{ACTUAL_ANNUAL_BILL}}/yr from a complete {{ANALYSIS_DAYS}}-day bill audit</div></div>
+  <div class="card"><div class="big blue">~{{ACTUAL_MONTHLY_BILL}}/mo</div><div class="lbl">Actual electric bill: {{ACTUAL_ANNUAL_BILL}}/yr from a complete {{ANALYSIS_DAYS}}-day bill audit</div></div>
   <div class="card"><div class="big">{{S0_FREE_WIN_CARD_FIGURE}}</div><div class="lbl">{{S0_FREE_WIN_CARD_LABEL}}</div></div>
   <div class="card"><div class="big warn">~{{BATTERY_PAYBACK_RANGE}}</div><div class="lbl">Battery-alone payback with price-aware dispatch ({{BATTERY_PAYBACK_EVENING_ONLY}} evening-only)</div></div>
   <div class="card"><div class="big">{{PAYBACK_STATUS_SHORT}}</div><div class="lbl">{{SYSTEM_GROSS_COST}} install recovered ~{{PAYBACK_CROSSOVER_DATE}}; now {{SOLAR_ANNUAL_VALUE}}/yr</div></div>
-  <div class="card"><div class="big blue">{{CHEAP_WINDOW}}</div><div class="lbl">Weekday super-off-peak: {{SUPER_OFF_PEAK_RATE}} midday power, year-round — run everything flexible here</div></div>
+  <div class="card"><div class="big blue">{{CHEAP_WINDOW}}</div><div class="lbl">Weekday super-off-peak: {{SUPER_OFF_PEAK_RATE}} midday power, year-round. Run everything flexible here</div></div>
 </div>
 
 <h2 id="s1">1 · The data (triple-verified)</h2>
@@ -313,7 +313,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <div>
 <h3>Hardware</h3>
 <ul>
-<li><b>Array:</b> {{SYSTEM_SIZE_KW_DC}} kW DC nameplate — <b>size verified</b>: {{PANEL_COUNT}} × {{PANEL_MODEL_WATTS}} modules, per {{SIZE_VERIFICATION_SOURCE}}</li>
+<li><b>Array:</b> {{SYSTEM_SIZE_KW_DC}} kW DC nameplate, <b>size verified</b>: {{PANEL_COUNT}} × {{PANEL_MODEL_WATTS}} modules, per {{SIZE_VERIFICATION_SOURCE}}</li>
 <li><b>Inverters:</b> {{INVERTER_DESCRIPTION}} ≈ {{AC_CEILING_KW}} kW AC max</li>
 <li><!-- TODO: gateway/metering configuration — note whether consumption metering exists (it is what makes whole-home-load and battery analysis possible) --></li>
 <li><!-- TODO: monitoring platforms in use --></li>
@@ -327,7 +327,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><b>Specific yield:</b> {{SPECIFIC_YIELD}} kWh/kW/yr · capacity factor {{CAPACITY_FACTOR}}</li>
 <li><!-- TODO: daily range — mean ({{DAILY_PRODUCTION_MEAN}}), best ({{DAILY_PRODUCTION_BEST}}), worst ({{DAILY_PRODUCTION_WORST}}). --></li>
 <li><!-- TODO: health signal — the naive multi-year output trend ({{DEGRADATION_NAIVE_RANGE}}), and one clause saying the weather-corrected rate is not determined, with §9 named as where the workup lives. No per-panel claim: nothing committed records per-module output, so a laggard-panel check has no evidence here and must not be asserted either way. --></li>
-<li><b>Where it goes:</b> covers {{SOLAR_COVERAGE_PCT}} of the home's {{ANNUAL_LOAD_KWH}} kWh/yr load — {{SELF_CONSUMED_SHARE}} self-consumed, {{EXPORTED_SHARE}} exported</li>
+<li><b>Where it goes:</b> covers {{SOLAR_COVERAGE_PCT}} of the home's {{ANNUAL_LOAD_KWH}} kWh/yr load: {{SELF_CONSUMED_SHARE}} self-consumed, {{EXPORTED_SHARE}} exported</li>
 </ul>
 </div>
 </div>
@@ -416,7 +416,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <h2 id="s7">7 · The decision: three packages</h2>
 <p class="verdict">{{S7_VERDICT}}</p>
-<p>All packages keep <b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}} <b>Baseline = your actual bills: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). No year-end lump-sum shortcuts; behavior and battery are simulated in ONE integrated pipeline ({{FREE_FIX_SHORT_NAME}} shift first, then battery, re-billed end-to-end), so nothing is double-counted.</p>
+<p>All packages keep <b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}} <b>Baseline = your actual bills: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). No year-end lump-sum shortcuts; behavior and battery are simulated in one integrated pipeline ({{FREE_FIX_SHORT_NAME}} shift first, then battery, re-billed end-to-end), so nothing is double-counted.</p>
 
 <div class="grid3">
 <div class="pkg">
@@ -425,7 +425,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><!-- TODO: the free behavior fix with savings at 100%/80% compliance and where the energy currently lands. --></li>
 <li><!-- TODO: the stretch add-on (shifting flexible house load) and its value. --></li>
 <li><!-- TODO: projected bill at constant current rates vs no-changes counterfactual. --></li>
-<li><b>ROI: infinite</b> — no hardware; do this regardless of the battery decision.</li>
+<li><b>ROI: infinite.</b> No hardware; do this regardless of the battery decision.</li>
 <li>Backup capability: none (grid-tied solar shuts off in outages).</li>
 </ul>
 </div>
@@ -452,7 +452,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <h2 id="s15">What to do Monday — the implementation appendix</h2>
 <p class="verdict">{{S15_VERDICT}}</p>
-<p>The whole analysis reduces to this short checklist. Nothing here is new analysis — each item cites the section that justifies it.</p>
+<p>The whole analysis reduces to this short checklist. Nothing here is new analysis; each item cites the section that justifies it.</p>
 <!-- TODO: content-only appendix (reusable-prompt.md Phase D spec) — no new analysis, no new artifacts; every item cites its justifying section. Four parts: -->
 <h3>{{S15_STEP1_HEADING}}</h3>
 <ul>

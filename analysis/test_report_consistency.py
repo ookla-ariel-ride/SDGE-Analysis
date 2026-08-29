@@ -705,6 +705,40 @@ def _dsgs_prestaging_paragraph():
     return m.group(0)
 
 
+def case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers():
+    """The MID package card cites DSGS VPP revenue ($97-$213) beside annual
+    savings and a payback year. The bullet that carries the figure must say,
+    in the same bullet, that it is not an annual figure and that a full-season
+    or annual figure is not determined, and must link the full caveats in
+    section 6 -- issue #252's dedup moved the long caveat to section 6 and
+    adversarial review found the card then read like recurring annual value
+    (Codex, PR #259, pass 1). Scoped to the bullet, not the page."""
+    m = re.search(r"<li><b>\+ DSGS VPP revenue \$97–\$213</b>.*?</li>", HTML, re.S)
+    assert m, "the MID card's DSGS VPP revenue bullet was not found in index.html"
+    bullet = m.group(0)
+    for phrase in ("not an annual figure",
+                   "full-season or annual figure is not determined",
+                   'href="#s6"'):
+        assert phrase in bullet, (
+            f"the MID card's DSGS bullet no longer carries {phrase!r} beside its "
+            f"$97–$213 figure: {bullet[:160]!r}")
+    return ("the MID card's $97–$213 DSGS bullet states non-annual and not-determined "
+            "in the same bullet and links section 6")
+
+
+def case_prestaging_paragraph_says_what_is_measured_and_what_is_assumed():
+    """The event-aware pre-staging result is modeled, but two of its inputs
+    are measured (this household's load, the real 2025 event calendar) and
+    two are assumed (a battery the household does not own, same-day notice).
+    The paragraph must say both halves; "nothing measured behind it" denied
+    the measured inputs (Codex adversarial review, PR #259, pass 2)."""
+    para = _dsgs_prestaging_paragraph()
+    for phrase in ("Modeled from measured load and the real event calendar",
+                   "with the battery and the notice assumed"):
+        assert phrase in para, f"the pre-staging paragraph no longer says {phrase!r}"
+    return "the pre-staging paragraph names its measured inputs and its assumed ones"
+
+
 def case_dsgs_prestaged_sensitivity_matches_the_artifact():
     """The §6 event-aware pre-staging disclosure is hand-written, not
     templated -- lock every cited number (and the direction of the
@@ -3171,9 +3205,9 @@ def case_s2_key_architectural_fact_matches_the_artifacts():
     (report-template.html carries only a TODO there) -- lock its export share,
     its 10am-2pm export share and its EV-charging night count to the artifacts
     that measure them, and hold each percentage to its own referent."""
-    m = re.search(r'<p class="small">That last split is the key architectural fact'
+    m = re.search(r'<p class="small">That last split is the fact behind every recommendation'
                   r'.*?</p>', HTML, re.S)
-    assert m, "§2's 'key architectural fact' paragraph not found in index.html"
+    assert m, "§2's 'fact behind every recommendation' paragraph not found in index.html"
     para = m.group(0)
 
     export_pct = _export_share_pct()
@@ -4186,9 +4220,9 @@ def case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim():
         "whole export share exactly as the retired wording did, and it passes every "
         f"substring §2 checks -- the guard reports {leading!r}")
 
-    published = re.search(r'<p class="small">That last split is the key architectural '
-                          r"fact.*?</p>", HTML, re.S)
-    assert published, "§2's 'key architectural fact' paragraph not found in index.html"
+    published = re.search(r'<p class="small">That last split is the fact behind every '
+                          r"recommendation.*?</p>", HTML, re.S)
+    assert published, "§2's 'fact behind every recommendation' paragraph not found in index.html"
     assert _referent_guard_rejects(published.group(0)) is None, (
         "§2's published paragraph attaches a time of day to the export share: "
         f"{_referent_guard_rejects(published.group(0))}")
@@ -4306,8 +4340,8 @@ def case_the_referent_guard_reads_across_a_sentence_boundary():
         "rejected may now be available -- re-measure it before keeping the "
         "figure-free-run rule, and delete this assertion if it is adopted")
 
-    for where, pattern in (("§2", r'<p class="small">That last split is the key '
-                                  r"architectural fact.*?</p>"),
+    for where, pattern in (("§2", r'<p class="small">That last split is the fact behind '
+                                  r"every recommendation.*?</p>"),
                            ("§8", r"<p><b>More panels: .*?</p>"),
                            ("§0", r"<li><b>More solar\? No\.</b>.*?</li>")):
         m = re.search(pattern, HTML, re.S)
@@ -5467,14 +5501,14 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
     ("s1", "Every 15-minute interval of the last"): ("50ada813f528",
         "index derives whole-home load in prose (29,914 kWh energy balance, CT-meter "
         "cross-check); no tokens exist for those figures"),
-    ("s2", "kW DC nameplate"): ("f3f0614b3626",
+    ("s2", "kW DC nameplate"): ("702b1ea21f42",
         "index adds module arithmetic and mount/orientation facts no token renders"),
     ("s2", "<b>In service since:</b>"): ("848ed58632f5",
         "index words the NEM grandfathering span (~20 years) with no token for it"),
     ("s2", "<b>Production:</b>"): ("b2b724534b3c",
         "index names the concrete sources (CT meter; PVOutput) the template keeps "
         "monitoring-agnostic per CLAUDE.md section 7"),
-    ("s2", "<b>Where it goes:</b>"): ("715f92125d33",
+    ("s2", "<b>Where it goes:</b>"): ("0b67c10d01b8",
         "index adds MWh splits and share-of-production parentheticals with no tokens"),
     ("s5", "the behaviors behind them"): ("4c9586423c95",
         "index counts the behaviors (four); the count has no token"),
@@ -5775,7 +5809,7 @@ def case_template_fixed_prose_lines_all_appear_in_the_published_page():
 # edit to the pipeline claim itself still breaks it loudly, which is correct,
 # because the mutation below exists to prove that exact claim is guarded.
 _S7_PIPELINE_SENTENCE_RE = re.compile(
-    r"behavior and battery are simulated in ONE integrated pipeline "
+    r"behavior and battery are simulated in one integrated pipeline "
     r"\(\{\{[A-Z0-9_]+\}\} shift first, then battery, re-billed end-to-end\), "
     r"so nothing is double-counted\.")
 
@@ -6528,6 +6562,8 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
 
 
 CASES = [
+    case_prestaging_paragraph_says_what_is_measured_and_what_is_assumed,
+    case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers,
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
     case_hourly_profiles_match_their_artifact,
