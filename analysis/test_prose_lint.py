@@ -136,7 +136,28 @@ def case_flags_promotional_verb_leverage():
     return "'leveraging' promotional-register verb is flagged"
 
 
-# --- 5. rule-of-three padding ------------------------------------------------
+# --- 5. intensifiers ---------------------------------------------------------
+@case
+def case_flags_every_intensifier_in_the_shared_word_list():
+    for word in sorted(prose_lint.INTENSIFIERS):
+        text = f"The {word} reading of the meter is the one below."
+        v = prose_lint.lint(text)
+        assert any(f"intensifier: {word!r}" in x for x in v), (word, v)
+    v = prose_lint.lint("The HONEST verdict is that the array underperforms.")
+    assert any("intensifier: 'honest'" in x for x in v), v
+    return (f"all {len(prose_lint.INTENSIFIERS)} words of INTENSIFIERS are flagged, "
+           "case-insensitively (analysis/prose_rhythm.py reuses this same list on the page)")
+
+
+@case
+def case_does_not_flag_a_word_that_merely_contains_an_intensifier():
+    text = "The robustness of the estimate is reported in the appendix."
+    v = prose_lint.lint(text)
+    assert not any("intensifier" in x for x in v), v
+    return "'robustness' is not flagged: the rule matches whole words only"
+
+
+# --- 6. rule-of-three padding ------------------------------------------------
 @case
 def case_flags_rule_of_three_padding():
     text = "The new dispatch policy is fast, reliable, and efficient."

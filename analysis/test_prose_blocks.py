@@ -125,10 +125,16 @@ def case_div_with_both_bare_text_and_a_nested_p_yields_both():
             "<p>and the nested paragraph is its own block</p></div>")
     blocks = prose_blocks.extract(html)
     assert [(b.tag, b.text) for b in blocks] == [
-        ("p", "and the nested paragraph is its own block"),
         ("div", "the div's own bare words come first here"),
+        ("p", "and the nested paragraph is its own block"),
     ], [(b.tag, b.text) for b in blocks]
-    return "bare text belongs to the innermost block that directly holds it; the <p> is separate"
+    # Opening-tag order, which is the documented contract: the <div> opens
+    # first even though it closes last. Ordering by line put the <p> first
+    # whenever both shared a line -- an accident of the sort key, not a rule
+    # (the same key mis-assigned tiers on a minified page, PR #262 pass 2).
+    assert blocks[0].pos < blocks[1].pos, [(b.tag, b.pos) for b in blocks]
+    return ("bare text belongs to the innermost block that directly holds it; the <p> is "
+            "separate, and both come back in opening-tag order")
 
 
 @case
@@ -229,12 +235,23 @@ def case_unclosed_p_ends_at_a_table():
 @case
 def case_unclosed_p_ends_at_a_section_and_at_details_summary():
     section = "<p>one two three four five<section>six seven eight nine ten</section>"
-    assert _shape(section) == [("p", "one two three four five", 23, 1)], _shape(section)
+    # <section> both ends the open <p> AND is a block of its own since PR #262:
+    # bare prose directly inside a semantic container used to belong to no block
+    # at all, which made every rhythm metric read zero for it.
+    assert _shape(section) == [("p", "one two three four five", 23, 1),
+                               ("section", "six seven eight nine ten", 24, 1)], _shape(section)
     details = ("<p>one two three four five<details><summary>six seven eight nine ten</summary>"
                "eleven twelve thirteen fourteen fifteen</details>")
+    # <details> is a block too since PR #262, so its own bare text ("eleven
+    # twelve …") is its own block: prose written directly under
+    # <details id="advanced"> is the advanced tier's own text, and without a
+    # block for it the advanced measurement read zero words.
     assert _shape(details) == [("p", "one two three four five", 23, 1),
-                               ("summary", "six seven eight nine ten", 24, 1)], _shape(details)
-    return "<section> and <details><summary> end an unclosed <p>; their bare text is not its text"
+                               ("summary", "six seven eight nine ten", 24, 1),
+                               ("details", "eleven twelve thirteen fourteen fifteen", 39, 1)],\
+        _shape(details)
+    return ("<section> and <details><summary> end an unclosed <p>; the section's own bare "
+            "text is its own block, and never the paragraph's")
 
 
 @case
@@ -282,8 +299,12 @@ def case_tier_split_at_the_advanced_details_line():
             "<p>advanced tier paragraph number one</p>\n"
             "</details>")
     blocks = prose_blocks.extract(html)
-    split = prose_blocks.advanced_line(html)
-    assert split == 3, split
+    split = prose_blocks.advanced_offset(html)
+    # An OFFSET now, not a line: the marker opens at character 78, right after
+    # the two basic paragraphs. Comparing lines mis-tiered a page whose markup
+    # shares a line (PR #262 pass 2); the same-line case below proves it.
+    assert split == html.index('<details id="advanced"'), (split, html[:90])
+    assert prose_blocks.advanced_line(html) == 3, prose_blocks.advanced_line(html)
     basic = prose_blocks.select_tier(blocks, split, "basic")
     adv = prose_blocks.select_tier(blocks, split, "advanced")
     assert [b.line for b in basic] == [1, 2], [b.line for b in basic]
@@ -350,7 +371,7 @@ def case_committed_index_html_extracts_at_least_200_blocks():
     assert len(blocks) >= 200, len(blocks)
     assert over == [], over
     html_text = page.read_text(encoding="utf-8")
-    split = prose_blocks.advanced_line(html_text)
+    split = prose_blocks.advanced_offset(html_text)
     assert split is not None, "index.html has no <details id=\"advanced\">"
     basic = prose_blocks.select_tier(blocks, split, "basic")
     adv = prose_blocks.select_tier(blocks, split, "advanced")
@@ -359,7 +380,8 @@ def case_committed_index_html_extracts_at_least_200_blocks():
     r = _run(str(page))
     assert r.returncode == 0 and r.stdout.startswith(f"PROSE BLOCKS {len(blocks)} blocks, "), r.stdout
     return (f"index.html: {len(blocks)} blocks ({len(basic)} basic, {len(adv)} advanced), "
-            f"{sum(b.words for b in blocks)} words; no 800-char gate yet (issue #256)")
+            f"{sum(b.words for b in blocks)} words; the 800-char cap is enforced "
+            "by analysis/test_prose_rhythm.py (issue #256)")
 
 
 def main():
