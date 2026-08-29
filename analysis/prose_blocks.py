@@ -64,7 +64,10 @@ USAGE
     extract(html_text, min_words=MIN_WORDS) -> list[Block]
     over_limit(blocks, max_chars) -> list[Block]
     advanced_lines(html_text) -> list[int]      every real advanced-tier marker
-    advanced_line(html_text) -> int | None      the first one, or None
+    advanced_line(html_text)    -> int | None   the first line, or None
+    advanced_offsets(html_text) -> [int]        every offset, document order
+    advanced_offset(html_text)  -> int | None   the first offset, or None (the
+                                                value select_tier compares)
     report(path, max_chars=None, tier="all") -> (blocks, over)
 
 Stdlib only. Runs anywhere, with or without private/ and with or without git.
@@ -77,7 +80,7 @@ from html.parser import HTMLParser
 
 BLOCK_TAGS = frozenset({
     "p", "li", "figcaption", "summary", "blockquote", "dd", "dt",
-    "h1", "h2", "h3", "h4", "div",
+    "h1", "h2", "h3", "h4", "h5", "h6", "div",
 })
 SKIP_TAGS = frozenset({
     "script", "style", "nav", "table", "svg", "canvas", "button", "select",
@@ -119,6 +122,11 @@ class Block:
     id: str
     cls: str
     line: int
+    # Absolute character offset of the opening tag. Tier selection compares
+    # this, not `line`: minified or same-line markup puts blocks either side of
+    # the advanced marker on one line, and a line comparison then hands a whole
+    # tier to the wrong side (Codex adversarial review, PR #262, pass 2).
+    pos: int
     text: str
     chars: int
     words: int
@@ -133,20 +141,40 @@ class Block:
         return self.tag
 
 
-class _Frame:
-    __slots__ = ("tag", "skip", "parts", "line", "id", "cls", "is_block")
+class _Positions:
+    """Absolute character offsets from html.parser's (line, column) positions.
 
-    def __init__(self, tag, skip, is_block, line, id_, cls):
+    html.parser reports a position, not an offset, and a tier boundary compared
+    by line alone breaks on same-line markup, so every parser here records where
+    a tag really starts in the document."""
+
+    def _index_lines(self, html_text):
+        self._line_start = [0]
+        for line in html_text.splitlines(keepends=True):
+            self._line_start.append(self._line_start[-1] + len(line))
+
+    def _offset(self, line, col):
+        starts = getattr(self, "_line_start", None)
+        if not starts or line - 1 >= len(starts):
+            return 0
+        return starts[line - 1] + col
+
+
+class _Frame:
+    __slots__ = ("tag", "skip", "parts", "line", "pos", "id", "cls", "is_block")
+
+    def __init__(self, tag, skip, is_block, line, pos, id_, cls):
         self.tag = tag
         self.skip = skip          # True when THIS element started an excluded subtree
         self.is_block = is_block  # True when this element collects prose of its own
         self.parts = []
         self.line = line
+        self.pos = pos
         self.id = id_
         self.cls = cls
 
 
-class _Extractor(HTMLParser):
+class _Extractor(_Positions, HTMLParser):
     def __init__(self, min_words=MIN_WORDS):
         super().__init__(convert_charrefs=True)
         self.stack = []
@@ -176,7 +204,7 @@ class _Extractor(HTMLParser):
             words = len(text.split())
             if words >= self.min_words:
                 self.blocks.append(Block(frame.tag, frame.id, frame.cls, frame.line,
-                                         text, len(text), words))
+                                         frame.pos, text, len(text), words))
 
     def _close_open_p(self):
         """Close an open <p> the way the HTML parser does when a start tag that
@@ -229,8 +257,9 @@ class _Extractor(HTMLParser):
         is_block = not self.skip_depth and tag in BLOCK_TAGS
         if is_block:
             self._implicit_close(tag)
-        line, _ = self.getpos()
+        line, col = self.getpos()
         self.stack.append(_Frame(tag, starts_skip, is_block, line,
+                                 self._offset(line, col),
                                  attrs.get("id", ""), attrs.get("class", "")))
 
     def handle_startendtag(self, tag, attrs):
@@ -263,7 +292,7 @@ class _Extractor(HTMLParser):
             self._close(self.stack.pop())
         # Blocks finalize at their END tag, so an inner block lands before its
         # parent; the list is returned in document order of the OPENING tag.
-        self.blocks.sort(key=lambda b: b.line)
+        self.blocks.sort(key=lambda b: b.pos)
         return self.blocks
 
 
@@ -274,6 +303,7 @@ def extract(html_text, min_words=MIN_WORDS):
     measured under. Pass 1 for every visible block, short ones included.
     """
     parser = _Extractor(min_words)
+    parser._index_lines(html_text)
     parser.feed(html_text)
     parser.close()
     return parser.finish()
@@ -284,7 +314,7 @@ def over_limit(blocks, max_chars):
     return [b for b in blocks if b.chars > max_chars]
 
 
-class _AdvancedFinder(HTMLParser):
+class _AdvancedFinder(_Positions, HTMLParser):
     """Every line where a real `<details id="advanced">` element opens.
 
     A parser, not a source scan, because the source scan this replaced matched
@@ -298,13 +328,16 @@ class _AdvancedFinder(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.lines = []
+        self.offsets = []
 
     def _check(self, tag, attrs):
         if tag.lower() != ADVANCED_TAG:
             return
         for key, value in attrs:
             if key.lower() == "id" and (value or "").strip() == ADVANCED_ID:
-                self.lines.append(self.getpos()[0])
+                line, col = self.getpos()
+                self.lines.append(line)
+                self.offsets.append(self._offset(line, col))
                 return
 
     def handle_starttag(self, tag, attrs):
@@ -322,9 +355,30 @@ def advanced_lines(html_text):
     caller can refuse rather than measure the wrong half of the page.
     """
     parser = _AdvancedFinder()
+    parser._index_lines(html_text)
     parser.feed(html_text)
     parser.close()
     return parser.lines
+
+
+def advanced_offsets(html_text):
+    """Character offsets of every real `<details id="advanced">`, document order.
+
+    The tier boundary is compared as an offset, never as a line: same-line or
+    minified markup puts blocks either side of the marker on one line, and a
+    line comparison then assigns a whole tier to the wrong side.
+    """
+    parser = _AdvancedFinder()
+    parser._index_lines(html_text)
+    parser.feed(html_text)
+    parser.close()
+    return parser.offsets
+
+
+def advanced_offset(html_text):
+    """The first real advanced-tier offset, or None: what select_tier compares."""
+    offsets = advanced_offsets(html_text)
+    return offsets[0] if offsets else None
 
 
 def advanced_line(html_text):
@@ -333,23 +387,29 @@ def advanced_line(html_text):
     return lines[0] if lines else None
 
 
-def select_tier(blocks, split_line, tier):
-    """The blocks of one tier: basic opens before split_line, advanced from it on."""
+def select_tier(blocks, split_pos, tier):
+    """The blocks of one tier: basic opens before split_pos, advanced from it on.
+
+    split_pos is a character OFFSET (advanced_offsets), not a line number. A
+    line comparison read every block sharing the marker's line as advanced, so
+    a minified page handed its whole basic tier to the advanced side and every
+    rate was measured over the wrong words (Codex adversarial review, PR #262).
+    """
     if tier not in TIERS:
         raise ValueError(f"tier must be one of {TIERS}, not {tier!r}")
     if tier == "all":
         return list(blocks)
-    if split_line is None:
+    if split_pos is None:
         return list(blocks) if tier == "basic" else []
     if tier == "basic":
-        return [b for b in blocks if b.line < split_line]
-    return [b for b in blocks if b.line >= split_line]
+        return [b for b in blocks if b.pos < split_pos]
+    return [b for b in blocks if b.pos >= split_pos]
 
 
 def report(path, max_chars=None, tier="all"):
     """(blocks, over) for the page at path; over is [] when max_chars is None."""
     html_text = pathlib.Path(path).read_text(encoding="utf-8")
-    blocks = select_tier(extract(html_text), advanced_line(html_text), tier)
+    blocks = select_tier(extract(html_text), advanced_offset(html_text), tier)
     over = over_limit(blocks, max_chars) if max_chars is not None else []
     return blocks, over
 

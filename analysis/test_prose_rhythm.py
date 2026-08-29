@@ -430,6 +430,33 @@ def case_a_package_label_in_predicate_position_is_still_emphasis():
 
 
 @case
+def case_a_modifier_between_the_copula_and_the_label_is_still_predicate_position():
+    """Adversarial review, pass 2, finding 2: the predicate rule read only the word
+    directly in front of the label, so one adverb between the copula and the label
+    walked past it. `The cost is still HIGH.` passed on the committed page."""
+    leads = ["is still", "is financially", "was very", "is not yet unusually",
+             "remains consistently", "seems rather"]
+    for lead in leads:
+        for word in sorted(prose_rhythm.PACKAGE_LABELS):
+            html = (_CARDS + f"<p>the winter cost {lead} {word} on this household's tariff</p>\n"
+                    + _filler(980))
+            m = prose_rhythm.measure(html)
+            assert m["caps"] == [word], (lead, word, m["caps"])
+            assert _kinds(prose_rhythm.check(html)) == {"ALL-CAPS emphasis"}, (lead, word)
+    # The modifier run has to actually be modifiers: an ordinary noun phrase after
+    # the copula puts the label back in a noun position, where it is a name again.
+    for keeps_the_name in ("is $289.60 for", "is 7.9% of", "saves more than",
+                           "adds a further $490.91 for"):
+        html = (_CARDS + f"<p>the winter cost {keeps_the_name} LOW on this tariff</p>\n"
+                + _filler(980))
+        assert prose_rhythm.measure(html)["caps"] == [], (keeps_the_name,
+                                                          prose_rhythm.measure(html)["caps"])
+    return (f"a copula plus a run of modifiers still reads as predicate position: all "
+            f"{len(leads)} leads ('is still HIGH', 'is financially HIGH', 'was very LOW', …) "
+            "are reported, while 'is 7.9% of LOW' and 'saves more than MID' stay names")
+
+
+@case
 def case_the_committed_page_names_its_packages_without_shouting():
     html = PAGE.read_text(encoding="utf-8")
     blocks = prose_blocks.extract(html, min_words=1)
@@ -585,6 +612,61 @@ def case_cli_defaults_to_the_repo_index_html():
         prose_rhythm.measure(PAGE.read_text(encoding="utf-8"), "advanced"))
     assert r.stdout.splitlines()[0] == expected, (r.stdout, expected)
     return "with no PATH the CLI walks up to the repo root and measures its index.html"
+
+
+@case
+def case_same_line_markup_does_not_collapse_the_tier_boundary():
+    """Adversarial review, pass 2, finding 1: tier selection compared opening
+    LINE numbers, so a minified page put the blocks either side of the advanced
+    marker on one line and handed a whole tier to the wrong side. The two
+    documents below differ only in newlines and must give identical verdicts."""
+    basic = "<p>" + ("clean word here now " * 500) + "</p>"
+    adv = "<p>" + ("an aside — here " * 4) + ("filler word " * 490) + "</p>"
+    multi = "<html>" + basic + "\n<details id=\"advanced\">\n" + adv + "</details></html>"
+    same = "<html>" + basic + "<details id=\"advanced\">" + adv + "</details></html>"
+    for tier in ("basic", "advanced", "all"):
+        a, b = prose_rhythm.measure(multi, tier), prose_rhythm.measure(same, tier)
+        assert (a["words"], a["em_dashes"], len(a["long_blocks"])) == (
+            b["words"], b["em_dashes"], len(b["long_blocks"])), (tier, a, b)
+        assert _kinds(prose_rhythm.check(multi, tier)) == _kinds(prose_rhythm.check(same, tier)), tier
+    assert prose_rhythm.measure(same, "basic")["words"] == 2000, prose_rhythm.measure(same, "basic")
+    return ("same-line and multi-line markup split the tiers identically; the basic tier keeps "
+            "its 2,000 words instead of emptying into advanced")
+
+
+@case
+def case_the_length_cap_reaches_blocks_under_the_word_floor():
+    """Adversarial review, pass 2, finding 4: the cap re-applied prose_blocks'
+    four-word floor, so a paragraph holding ONE 801-character token reported
+    nothing while this module claims to measure every visible block."""
+    for words, chars, expected in ((1, 801, 1), (1, 800, 0), (2, 801, 1), (3, 800, 0)):
+        body = " ".join(["x" * (chars // words)] * words)
+        body += "y" * (chars - len(body))
+        html = f"<p>{body}</p>\n" + _filler(1000)
+        m = prose_rhythm.measure(html)
+        assert len(m["long_blocks"]) == expected, (words, chars, len(body), m["long_blocks"])
+    return ("a 1-, 2- or 3-word block is measured against the 800-character cap: 801 characters "
+            "is reported at every word count, 800 is not")
+
+
+@case
+def case_h5_and_h6_are_visible_blocks_like_any_other_heading():
+    """Adversarial review, pass 2, finding 3: BLOCK_TAGS stopped at h4 although
+    the parser already treated h5 and h6 as paragraph closers, so their text
+    landed in whatever block happened to enclose it. They are headings: measured
+    for every metric except em dashes, which CLAUDE.md section 10 makes design
+    language in a heading."""
+    for tag in ("h5", "h6"):
+        html = f"<{tag}>NEVER honest, and this, not that</{tag}>\n" + _filler(1000)
+        m = prose_rhythm.measure(html)
+        assert m["caps"] == ["NEVER"], (tag, m["caps"])
+        assert m["intensifiers"] == ["honest"], (tag, m["intensifiers"])
+        assert m["tails"] == 1, (tag, m["tails"])
+        dashes = prose_rhythm.measure(f"<{tag}>A verdict — stated here</{tag}>\n" + _filler(1000))
+        assert dashes["em_dashes"] == 0, (tag, dashes["em_sites"])
+        assert prose_blocks.extract(f"<{tag}>one two three four five</{tag}>"), tag
+    return ("h5 and h6 are extracted and measured for caps, intensifiers and tails, and their "
+            "em dashes are exempt like every other heading's")
 
 
 def main():

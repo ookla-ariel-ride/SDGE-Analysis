@@ -5053,6 +5053,24 @@ configuration, so a reader can audit the process or reproduce it:
   behave correctly (`CLAUDE.md`, the cheatsheet, the template, the gates), so the analysis
   is not tied to any one vendor's tooling.
 
+Three scope rules the metrics do not share, each learned from a bypass adversarial review
+demonstrated (PR #262):
+
+- **Which blocks each metric reads.** ALL-CAPS, intensifiers and tails read every visible
+  block, headings and blocks under the four-word floor included. Only the em-dash rule
+  exempts headings, because CLAUDE.md section 10 makes a heading verdict design language.
+  The 800-character cap covers every measured block too, so a paragraph holding one long
+  token is reported; the standalone `prose_blocks.py --max-chars` report keeps its own
+  four-word floor, and this gate is the stricter of the two.
+- **The tier boundary is a character offset**, taken from a parser pass that ignores
+  comments and matches `id="advanced"` whole. A line comparison mis-assigned a whole tier
+  on same-line or minified markup, and a decoy `id="advanced-help"` inside a comment moved
+  the boundary to line 1. A page without exactly one real marker fails loudly.
+- **`LOW`, `MID` and `HIGH` are package names, not acronyms.** They are exempt only where
+  the page defines the card and the use is not in predicate position -- a copula followed by
+  any run of adverbs, so `the cost is still HIGH` is reported while `Recommendation: LOW
+  today` and the other 18 proper-noun uses stand.
+
 ### 8.1 `analysis/generate_report.py` — filling the report without an agent harness (issue #39)
 
 The bullets above describe the tooling used to build THIS repo's own `index.html`. This

@@ -128,7 +128,7 @@ class TierBoundaryError(ValueError):
 # heading verdicts), so the EM-DASH metric alone skips them. Every other metric
 # reads them: shouting, an intensifier and an "X, not Y" tail are the same
 # habit in a heading as in a paragraph.
-HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4"})
+HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
 # The allowlist for metric 3, grown by hand over issues #252 and #253: every
 # entry is an acronym, initialism or all-caps proper name this report's
@@ -176,10 +176,21 @@ ACRONYMS = frozenset({
 # "Recommendation: LOW today", which is not.
 PACKAGE_LABELS = frozenset({"LOW", "MID", "HIGH"})
 PACKAGE_CARD_RE = re.compile(r"^([A-Z]{3,})\s*—\s*\S")
+# A copula (or degree word), then any run of adverbs and degree words, then the
+# label: "is HIGH", "is still HIGH", "is financially HIGH", "was very LOW".
+# Reading only the word in front of the label let one adverb walk past the rule
+# (Codex adversarial review, PR #262, pass 2). The run is deliberately limited
+# to -ly adverbs and a closed list of degree words, so an ordinary noun phrase
+# after the copula -- "is 7.9% of LOW", "is the recommendation for MID" -- keeps
+# the label in a NAME position, which is what the page's 19 real uses are.
+_MODIFIER = (r"(?:\w+ly|not|yet|still|even|also|again|already|almost|nearly|"
+             r"about|only|just|quite|very|so|too|really|rather|somewhat|fairly|"
+             r"unusually|extremely|especially|particularly|notably|consistently)")
 EMPHASIS_LEAD_RE = re.compile(
     r"\b(?:is|are|was|were|be|been|being|am|seems?|seemed|stays?|stayed|"
     r"remains?|remained|looks?|looked|runs?|ran|gets?|got|feels?|felt|"
-    r"too|very|so|quite|really|how|extremely|unusually)\s+$", re.I)
+    r"too|very|so|quite|really|how|extremely|unusually)\s+"
+    rf"(?:{_MODIFIER}\s+)*$", re.I)
 
 # Visually equivalent long dashes, all folded to "—" by normalize() so one
 # spelling of the rule catches every spelling of the character. The EN dash
@@ -323,12 +334,16 @@ def tier_split(html_text, tier):
     if tier == "all":
         return None
     lines = prose_blocks.advanced_lines(html_text)
-    if len(lines) != 1:
+    offsets = prose_blocks.advanced_offsets(html_text)
+    if len(offsets) != 1:
         raise TierBoundaryError(
             f"tier={tier} needs exactly one <details id=\"advanced\"> to split the page; "
-            f"this one has {len(lines)}"
+            f"this one has {len(offsets)}"
             + (f" (lines {', '.join(str(n) for n in lines)})" if lines else ""))
-    return lines[0]
+    # A character OFFSET, which is what select_tier compares: the marker and the
+    # blocks either side of it can share a line, and a line comparison then
+    # hands a whole tier to the wrong side (Codex adversarial review, pass 2).
+    return offsets[0]
 
 
 def per_1k(count, words):
@@ -365,11 +380,13 @@ def measure(html_text, tier="all", max_block_chars=None):
     tails, tail_sites = _sites(measured, TAIL_RE)
     caps, caps_sites = _words(measured, CAPS_RE, keep=_caps_keeper(package_labels(all_blocks)))
     intens, intens_sites = _words(measured, INTENSIFIER_RE)
-    # The 800-character cap is prose_blocks' own gate, applied to the same
-    # blocks `prose_blocks.py --max-chars 800 --tier T` would apply it to:
-    # headings included, blocks under prose_blocks.MIN_WORDS excluded.
-    long_blocks = prose_blocks.over_limit(
-        [b for b in tier_blocks if b.words >= prose_blocks.MIN_WORDS], max_block_chars)
+    # The 800-character cap covers EVERY measured block of the tier, headings
+    # and short blocks included. Re-applying prose_blocks' 4-word floor here
+    # let a paragraph holding one 801-character token report nothing, which
+    # contradicts this module's own visible-block coverage (Codex adversarial
+    # review, PR #262, pass 2). The standalone `prose_blocks.py --max-chars`
+    # report keeps that floor; this gate is the stricter of the two.
+    long_blocks = prose_blocks.over_limit(tier_blocks, max_block_chars)
     return {
         "tier": tier,
         "blocks": len(measured),
