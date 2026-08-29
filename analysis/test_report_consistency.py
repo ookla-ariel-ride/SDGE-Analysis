@@ -750,6 +750,11 @@ def _enclosing_block(pos):
     return HTML[start:min(ends)]
 
 
+# Comments, masked with spaces so character offsets survive. A definition,
+# figure or link a reader cannot see must not satisfy a guard.
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+
 def case_export_netting_definition_is_stated_once():
     """issue #254: the netted export rate is DEFINED once, in section 8, which
     derives it; everywhere else the report names it and links there.
@@ -764,14 +769,22 @@ def case_export_netting_definition_is_stated_once():
     still carries the 10.4¢ figure and a link to section 8. Deleting the figure
     or the route to its derivation would satisfy a count-only check and is the
     failure this case exists to catch."""
-    hits = list(_NETTING_DEFINITION_RE.finditer(HTML))
+    # Every scan in this case runs on comment-masked HTML, offsets preserved:
+    # a definition, figure or link inside an HTML comment is invisible to a
+    # reader and must not satisfy any assertion here. Codex adversarial review
+    # (PR #261) found this hole twice in one case -- first in the per-site
+    # assertions, then in this count -- so the mask is applied once, for all of
+    # them, rather than at each site that happened to be reported.
+    masked = _COMMENT_RE.sub(lambda m: " " * (m.end() - m.start()), HTML)
+    hits = list(_NETTING_DEFINITION_RE.finditer(masked))
     assert len(hits) == 1, (
         f"the netted-export-rate definition is stated in full {len(hits)} times in "
-        "index.html; it belongs exactly once, in section 8, which derives it. Name "
+        "index.html (comments do not count: a definition a reader cannot see is not "
+        "stated); it belongs exactly once, in section 8, which derives it. Name "
         "the rate and link section 8 at the other sites. Found at: "
-        + "; ".join(repr(HTML[max(0, m.start() - 70):m.end()]) for m in hits))
+        + "; ".join(repr(masked[max(0, m.start() - 70):m.end()]) for m in hits))
 
-    s8, s9 = HTML.index('<h2 id="s8"'), HTML.index('<h2 id="s9"')
+    s8, s9 = masked.index('<h2 id="s8"'), masked.index('<h2 id="s9"')
     assert s8 < hits[0].start() < s9, (
         "the one full statement of the netted-export-rate definition is not inside "
         f"section 8 (char {hits[0].start()}, section 8 spans {s8}-{s9}) -- the "
