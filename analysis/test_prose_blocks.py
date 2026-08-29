@@ -359,7 +359,8 @@ def case_committed_index_html_extracts_at_least_200_blocks():
     r = _run(str(page))
     assert r.returncode == 0 and r.stdout.startswith(f"PROSE BLOCKS {len(blocks)} blocks, "), r.stdout
     return (f"index.html: {len(blocks)} blocks ({len(basic)} basic, {len(adv)} advanced), "
-            f"{sum(b.words for b in blocks)} words; no 800-char gate yet (issue #256)")
+            f"{sum(b.words for b in blocks)} words; the 800-char cap is enforced "
+            "by analysis/test_prose_rhythm.py (issue #256)")
 
 
 def main():

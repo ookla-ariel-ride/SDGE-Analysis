@@ -4651,7 +4651,60 @@ length, and reports which blocks exceed a cap.
   `analysis/test_prose_blocks.py` covers each exclusion and boundary rule on synthetic
   pages, the cap on an 801- and an 800-character paragraph, the tier split, the exit codes,
   and a read-only run over the committed `index.html`. The 800-character gate on the
-  committed page itself arrives with issue #256, after the over-cap blocks are split.
+  committed page itself is enforced by §5.3's suite.
+
+### 5.3 Prose rhythm (`analysis/prose_rhythm.py`, issue #256)
+
+`prose_lint.py` gates the fragments that go *into* the page and `prose_blocks.py` measures
+how long a paragraph runs. Neither ever read the finished `index.html`, so four habits of
+machine prose accumulated across roughly thirty commits with every suite green: em dashes at
+17 per 1,000 words, 156 ALL-CAPS emphasis words, "X, not Y" tails, and the intensifiers
+"genuine", "honest" and "robust". Issues #251–#255 removed them. `prose_rhythm.py` is the
+gate that keeps them gone.
+
+- **What it measures.** The blocks come from `prose_blocks.extract()`, so the day-band,
+  the `.meta` ledger, nav, pills, tables and `<code>` spans are already out. This module
+  then drops the `h1`–`h4` heading blocks: CLAUDE.md §10 makes a heading verdict part of the
+  design language, the same as a day-band label or a table cell, so an em dash there is a
+  typographic separator the template asks for rather than a writer reaching for one.
+- **The four metrics, per tier.** (1) Em dashes per 1,000 words — the character `—` plus the
+  ` -- ` substitute, which needs whitespace on both sides so a hyphenated compound or a
+  numeric range never counts. (2) `"X, not Y"` tails per 1,000 words — `,\s+not\s` and
+  `rather than`. (3) ALL-CAPS emphasis, an absolute count: a run of three or more capitals
+  that is not in the module's `ACRONYMS` allowlist, with the lookaround keeping `TOU` inside
+  `EV-TOU-5` and `SDG` inside `SDG&E` from counting. (4) Intensifiers, an absolute count,
+  over `prose_lint.INTENSIFIERS` — the one canonical word list, imported rather than copied,
+  so the fragment gate and the page gate cannot drift. Carried over from §5.2: no block over
+  800 characters, checked by calling `prose_blocks.over_limit()`.
+- **The thresholds and their provenance.** Em dashes ≤ 3.0 per 1,000 words and ALL-CAPS = 0
+  are the acceptance criteria of issue #252; `"X, not Y"` ≤ 1.5 per 1,000 words and
+  intensifiers = 0 are those of issue #253; the 800-character block cap is CLAUDE.md §10 by
+  way of issue #255. They are ceilings, not targets, and the committed page sits far under
+  every one: the basic tier reads 0.1 em dashes and 0.1 tails per 1,000 words over 8,049
+  words, the advanced tier 0.1 and 0.9 over 15,126 words, and both carry zero ALL-CAPS
+  words, zero intensifiers and zero over-cap blocks. A tier would need roughly two dozen new
+  em dashes before the first threshold bit — which is the point, since a rate that suddenly
+  sits near its ceiling is itself the signal.
+- **Adding an acronym.** When new prose introduces one, the CLI names it under
+  `ALL-CAPS emphasis:` with its source line. Add it to the `ACRONYMS` frozenset in the group
+  it belongs to and rerun; never widen the regex. Entries the running prose does not
+  currently use (`JSON`, `PVWATTS`, …) are on the page inside the tables and `<code>` spans
+  the extractor excludes, and stay in the list so restating one in prose is not a false
+  alarm. Two-letter forms are deliberately absent: the three-or-more rule cannot reach them.
+- **The CLI.** `prose_rhythm.py [--tier basic|advanced|all] [--strict] [PATH]` (PATH defaults
+  to `<repo root>/index.html`). It prints one `PROSE RHYTHM tier=… words=… em=… tails=…
+  caps=… intensifiers=… long-blocks=…` line per tier measured — the default `--tier all`
+  reports basic, advanced and the whole page — then an indented violation and offender list
+  under any tier that breaks a limit, and a final `PROSE RHYTHM OK` or
+  `PROSE RHYTHM FAIL: N violation(s)`. `--strict` turns a violation into exit 1; a missing
+  file exits 2.
+- **The suite.** `analysis/test_prose_rhythm.py` runs each metric against a synthetic page on
+  both sides of its threshold (3 em dashes in 1,000 words passes at exactly 3.0/1k, the same
+  3 in 999 words fails), covers the allowlist, the heading exclusion, the tier split and the
+  CLI exit codes, asserts the committed `index.html` clears every limit in both tiers, and
+  then proves the gate bites: for each metric it injects the defect into an in-memory copy of
+  the committed page and asserts that rule — and only that rule — fires. It reads
+  `index.html` and `analysis/` only, so it runs in CI with no `private/` and no git history.
 
 ---
 

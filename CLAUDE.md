@@ -104,6 +104,14 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 # at >= 90% statement coverage (currently ~93%):
 ./analysis/check_coverage.sh                          # fails under 90%
 
+# Report prose gates (issue #251/#255/#256; no private archive needed, run from the repo
+# root). Any hand edit to index.html must be followed by a restamp or the stamp gate fails:
+./.venv/bin/python analysis/stamp_report_version.py index.html   # restamp after editing
+./.venv/bin/python analysis/stamp_report_version.py --check index.html
+./.venv/bin/python analysis/prose_rhythm.py --strict index.html  # em dashes, tails, caps,
+                                                                 # intensifiers, block cap
+./.venv/bin/python analysis/prose_blocks.py --max-chars 800 index.html
+
 # Full-history secret scan (CI runs the generic rules automatically on every push):
 gitleaks git --config .gitleaks.toml .                # committed generic rules
 gitleaks git --config private/pii-rules.toml .        # + personal PII rules (local-only)

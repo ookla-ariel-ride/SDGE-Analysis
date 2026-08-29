@@ -24,7 +24,11 @@ RULES, straight from CLAUDE.md
   4. Promotional adjectives: generic marketing-register words ("cutting-edge",
      "seamless", "robust", ...) that CLAUDE.md section 10 bans from running
      prose.
-  5. Rule-of-three padding: CLAUDE.md section 10 bans "rule-of-three padding"
+  5. Intensifiers: "genuine", "honest", "robust" and their -ly forms, which
+     claim candour instead of showing it (issue #253 stripped 30 of them out
+     of index.html). INTENSIFIERS is the canonical word list for this rule and
+     for the page-level version of it in analysis/prose_rhythm.py.
+  6. Rule-of-three padding: CLAUDE.md section 10 bans "rule-of-three padding"
      outright, but a bare "A, B, and C" list is also just how a lot of
      legitimate technical prose reads in this report (e.g. "on-peak,
      off-peak, and super-off-peak"), so a length-3-list detector alone would
@@ -44,7 +48,9 @@ WHAT THIS MODULE DELIBERATELY DOES NOT CHECK
   cell, a meta row, or a heading, so there is no structural em dash usage for
   it to produce, and no density rule to write or exempt. Implementing one
   here would be dead code guarding against a case this module's own inputs
-  cannot produce.
+  cannot produce. The density rule that DOES apply, to the finished page and
+  per tier, lives in analysis/prose_rhythm.py (issue #256); it excludes
+  headings for exactly the structural reason above.
 
 USAGE
   lint(text) -> list[str] of violation descriptions (empty means clean).
@@ -102,7 +108,25 @@ PROMOTIONAL_ADJECTIVES = [
 ]
 
 # ---------------------------------------------------------------------------
-# 5. Rule-of-three padding: a narrow, low-false-positive heuristic.
+# 5. Intensifiers that claim candour instead of showing it.
+#
+# "genuine", "honest" and "robust" assert a quality the sentence around them
+# should be demonstrating; issue #253 stripped 30 of them out of index.html.
+# This frozenset is the CANONICAL list for both gates: prose_lint checks it on
+# each generated fragment, and analysis/prose_rhythm.py imports it to check the
+# rendered page, so the two cannot drift apart. "robust" also appears in
+# PROMOTIONAL_ADJECTIVES above, where it earns its place on a different ground
+# (marketing register); a fragment using it trips both rules, which this
+# linter has always allowed.
+# ---------------------------------------------------------------------------
+INTENSIFIERS = frozenset({
+    "genuine", "genuinely", "honest", "honestly", "robust", "robustly",
+})
+_INTENSIFIER_RE = re.compile(
+    r"\b(" + "|".join(sorted(INTENSIFIERS, key=len, reverse=True)) + r")\b", re.I)
+
+# ---------------------------------------------------------------------------
+# 6. Rule-of-three padding: a narrow, low-false-positive heuristic.
 # ---------------------------------------------------------------------------
 PADDING_ADJECTIVES = {
     "fast", "reliable", "efficient", "robust", "simple", "elegant", "powerful",
@@ -139,6 +163,11 @@ def _check_promotional_adjectives(text):
     return hits
 
 
+def _check_intensifiers(text):
+    hits = sorted({m.group(1).lower() for m in _INTENSIFIER_RE.finditer(text)})
+    return [f"intensifier: {word!r}" for word in hits]
+
+
 def _check_rule_of_three(text):
     violations = []
     for m in _TRIAD_RE.finditer(text):
@@ -155,6 +184,7 @@ CHECKS = [
     _check_negative_parallelism,
     _check_filler_transitions,
     _check_promotional_adjectives,
+    _check_intensifiers,
     _check_rule_of_three,
 ]
 
