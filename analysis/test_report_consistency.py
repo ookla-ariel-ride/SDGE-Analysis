@@ -726,6 +726,19 @@ def case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers():
             "in the same bullet and links section 6")
 
 
+def case_prestaging_paragraph_says_what_is_measured_and_what_is_assumed():
+    """The event-aware pre-staging result is modeled, but two of its inputs
+    are measured (this household's load, the real 2025 event calendar) and
+    two are assumed (a battery the household does not own, same-day notice).
+    The paragraph must say both halves; "nothing measured behind it" denied
+    the measured inputs (Codex adversarial review, PR #259, pass 2)."""
+    para = _dsgs_prestaging_paragraph()
+    for phrase in ("Modeled from measured load and the real event calendar",
+                   "with the battery and the notice assumed"):
+        assert phrase in para, f"the pre-staging paragraph no longer says {phrase!r}"
+    return "the pre-staging paragraph names its measured inputs and its assumed ones"
+
+
 def case_dsgs_prestaged_sensitivity_matches_the_artifact():
     """The §6 event-aware pre-staging disclosure is hand-written, not
     templated -- lock every cited number (and the direction of the
@@ -6549,6 +6562,7 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
 
 
 CASES = [
+    case_prestaging_paragraph_says_what_is_measured_and_what_is_assumed,
     case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers,
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
