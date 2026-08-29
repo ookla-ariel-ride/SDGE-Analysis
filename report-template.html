@@ -663,10 +663,10 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><b>NBT counterfactual &amp; price map (§13):</b> <!-- TODO: successor-tariff export-rate variants; price-map source file. --></li>
 <li><b>Phantom decomposition (§13):</b> <!-- TODO: the quiet-night selection rule (window, per-night gate, and what the gate does and does not identify), the statistics computed from the kept nights, and the two pricing methods applied to the floor; name the script and the artifact it writes. --></li>
 </ul>
-<p class="small"><b>Data sources:</b> {{DATA_SOURCES_DETAIL}} <!-- TODO: full inventory with platform names and export types. --><br>
-<b>Rate &amp; tariff sources:</b> {{RATE_SOURCES_DETAIL}}<br>
-<b>Environmental sources:</b> {{ENV_SOURCES_DETAIL}}<br>
-This is an independent analysis, not advice from any utility, provider, or manufacturer; verify current rates and prices before acting.<br>
+<p class="small"><b>Data sources:</b> {{DATA_SOURCES_DETAIL}} <!-- TODO: full inventory with platform names and export types. --></p>
+<p class="small"><b>Rate &amp; tariff sources:</b> {{RATE_SOURCES_DETAIL}}</p>
+<p class="small"><b>Environmental sources:</b> {{ENV_SOURCES_DETAIL}}</p>
+<p class="small">This is an independent analysis, not advice from any utility, provider, or manufacturer; verify current rates and prices before acting.</p>
 <!-- PROVENANCE (CLAUDE.md §11): the tokens below resolve from private/household.yaml's
      `provenance` block, so the NAMES are whoever actually ran this. The four-step structure —
      generate -> independent review -> adversarial review -> rework — asserts all four, so keep
@@ -675,7 +675,7 @@ This is an independent analysis, not advice from any utility, provider, or manuf
      substituting names is not enough: replace the whole sentence with one that says no review
      was performed. analysis/generate_report.py does that automatically; a human filling this
      template by hand does it here. -->
-<b>How this report was produced:</b> generated with <b>{{GENERATION_TOOL}}</b>; the data, methodology, and conclusions were then independently reviewed with <b>{{REVIEW_TOOL_1}}</b> and adversarially reviewed with <b>{{REVIEW_TOOL_2}}</b>; the analysis was subsequently re-worked in {{GENERATION_TOOL}} to incorporate the findings of both reviews.</p>
+<p class="small"><b>How this report was produced:</b> generated with <b>{{GENERATION_TOOL}}</b>; the data, methodology, and conclusions were then independently reviewed with <b>{{REVIEW_TOOL_1}}</b> and adversarially reviewed with <b>{{REVIEW_TOOL_2}}</b>; the analysis was subsequently re-worked in {{GENERATION_TOOL}} to incorporate the findings of both reviews.</p>
 </details>
 
 <button class="totop" id="totop" aria-label="Back to top">↑ Top</button>
