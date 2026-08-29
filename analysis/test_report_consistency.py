@@ -775,20 +775,30 @@ def case_export_netting_definition_is_stated_once():
     # (PR #261) found this hole twice in one case -- first in the per-site
     # assertions, then in this count -- so the mask is applied once, for all of
     # them, rather than at each site that happened to be reported.
-    masked = _COMMENT_RE.sub(lambda m: " " * (m.end() - m.start()), HTML)
-    hits = list(_NETTING_DEFINITION_RE.finditer(masked))
-    assert len(hits) == 1, (
-        f"the netted-export-rate definition is stated in full {len(hits)} times in "
-        "index.html (comments do not count: a definition a reader cannot see is not "
-        "stated); it belongs exactly once, in section 8, which derives it. Name "
-        "the rate and link section 8 at the other sites. Found at: "
-        + "; ".join(repr(masked[max(0, m.start() - 70):m.end()]) for m in hits))
+    # Count in READER-VISIBLE text, per section, not in markup. Codex found the
+    # same hole three times in this one case -- a definition hidden in a
+    # comment, a figure and link hidden in a comment, then a definition moved
+    # into a title attribute -- and inline markup inside a restatement made the
+    # regex miss it outright. Visible text closes all four at once: comments,
+    # attributes and tags are gone before anything is counted, so the guard
+    # enforces what a reader sees and nothing else.
+    s8, s9 = HTML.index('<h2 id="s8"'), HTML.index('<h2 id="s9"')
+    in_s8 = _visible_text(HTML[s8:s9])
+    elsewhere_text = _visible_text(HTML[:s8]) + "\n" + _visible_text(HTML[s9:])
 
-    s8, s9 = masked.index('<h2 id="s8"'), masked.index('<h2 id="s9"')
-    assert s8 < hits[0].start() < s9, (
-        "the one full statement of the netted-export-rate definition is not inside "
-        f"section 8 (char {hits[0].start()}, section 8 spans {s8}-{s9}) -- the "
-        "definition's home is the section that derives it")
+    here = _NETTING_DEFINITION_RE.findall(in_s8)
+    assert len(here) == 1, (
+        f"section 8 states the netted-export-rate definition {len(here)} times in "
+        "text a reader can see; it belongs there exactly once, since section 8 is "
+        "what derives it (a definition inside a comment or an attribute is not "
+        "stated)")
+
+    strays = list(_NETTING_DEFINITION_RE.finditer(elsewhere_text))
+    assert not strays, (
+        f"the netted-export-rate definition is restated in full {len(strays)} times "
+        "outside section 8; name the rate and link section 8 instead. Found at: "
+        + "; ".join(repr(elsewhere_text[max(0, m.start() - 70):m.end()])
+                    for m in strays))
 
     # Named passages, not a count: an occurrence count is satisfiable by
     # unrelated text while an intended site quietly loses its figure (Codex
