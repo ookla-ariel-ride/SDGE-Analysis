@@ -36,12 +36,20 @@ MEASUREMENT
   decoded. chars is len(text) of the collapsed visible text and words is the
   number of whitespace-separated tokens. Blocks under MIN_WORDS words are
   dropped: a "4.2 kWh" table-free figure card or a one-word heading is not a
-  paragraph and cannot break the cap.
+  paragraph and cannot break the cap. A caller that needs the short blocks too
+  passes extract(html, min_words=1); prose_rhythm.py does, because a
+  three-word block can still shout a word even though it cannot break the cap.
 
 TIERS
-  --tier splits the page at the line of `<details id="advanced"`: blocks that
-  open on an earlier line are the basic tier, blocks from that line on are the
-  advanced tier. A page with no such element is all basic.
+  --tier splits the page at the line of the page's `<details id="advanced">`:
+  blocks that open on an earlier line are the basic tier, blocks from that line
+  on are the advanced tier. A page with no such element is all basic.
+  advanced_lines() finds that element by PARSING, not by scanning the source:
+  an id in a comment or a script string is not an element, `id="advanced-help"`
+  is not `id="advanced"`, and a page may legitimately have more than one match
+  to report. advanced_line() keeps the single-value contract (the first line, or
+  None); a caller that must not guess which one is meant reads advanced_lines()
+  and decides for itself, the way prose_rhythm.py does.
 
 USAGE
   prose_blocks.py [--max-chars N] [--tier basic|advanced|all] [--list] [PATH]
@@ -53,8 +61,10 @@ USAGE
     and exits 1 when K > 0. When K == 0 the summary reads `PROSE BLOCKS OK ...`.
 
   As a library:
-    extract(html_text) -> list[Block]
+    extract(html_text, min_words=MIN_WORDS) -> list[Block]
     over_limit(blocks, max_chars) -> list[Block]
+    advanced_lines(html_text) -> list[int]      every real advanced-tier marker
+    advanced_line(html_text) -> int | None      the first one, or None
     report(path, max_chars=None, tier="all") -> (blocks, over)
 
 Stdlib only. Runs anywhere, with or without private/ and with or without git.
@@ -62,7 +72,6 @@ Stdlib only. Runs anywhere, with or without private/ and with or without git.
 import argparse
 import dataclasses
 import pathlib
-import re
 import sys
 from html.parser import HTMLParser
 
@@ -94,7 +103,12 @@ P_IMPLICIT_CLOSERS = frozenset({
     "p", "pre", "section", "table", "ul",
 })
 MIN_WORDS = 4
-ADVANCED_MARKER = re.compile(r"<details\s[^>]*\bid\s*=\s*[\"']?advanced\b", re.I)
+# The advanced tier opens at `<details id="advanced">`. The id is matched whole
+# and case-sensitively: `advanced-help` is a different element, and moving the
+# boundary is exactly what a stray near-miss would do to every tier measurement
+# downstream.
+ADVANCED_TAG = "details"
+ADVANCED_ID = "advanced"
 PREVIEW_CHARS = 80
 TIERS = ("basic", "advanced", "all")
 
@@ -133,11 +147,12 @@ class _Frame:
 
 
 class _Extractor(HTMLParser):
-    def __init__(self):
+    def __init__(self, min_words=MIN_WORDS):
         super().__init__(convert_charrefs=True)
         self.stack = []
         self.skip_depth = 0
         self.blocks = []
+        self.min_words = min_words
 
     # -- helpers ------------------------------------------------------------
     def _current_block(self):
@@ -159,7 +174,7 @@ class _Extractor(HTMLParser):
         if frame.is_block:
             text = " ".join("".join(frame.parts).split())
             words = len(text.split())
-            if words >= MIN_WORDS:
+            if words >= self.min_words:
                 self.blocks.append(Block(frame.tag, frame.id, frame.cls, frame.line,
                                          text, len(text), words))
 
@@ -252,9 +267,13 @@ class _Extractor(HTMLParser):
         return self.blocks
 
 
-def extract(html_text):
-    """The prose blocks of a page, in document order, each at least MIN_WORDS words."""
-    parser = _Extractor()
+def extract(html_text, min_words=MIN_WORDS):
+    """The prose blocks of a page, in document order, each at least min_words words.
+
+    min_words defaults to MIN_WORDS, the 4-word floor the 800-character cap is
+    measured under. Pass 1 for every visible block, short ones included.
+    """
+    parser = _Extractor(min_words)
     parser.feed(html_text)
     parser.close()
     return parser.finish()
@@ -265,12 +284,53 @@ def over_limit(blocks, max_chars):
     return [b for b in blocks if b.chars > max_chars]
 
 
+class _AdvancedFinder(HTMLParser):
+    """Every line where a real `<details id="advanced">` element opens.
+
+    A parser, not a source scan, because the source scan this replaced matched
+    text that is not an element at all: `<details id="advanced-help">` written
+    inside an HTML comment moved the tier boundary to the comment's line, which
+    silently re-tiered the whole page. handle_comment is not handle_starttag, and
+    html.parser hands script and style bodies to handle_data rather than parsing
+    them, so a comment and a string in a script are both invisible here.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.lines = []
+
+    def _check(self, tag, attrs):
+        if tag.lower() != ADVANCED_TAG:
+            return
+        for key, value in attrs:
+            if key.lower() == "id" and (value or "").strip() == ADVANCED_ID:
+                self.lines.append(self.getpos()[0])
+                return
+
+    def handle_starttag(self, tag, attrs):
+        self._check(tag, attrs)
+
+    def handle_startendtag(self, tag, attrs):
+        self._check(tag, attrs)
+
+
+def advanced_lines(html_text):
+    """1-based lines of every real `<details id="advanced">`, in document order.
+
+    Empty when the page has none. Two or more entries mean the page states its
+    tier boundary twice; this function reports that instead of picking one, so a
+    caller can refuse rather than measure the wrong half of the page.
+    """
+    parser = _AdvancedFinder()
+    parser.feed(html_text)
+    parser.close()
+    return parser.lines
+
+
 def advanced_line(html_text):
-    """1-based line of `<details id="advanced"`, or None when the page has none."""
-    m = ADVANCED_MARKER.search(html_text)
-    if m is None:
-        return None
-    return html_text.count("\n", 0, m.start()) + 1
+    """1-based line of the first `<details id="advanced">`, or None if there is none."""
+    lines = advanced_lines(html_text)
+    return lines[0] if lines else None
 
 
 def select_tier(blocks, split_line, tier):

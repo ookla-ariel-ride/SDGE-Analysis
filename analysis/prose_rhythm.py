@@ -13,33 +13,63 @@ WHY THIS EXISTS
   build that lets one climb back.
 
 WHAT COUNTS AS RUNNING PROSE
-  prose_blocks.extract() supplies the blocks (it already drops tables, the
-  day-band, the .meta ledger, nav, pills, <code> spans and every other
-  non-prose subtree; see its docstring), and this module then drops the
-  HEADING blocks h1-h4. Headings are excluded because CLAUDE.md section 10
-  makes the heading verdict a piece of the design language, the same way it
-  does for day-band labels, .meta rows and table cells: an em dash there is a
-  typographic separator the template asks for, not a writer reaching for one.
-  So the text measured here is what a reader reads as sentences, and nothing
-  else.
+  prose_blocks.extract(html, min_words=1) supplies the blocks: every visible
+  block of the page, SHORT BLOCKS AND HEADINGS INCLUDED (tables, the day-band,
+  the .meta ledger, nav, pills and <code> spans are already gone; see that
+  module's docstring). Short blocks are in because a three-word card can shout
+  a word or claim candour as loudly as a paragraph, and prose_blocks' 4-word
+  floor exists for the 800-character cap, which a short block cannot break.
+  Headings are in for the same reason, with ONE exception: the em-dash metric
+  skips them, because CLAUDE.md section 10 makes the heading verdict a piece of
+  the design language, the same way it does for day-band labels, .meta rows and
+  table cells, so an em dash there is a typographic separator the template asks
+  for rather than a writer reaching for one. That exemption is about dashes and
+  nothing else: an ALL-CAPS word, an intensifier or an "X, not Y" tail in a
+  heading is the same habit it is in a paragraph, and is counted.
+
+  Two word counts follow from that split, and each metric names its own:
+    prose_words  the non-heading blocks -- the denominator for em dashes
+    words        every measured block   -- the denominator for tails
+
+  Text is NORMALIZED before any pattern runs (see normalize()), so a
+  typographic variant of a character cannot walk past a rule that spells out
+  its plain form.
 
 THE FOUR METRICS
-  1. EM DASHES per 1,000 words. Counts the character "—" plus the " -- "
-     substitute (a double hyphen surrounded by spaces; a hyphenated compound
-     or a range never matches).
-  2. "X, NOT Y" TAILS per 1,000 words. Counts `,\\s+not\\s` and `rather than`.
+  1. EM DASHES per 1,000 prose words, headings excluded. Counts every code
+     point in LONG_DASHES (em dash, horizontal bar, two- and three-em dash and
+     the small/vertical presentation forms, all normalized to "—") plus the
+     " -- " substitute (a double hyphen surrounded by spaces; a hyphenated
+     compound or a range never matches). The EN dash is deliberately not in
+     the set: this report writes ranges with it ("6–9pm", "2024–2025").
+  2. "X, NOT Y" TAILS per 1,000 words. Counts a comma followed by "not",
+     allowing a closing quote between the two (`"measured," not "modeled"`
+     is the same tail as `measured, not modeled`), and `rather than`.
      One is a useful contrast. A page full of them is a tic.
   3. ALL-CAPS EMPHASIS, an absolute count. A run of three or more capitals
-     that is not in ACRONYMS. Two-letter forms are out of scope by
-     construction, so shouting a two-letter word is not caught.
+     that is not in ACRONYMS and is not a package label used as a name (see
+     PACKAGE_LABELS). Two-letter forms are out of scope by construction, so
+     shouting a two-letter word is not caught.
   4. INTENSIFIERS, an absolute count. The words in prose_lint.INTENSIFIERS
      ("genuine", "honest", "robust" and their -ly forms), which claim candour
      instead of showing it. The word list lives in prose_lint.py so the
      fragment gate and this page gate cannot drift apart.
   Carried over from issue #255: no block over LIMITS["max_block_chars"]
   visible characters. That check is prose_blocks.over_limit(), called here,
-  not reimplemented, and it is applied to the tier's blocks INCLUDING
-  headings, exactly as `prose_blocks.py --max-chars 800` applies it.
+  not reimplemented, and it is applied to the tier's blocks INCLUDING headings
+  and EXCLUDING the sub-4-word blocks, exactly the set
+  `prose_blocks.py --max-chars 800` applies it to.
+
+THE TIER BOUNDARY
+  The basic/advanced split is the line of the page's `<details id="advanced">`,
+  found by parsing (prose_blocks.advanced_lines). A tier measurement is only
+  meaningful when that boundary is unambiguous, so measure() raises
+  TierBoundaryError for --tier basic or --tier advanced unless the page has
+  EXACTLY ONE such element. A page with none, or with two, is a defect in the
+  page; reading it as one big basic tier would dilute every rate on it by
+  however many advanced words the reader never counted. --tier all needs no
+  boundary and does not check one, and the CLI's default measures all three
+  tiers, so the ordinary run still checks it.
 
 THE THRESHOLDS AND WHERE THEY COME FROM
   em dashes    <= 3.0 per 1,000 words   acceptance criterion of issue #252
@@ -60,7 +90,10 @@ ADDING AN ACRONYM
   ACRONYMS below is the allowlist for metric 3. When a new acronym enters the
   prose, the CLI names it under `ALL-CAPS emphasis:` with its source line; add
   it to the frozenset in the group it belongs to and rerun. Do not widen the
-  regex.
+  regex, and do not put an ordinary English word in there: LOW, MID and HIGH
+  were in ACRONYMS once, which quietly licensed "the cost is HIGH" anywhere on
+  the page. They live in PACKAGE_LABELS now, on the narrower terms described
+  there.
 
 USAGE
   prose_rhythm.py [--tier basic|advanced|all] [--strict] [PATH]
@@ -68,7 +101,9 @@ USAGE
     Prints one `PROSE RHYTHM ...` summary line per tier measured (the default
     --tier all reports basic, advanced and the whole page), then an indented
     offender list under any tier that breaks a limit. Exit 0 unless --strict,
-    which exits 1 when any measured tier has a violation; a missing file exits 2.
+    which exits 1 when any measured tier has a violation. A missing file, and a
+    page whose advanced-tier boundary is not exactly one element, both exit 2
+    with `PROSE RHYTHM ERROR` -- an error about the input, never a verdict on it.
 
   As a library:
     measure(html_text, tier="all") -> dict of counts, per-1,000-word rates and offenders
@@ -85,8 +120,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import prose_blocks  # noqa: E402
 import prose_lint  # noqa: E402
 
+class TierBoundaryError(ValueError):
+    """The page does not state its basic/advanced boundary exactly once."""
+
+
 # Headings carry the design language's own em dashes (CLAUDE.md section 10's
-# heading verdicts), so they are not running prose for this module's purposes.
+# heading verdicts), so the EM-DASH metric alone skips them. Every other metric
+# reads them: shouting, an intensifier and an "X, not Y" tail are the same
+# habit in a heading as in a paragraph.
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4"})
 
 # The allowlist for metric 3, grown by hand over issues #252 and #253: every
@@ -112,16 +153,53 @@ ACRONYMS = frozenset({
     "GPT", "FAQ", "YTD",
     # clock and calendar
     "DST", "UTC", "PST", "PDT",
-    # all-caps proper names: the repo's own documents and the package tiers
-    "CLAUDE", "TECHNICAL", "GLOSSARY", "README", "LOW", "MID", "HIGH",
+    # all-caps proper names: the repo's own documents
+    "CLAUDE", "TECHNICAL", "GLOSSARY", "README",
 })
+
+# The package tiers of section 7. These are ordinary English words as well as
+# names, so they are NOT in ACRONYMS: a blanket entry there licensed "the cost
+# is HIGH" on any page. A label is exempt only where it is being used as a
+# NAME, which takes two things at once:
+#   - the page must define it, by carrying a package-card heading of the shape
+#     `LABEL — $0 · behavior only` (see PACKAGE_CARD_RE and package_labels());
+#     a page with no such card has no packages to name, so the word is a shout.
+#   - the occurrence must not sit in predicate position. A copula or a degree
+#     word immediately in front of it ("the cost is HIGH", "the credit was
+#     LOW", "very HIGH") makes it an adjective, whatever the page defines.
+# Everything the committed page actually writes -- "§7 LOW", "more than MID",
+# "7.9% of LOW's bill", "MID and HIGH both come in lower than LOW" -- is a name
+# in a noun position and passes; nothing on it is in predicate position.
+# The cost of the second rule, stated plainly: "the recommendation is LOW" is
+# reported even though it means the package. That is the intended trade. The
+# sentence is ambiguous to a reader too, and the page writes it as
+# "Recommendation: LOW today", which is not.
+PACKAGE_LABELS = frozenset({"LOW", "MID", "HIGH"})
+PACKAGE_CARD_RE = re.compile(r"^([A-Z]{3,})\s*—\s*\S")
+EMPHASIS_LEAD_RE = re.compile(
+    r"\b(?:is|are|was|were|be|been|being|am|seems?|seemed|stays?|stayed|"
+    r"remains?|remained|looks?|looked|runs?|ran|gets?|got|feels?|felt|"
+    r"too|very|so|quite|really|how|extremely|unusually)\s+$", re.I)
+
+# Visually equivalent long dashes, all folded to "—" by normalize() so one
+# spelling of the rule catches every spelling of the character. The EN dash
+# (U+2013) is deliberately absent: this report writes ranges with it.
+LONG_DASHES = "—―⸺⸻︱﹘"
+# Closing quotes a writer can slip between the comma and "not", straight or
+# curly, single or double, plus the guillemets.
+CLOSING_QUOTES = "\"'‘’“”»›"
+_NORMALIZE = str.maketrans({c: "—" for c in LONG_DASHES})
 
 # 1. An em dash, or the " -- " substitute. A hyphenated compound ("on-peak")
 #    and a numeric range ("2024-2025") never match: the substitute needs
-#    whitespace on both sides.
+#    whitespace on both sides. Every other long dash is already an em dash by
+#    the time this runs.
 EM_DASH_RE = re.compile(r"—|(?<=\s)--(?=\s)")
-# 2. The "X, not Y" tail and its "rather than" twin.
-TAIL_RE = re.compile(r",\s+not\s|\brather than\b", re.I)
+# 2. The "X, not Y" tail and its "rather than" twin. A closing quote may stand
+#    between the comma and the "not" (`"measured," not "modeled"`); it is the
+#    same tail, and reading it as a different one is how the rule was evaded.
+TAIL_RE = re.compile(
+    r",(?:\s+|\s*[" + re.escape(CLOSING_QUOTES) + r"]+\s*)not\s|\brather than\b", re.I)
 # 3. A run of three or more capitals standing alone. The lookbehind and
 #    lookahead keep the run from being a slice of a longer token: EV-TOU-5,
 #    kWh/HDD and SDG&E are single words, not emphasis.
@@ -156,29 +234,101 @@ def _snippet(text, start, end):
     return out
 
 
-def _sites(blocks, pattern):
-    """(count, [f"L<line> <snippet>"]) for every match of pattern across blocks."""
+def normalize(text):
+    """Block text with every long dash folded to "—", ready to be measured.
+
+    A rule written against one code point is evaded by the next one that looks
+    identical on the page, so the variants are folded away before any pattern
+    runs. The translation is one character for one character, which keeps every
+    match offset (and so every reported snippet) aligned with the visible text.
+    """
+    return text.translate(_NORMALIZE)
+
+
+def _measurable(blocks):
+    """[(block, normalized text)] -- what every metric below actually reads."""
+    return [(b, normalize(b.text)) for b in blocks]
+
+
+def package_labels(blocks):
+    """The PACKAGE_LABELS this page defines, read off its package-card headings.
+
+    A card heading reads `LOW — $0 · behavior only`: the label, an em dash, then
+    the price and the note. A page carrying that heading has a package called
+    LOW and its prose may name it; a page without one does not, and the same
+    word there is emphasis. The blocks passed in are the WHOLE page's, not one
+    tier's, because the advanced tier's methodology names packages the basic
+    tier's section 7 defines.
+    """
+    out = set()
+    for b, text in _measurable(blocks):
+        if b.tag not in HEADING_TAGS:
+            continue
+        m = PACKAGE_CARD_RE.match(text)
+        if m is not None and m.group(1) in PACKAGE_LABELS:
+            out.add(m.group(1))
+    return frozenset(out)
+
+
+def _sites(items, pattern):
+    """(count, [f"L<line> <snippet>"]) for every match of pattern across items."""
     count = 0
     sites = []
-    for b in blocks:
-        for m in pattern.finditer(b.text):
+    for b, text in items:
+        for m in pattern.finditer(text):
             count += 1
-            sites.append(f"L{b.line} {_snippet(b.text, m.start(), m.end())}")
+            sites.append(f"L{b.line} {_snippet(text, m.start(), m.end())}")
     return count, sites
 
 
-def _words(blocks, pattern, keep=None):
-    """(matched words, [f"L<line> <word>"]) for matches kept by `keep(word)`."""
+def _words(items, pattern, keep=None):
+    """(matched words, [f"L<line> <word>"]) for matches kept by `keep(word, text, start)`."""
     words = []
     sites = []
-    for b in blocks:
-        for m in pattern.finditer(b.text):
+    for b, text in items:
+        for m in pattern.finditer(text):
             word = m.group(1) if m.groups() else m.group(0)
-            if keep is not None and not keep(word):
+            if keep is not None and not keep(word, text, m.start()):
                 continue
             words.append(word)
             sites.append(f"L{b.line} {word}")
     return words, sites
+
+
+def _caps_keeper(defined):
+    """A `keep` for the ALL-CAPS metric: True when this run of capitals is a shout.
+
+    `defined` is the set of package labels the page earns from its own cards.
+    """
+    def keep(word, text, start):
+        if word in ACRONYMS:
+            return False
+        if (word in PACKAGE_LABELS and word in defined
+                and EMPHASIS_LEAD_RE.search(text[:start]) is None):
+            return False
+        return True
+    return keep
+
+
+def tier_split(html_text, tier):
+    """The advanced-tier boundary line for `tier`, refusing an ambiguous page.
+
+    Raises TierBoundaryError for a per-tier measurement of a page that does not
+    carry exactly one `<details id="advanced">`. Reading such a page as all
+    basic is what the previous source-scan did after a decoy in a comment moved
+    the boundary to line 1, and every rate it printed was measured over the
+    wrong words. The "all" tier spans the whole page either way, so it neither
+    needs the boundary nor checks it.
+    """
+    if tier == "all":
+        return None
+    lines = prose_blocks.advanced_lines(html_text)
+    if len(lines) != 1:
+        raise TierBoundaryError(
+            f"tier={tier} needs exactly one <details id=\"advanced\"> to split the page; "
+            f"this one has {len(lines)}"
+            + (f" (lines {', '.join(str(n) for n in lines)})" if lines else ""))
+    return lines[0]
 
 
 def per_1k(count, words):
@@ -189,35 +339,44 @@ def per_1k(count, words):
 def measure(html_text, tier="all", max_block_chars=None):
     """Every rhythm figure for one tier of a page, as a dict.
 
-    Keys: tier, blocks, words, em_dashes, em_per_1k, tails, tails_per_1k,
-    caps (the offending words), intensifiers (the offending words, as written),
-    long_blocks (prose_blocks.Block objects over max_block_chars, which
-    defaults to LIMITS["max_block_chars"]), and one `*_sites` list per metric
-    giving `L<line> <what>` for each hit.
+    Keys: tier, blocks, words (every measured block), prose_words (the
+    non-heading blocks, the em-dash denominator), em_dashes, em_per_1k, tails,
+    tails_per_1k, caps (the offending words), intensifiers (the offending
+    words, as written), long_blocks (prose_blocks.Block objects over
+    max_block_chars, which defaults to LIMITS["max_block_chars"]), and one
+    `*_sites` list per metric giving `L<line> <what>` for each hit.
+
+    Raises TierBoundaryError when tier is "basic" or "advanced" and the page
+    does not carry exactly one `<details id="advanced">`.
     """
     if max_block_chars is None:
         max_block_chars = LIMITS["max_block_chars"]
     if tier not in TIERS:
         raise ValueError(f"tier must be one of {TIERS}, not {tier!r}")
-    all_blocks = prose_blocks.extract(html_text)
-    tier_blocks = prose_blocks.select_tier(all_blocks,
-                                           prose_blocks.advanced_line(html_text), tier)
-    prose = [b for b in tier_blocks if b.tag not in HEADING_TAGS]
-    words = sum(b.words for b in prose)
+    # min_words=1: every visible block, short ones included. The 4-word floor
+    # belongs to the 800-character cap, and is reapplied to that check alone.
+    all_blocks = prose_blocks.extract(html_text, min_words=1)
+    tier_blocks = prose_blocks.select_tier(all_blocks, tier_split(html_text, tier), tier)
+    measured = _measurable(tier_blocks)
+    prose = [(b, t) for b, t in measured if b.tag not in HEADING_TAGS]
+    words = sum(b.words for b in tier_blocks)
+    prose_words = sum(b.words for b, _ in prose)
     em, em_sites = _sites(prose, EM_DASH_RE)
-    tails, tail_sites = _sites(prose, TAIL_RE)
-    caps, caps_sites = _words(prose, CAPS_RE, keep=lambda w: w not in ACRONYMS)
-    intens, intens_sites = _words(prose, INTENSIFIER_RE)
+    tails, tail_sites = _sites(measured, TAIL_RE)
+    caps, caps_sites = _words(measured, CAPS_RE, keep=_caps_keeper(package_labels(all_blocks)))
+    intens, intens_sites = _words(measured, INTENSIFIER_RE)
     # The 800-character cap is prose_blocks' own gate, applied to the same
-    # blocks `prose_blocks.py --max-chars 800 --tier T` would apply it to,
-    # headings included.
-    long_blocks = prose_blocks.over_limit(tier_blocks, max_block_chars)
+    # blocks `prose_blocks.py --max-chars 800 --tier T` would apply it to:
+    # headings included, blocks under prose_blocks.MIN_WORDS excluded.
+    long_blocks = prose_blocks.over_limit(
+        [b for b in tier_blocks if b.words >= prose_blocks.MIN_WORDS], max_block_chars)
     return {
         "tier": tier,
-        "blocks": len(prose),
+        "blocks": len(measured),
         "words": words,
+        "prose_words": prose_words,
         "em_dashes": em,
-        "em_per_1k": per_1k(em, words),
+        "em_per_1k": per_1k(em, prose_words),
         "em_sites": em_sites,
         "tails": tails,
         "tails_per_1k": per_1k(tails, words),
@@ -242,7 +401,8 @@ def check(html_text, tier="all", limits=None):
     out = []
     if m["em_per_1k"] > lim["em_per_1k"]:
         out.append(f"{tier} tier: em dashes {m['em_per_1k']:.1f} per 1,000 words "
-                   f"(limit {lim['em_per_1k']:.1f}; {m['em_dashes']} in {m['words']} words)")
+                   f"(limit {lim['em_per_1k']:.1f}; {m['em_dashes']} in {m['prose_words']} "
+                   f"non-heading words)")
     if m["tails_per_1k"] > lim["tails_per_1k"]:
         out.append(f"{tier} tier: 'X, not Y' tails {m['tails_per_1k']:.1f} per 1,000 words "
                    f"(limit {lim['tails_per_1k']:.1f}; {m['tails']} in {m['words']} words)")
@@ -289,6 +449,7 @@ def summary_line(m, limits=None):
     if limits:
         lim.update(limits)
     return (f"PROSE RHYTHM tier={m['tier']} words={m['words']} "
+            f"prose-words={m['prose_words']} "
             f"em={m['em_dashes']} ({m['em_per_1k']:.1f}/1k, max {lim['em_per_1k']:.1f}) "
             f"tails={m['tails']} ({m['tails_per_1k']:.1f}/1k, max {lim['tails_per_1k']:.1f}) "
             f"caps={len(m['caps'])} intensifiers={len(m['intensifiers'])} "
@@ -311,7 +472,14 @@ def main(argv=None):
     tiers = TIERS if args.tier == "all" else (args.tier,)
     violations = []
     for tier in tiers:
-        m = measure(html_text, tier)
+        try:
+            m = measure(html_text, tier)
+        except TierBoundaryError as e:
+            # A page that cannot be split is an error about the input, not a
+            # verdict on its prose: exit 2, the same class as a missing file,
+            # so a broken page can never be mistaken for a clean one.
+            print(f"PROSE RHYTHM ERROR: {path}: {e}")
+            return 2
         print(summary_line(m))
         found = check(html_text, tier)
         for v in found:

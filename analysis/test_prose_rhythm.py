@@ -175,13 +175,13 @@ def case_every_acronym_on_the_committed_page_is_allowlisted():
     html = PAGE.read_text(encoding="utf-8")
     m = prose_rhythm.measure(html)
     assert m["caps"] == [], m["caps"]
-    text = "\n".join(b.text for b in prose_blocks.extract(html)
-                     if b.tag not in prose_rhythm.HEADING_TAGS)
+    text = "\n".join(b.text for b in prose_blocks.extract(html, min_words=1))
     used = {w for w in prose_rhythm.CAPS_RE.findall(text)}
-    assert used <= prose_rhythm.ACRONYMS, sorted(used - prose_rhythm.ACRONYMS)
+    allowed = prose_rhythm.ACRONYMS | prose_rhythm.PACKAGE_LABELS
+    assert used <= allowed, sorted(used - allowed)
     assert len(used) >= 50, sorted(used)
-    return (f"the page's running prose uses {len(used)} distinct all-caps tokens and every one "
-            f"is in ACRONYMS")
+    return (f"every measured block of the page, headings and short blocks included, uses "
+            f"{len(used)} distinct all-caps tokens, each an acronym or a package label")
 
 
 # --- 4. intensifiers --------------------------------------------------------
@@ -207,18 +207,6 @@ def case_prose_lint_flags_the_same_intensifiers_on_a_fragment():
     assert any("intensifier" in x for x in v), v
     assert prose_lint.lint("The verdict is that the array underperforms.") == []
     return "prose_lint gates the same word list on a generated fragment, so the two cannot drift"
-
-
-# --- headings ---------------------------------------------------------------
-@case
-def case_headings_are_excluded_from_the_measured_text():
-    dashes = "alpha — beta — gamma — delta — epsilon — zeta"
-    in_heading = f"<h2>{dashes}</h2>\n<h3>{dashes}</h3>\n" + _filler(1000)
-    assert prose_rhythm.measure(in_heading)["em_dashes"] == 0, prose_rhythm.measure(in_heading)
-    in_prose = f"<p>{dashes}</p>\n<p>{dashes}</p>\n" + _filler(1000)
-    assert prose_rhythm.measure(in_prose)["em_dashes"] == 10, prose_rhythm.measure(in_prose)
-    assert prose_rhythm.measure(in_heading)["words"] == 1000
-    return "the same 5 em dashes count 0 in an h2/h3 heading verdict and 10 in two paragraphs"
 
 
 # --- tiers ------------------------------------------------------------------
@@ -307,10 +295,10 @@ def case_seeded_x_not_y_tails_fail_the_committed_page():
             "and bills demand, not energy</p>")
     seeded = _seed_into_basic(html, "\n".join([line] * 5))
     m = prose_rhythm.measure(seeded, "basic")
-    assert m["tails"] == 16 and m["tails_per_1k"] > 1.5, m
+    assert m["tails"] == 17 and m["tails_per_1k"] > 1.5, m
     v = prose_rhythm.check(seeded, "basic")
     assert _kinds(v) == {"'X, not Y' tails"}, v
-    return ("seeded 15 extra 'X, not Y' tails into the basic tier (1 -> 16, 0.1 -> "
+    return ("seeded 15 extra 'X, not Y' tails into the basic tier (2 -> 17, 0.2 -> "
             f"{m['tails_per_1k']:.1f}/1k): the tail rule fires and nothing else does")
 
 
@@ -352,6 +340,200 @@ def case_seeded_over_cap_paragraph_fails_the_committed_page():
             "cap fires alone")
 
 
+# --- scope: short blocks and headings are measured too (issue #256 review) ---
+@case
+def case_a_block_under_the_word_floor_is_still_measured():
+    short = "<p>This is ROBUST</p>"
+    assert prose_blocks.extract(short) == [], "the 4-word floor must still drop it for #255"
+    html = short + "\n" + _filler(1000)
+    m = prose_rhythm.measure(html)
+    assert m["caps"] == ["ROBUST"], m["caps"]
+    assert [w.lower() for w in m["intensifiers"]] == ["robust"], m["intensifiers"]
+    assert _kinds(prose_rhythm.check(html)) == {"ALL-CAPS emphasis", "intensifier"}
+    tail = "<p>measured, not modeled</p>\n" + _filler(1000)
+    assert prose_rhythm.measure(tail)["tails"] == 1, prose_rhythm.measure(tail)
+    return ("a 3-word block is below prose_blocks' 4-word floor yet still measured here: "
+            "'This is ROBUST' reports one ALL-CAPS word and one intensifier")
+
+
+@case
+def case_a_heading_is_measured_for_everything_except_em_dashes():
+    head = "<h2>A heading — with NEVER and honest, not modeled</h2>"
+    # 500 filler words, so the single tail reads 1.9/1k and trips its rate too.
+    html = head + "\n" + _filler(500)
+    m = prose_rhythm.measure(html)
+    assert m["em_dashes"] == 0, m["em_sites"]
+    assert m["caps"] == ["NEVER"], m["caps"]
+    assert [w.lower() for w in m["intensifiers"]] == ["honest"], m["intensifiers"]
+    assert m["tails"] == 1, m["tail_sites"]
+    assert _kinds(prose_rhythm.check(html)) == {
+        "ALL-CAPS emphasis", "intensifier", "'X, not Y' tails"}
+    return ("a heading's em dash stays exempt as design language, while its ALL-CAPS word, "
+            "intensifier and 'X, not Y' tail are all reported")
+
+
+@case
+def case_heading_words_count_toward_the_tail_rate_but_not_the_em_dash_rate():
+    dashes = "alpha — beta — gamma — delta — epsilon — zeta"
+    in_heading = f"<h2>{dashes}</h2>\n<h3>{dashes}</h3>\n" + _filler(1000)
+    m = prose_rhythm.measure(in_heading)
+    assert m["em_dashes"] == 0, m
+    assert m["words"] == 1022 and m["prose_words"] == 1000, m
+    in_prose = f"<p>{dashes}</p>\n<p>{dashes}</p>\n" + _filler(1000)
+    assert prose_rhythm.measure(in_prose)["em_dashes"] == 10, prose_rhythm.measure(in_prose)
+    return ("the same 5 em dashes count 0 in an h2/h3 verdict and 10 in two paragraphs; the "
+            "22 heading words join `words` (the tail denominator) and not `prose_words`")
+
+
+# --- the package labels LOW/MID/HIGH ----------------------------------------
+_CARDS = ("<h3>LOW — $0 · behavior only</h3>\n"
+          "<h3>MID — ~$14,500 · + 1 Tesla Powerwall 3</h3>\n"
+          "<h3>HIGH — ~$20,400 · + PW3 with Expansion</h3>\n")
+
+
+@case
+def case_a_package_label_is_emphasis_on_a_page_with_no_package_cards():
+    for word in sorted(prose_rhythm.PACKAGE_LABELS):
+        html = f"<p>the winter bill under {word} is what the table below reports</p>\n" + _filler(990)
+        m = prose_rhythm.measure(html)
+        assert m["caps"] == [word], (word, m["caps"])
+    return (f"{', '.join(sorted(prose_rhythm.PACKAGE_LABELS))} are shouted words on a page that "
+            "never defines them as package cards")
+
+
+@case
+def case_a_package_card_earns_the_exemption_for_its_own_label_only():
+    html = (_CARDS + "<p>it saves more than MID in the integrated post-behavior run</p>\n"
+            "<p>the fixed charge is 7.9% of LOW's bill and 20.0% of MID's here</p>\n"
+            + _filler(980))
+    assert prose_rhythm.measure(html)["caps"] == [], prose_rhythm.measure(html)["caps"]
+    one_card = ("<h3>LOW — $0 · behavior only</h3>\n"
+                "<p>it saves more than MID in the integrated post-behavior run</p>\n"
+                + _filler(990))
+    assert prose_rhythm.measure(one_card)["caps"] == ["MID"], prose_rhythm.measure(one_card)
+    return ("a `LABEL — price · note` heading defines that label as a package name, so prose "
+            "may name it; a label with no card of its own is still emphasis")
+
+
+@case
+def case_a_package_label_in_predicate_position_is_still_emphasis():
+    html = _CARDS + "<p>the cost is HIGH and the winter export credit is LOW</p>\n" + _filler(980)
+    m = prose_rhythm.measure(html)
+    assert sorted(m["caps"]) == ["HIGH", "LOW"], m["caps"]
+    assert _kinds(prose_rhythm.check(html)) == {"ALL-CAPS emphasis"}
+    ok = (_CARDS + "<p>Recommendation: LOW today, MID if you value backup power</p>\n"
+          + _filler(980))
+    assert prose_rhythm.measure(ok)["caps"] == [], prose_rhythm.measure(ok)["caps"]
+    return ("'the cost is HIGH' and 'the credit is LOW' are reported even where the cards "
+            "exist, because a copula in front of the label makes it an adjective; the page's "
+            "own 'Recommendation: LOW today, MID if...' is a name and passes")
+
+
+@case
+def case_the_committed_page_names_its_packages_without_shouting():
+    html = PAGE.read_text(encoding="utf-8")
+    blocks = prose_blocks.extract(html, min_words=1)
+    assert prose_rhythm.package_labels(blocks) == prose_rhythm.PACKAGE_LABELS
+    hits = sum(len(prose_rhythm.CAPS_RE.findall(b.text)) for b in blocks
+               if prose_rhythm.CAPS_RE.findall(b.text))
+    labels = sum(1 for b in blocks for w in prose_rhythm.CAPS_RE.findall(b.text)
+                 if w in prose_rhythm.PACKAGE_LABELS)
+    assert prose_rhythm.measure(html)["caps"] == [], prose_rhythm.measure(html)["caps"]
+    assert labels >= 15, labels
+    return (f"the committed page defines all three package cards and names them {labels} times "
+            f"in prose (of {hits} all-caps tokens), none of them in predicate position")
+
+
+# --- typographic variants ----------------------------------------------------
+@case
+def case_every_long_dash_form_counts_and_the_en_dash_does_not():
+    for ch in sorted(prose_rhythm.LONG_DASHES):
+        html = f"<p>alpha {ch} beta gamma delta epsilon zeta eta theta</p>\n" + _filler(990)
+        m = prose_rhythm.measure(html)
+        assert m["em_dashes"] == 1, (hex(ord(ch)), m["em_dashes"])
+    entity = "<p>alpha &mdash; beta and gamma &#8213; delta epsilon zeta eta</p>\n" + _filler(990)
+    assert prose_rhythm.measure(entity)["em_dashes"] == 2, prose_rhythm.measure(entity)
+    ranges = "<p>the 6–9pm window and the 2024–2025 season and the 3–4 kW draw</p>\n" + _filler(990)
+    assert prose_rhythm.measure(ranges)["em_dashes"] == 0, prose_rhythm.measure(ranges)
+    return (f"all {len(prose_rhythm.LONG_DASHES)} long-dash code points count, including the "
+            "entity spellings &mdash; and &#8213;; the en dash used for ranges does not")
+
+
+@case
+def case_a_closing_quote_between_the_comma_and_not_still_counts():
+    variants = ['"measured," not "modeled"',
+                "&ldquo;measured,&rdquo; not &ldquo;modeled&rdquo;",
+                "'measured,' not 'modeled'",
+                "&lsquo;measured,&rsquo; not &lsquo;modeled&rsquo;"]
+    for v in variants:
+        html = f"<p>the label reads {v} in every card on this page</p>\n" + _filler(990)
+        m = prose_rhythm.measure(html)
+        assert m["tails"] == 1, (v, m["tails"], m["tail_sites"])
+    return ("a straight or curly closing quote between the comma and 'not' no longer hides the "
+            f"tail: all {len(variants)} spellings of '\"measured,\" not \"modeled\"' count")
+
+
+# --- the advanced-tier boundary ---------------------------------------------
+def _tier_page(marker):
+    """1,000 basic words, `marker`, then 1,000 advanced words."""
+    return _filler(1000) + "\n" + marker + "\n" + _filler(1000) + "\n</details>"
+
+
+@case
+def case_a_commented_out_marker_does_not_move_the_tier_boundary():
+    decoy = ("<!-- the advanced tier lives below; see <details id=\"advanced-help\"> -->\n"
+             + _tier_page("<details id=\"advanced\" class=\"advanced\">"))
+    assert prose_blocks.advanced_lines(decoy) == [prose_blocks.advanced_line(decoy)]
+    assert prose_rhythm.measure(decoy, "basic")["words"] == 1000, \
+        prose_rhythm.measure(decoy, "basic")["words"]
+    assert prose_rhythm.measure(decoy, "advanced")["words"] == 1000
+    return ("a `<details id=\"advanced-help\">` inside an HTML comment no longer becomes the "
+            "tier boundary: the split stays at the real element, 1,000 words into the page")
+
+
+@case
+def case_an_id_that_only_starts_with_advanced_is_not_the_boundary():
+    only_prefix = _tier_page("<details id=\"advanced-help\" class=\"advanced\">")
+    assert prose_blocks.advanced_lines(only_prefix) == [], prose_blocks.advanced_lines(only_prefix)
+    try:
+        prose_rhythm.measure(only_prefix, "basic")
+    except prose_rhythm.TierBoundaryError as e:
+        assert "0" in str(e), e
+    else:
+        raise AssertionError("a page with no real marker must fail loudly")
+    return "id=\"advanced-help\" is not id=\"advanced\": the page reads as having no boundary"
+
+
+@case
+def case_zero_or_two_markers_fail_loudly_instead_of_reading_as_all_basic():
+    none_at_all = _filler(1000)
+    two = _tier_page("<details id=\"advanced\">") + "\n<details id=\"advanced\">\n" + _filler(50)
+    assert prose_blocks.advanced_lines(none_at_all) == []
+    assert len(prose_blocks.advanced_lines(two)) == 2, prose_blocks.advanced_lines(two)
+    for html, count in ((none_at_all, "0"), (two, "2")):
+        for tier in ("basic", "advanced"):
+            try:
+                prose_rhythm.measure(html, tier)
+            except prose_rhythm.TierBoundaryError as e:
+                assert count in str(e), (count, str(e))
+            else:
+                raise AssertionError(f"{count} markers must raise for tier={tier}")
+    return ("a page with 0 or 2 `<details id=\"advanced\">` elements raises TierBoundaryError "
+            "for either tier rather than silently reading as one big basic tier")
+
+
+@case
+def case_cli_reports_a_broken_tier_boundary_and_exits_2():
+    with tempfile.TemporaryDirectory() as td:
+        page = pathlib.Path(td) / "page.html"
+        page.write_text(_filler(1000), encoding="utf-8")
+        r = _run("--strict", str(page))
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr)
+    assert r.stdout.startswith("PROSE RHYTHM ERROR:"), r.stdout
+    assert "advanced" in r.stdout, r.stdout
+    return "the CLI turns a broken tier boundary into `PROSE RHYTHM ERROR` and exit 2"
+
+
 # --- the CLI ----------------------------------------------------------------
 @case
 def case_cli_on_the_committed_page_reports_three_tiers_and_exits_0():
@@ -370,7 +552,7 @@ def case_cli_on_the_committed_page_reports_three_tiers_and_exits_0():
 @case
 def case_cli_strict_exits_1_and_names_the_offenders():
     page_text = ("<p>the battery NEVER exports and the honest verdict says so</p>\n"
-                 + _filler(1000))
+                 + _filler(1000) + "\n<details id=\"advanced\">\n" + _filler(20) + "\n</details>")
     with tempfile.TemporaryDirectory() as td:
         page = pathlib.Path(td) / "page.html"
         page.write_text(page_text, encoding="utf-8")

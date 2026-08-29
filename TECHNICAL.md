@@ -4628,6 +4628,8 @@ length, and reports which blocks exceed a cap.
   new block, so a `div.note` holding three `p`s yields the three `p`s, and a `div.note`
   holding bare text yields the div. Inline tags (`b`, `span`, `a`) do not split a block.
   Blocks under 4 words are ignored, so a figure card or a short heading cannot trip the cap.
+  That floor is `extract()`'s `min_words` argument, and it belongs to the cap rather than to
+  the extractor: §5.3 passes `min_words=1` because a three-word card can still shout a word.
 - **What is excluded.** The whole subtree of `script`, `style`, `nav`, `table`, `svg`,
   `canvas`, `button`, `select`, `option`, `label`, `pre` and `code`, and of any element
   whose class list contains `day-band`, `dayband`, `band`, `meta`, `nav`, `skip`, `toc`,
@@ -4640,9 +4642,15 @@ length, and reports which blocks exceed a cap.
 - **Measurement.** `<br>` becomes a space, entities are decoded, whitespace collapses to
   single spaces; `chars` is the length of that text and `words` its whitespace-separated
   token count. Each block records the 1-based source line of its opening tag.
-- **Tiers.** `--tier basic|advanced` splits the page at the line of
-  `<details id="advanced"`: blocks that open before it are basic, blocks from it on are
-  advanced. A page with no such element is all basic.
+- **Tiers.** `--tier basic|advanced` splits the page at the line of its
+  `<details id="advanced">`: blocks that open before it are basic, blocks from it on are
+  advanced. A page with no such element is all basic. `advanced_lines()` finds that element
+  by **parsing**, not by scanning the source, and returns every match: an id written inside
+  an HTML comment or a script string is not an element, and `id="advanced-help"` is not
+  `id="advanced"`. The source scan this replaced matched both, so a comment mentioning
+  `advanced-help` moved the boundary to the comment's own line and re-tiered the whole page.
+  `advanced_line()` keeps the single-value contract (first match, or `None`); §5.3 reads the
+  list instead, because it must refuse rather than guess.
 - **The CLI.** `prose_blocks.py [--max-chars N] [--tier T] [--list] [PATH]` (PATH defaults
   to `<repo root>/index.html`). Without `--max-chars` it prints
   `PROSE BLOCKS <N> blocks, <W> words` and exits 0. With `--max-chars N` it prints
@@ -4662,32 +4670,70 @@ machine prose accumulated across roughly thirty commits with every suite green: 
 "genuine", "honest" and "robust". Issues #251–#255 removed them. `prose_rhythm.py` is the
 gate that keeps them gone.
 
-- **What it measures.** The blocks come from `prose_blocks.extract()`, so the day-band,
-  the `.meta` ledger, nav, pills, tables and `<code>` spans are already out. This module
-  then drops the `h1`–`h4` heading blocks: CLAUDE.md §10 makes a heading verdict part of the
-  design language, the same as a day-band label or a table cell, so an em dash there is a
-  typographic separator the template asks for rather than a writer reaching for one.
-- **The four metrics, per tier.** (1) Em dashes per 1,000 words — the character `—` plus the
-  ` -- ` substitute, which needs whitespace on both sides so a hyphenated compound or a
-  numeric range never counts. (2) `"X, not Y"` tails per 1,000 words — `,\s+not\s` and
+- **What it measures.** The blocks come from `prose_blocks.extract(html, min_words=1)`, so
+  the day-band, the `.meta` ledger, nav, pills, tables and `<code>` spans are already out
+  and everything else is in — **short blocks and headings included**. Short blocks are in
+  because §5.2's 4-word floor exists for the 800-character cap, which a three-word card
+  cannot break, while a three-word card can shout a word as loudly as a paragraph.
+  Headings are in for the same reason, with one exception: the **em-dash metric alone**
+  skips them, because CLAUDE.md §10 makes a heading verdict part of the design language,
+  the same as a day-band label or a table cell, so an em dash there is a typographic
+  separator the template asks for rather than a writer reaching for one. That exemption is
+  about dashes; an ALL-CAPS word, an intensifier or an `"X, not Y"` tail in a heading is the
+  same habit it is in a paragraph and is counted. Two denominators follow: `prose_words`
+  (the non-heading blocks) for em dashes, `words` (every measured block) for tails, and each
+  metric's message names the one it used. Every block's text is normalized before any
+  pattern runs, so a typographic variant cannot walk past a rule written for the plain form.
+- **The four metrics, per tier.** (1) Em dashes per 1,000 non-heading words — every code
+  point in `LONG_DASHES` (`—` U+2014, `―` U+2015, the two- and three-em dashes U+2E3A/U+2E3B
+  and the small and vertical presentation forms U+FE58/U+FE31, all folded to `—` by
+  `normalize()`) plus the ` -- ` substitute, which needs whitespace on both sides so a
+  hyphenated compound or a numeric range never counts. The en dash U+2013 is deliberately
+  outside the set: this report writes ranges with it (`6–9pm`, `2024–2025`). (2)
+  `"X, not Y"` tails per 1,000 words — a comma followed by `not`, allowing a straight or
+  curly closing quote between the two (`"measured," not "modeled"` is the same tail), and
   `rather than`. (3) ALL-CAPS emphasis, an absolute count: a run of three or more capitals
   that is not in the module's `ACRONYMS` allowlist, with the lookaround keeping `TOU` inside
   `EV-TOU-5` and `SDG` inside `SDG&E` from counting. (4) Intensifiers, an absolute count,
   over `prose_lint.INTENSIFIERS` — the one canonical word list, imported rather than copied,
   so the fragment gate and the page gate cannot drift. Carried over from §5.2: no block over
-  800 characters, checked by calling `prose_blocks.over_limit()`.
+  800 characters, checked by calling `prose_blocks.over_limit()` on the tier's blocks with
+  the 4-word floor reapplied, which is exactly the set `prose_blocks.py --max-chars 800`
+  measures.
+- **The package labels `LOW`, `MID`, `HIGH`.** These are §7's package names and ordinary
+  English words at once. They used to sit in `ACRONYMS`, which licensed "the cost is HIGH"
+  anywhere on the page, so they live in `PACKAGE_LABELS` now and are exempt only where they
+  are being used as a *name*, which takes two things together. The page must **define** the
+  label, by carrying a package-card heading of the shape `LOW — $0 · behavior only`
+  (`package_labels()` reads them off the headings of the whole page, not one tier, because
+  §14's methodology names packages §7 defines); and the occurrence must not sit in
+  **predicate position**, with a copula or a degree word in front of it. Both hold for every
+  one of the 19 sites on the committed page — `§7 LOW`, `more than MID`, `7.9% of LOW's
+  bill`, `MID and HIGH both come in lower than LOW`, `Recommendation: LOW today` — and
+  neither holds for `the cost is HIGH`, which is reported. The cost of the second rule is
+  stated rather than hidden: `the recommendation is LOW` is reported even when it means the
+  package, which is the intended trade, since that sentence is ambiguous to a reader too.
+- **The tier boundary.** `measure()` calls `prose_blocks.advanced_lines()` and raises
+  `TierBoundaryError` for a `basic` or `advanced` measurement unless the page carries
+  **exactly one** `<details id="advanced">`. A page with none, or with two, is a defect in
+  the page, and reading it as one big basic tier would dilute every rate on it by however
+  many advanced words the reader never counted — which is what the old source-scan did once
+  a decoy id in a comment moved the boundary to line 1. `--tier all` spans the whole page
+  either way, so it neither needs the boundary nor checks one; the CLI's default measures
+  all three tiers, so an ordinary run always checks it.
 - **The thresholds and their provenance.** Em dashes ≤ 3.0 per 1,000 words and ALL-CAPS = 0
   are the acceptance criteria of issue #252; `"X, not Y"` ≤ 1.5 per 1,000 words and
   intensifiers = 0 are those of issue #253; the 800-character block cap is CLAUDE.md §10 by
-  way of issue #255. They are ceilings, not targets, and the committed page sits far under
-  every one: the basic tier reads 0.1 em dashes and 0.1 tails per 1,000 words over 8,049
-  words, the advanced tier 0.1 and 0.9 over 15,126 words, and both carry zero ALL-CAPS
-  words, zero intensifiers and zero over-cap blocks. A tier would need roughly two dozen new
+  way of issue #255. They are ceilings, not targets, and the committed page sits under every
+  one: the basic tier reads 0.1 em dashes per 1,000 non-heading words and 0.2 tails per
+  1,000 words over 8,259 words, the advanced tier 0.1 and 1.1 over 15,443 words, and both
+  carry zero ALL-CAPS words, zero intensifiers and zero over-cap blocks. A tier would need roughly two dozen new
   em dashes before the first threshold bit — which is the point, since a rate that suddenly
   sits near its ceiling is itself the signal.
 - **Adding an acronym.** When new prose introduces one, the CLI names it under
   `ALL-CAPS emphasis:` with its source line. Add it to the `ACRONYMS` frozenset in the group
-  it belongs to and rerun; never widen the regex. Entries the running prose does not
+  it belongs to and rerun; never widen the regex, and never put an ordinary English word
+  there — that is what `PACKAGE_LABELS` is for. Entries the running prose does not
   currently use (`JSON`, `PVWATTS`, …) are on the page inside the tables and `<code>` spans
   the extractor excludes, and stay in the list so restating one in prose is not a false
   alarm. Two-letter forms are deliberately absent: the three-or-more rule cannot reach them.
@@ -4696,15 +4742,22 @@ gate that keeps them gone.
   caps=… intensifiers=… long-blocks=…` line per tier measured — the default `--tier all`
   reports basic, advanced and the whole page — then an indented violation and offender list
   under any tier that breaks a limit, and a final `PROSE RHYTHM OK` or
-  `PROSE RHYTHM FAIL: N violation(s)`. `--strict` turns a violation into exit 1; a missing
-  file exits 2.
+  `PROSE RHYTHM FAIL: N violation(s)`. `--strict` turns a violation into exit 1. A missing
+  file and a page whose tier boundary is not exactly one element both exit 2 with
+  `PROSE RHYTHM ERROR` — an error about the input, never a verdict on it.
 - **The suite.** `analysis/test_prose_rhythm.py` runs each metric against a synthetic page on
   both sides of its threshold (3 em dashes in 1,000 words passes at exactly 3.0/1k, the same
-  3 in 999 words fails), covers the allowlist, the heading exclusion, the tier split and the
+  3 in 999 words fails), covers the allowlist, the heading rule, the tier split and the
   CLI exit codes, asserts the committed `index.html` clears every limit in both tiers, and
   then proves the gate bites: for each metric it injects the defect into an in-memory copy of
   the committed page and asserts that rule — and only that rule — fires. It reads
   `index.html` and `analysis/` only, so it runs in CI with no `private/` and no git history.
+  Four groups of cases guard the evasions an adversarial review found, each written to fail
+  against the code before its fix: a 3-word block and a heading that shout, claim candour or
+  carry a tail; a package label on a page with no cards and one in predicate position; each
+  long-dash code point, the `&mdash;`/`&#8213;` entity spellings and a closing quote between
+  the comma and `not`; and a decoy `id="advanced-help"` in a comment, a real one, zero
+  markers and two.
 
 ---
 
