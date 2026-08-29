@@ -792,13 +792,19 @@ def case_export_netting_definition_is_stated_once():
             f"{where} was not found by its lead {lead!r}; if the lead was reworded, "
             "update this case rather than dropping the site from it")
         block = _enclosing_block(i)
-        visible = re.sub(r"<[^>]+>", " ", block)
-        assert _NETTING_FIGURE in block, (
-            f"{where} gave up the netted-rate definition but no longer carries "
-            f"{_NETTING_FIGURE}: {visible[:200]!r}")
-        assert 'href="#s8"' in block, (
-            f"{where} carries {_NETTING_FIGURE} with no link to section 8, so a reader "
-            f"who wants the derivation cannot reach it: {visible[:200]!r}")
+        # Read the block the way a reader does: a figure or a link inside an
+        # HTML comment is invisible on the page and must not satisfy either
+        # assertion (Codex adversarial review, PR #261, pass 2 -- proven by
+        # hiding both in a comment inside the same list item). Same lesson as
+        # the seam guard in issue #156.
+        uncommented = re.sub(r"<!--.*?-->", "", block, flags=re.S)
+        visible = _visible_text(block)
+        assert _NETTING_FIGURE in visible, (
+            f"{where} gave up the netted-rate definition but no longer shows "
+            f"{_NETTING_FIGURE} to a reader: {visible[:200]!r}")
+        assert re.search(r'<a\b[^>]*href="#s8"', uncommented), (
+            f"{where} shows {_NETTING_FIGURE} with no live link to section 8, so a "
+            f"reader who wants the derivation cannot reach it: {visible[:200]!r}")
     return ("the netted-export-rate definition is stated once, inside section 8; "
             f"all {len(collapsed)} collapsed sites keep {_NETTING_FIGURE} and link section 8")
 
