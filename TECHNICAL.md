@@ -4634,6 +4634,9 @@ length, and reports which blocks exceed a cap.
   `pill`, `legend`, `back-to-top` or `progress`. A `code` span or an evidence pill inside a
   paragraph is stripped, so a `data/x.json` citation does not count toward the paragraph's
   length. Class matching is by token: `class="pill y"` is excluded, `class="pillbox"` is not.
+  Code spans and pills are citations and stamps, not sentences a reader parses, which is why
+  they do not count; measured with them, the three longest such blocks on the current page
+  run 836 to 864 characters, inside the cap's tilde.
 - **Measurement.** `<br>` becomes a space, entities are decoded, whitespace collapses to
   single spaces; `chars` is the length of that text and `words` its whitespace-separated
   token count. Each block records the 1-based source line of its opening tag.

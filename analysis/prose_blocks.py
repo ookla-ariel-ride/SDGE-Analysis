@@ -15,7 +15,10 @@ WHAT COUNTS AS A PROSE BLOCK
   holding three <p>s yields the three <p>s and, for the div itself, only the
   text it holds directly (usually nothing). A <div class="note"> with bare text
   yields the div. Inline elements (b, i, span, a, ...) do not split a block;
-  their text belongs to the block around them.
+  their text belongs to the block around them. A <p> whose optional </p> is
+  omitted ends where HTML ends it: at the next start tag in P_IMPLICIT_CLOSERS
+  (ul, ol, table, section, details, div, h1-h6, ...), so `<p>text<ul>` measures
+  the same as `<p>text</p><ul>`.
 
 WHAT IS EXCLUDED (the whole subtree, no text collected)
   Elements that are not running prose: script, style, nav, table, svg, canvas,
@@ -80,6 +83,15 @@ SKIP_CLASSES = frozenset({
 VOID_TAGS = frozenset({
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
     "param", "source", "track", "wbr",
+})
+# Start tags before which HTML lets an author omit </p> (the spec's "p end tag
+# omission" rule). Valid markup may write `<p>text<ul>...` and mean two blocks;
+# without this list the open <p> would absorb the list's text.
+P_IMPLICIT_CLOSERS = frozenset({
+    "address", "article", "aside", "blockquote", "details", "div", "dl",
+    "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3",
+    "h4", "h5", "h6", "header", "hgroup", "hr", "main", "menu", "nav", "ol",
+    "p", "pre", "section", "table", "ul",
 })
 MIN_WORDS = 4
 ADVANCED_MARKER = re.compile(r"<details\s[^>]*\bid\s*=\s*[\"']?advanced\b", re.I)
@@ -151,13 +163,25 @@ class _Extractor(HTMLParser):
                 self.blocks.append(Block(frame.tag, frame.id, frame.cls, frame.line,
                                          text, len(text), words))
 
+    def _close_open_p(self):
+        """Close an open <p> the way the HTML parser does when a start tag that
+        ends a paragraph arrives: pop down to the innermost prose block if it
+        is a <p>, closing any inline elements still open inside it."""
+        frame = self._current_block()
+        if frame is None or frame.tag != "p":
+            return
+        while self.stack:
+            popped = self.stack.pop()
+            self._close(popped)
+            if popped is frame:
+                return
+
     def _implicit_close(self, tag):
         """Close what HTML closes for us: an open <p> when any block tag opens,
         and an open <li> (or <dd>/<dt>) when its sibling opens with no list
         element in between. Without this, `<li>a<li>b` nests b inside a and the
         two blocks come out in reverse order."""
-        if self.stack and self.stack[-1].tag == "p":
-            self._close(self.stack.pop())
+        self._close_open_p()
         siblings = {"li": ("li",), "dd": ("dd", "dt"), "dt": ("dd", "dt")}.get(tag)
         if siblings is None:
             return
@@ -175,6 +199,10 @@ class _Extractor(HTMLParser):
         tag = tag.lower()
         if tag == "br":
             self._append(" ")
+        if tag in P_IMPLICIT_CLOSERS:
+            # `<p>text<ul>` with the optional </p> omitted: the paragraph ends
+            # here, before this tag is classified as skipped, block or inline.
+            self._close_open_p()
         if tag in VOID_TAGS:
             return
         attrs = {k.lower(): (v or "") for k, v in attrs}
@@ -196,6 +224,8 @@ class _Extractor(HTMLParser):
         tag = tag.lower()
         if tag == "br":
             self._append(" ")
+        if tag in P_IMPLICIT_CLOSERS:
+            self._close_open_p()
 
     def handle_endtag(self, tag):
         tag = tag.lower()

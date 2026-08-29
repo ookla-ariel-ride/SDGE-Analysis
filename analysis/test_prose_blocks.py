@@ -178,6 +178,86 @@ def case_unclosed_li_and_p_do_not_merge_into_one_block():
     return "an <li> left unclosed is closed by the parent's end tag, not merged with the next"
 
 
+# --- the omitted </p> -------------------------------------------------------------
+P_OMISSION_SPEC = frozenset(
+    "address article aside blockquote details div dl fieldset figcaption figure "
+    "footer form h1 h2 h3 h4 h5 h6 header hgroup hr main menu nav ol p pre section "
+    "table ul".split())
+
+
+def _shape(html):
+    return [(b.tag, b.text, b.chars, b.line) for b in prose_blocks.extract(html)]
+
+
+@case
+def case_closer_list_is_the_html_spec_p_end_tag_omission_list():
+    assert prose_blocks.P_IMPLICIT_CLOSERS == P_OMISSION_SPEC, (
+        sorted(prose_blocks.P_IMPLICIT_CLOSERS ^ P_OMISSION_SPEC))
+    return "P_IMPLICIT_CLOSERS is exactly the spec's 30-tag </p>-omission list"
+
+
+@case
+def case_unclosed_p_ends_at_a_ul():
+    html = ("<p>one two three four five<ul><li>six seven eight nine ten</li></ul>"
+            "eleven twelve thirteen fourteen fifteen")
+    got = _shape(html)
+    # Positive control on the counts: with the <p> left open past the <ul>, the
+    # five trailing words land in it and the page has a p of TEN words; closed
+    # at the <ul>, the p holds five, the li holds five, the trailing words are
+    # bare text in no block, and no block holds ten.
+    assert got == [("p", "one two three four five", 23, 1),
+                   ("li", "six seven eight nine ten", 24, 1)], got
+    words = [b.words for b in prose_blocks.extract(html)]
+    assert words == [5, 5] and 10 not in words, words
+    return "<p>...<ul> with no </p>: the p holds its five words, the li its five, the tail neither"
+
+
+@case
+def case_unclosed_p_ends_at_a_table():
+    html = ("<p>one two three four five<table><tr><td>six seven eight nine ten</td></tr>"
+            "</table>eleven twelve thirteen fourteen fifteen"
+            "<p>sixteen seventeen eighteen nineteen twenty</p>")
+    got = _shape(html)
+    # Table text is excluded either way; the tell is the bare text after the
+    # table, which an unclosed p would absorb into a ten-word block.
+    assert got == [("p", "one two three four five", 23, 1),
+                   ("p", "sixteen seventeen eighteen nineteen twenty", 42, 1)], got
+    assert 10 not in [b.words for b in prose_blocks.extract(html)]
+    return "<p>...<table> with no </p>: the p ends at the table and holds five words"
+
+
+@case
+def case_unclosed_p_ends_at_a_section_and_at_details_summary():
+    section = "<p>one two three four five<section>six seven eight nine ten</section>"
+    assert _shape(section) == [("p", "one two three four five", 23, 1)], _shape(section)
+    details = ("<p>one two three four five<details><summary>six seven eight nine ten</summary>"
+               "eleven twelve thirteen fourteen fifteen</details>")
+    assert _shape(details) == [("p", "one two three four five", 23, 1),
+                               ("summary", "six seven eight nine ten", 24, 1)], _shape(details)
+    return "<section> and <details><summary> end an unclosed <p>; their bare text is not its text"
+
+
+@case
+def case_explicit_and_implicit_p_close_measure_identically():
+    body = "one two three four five<ul><li>six seven eight nine ten</li></ul>\n<p>tail words here now</p>"
+    explicit = prose_blocks.extract("<p>" + body.replace("<ul>", "</p><ul>", 1))
+    implicit = prose_blocks.extract("<p>" + body)
+    key = lambda bs: [(b.tag, b.text, b.chars, b.words, b.line) for b in bs]  # noqa: E731
+    assert key(explicit) == key(implicit), (key(explicit), key(implicit))
+    assert len(key(explicit)) == 3, key(explicit)
+    return "<p>x</p><ul> and <p>x<ul> yield the same blocks, chars, words and lines"
+
+
+@case
+def case_inline_tags_do_not_close_an_open_p():
+    html = ("<p>one <b>two</b> three <a href=\"#s1\">four</a> five <span>six</span> seven"
+            "<ul><li>eight nine ten eleven twelve</li></ul>")
+    got = _shape(html)
+    assert got == [("p", "one two three four five six seven", 33, 1),
+                   ("li", "eight nine ten eleven twelve", 28, 1)], got
+    return "<b>, <a> and <span> inside a <p> keep it open; the <ul> after them closes it"
+
+
 # --- the cap --------------------------------------------------------------------
 @case
 def case_over_limit_positive_control_on_both_sides_of_800():
