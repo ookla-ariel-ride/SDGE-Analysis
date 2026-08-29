@@ -726,6 +726,112 @@ def case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers():
             "in the same bullet and links section 6")
 
 
+# The definitional formula for the netted export rate, in every wording the
+# report has used for it. Deliberately a SHAPE, not one literal sentence: the
+# four sites #254 collapsed each phrased it slightly differently ("earns"/
+# "saves", "its own"/"the same", "month and period"/"month and TOU period"/
+# "period and month"), so pinning any one string would let the next paraphrase
+# back in. Section 8's own bracket sentence ("every export cancelling an import
+# inside its own month and TOU period") is NOT this shape -- it states which end
+# of the bracket is which, and never says what the rate IS -- so it stays.
+_NETTING_DEFINITION_RE = re.compile(
+    r"an export (?:earns|saves) by cancelling an import in "
+    r"(?:its own|the same) (?:month and (?:TOU )?period|period and month)")
+
+# The figure those sites publish, as index.html prints it.
+_NETTING_FIGURE = "10.4¢"
+
+
+def _enclosing_block(pos):
+    """The innermost <li>/<p> around HTML[pos], so a check can be scoped to the
+    passage that makes the claim rather than to the whole document."""
+    start = max(HTML.rfind("<li", 0, pos), HTML.rfind("<p", 0, pos))
+    ends = [e for e in (HTML.find("</li>", pos), HTML.find("</p>", pos)) if e != -1]
+    return HTML[start:min(ends)]
+
+
+# Comments, masked with spaces so character offsets survive. A definition,
+# figure or link a reader cannot see must not satisfy a guard.
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+
+def case_export_netting_definition_is_stated_once():
+    """issue #254: the netted export rate is DEFINED once, in section 8, which
+    derives it; everywhere else the report names it and links there.
+
+    The definition was restated in full four times -- section 0's midday
+    bullet, section 5's export bullet, the Monday appendix, and again inside
+    section 8's own clipping paragraph -- which is the treadmill pattern the
+    writing pass behind #252 flagged.
+
+    Collapsing a caveat must not cost the reader anything, so this pins BOTH
+    halves: the definition appears exactly once, AND every site that gave it up
+    still carries the 10.4¢ figure and a link to section 8. Deleting the figure
+    or the route to its derivation would satisfy a count-only check and is the
+    failure this case exists to catch."""
+    # Every scan in this case runs on comment-masked HTML, offsets preserved:
+    # a definition, figure or link inside an HTML comment is invisible to a
+    # reader and must not satisfy any assertion here. Codex adversarial review
+    # (PR #261) found this hole twice in one case -- first in the per-site
+    # assertions, then in this count -- so the mask is applied once, for all of
+    # them, rather than at each site that happened to be reported.
+    # Count in READER-VISIBLE text, per section, not in markup. Codex found the
+    # same hole three times in this one case -- a definition hidden in a
+    # comment, a figure and link hidden in a comment, then a definition moved
+    # into a title attribute -- and inline markup inside a restatement made the
+    # regex miss it outright. Visible text closes all four at once: comments,
+    # attributes and tags are gone before anything is counted, so the guard
+    # enforces what a reader sees and nothing else.
+    s8, s9 = HTML.index('<h2 id="s8"'), HTML.index('<h2 id="s9"')
+    in_s8 = _visible_text(HTML[s8:s9])
+    elsewhere_text = _visible_text(HTML[:s8]) + "\n" + _visible_text(HTML[s9:])
+
+    here = _NETTING_DEFINITION_RE.findall(in_s8)
+    assert len(here) == 1, (
+        f"section 8 states the netted-export-rate definition {len(here)} times in "
+        "text a reader can see; it belongs there exactly once, since section 8 is "
+        "what derives it (a definition inside a comment or an attribute is not "
+        "stated)")
+
+    strays = list(_NETTING_DEFINITION_RE.finditer(elsewhere_text))
+    assert not strays, (
+        f"the netted-export-rate definition is restated in full {len(strays)} times "
+        "outside section 8; name the rate and link section 8 instead. Found at: "
+        + "; ".join(repr(elsewhere_text[max(0, m.start() - 70):m.end()])
+                    for m in strays))
+
+    # Named passages, not a count: an occurrence count is satisfiable by
+    # unrelated text while an intended site quietly loses its figure (Codex
+    # adversarial review, PR #261, pass 1 -- proven by mutating one site's
+    # 10.4 to 10.5 and appending an unrelated linked paragraph).
+    collapsed = {
+        "section 0's midday bullet": "Exploit the 10am–2pm weekday window",
+        "section 5's export bullet": "Midday exports earn little",
+        "the Monday appendix's midday habit": "Build the home-day midday habit",
+    }
+    for where, lead in collapsed.items():
+        i = HTML.find(lead)
+        assert i != -1, (
+            f"{where} was not found by its lead {lead!r}; if the lead was reworded, "
+            "update this case rather than dropping the site from it")
+        block = _enclosing_block(i)
+        # Read the block the way a reader does: a figure or a link inside an
+        # HTML comment is invisible on the page and must not satisfy either
+        # assertion (Codex adversarial review, PR #261, pass 2 -- proven by
+        # hiding both in a comment inside the same list item). Same lesson as
+        # the seam guard in issue #156.
+        uncommented = re.sub(r"<!--.*?-->", "", block, flags=re.S)
+        visible = _visible_text(block)
+        assert _NETTING_FIGURE in visible, (
+            f"{where} gave up the netted-rate definition but no longer shows "
+            f"{_NETTING_FIGURE} to a reader: {visible[:200]!r}")
+        assert re.search(r'<a\b[^>]*href="#s8"', uncommented), (
+            f"{where} shows {_NETTING_FIGURE} with no live link to section 8, so a "
+            f"reader who wants the derivation cannot reach it: {visible[:200]!r}")
+    return ("the netted-export-rate definition is stated once, inside section 8; "
+            f"all {len(collapsed)} collapsed sites keep {_NETTING_FIGURE} and link section 8")
+
+
 def case_rate_source_inventory_keeps_every_source_across_its_split():
     """Section 14's rate-and-tariff inventory runs across two paragraphs since
     issue #253 split it under the 800-character prose cap. A split is the easy
@@ -6592,6 +6698,7 @@ CASES = [
     case_rate_source_inventory_keeps_every_source_across_its_split,
     case_prestaging_paragraph_says_what_is_measured_and_what_is_assumed,
     case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers,
+    case_export_netting_definition_is_stated_once,
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
     case_hourly_profiles_match_their_artifact,
