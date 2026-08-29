@@ -693,13 +693,14 @@ def case_tou_structure_stress_table_matches_the_artifact():
 
 
 def _dsgs_prestaging_paragraph():
-    """The one <p> holding the event-aware pre-staging disclosure, isolated
+    """The consecutive <p>s holding the event-aware pre-staging disclosure
+    (a lead paragraph plus its .small continuations, issue #255), isolated
     so every check below can only match INSIDE it -- several of its own
     figures ($139.95, $128.47, kWh totals) are also cited elsewhere in the
     report for the reactive baseline, and a match anywhere in the whole
     document would pass even if this specific paragraph never mentioned
     the figure at all."""
-    m = re.search(r"<p><b>Event-aware pre-staging.*?</p>", HTML, re.S)
+    m = re.search(r"<p><b>Event-aware pre-staging.*?</p>(?:\s*<p><span class=\"small\">.*?</p>)*", HTML, re.S)
     assert m, "the DSGS event-aware pre-staging paragraph was not found in index.html"
     return m.group(0)
 
@@ -942,11 +943,13 @@ def case_all_electric_paragraph_furnace_savings_matches_the_artifact():
     silently: three rounds of fixes updated the main subsection's own
     citation but left this second one at the pre-#109 $483/yr for two
     commits before Codex's third adversarial-review pass caught it. This
-    pins the second citation independently so that gap can't reopen."""
+    pins the second citation independently so that gap can't reopen.
+    Spans the lead paragraph plus the 1 consecutive <p> its split
+    produced (issue #255)."""
     hpc = json.loads((ROOT / "data" / "heat_pump_conversion.json").read_text())
     if not hpc["applicable"]:
         raise SkipCase("household.has_gas is false")
-    m = re.search(r"<p><b>Going all-electric.*?</p>", HTML, re.S)
+    m = re.search(r"<p><b>Going all-electric.*?</p>(?:\s*<p>.*?</p>){1}", HTML, re.S)
     assert m, "the 'Going all-electric' paragraph was not found in index.html"
     rounded = round(hpc["gas_savings_annual_usd"])
     assert f"~${rounded}/yr heating gas" in m.group(0), (
@@ -1343,7 +1346,9 @@ def case_carbon_dispatch_tradeoff_paragraph_matches_the_artifact():
     """issue #112: the §13 cost-vs-carbon dispatch tradeoff paragraph is
     hand-written, not templated -- lock every cited figure (thresholds,
     per-policy CO2/savings, the tradeoff penalties, and the union policy's
-    comparison ratios) against the live artifact."""
+    comparison ratios) against the live artifact.
+    Spans the lead paragraph plus the 5 consecutive <p>s its split
+    produced (issue #255)."""
     cdt_path = ROOT / "data" / "carbon_dispatch_tradeoff.json"
     assert cdt_path.exists(), f"{cdt_path} is committed public data and must exist"
     cdt = json.loads(cdt_path.read_text())
@@ -1353,7 +1358,7 @@ def case_carbon_dispatch_tradeoff_paragraph_matches_the_artifact():
     tr = cdt["tradeoff"]
     rca = cdt["run_c_analysis"]
 
-    m = re.search(r"<p>The price-aware dispatch this report recommends throughout.*?</p>", HTML, re.S)
+    m = re.search(r"<p>The price-aware dispatch this report recommends throughout.*?</p>(?:\s*<p>.*?</p>){5}", HTML, re.S)
     assert m, "§13 carbon-vs-cost dispatch paragraph not found in index.html"
     para = m.group(0)
 
@@ -1487,7 +1492,9 @@ def case_ev_fleet_fuel_cost_matches_extended_results():
 def case_gas_hdd_decomposition_matches_extended_results():
     """issue #112: the §9 HDD gas-decomposition paragraph is hand-written,
     not templated -- lock its floor/slope regression figures against the
-    live artifact."""
+    live artifact.
+    Spans the lead paragraph plus the 1 consecutive <p> its split
+    produced (issue #255)."""
     er_path = ROOT / "data" / "extended_results.json"
     assert er_path.exists(), f"{er_path} is committed public data and must exist"
     er = json.loads(er_path.read_text())
@@ -1499,7 +1506,7 @@ def case_gas_hdd_decomposition_matches_extended_results():
     if gd.get("not_applicable"):
         raise SkipCase("household.has_gas is false")
 
-    m = re.search(r"<p><b>The HDD decomposition agrees with the bills.*?</p>", HTML, re.S)
+    m = re.search(r"<p><b>The HDD decomposition agrees with the bills.*?</p>(?:\s*<p>.*?</p>){1}", HTML, re.S)
     assert m, "§9 HDD gas-decomposition paragraph not found in index.html"
     para = m.group(0)
     # issue #112 adversarial review, self-swept: floor_therms_day/annual_
@@ -1523,7 +1530,9 @@ def case_nbt_flat_credit_sensitivity_matches_the_artifacts():
     """issue #112: the §13 NBT-2039 flat-credit-sensitivity paragraph is
     hand-written, not templated -- lock its real-hourly figure (from
     nem3_grandfathering.json) and its flat 3/5/8¢ bracket (from
-    extended_results.json's nbt_2039) against the live artifacts."""
+    extended_results.json's nbt_2039) against the live artifacts.
+    Spans the lead paragraph plus the 3 consecutive <p>s its split
+    produced (issue #255)."""
     er_path = ROOT / "data" / "extended_results.json"
     n3_path = ROOT / "data" / "nem3_grandfathering.json"
     assert er_path.exists(), f"{er_path} is committed public data and must exist"
@@ -1533,7 +1542,7 @@ def case_nbt_flat_credit_sensitivity_matches_the_artifacts():
     nbt = er["nbt_2039"]
     real_hourly = n3["battery_marginal_reconciliation_vs_nbt_2039"]["battery_marginal_real_hourly_usd_yr"]["NBT26"]
 
-    m = re.search(r"<p>NEM 2\.0 runs to ~Dec 2039.*?</p>", HTML, re.S)
+    m = re.search(r"<p>NEM 2\.0 runs to ~Dec 2039.*?</p>(?:\s*<p>.*?</p>){3}", HTML, re.S)
     assert m, "§13 NBT-2039 flat-credit-sensitivity paragraph not found in index.html"
     para = m.group(0)
 
@@ -1560,7 +1569,9 @@ def case_nbt_flat_credit_sensitivity_matches_the_artifacts():
 def case_extra_results_cleaning_cadence_matches_the_artifact():
     """issue #112: the §12 cleaning-cadence paragraph is hand-written, not
     templated -- lock its second-cleaning marginal-value range and its
-    full-blended-value best case against the live artifact."""
+    full-blended-value best case against the live artifact.
+    Spans the lead paragraph plus the 1 consecutive <p> its split
+    produced (issue #255)."""
     xr_path = ROOT / "data" / "extra_results.json"
     assert xr_path.exists(), f"{xr_path} is committed public data and must exist"
     xr = json.loads(xr_path.read_text())
@@ -1568,7 +1579,7 @@ def case_extra_results_cleaning_cadence_matches_the_artifact():
     marginals = [v["marginal2nd"] for v in cleaning.values()]
     best_case = cleaning["2.4"]["save1"]
 
-    m = re.search(r"<p>Modeling soiling accumulation over the Apr–Nov dry season.*?</p>", HTML, re.S)
+    m = re.search(r"<p>Modeling soiling accumulation over the Apr–Nov dry season.*?</p>(?:\s*<p>.*?</p>){1}", HTML, re.S)
     assert m, "§12 cleaning-cadence paragraph not found in index.html"
     para = m.group(0)
     assert f"${min(marginals)}–{max(marginals)}/yr" in para, (
@@ -1815,7 +1826,9 @@ def case_gross_import_decomposition_section_matches_the_artifact():
     """issue #112: the §9 'Gross imports are climbing' subsection is
     hand-written, not templated -- lock its bill-ground-truth kWh figures
     and both shape-assumption decomposition splits against the live
-    artifact."""
+    artifact.
+    Spans the opening paragraph plus the 4 consecutive <p>s its split
+    produced (issue #255)."""
     gd_path = ROOT / "data" / "gross_import_decomposition.json"
     assert gd_path.exists(), f"{gd_path} is committed public data and must exist"
     gd = json.loads(gd_path.read_text())
@@ -1823,7 +1836,7 @@ def case_gross_import_decomposition_section_matches_the_artifact():
     dec = gd["decomposition"]
     robust = gd["decomposition_identifiability_robustness_check"]
 
-    m = re.search(r"<h3>Gross imports are climbing.*?</p>", HTML, re.S)
+    m = re.search(r"<h3>Gross imports are climbing.*?</p>(?:\s*<p>.*?</p>){4}", HTML, re.S)
     assert m, "§9 'Gross imports are climbing' subsection not found in index.html"
     section = m.group(0)
 
@@ -1943,7 +1956,9 @@ def case_nem3_grandfathering_section_matches_the_artifact():
     """issue #112: the §13 'What NEM 2.0 grandfathering is worth' subsection
     is hand-written, not templated -- lock its NEM-2.0/NBT bill totals, the
     grandfathering-value gap, and the Delivery-only alternative against the
-    live artifact."""
+    live artifact.
+    Spans the opening paragraph plus the 3 consecutive <p>s its split
+    produced (issue #255)."""
     n3_path = ROOT / "data" / "nem3_grandfathering.json"
     assert n3_path.exists(), f"{n3_path} is committed public data and must exist"
     n3 = json.loads(n3_path.read_text())
@@ -1951,7 +1966,7 @@ def case_nem3_grandfathering_section_matches_the_artifact():
     nbt = n3["nbt_counterfactual"]["NBT26"]
     alt = n3["generation_component_sensitivity"]["alternative_bills"]["NBT26"]
 
-    m = re.search(r"<h3>What NEM 2\.0 grandfathering is worth.*?</p>", HTML, re.S)
+    m = re.search(r"<h3>What NEM 2\.0 grandfathering is worth.*?</p>(?:\s*<p>.*?</p>){3}", HTML, re.S)
     assert m, "§13 NEM-2.0-grandfathering subsection not found in index.html"
     section = m.group(0)
 
@@ -5506,7 +5521,7 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
     ("s14", "<b>Confidence labels:</b>"): ("df64676a5e46",
         "index adds report-specific evidence claims (example list, 'Sections 1-10 "
         "are measured/modeled throughout')"),
-    ("s14", "not advice from any utility"): ("05e7dcb440cc",
+    ("s14", "not advice from any utility"): ("edec746468c0",
         "index names vendors (SDG&E, CEA, Enphase, Tesla) the template keeps generic"),
 }
 
@@ -5605,9 +5620,8 @@ _FIXED_PROSE_ONE_LINE_DIV_CLASSES = frozenset({"card", "note", "lbl", "big"})
 # checked individually, so nothing in it escapes the gate; anything else
 # spanning lines must be listed here deliberately or fail.
 _FIXED_PROSE_MULTILINE_ALLOWED = {
-    ("s14", '<p class="small"><b>Data sources:</b>'):
-        "the provenance paragraph is written across source lines with <br> "
-        "breaks; every continuation line is long enough to be checked itself",
+    # Empty since issue #255: the provenance paragraph's five <br> lines are
+    # now five one-line <p class="small"> elements, checked like any other.
 }
 
 

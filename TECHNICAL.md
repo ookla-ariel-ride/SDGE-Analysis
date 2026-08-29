@@ -4615,6 +4615,44 @@ row directly after Window, `<span class="meta-v" id="report-version">YYYY-MM-DD 
   real build too. Writes are atomic (temp file beside the page + `os.replace`) and preserve
   the page's mode; a page that did not exist gets 0644 masked by the process umask.
 
+### 5.2 Prose-block length (`analysis/prose_blocks.py`, issue #255)
+
+CLAUDE.md §10 caps a paragraph of running prose at about 800 characters. The cap had no
+instrument, and an audit found 46 blocks over it, the longest near 3,800 characters.
+`prose_blocks.py` is the instrument. It parses a page with the standard library's
+`html.parser`, returns every running-prose block with its source line and visible-text
+length, and reports which blocks exceed a cap.
+
+- **What is a block.** The innermost `p`, `li`, `figcaption`, `summary`, `blockquote`,
+  `dd`, `dt`, `h1`-`h4` or `div` that directly holds the text. A nested block tag starts a
+  new block, so a `div.note` holding three `p`s yields the three `p`s, and a `div.note`
+  holding bare text yields the div. Inline tags (`b`, `span`, `a`) do not split a block.
+  Blocks under 4 words are ignored, so a figure card or a short heading cannot trip the cap.
+- **What is excluded.** The whole subtree of `script`, `style`, `nav`, `table`, `svg`,
+  `canvas`, `button`, `select`, `option`, `label`, `pre` and `code`, and of any element
+  whose class list contains `day-band`, `dayband`, `band`, `meta`, `nav`, `skip`, `toc`,
+  `pill`, `legend`, `back-to-top` or `progress`. A `code` span or an evidence pill inside a
+  paragraph is stripped, so a `data/x.json` citation does not count toward the paragraph's
+  length. Class matching is by token: `class="pill y"` is excluded, `class="pillbox"` is not.
+  Code spans and pills are citations and stamps, not sentences a reader parses, which is why
+  they do not count; measured with them, the three longest such blocks on the current page
+  run 836 to 864 characters, inside the cap's tilde.
+- **Measurement.** `<br>` becomes a space, entities are decoded, whitespace collapses to
+  single spaces; `chars` is the length of that text and `words` its whitespace-separated
+  token count. Each block records the 1-based source line of its opening tag.
+- **Tiers.** `--tier basic|advanced` splits the page at the line of
+  `<details id="advanced"`: blocks that open before it are basic, blocks from it on are
+  advanced. A page with no such element is all basic.
+- **The CLI.** `prose_blocks.py [--max-chars N] [--tier T] [--list] [PATH]` (PATH defaults
+  to `<repo root>/index.html`). Without `--max-chars` it prints
+  `PROSE BLOCKS <N> blocks, <W> words` and exits 0. With `--max-chars N` it prints
+  `PROSE BLOCKS <N> blocks, <W> words, <K> over N`, one `L<line> <tag> <chars> chars: <preview>`
+  line per offender, and exits 1 when K > 0; a clean page reads `PROSE BLOCKS OK ...`.
+  `analysis/test_prose_blocks.py` covers each exclusion and boundary rule on synthetic
+  pages, the cap on an 801- and an 800-character paragraph, the tier split, the exit codes,
+  and a read-only run over the committed `index.html`. The 800-character gate on the
+  committed page itself arrives with issue #256, after the over-cap blocks are split.
+
 ---
 
 ## 6. Validation and known limitations
