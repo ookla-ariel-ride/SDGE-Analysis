@@ -6021,16 +6021,9 @@ _tok("DATA_SOURCES_DETAIL", kind="derived", get=_data_sources_detail,
 _tok("RATE_SOURCES_DETAIL", phrase=True, kind="derived",
      get=lambda ctx: (
          f"{hh1('household.utility')} Total Rates Tables and {hh1('household.cca')} "
-         f"Adopted Residential Rates, both effective {_rates_effective_date().isoformat()}."),
-     sources=["private/household.yaml:household.utility/cca", "analysis/rates.py"])
-# The second Rate & tariff sources line (issue #253): the same inventory,
-# split at the source boundary between the tariff documents above and the
-# bill-derived rate constants, so neither rendered <p> outgrows the report's
-# 800-character prose-block cap.
-_tok("RATE_SOURCES_DETAIL_2", phrase=True, kind="derived",
-     get=lambda ctx: (
+         f"Adopted Residential Rates, both effective {_rates_effective_date().isoformat()}; "
          f"PCIA ${R.PCIA}; NBC ${R.NBC}; BSC ${R.BSC}/day (analysis/rates.py)."),
-     sources=["analysis/rates.py"])
+     sources=["private/household.yaml:household.utility/cca", "analysis/rates.py"])
 
 
 def _env_sources_detail(ctx):

@@ -726,6 +726,33 @@ def case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers():
             "in the same bullet and links section 6")
 
 
+def case_rate_source_inventory_keeps_every_source_across_its_split():
+    """Section 14's rate-and-tariff inventory runs across two paragraphs since
+    issue #253 split it under the 800-character prose cap. A split is the easy
+    way to lose a line silently, so pin every source the single paragraph
+    carried: the two paragraphs together must still name all of them, and the
+    second must follow the first (Codex adversarial review, PR #260, pass 1)."""
+    paras = re.findall(
+        r'<p class="small"><b>Rate &amp; tariff sources[^<]*</b>(.*?)</p>', HTML, re.S)
+    assert len(paras) == 2, (
+        f"expected the rate-and-tariff inventory in exactly 2 paragraphs, found {len(paras)}")
+    combined = re.sub(r"<[^>]+>", " ", " ".join(paras))
+    for source in ("Total Rates Tables", "Adopted Residential Rate Schedule",
+                   "Joint Rate Comparison", "Schedule DR", "Pricing Plans TOU definitions",
+                   "SolarReviews", "NuWatt", "SGIP program status", "State Auditor",
+                   "solar.com", "CPUC D.24-05-028", "Resolution E-5355",
+                   "CEC DSGS guidelines", "Tesla VPP program pages", "22-RENEW-01",
+                   "TN 269155", "TN 266629", "Olivine DSGS Option 3 FAQ",
+                   "Electric System Reliability Annual Report", "PSPS post-event reports",
+                   "EIA California gasoline price series", "FHWA Highway Statistics VM-1"):
+        assert source in combined, (
+            f"the rate-and-tariff inventory no longer names {source!r} in either paragraph")
+    first_end = HTML.index("</p>", HTML.index("<b>Rate &amp; tariff sources:</b>"))
+    assert HTML.index("Rate &amp; tariff sources (continued):") > first_end, (
+        "the continuation paragraph does not follow the first")
+    return "both rate-and-tariff paragraphs together name all 22 pinned sources, in order"
+
+
 def case_prestaging_paragraph_says_what_is_measured_and_what_is_assumed():
     """The event-aware pre-staging result is modeled, but two of its inputs
     are measured (this household's load, the real 2025 event calendar) and
@@ -6562,6 +6589,7 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
 
 
 CASES = [
+    case_rate_source_inventory_keeps_every_source_across_its_split,
     case_prestaging_paragraph_says_what_is_measured_and_what_is_assumed,
     case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers,
     case_periods_chart_matches_its_artifact,
