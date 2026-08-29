@@ -693,13 +693,14 @@ def case_tou_structure_stress_table_matches_the_artifact():
 
 
 def _dsgs_prestaging_paragraph():
-    """The one <p> holding the event-aware pre-staging disclosure, isolated
+    """The consecutive <p>s holding the event-aware pre-staging disclosure
+    (a lead paragraph plus its .small continuations, issue #255), isolated
     so every check below can only match INSIDE it -- several of its own
     figures ($139.95, $128.47, kWh totals) are also cited elsewhere in the
     report for the reactive baseline, and a match anywhere in the whole
     document would pass even if this specific paragraph never mentioned
     the figure at all."""
-    m = re.search(r"<p><b>Event-aware pre-staging.*?</p>", HTML, re.S)
+    m = re.search(r"<p><b>Event-aware pre-staging.*?</p>(?:\s*<p><span class=\"small\">.*?</p>)*", HTML, re.S)
     assert m, "the DSGS event-aware pre-staging paragraph was not found in index.html"
     return m.group(0)
 
