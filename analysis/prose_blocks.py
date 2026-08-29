@@ -84,7 +84,11 @@ BLOCK_TAGS = frozenset({
     # Semantic flow containers. Bare text directly inside one of these was
     # invisible to every metric, so an ordinary HTML refactor could switch
     # the gate off for real prose (Codex adversarial review, PR #262).
-    "section", "article", "aside", "main", "header", "footer",
+    "section", "article", "aside", "main", "header", "footer", "details",
+    # "details" is here for the same reason and one more: prose written
+    # directly under <details id="advanced"> is the advanced tier's own
+    # text, and without a block for it the advanced measurement read zero
+    # words (Codex review, PR #262).
 })
 SKIP_TAGS = frozenset({
     "script", "style", "nav", "table", "svg", "canvas", "button", "select",

@@ -242,7 +242,12 @@ def case_unclosed_p_ends_at_a_section_and_at_details_summary():
                                ("section", "six seven eight nine ten", 24, 1)], _shape(section)
     details = ("<p>one two three four five<details><summary>six seven eight nine ten</summary>"
                "eleven twelve thirteen fourteen fifteen</details>")
+    # <details> is a block too since PR #262, so its own bare text ("eleven
+    # twelve …") is its own block: prose written directly under
+    # <details id="advanced"> is the advanced tier's own text, and without a
+    # block for it the advanced measurement read zero words.
     assert _shape(details) == [("p", "one two three four five", 23, 1),
+                               ("details", "eleven twelve thirteen fourteen fifteen", 39, 1),
                                ("summary", "six seven eight nine ten", 24, 1)], _shape(details)
     return ("<section> and <details><summary> end an unclosed <p>; the section's own bare "
             "text is its own block, and never the paragraph's")
