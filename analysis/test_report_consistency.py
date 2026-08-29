@@ -705,6 +705,27 @@ def _dsgs_prestaging_paragraph():
     return m.group(0)
 
 
+def case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers():
+    """The MID package card cites DSGS VPP revenue ($97-$213) beside annual
+    savings and a payback year. The bullet that carries the figure must say,
+    in the same bullet, that it is not an annual figure and that a full-season
+    or annual figure is not determined, and must link the full caveats in
+    section 6 -- issue #252's dedup moved the long caveat to section 6 and
+    adversarial review found the card then read like recurring annual value
+    (Codex, PR #259, pass 1). Scoped to the bullet, not the page."""
+    m = re.search(r"<li><b>\+ DSGS VPP revenue \$97–\$213</b>.*?</li>", HTML, re.S)
+    assert m, "the MID card's DSGS VPP revenue bullet was not found in index.html"
+    bullet = m.group(0)
+    for phrase in ("not an annual figure",
+                   "full-season or annual figure is not determined",
+                   'href="#s6"'):
+        assert phrase in bullet, (
+            f"the MID card's DSGS bullet no longer carries {phrase!r} beside its "
+            f"$97–$213 figure: {bullet[:160]!r}")
+    return ("the MID card's $97–$213 DSGS bullet states non-annual and not-determined "
+            "in the same bullet and links section 6")
+
+
 def case_dsgs_prestaged_sensitivity_matches_the_artifact():
     """The §6 event-aware pre-staging disclosure is hand-written, not
     templated -- lock every cited number (and the direction of the
@@ -6528,6 +6549,7 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
 
 
 CASES = [
+    case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers,
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
     case_hourly_profiles_match_their_artifact,
