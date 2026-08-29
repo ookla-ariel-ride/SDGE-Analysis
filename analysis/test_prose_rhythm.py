@@ -762,6 +762,51 @@ def case_a_rate_just_over_its_limit_says_so():
     return "a rate of 3.0211 prints as 3.02 against its 3.0 limit, not as 3.0"
 
 
+@case
+def case_a_parents_fragments_are_finalized_at_each_nested_block():
+    """Codex review, PR #262, pass 3: separating the parent's fragments with a
+    space still kept them in ONE block, so two 500-character fragments around a
+    nested block were one over-limit block nothing reported, and text after
+    <details id="advanced"> inherited the parent's pre-boundary position and
+    read as basic tier."""
+    doc = "<section>" + "a" * 500 + "<p>nested words go here now</p>" + "b" * 500 + "</section>"
+    shapes = [(x.tag, x.chars) for x in prose_blocks.extract(doc, min_words=1)]
+    assert shapes == [("section", 500), ("p", 24), ("section", 500)], shapes
+    assert prose_rhythm.measure(doc)["long_blocks"] == [], prose_rhythm.measure(doc)["long_blocks"]
+    over = "<section>" + "a" * 801 + "<p>nested words go here now</p></section>"
+    assert len(prose_rhythm.measure(over)["long_blocks"]) == 1, prose_rhythm.measure(over)
+
+    tier = ("<html><section>basic words here now<details id=\"advanced\">"
+            "<p>" + ("w " * 40) + "</p>advanced trailing words here</section></html>")
+    blocks = prose_blocks.extract(tier, min_words=1)
+    split = prose_blocks.advanced_offset(tier)
+    sides = {b.text[:12]: ("advanced" if b.pos >= split else "basic") for b in blocks}
+    assert sides["basic words "] == "basic" and sides["advanced tra"] == "advanced", sides
+    return ("each fragment either side of a nested block is its own block at its own position: "
+            "500+500 is not one over-limit block, and text after the advanced marker is advanced")
+
+
+@case
+def case_a_hyphenated_shout_with_a_short_first_segment_counts():
+    """Codex review, PR #262, pass 3: requiring the FIRST segment to be three
+    capitals missed DO-NOT-SHOUT, whose chain starts with two."""
+    html = "<p>DO-NOT-SHOUT in running prose here now</p>\n" + _filler(1000)
+    assert prose_rhythm.measure(html)["caps"] == ["DO-NOT-SHOUT"], prose_rhythm.measure(html)["caps"]
+    return "a hyphenated shout counts however short its first segment is"
+
+
+@case
+def case_only_a_real_price_card_earns_the_package_exemption():
+    """Codex review, PR #262, pass 3: any text after the dash minted a package
+    card, so an unrelated <h3>HIGH — risk</h3> exempted every later HIGH."""
+    fake = "<h3>HIGH — risk</h3><p>choose the HIGH path here now</p>\n" + _filler(1000)
+    assert prose_rhythm.measure(fake)["caps"] == ["HIGH", "HIGH"], prose_rhythm.measure(fake)["caps"]
+    real = ("<h3>HIGH — ~$20,400 · + PW3 with Expansion</h3>"
+            "<p>choose the HIGH package here now</p>\n" + _filler(1000))
+    assert prose_rhythm.measure(real)["caps"] == [], prose_rhythm.measure(real)["caps"]
+    return "a package card has to state a price; 'HIGH — risk' exempts nothing"
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

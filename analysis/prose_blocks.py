@@ -198,6 +198,27 @@ class _Extractor(_Positions, HTMLParser):
                 return frame
         return None
 
+    def _flush_fragment(self, frame):
+        """Emit the parent's text so far as its own Block, at its own position.
+
+        A nested block renders as a box: the parent's text before it and after
+        it are two visible fragments, not one. Keeping them in one Block joined
+        two 500-character fragments into an over-limit block that nothing
+        reported, and gave text written after `<details id="advanced">` the
+        parent's pre-boundary position, which put it in the basic tier (Codex
+        review, PR #262). Each fragment is finalized where it really sits.
+        """
+        if frame is None or not frame.is_block:
+            return
+        text = " ".join("".join(frame.parts).split())
+        frame.parts.clear()
+        if len(text.split()) >= self.min_words:
+            self.blocks.append(Block(frame.tag, frame.id, frame.cls, frame.line,
+                                     frame.pos, text, len(text), len(text.split())))
+        # The next fragment starts here, after the nested block's opening tag.
+        line, col = self.getpos()
+        frame.line, frame.pos = line, self._offset(line, col)
+
     def _append(self, text):
         if self.skip_depth:
             return
@@ -270,9 +291,7 @@ class _Extractor(_Positions, HTMLParser):
             # it and after it are not one word. Without this separator
             # <section>NEVER<aside>..</aside>AGAIN</section> measured as
             # NEVERAGAIN and no metric saw either word (Codex review, #262).
-            parent = self._current_block()
-            if parent is not None:
-                parent.parts.append(" ")
+            self._flush_fragment(self._current_block())
         line, col = self.getpos()
         self.stack.append(_Frame(tag, starts_skip, is_block, line,
                                  self._offset(line, col),

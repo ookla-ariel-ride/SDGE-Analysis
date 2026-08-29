@@ -142,7 +142,7 @@ ACRONYMS = frozenset({
     # (a shout survives hyphens), so each rate plan and file name that really
     # is written this way is named here rather than loosening the pattern.
     "TOU-DR", "TOU-DR1", "TOU-DR2", "TOU-DR-P", "TOU-ELEC", "EV-TOU-5",
-    "EV-TOU-2", "DATA-SOURCES-CHEATSHEET",
+    "EV-TOU-2", "DR-SES", "WF-NBC", "DATA-SOURCES-CHEATSHEET",
     # utilities, tariffs, programs, regulators
     "SDGE", "SDG", "CAISO", "CPUC", "CEC", "CCA", "CEA", "NEM", "NBT", "NBC",
     "PCIA", "UDC", "TOU", "IOU", "VNEM", "SGIP", "DSGS", "ELRP", "PSPS", "VPP",
@@ -180,7 +180,10 @@ ACRONYMS = frozenset({
 # sentence is ambiguous to a reader too, and the page writes it as
 # "Recommendation: LOW today", which is not.
 PACKAGE_LABELS = frozenset({"LOW", "MID", "HIGH"})
-PACKAGE_CARD_RE = re.compile(r"^([A-Z]{3,})\s*—\s*\S")
+# A package card names the label and its PRICE: "LOW — $0 · behavior only".
+# Accepting any text after the dash let an unrelated heading such as
+# "HIGH — risk" mint the exemption (Codex review, PR #262, pass 3).
+PACKAGE_CARD_RE = re.compile(r"^([A-Z]{3,})\s*—\s*~?\$[\d,]")
 # A copula (or degree word), then any run of adverbs and degree words, then the
 # label: "is HIGH", "is still HIGH", "is financially HIGH", "was very LOW".
 # Reading only the word in front of the label let one adverb walk past the rule
@@ -233,7 +236,14 @@ TAIL_RE = re.compile(
 # which every single-run pattern rejected because each part touches a hyphen
 # (Codex review, PR #262). A chain is reported as one word, so a domain token
 # like EV-TOU-5 is exempted by naming it in ACRONYMS, not by the pattern.
-CAPS_RE = re.compile(r"(?<![A-Za-z0-9$§/&\-])([A-Z]{3,}(?:-[A-Z0-9]{1,})*)(?![A-Za-z0-9])")
+# Any hyphenated chain of capitals where at least one segment is long enough
+# to be a shout. Requiring the FIRST segment to be long missed DO-NOT-SHOUT
+# outright (Codex review, PR #262, pass 3).
+CAPS_RE = re.compile(
+    r"(?<![A-Za-z0-9$§/&\-])"
+    r"(?=[A-Z0-9-]*[A-Z]{3,})"          # some segment is 3+ capitals
+    r"([A-Z]{2,}(?:-[A-Z0-9]+)*)"
+    r"(?![A-Za-z0-9])")
 # 4. The intensifiers, from prose_lint's shared word list.
 INTENSIFIER_RE = re.compile(
     r"\b(" + "|".join(sorted(prose_lint.INTENSIFIERS, key=len, reverse=True)) + r")\b",
