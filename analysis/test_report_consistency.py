@@ -726,6 +726,74 @@ def case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers():
             "in the same bullet and links section 6")
 
 
+# The definitional formula for the netted export rate, in every wording the
+# report has used for it. Deliberately a SHAPE, not one literal sentence: the
+# four sites #254 collapsed each phrased it slightly differently ("earns"/
+# "saves", "its own"/"the same", "month and period"/"month and TOU period"/
+# "period and month"), so pinning any one string would let the next paraphrase
+# back in. Section 8's own bracket sentence ("every export cancelling an import
+# inside its own month and TOU period") is NOT this shape -- it states which end
+# of the bracket is which, and never says what the rate IS -- so it stays.
+_NETTING_DEFINITION_RE = re.compile(
+    r"an export (?:earns|saves) by cancelling an import in "
+    r"(?:its own|the same) (?:month and (?:TOU )?period|period and month)")
+
+# The figure those sites publish, as index.html prints it.
+_NETTING_FIGURE = "10.4¢"
+
+
+def _enclosing_block(pos):
+    """The innermost <li>/<p> around HTML[pos], so a check can be scoped to the
+    passage that makes the claim rather than to the whole document."""
+    start = max(HTML.rfind("<li", 0, pos), HTML.rfind("<p", 0, pos))
+    ends = [e for e in (HTML.find("</li>", pos), HTML.find("</p>", pos)) if e != -1]
+    return HTML[start:min(ends)]
+
+
+def case_export_netting_definition_is_stated_once():
+    """issue #254: the netted export rate is DEFINED once, in section 8, which
+    derives it; everywhere else the report names it and links there.
+
+    The definition was restated in full four times -- section 0's midday
+    bullet, section 5's export bullet, the Monday appendix, and again inside
+    section 8's own clipping paragraph -- which is the treadmill pattern the
+    writing pass behind #252 flagged.
+
+    Collapsing a caveat must not cost the reader anything, so this pins BOTH
+    halves: the definition appears exactly once, AND every site that gave it up
+    still carries the 10.4¢ figure and a link to section 8. Deleting the figure
+    or the route to its derivation would satisfy a count-only check and is the
+    failure this case exists to catch."""
+    hits = list(_NETTING_DEFINITION_RE.finditer(HTML))
+    assert len(hits) == 1, (
+        f"the netted-export-rate definition is stated in full {len(hits)} times in "
+        "index.html; it belongs exactly once, in section 8, which derives it. Name "
+        "the rate and link section 8 at the other sites. Found at: "
+        + "; ".join(repr(HTML[max(0, m.start() - 70):m.end()]) for m in hits))
+
+    s8, s9 = HTML.index('<h2 id="s8"'), HTML.index('<h2 id="s9"')
+    assert s8 < hits[0].start() < s9, (
+        "the one full statement of the netted-export-rate definition is not inside "
+        f"section 8 (char {hits[0].start()}, section 8 spans {s8}-{s9}) -- the "
+        "definition's home is the section that derives it")
+
+    elsewhere = [m for m in re.finditer(re.escape(_NETTING_FIGURE), HTML)
+                 if not s8 < m.start() < s9]
+    assert len(elsewhere) >= 3, (
+        f"only {len(elsewhere)} occurrences of {_NETTING_FIGURE} outside section 8 -- "
+        "the collapsed sites (section 0's midday bullet, section 5's export bullet, "
+        "the Monday appendix) are expected to keep the figure, so this case is "
+        "probably no longer looking at the right string")
+    for m in elsewhere:
+        block = _enclosing_block(m.start())
+        assert 'href="#s8"' in block, (
+            f"a {_NETTING_FIGURE} figure outside section 8 sits in a passage with no "
+            "link to section 8, so a reader who wants the derivation cannot reach "
+            f"it: {re.sub(r'<[^>]+>', ' ', block)[:200]!r}")
+    return (f"the netted-export-rate definition is stated once, inside section 8; all "
+            f"{len(elsewhere)} sites elsewhere keep {_NETTING_FIGURE} and link section 8")
+
+
 def case_rate_source_inventory_keeps_every_source_across_its_split():
     """Section 14's rate-and-tariff inventory runs across two paragraphs since
     issue #253 split it under the 800-character prose cap. A split is the easy
@@ -6592,6 +6660,7 @@ CASES = [
     case_rate_source_inventory_keeps_every_source_across_its_split,
     case_prestaging_paragraph_says_what_is_measured_and_what_is_assumed,
     case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers,
+    case_export_netting_definition_is_stated_once,
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
     case_hourly_profiles_match_their_artifact,
