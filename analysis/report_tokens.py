@@ -5843,7 +5843,7 @@ def _s10_verdict(ctx):
             size = "an equally large, unpriced net-export effect"
         else:
             size = "a smaller, unpriced net-export effect"
-        tail = f" — {size} means the whole-household answer is not fully settled."
+        tail = f", but {size} means the whole-household answer is not fully settled."
     else:
         tail = ", with no net-export credit excluded from it."
     return (f"{VERDICT_STEM}on the net-import energy this analysis can price, staying on "

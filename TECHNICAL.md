@@ -3459,8 +3459,8 @@ explicitly, per Codex's own recommendation, rather than only asserting the defau
 sum). With both scenarios computed in the same units and against the same correctly-sized
 template, the finding is reassuring: +5.0 kWh (uniform scaling) and +26.3 kWh (EV-concentrated)
 are both small relative to the ~470-490 kWh consumption term either scenario reports, and the
-"consumption story, not a production story" conclusion is genuinely robust to this
-identifiability concern, not merely an artifact of one modeling choice.
+"consumption story, not a production story" conclusion holds under either diurnal-shape
+assumption; it is not an artifact of one modeling choice.
 `case_identifiability_robustness_check_reports_an_alternative_shape_honestly` pins this exact
 agreement (`conclusion_robust_to_this_alternative_shape` = `True`) so a future regeneration
 that silently reintroduces either the units-mismatch bug or the compression artifact — both of
