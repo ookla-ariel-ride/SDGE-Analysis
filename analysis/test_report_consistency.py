@@ -1811,15 +1811,109 @@ def _night_floor_published_figures():
     The energy is floor_kw_priced x hours, not median_kw x hours: the priced
     floor is what both dollar figures were computed from (it is round(median,
     4) in the generator), so building the kWh off the other field would let
-    the energy and the cost drift apart on a re-run."""
+    the energy and the cost drift apart on a re-run.
+
+    The sensitivity rate is a bare dollar amount, deliberately. The three
+    sections phrase it three ways ("the first 100 W ... is worth about $X/yr",
+    "about $X/yr for the first 100 W removed", "priced as the first 100 W off
+    the floor as measured"), and asserting one sentence shape across all three
+    would fail on correct prose while catching no wrong figure. What must
+    agree section to section is the VALUE."""
     doc = _night_floor_artifact()
     nf, pr = doc["night_floor"], doc["pricing"]
+    sens = doc["sensitivity_per_100w"]
     return {
         "floor": f"{nf['median_kw']:,.2f} kW",
         "energy": f"{pr['floor_kw_priced'] * nf['nights_total'] * 24:,.0f} kWh/yr",
         "price map cost": f"${pr['method_a_price_map']['total_usd']:,.0f}",
         "re-bill cost": f"${pr['method_b_rebill']['total_usd']:,.0f}",
+        "sensitivity rate": f"${sens['usd_per_100w_at_current_floor']['value_usd']:,.0f}",
     }
+
+
+# --- recognising a per-100 W money claim -----------------------------------
+#
+# NAME THE TWO FAILURE MODES, because this guard has already been wrong once in
+# exactly the shape it did not look at, and the temptation is always to narrow
+# it back to the one sentence the report happens to carry today.
+#
+#   TOO NARROW -> a false FAILURE on correct prose. The first version was
+#   `\$([\d,]+)(?:–([\d,]+))? per 100 W`: the compact en-dash form the
+#   hand-written §9/§13 sentences use. report-template.html injects
+#   {{NIGHT_FLOOR_SENSITIVITY_PER_100W}} into both sections, and that token
+#   renders the spread as "... runs from $289 to $323 per 100 W ...", the
+#   "X to Y" form. The pattern did not match it, so the guard saw a per-100 W
+#   claim it could not read and failed a household reproducing this report from
+#   the template on prose the repo itself generated. Reproduction is a product
+#   here (README, "Reproduce this for your own home"), so accepting only one
+#   author's wording is a defect, not strictness.
+#
+#   TOO LOOSE -> a MISSED wrong figure. The same version saw nothing written as
+#   "per 100 watts", "per 100W", "for each 100 W", "for every additional 100 W"
+#   or "$X per kW", so a stale or invented rate survived on phrasing alone:
+#   "each further 100 W is worth about $450/yr" passed the guard untouched.
+#
+# So the claim is recognised in two independent halves -- find the RATE UNIT in
+# every spelling, find the MONEY separately, and pair them when they sit close
+# enough together to be one claim, in EITHER order. Adding a phrasing means
+# adding a unit spelling, never a whole sentence shape.
+
+# Whitespace as it can appear in the report's HTML.
+_HTML_SPACE = r"(?:\s|&nbsp;|&#160;)"
+
+# The unit half. Either an explicit 100 W quantity ("100 W", "100W",
+# "100 watts", "100 Watts"), or a kW rate -- kW only counts behind a rate
+# preposition, so the report's many plain "1.03 kW" load figures are not
+# mistaken for prices. The lookbehind keeps "100" from matching inside a longer
+# number such as "9,100".
+_RATE_UNIT_RE = re.compile(
+    r"(?<![\d,.])100" + _HTML_SPACE + r"*(?:W|watts?)\b"
+    r"|(?:per|for" + _HTML_SPACE + r"+(?:each|every)(?:" + _HTML_SPACE
+    + r"+additional)?)" + _HTML_SPACE + r"+(?:kW|kilowatts?)\b",
+    re.I)
+
+# The money half. Cents are consumed here so a trailing ".16" cannot read as a
+# sentence break in the gap test below.
+_RATE_MONEY_RE = re.compile(r"\$(\d[\d,]*)(?:\.(\d+))?")
+
+# How far apart a money amount and its unit may sit and still be one claim.
+# Sized off the longest legitimate form the repo produces -- the token's
+# "$289 to $323 per 100 W" and the sections' "$323/yr for the first 100 W
+# removed" -- with room to spare, not off a round number.
+_RATE_PROXIMITY_CHARS = 80
+
+# What ends a claim inside that window: a sentence break, or a block boundary.
+# Without these an unrelated dollar figure one sentence away could be dragged
+# into a claim and fail the report on correct prose -- the false-failure mode
+# again, entering through the pairing rather than the pattern.
+_RATE_GAP_BARRIER_RE = re.compile(
+    r"\.(?:\s|<|$)|</?(?:p|h[1-6]|li|ul|ol|div|table|tr|td|th|section)\b", re.I)
+
+
+def _per_100w_amounts_stated(span):
+    """The set of per-100 W money amounts, as ints, that `span` states.
+
+    A money amount counts when a rate unit sits within
+    _RATE_PROXIMITY_CHARS of it, on either side, with no sentence or block
+    break in between. Amounts are rounded to whole dollars so they compare
+    against the artifact the way the prose writes them."""
+    units = [m.span() for m in _RATE_UNIT_RE.finditer(span)]
+    found = set()
+    for m in _RATE_MONEY_RE.finditer(span):
+        m_start, m_end = m.span()
+        for u_start, u_end in units:
+            if u_start >= m_end:                       # $X ... 100 W
+                gap = span[m_end:u_start]
+            elif m_start >= u_end:                     # 100 W ... $X
+                gap = span[u_end:m_start]
+            else:                                      # overlapping: one claim
+                gap = ""
+            if len(gap) > _RATE_PROXIMITY_CHARS or _RATE_GAP_BARRIER_RE.search(gap):
+                continue
+            found.add(round(float(m.group(1).replace(",", "")
+                                  + "." + (m.group(2) or "0"))))
+            break
+    return found
 
 
 def _report_span(what, start, end):
@@ -1870,9 +1964,12 @@ def case_night_floor_section_matches_the_artifact():
         "modeled, not measured",
         f"conservative by about ${pr['floor_assumption_violations']['usd_dropped_at_export_rate']:,.0f}",
         # What a household could act on, at the rate the sensitivity re-bill
-        # measured rather than an opinion about how much is removable.
+        # measured rather than an opinion about how much is removable. FIRST,
+        # not every: the rate is the ladder's smallest rung, and "for every
+        # 100 W" read it as a multiplier over rungs whose marginal is lower --
+        # the spread pinned below is what says by how much.
         f"about ${doc['sensitivity_per_100w']['usd_per_100w_at_current_floor']['value_usd']:,.0f}/yr "
-        "for every 100 W removed",
+        "for the first 100 W removed",
     ]
     for value in checks:
         assert value in section, (
@@ -1901,10 +1998,18 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
         "§13": _report_span("the §13 always-on-floor subsection",
                             r"<h3>Phantom baseload", r"<h3"),
     }
-    # The floor, its energy and its price-map cost are the three figures all
-    # three sections state. The full re-bill is a §0/§13 reconciliation, so it
-    # is required only where the two methods are set against each other.
-    shared = ("floor", "energy", "price map cost")
+    # The floor, its energy, its price-map cost and the rate for the next
+    # 100 W off it are the four figures all three sections state. The full
+    # re-bill is a §0/§13 reconciliation, so it is required only where the two
+    # methods are set against each other.
+    #
+    # The sensitivity rate joined this list with issue #173. Until then only
+    # §13's own case pinned it, while §0 and §9 published it unasserted -- so
+    # the artifact could be corrected and §13 updated with two stale figures
+    # left standing and the whole suite green. That is how #173's wrong rung
+    # survived. A figure any section publishes has to be pinned in EVERY
+    # section that publishes it, not in the one that happens to own a case.
+    shared = ("floor", "energy", "price map cost", "sensitivity rate")
     for sid, span in sorted(spans.items()):
         for name in shared:
             assert figures[name] in span, (
@@ -1916,6 +2021,43 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
             f"{sid} states one pricing of the load without the other "
             f"({figures['re-bill cost']!r}); two live methods are reconciled where they "
             "are published, not left to the reader (CLAUDE.md §0)")
+
+    # The spread the rate is read against, in §9 and §13 only -- §0 states the
+    # rate with no spread beside it, so requiring one there would fail on
+    # correct prose.
+    #
+    # This was free prose asserted against NO artifact field: exactly the gap
+    # issue #173 closed one field over. The rate was pinned in all three
+    # sections while the spread beside it could drift, or go stale on a
+    # re-run, with this whole suite green. Both ends come from
+    # marginal_range.reachable, so both are checked -- the low end must be
+    # stated (it is the end that carries the "not a multiplier" warning) and
+    # NOTHING but those two ends may appear as a per-100 W amount, which is
+    # what catches a stale figure as well as a missing one.
+    sens = _night_floor_artifact()["sensitivity_per_100w"]
+    reachable = (sens.get("marginal_range") or {}).get("reachable")
+    for sid in ("§9", "§13"):
+        stated = _per_100w_amounts_stated(spans[sid])
+        if not reachable:
+            # The generator publishes no `reachable` block when the measured
+            # floor sits below the ladder's smallest rung. Prose still quoting
+            # a reachable spread would be quoting nothing at all.
+            assert not stated, (
+                f"{sid} states the per-100 W amount(s) {sorted(stated)} but "
+                "sensitivity_per_100w.marginal_range publishes no `reachable` block "
+                "(the measured floor is below the ladder's smallest rung); there is no "
+                "artifact figure behind them")
+            continue
+        ends = {round(reachable["min_usd"]), round(reachable["max_usd"])}
+        assert round(reachable["min_usd"]) in stated, (
+            f"{sid} states the per-100 W amount(s) {sorted(stated)} without the "
+            f"${round(reachable['min_usd'])} low end that marginal_range.reachable gives; "
+            "the rate is published as a rate near this floor and never as a multiplier, "
+            "which is a claim only the far end of the spread supports")
+        assert stated <= ends, (
+            f"{sid} states the per-100 W amount(s) {sorted(stated - ends)}, which are "
+            f"neither end of marginal_range.reachable ({sorted(ends)}); the spread the "
+            "rate is read against is an artifact figure, not free prose")
 
     # The superseded workpapers, checked absent BY VALUE and read out of the
     # artifacts themselves, so the check tracks them rather than a literal.
@@ -1955,7 +2097,9 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
             f"the report states {value!r}, which is {who} -- a superseded workpaper "
             "(TECHNICAL.md §3.5/§3.11), not the published figure for this load")
     return (f"§0, §9 and §13 all state the same {len(shared)} floor figures from "
-            f"quiet_night_floor.json, §0 and §13 both reconcile the two pricings, and "
+            f"quiet_night_floor.json, §0 and §13 both reconcile the two pricings, §9 and "
+            f"§13 both state the per-100 W spread marginal_range.reachable gives and no "
+            f"amount outside it, and "
             f"{len(retired)} superseded workpaper values are absent from the report")
 
 

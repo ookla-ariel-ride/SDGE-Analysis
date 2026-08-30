@@ -3799,10 +3799,117 @@ constants themselves and not the physical floor-allocation model, where the larg
 separately-quantified `floor_assumption_violations` limitation actually lives.
 
 **Sensitivity (issue AC4, `sensitivity_per_100w`).** Re-bills (method b) at 100 W steps from
-100 to 1,200 W (`MAX_REDUCTION_W`) and reports both the marginal $/100W at the sensitivity
-step nearest the currently-measured floor and the general linear-fit slope across the whole
-range, stating explicitly which is which and how far the removal is from being perfectly
-linear (a bucket sign flip inside the tested range would show up as measurable nonlinearity).
+100 to 1,200 W (`MAX_REDUCTION_W`). The ladder's `reduction_w` axis counts watts REMOVED from
+the measured floor, not a resulting floor level: the 100 W rung is the first 100 W stripped
+off the 1,030 W floor as it stands, and the 1,000 W rung is the tenth such step, priced for a
+household that already stripped 900 W. `usd_per_100w_at_current_floor` is therefore the FIRST
+rung ($323.16), which is the rate a household standing at its own measured floor is asking
+for; reading a deeper rung as "the step nearest this floor" prices the wrong slice, and the
+field's own `note` states the axis so a consumer cannot repeat that reading.
+
+`marginal_range` publishes the spread twice, and NEITHER half isolates tariff curvature.
+`reachable` covers the rungs at or below the measured floor (100-1,000 W, $289.13-$323.16);
+`full_ladder` adds the 1,100 W and 1,200 W rungs ($249.03-$323.16), which ask for more than
+the floor holds. The two labels differ only in where the boundary is drawn, and the boundary
+is drawn at the MEDIAN floor (1,030 W) while `_split_floor` clamps PER INTERVAL against that
+interval's own metered import and DROPS the remainder where there is no generation. A median
+is not a minimum, so rungs well below the boundary are clamped as well, and calling the lower
+range "the removal the metered load can supply" claims more than the split delivers.
+
+The 1,000 W rung measures the size of that error, and every figure in this paragraph comes
+from the four per-rung fields the artifact publishes: `requested_kwh`, `delivered_kwh`,
+`dropped_kwh` and `marginal_delivery_ratio`. That rung asks for 8,760.0 kWh across the year
+and the meter supplies 8,569.38 of it, dropping 190.62 kWh, or 2.18% of the request. The
+dilution is concentrated in the rung's own marginal slice (the tenth 100 W), whose
+`marginal_delivery_ratio` is 0.9259: it delivers about 811 of the 876 kWh it asks for, so 7.41%
+of the slice is discarded before any rate is applied. Divide the slice's saving by that ratio
+and it prices at $312.27 per delivered 100 W instead of the published $289.13. That single
+correction accounts for $23.14 of the $34.03 `reachable` spread -- 68% of it -- and the first
+rung is essentially undiluted at 0.9999, so the top of the range needs no such correction.
+
+The direct evidence for the shortfall is per-interval, and those `marginal_delivery_ratio`
+fields ARE that evidence -- `night_floor.p10_kw` is not, and must not be cited as though it
+were. That field (0.822 kW against a 1.030 kW median) is a percentile over the 43 quiet
+NIGHTS by their own nightly medians, one value per night; it says nothing about how many
+individual 15-minute intervals sit under a rung. Measured over intervals instead -- the share
+of the year's 15-minute intervals whose metered import is below the per-interval kWh a rung
+asks to remove, computed directly off the same `Consumption` series `_split_floor` clamps
+against -- 43.1% of intervals draw less than the 1,030 W floor asks, 52.7% less than the
+1,200 W rung asks, and 28.0% less than even the FIRST 100 W rung asks. The interval evidence
+is much stronger than the nightly decile it replaces, and the last of those three figures is
+the one to hold on to: clamping is not a deep-rung phenomenon that begins somewhere down the
+ladder. It is present at every rung, including the one whose delivery ratio is 0.9999. What
+changes along the ladder is where the clamped remainder GOES, which the next paragraphs take
+up.
+
+That 68% is a lower bound on the delivery correction, not an upper one, because dividing by
+`marginal_delivery_ratio` prices the dropped kWh at the slice's own blended delivered rate
+($289.13 / 811.11 kWh = $0.3565/kWh) -- and the dropped energy is not cheap energy. The slice
+drops 64.90 kWh (876.0 requested less 811.11 delivered), and summed by hour of day that energy
+peaks at 07:00-09:00 and 16:00-19:00, not overnight: the clamp bites wherever metered import is
+already below the request, which on this house is the shoulder hours. Value it instead at the
+import price of the period each dropped kWh actually falls in -- a TOU-weighted $0.4207/kWh,
+the dropped-kWh-weighted mean of `price_map_from_rates()`'s import cell for each interval's own
+season and period -- and the rung prices at $289.13 + 64.90 x $0.4207 = $316.43 per delivered
+100 W rather than $312.27, making the delivery correction worth $27.30 of the $34.03 spread,
+about 80% of it. That alternative valuation is a DECOMPOSITION of the measured slice at
+published rates, not a re-billed counterfactual: no unclamped year is constructed and no
+unmetered kWh is credited. Its direction is the point.
+The published 68% errs downward, so a reader who prefers the conservative figure should keep
+68% and know that the honest correction for WHERE the dropped energy sits is larger.
+
+Apply the same division to every rung and the per-delivered-100W rate runs $323.19 down to
+$312.27 across the reachable range and $309.62 at 1,200 W: a spread of $10.92 reachable and
+$13.57 full-ladder, against $34.03 and $74.13 as published. Most of the published fall is
+therefore incomplete DELIVERY -- each successive slice removes a smaller share of what it
+requests. What survives the division is still NOT tariff curvature, and the division does not
+isolate it, because a third mechanism sits between the two. `_split_floor` returns the
+delivered energy in two channels worth very different money: `reduce_from_import`, energy that
+comes off metered import, and `leftover`, the clamped remainder credited as extra EXPORT where
+generation is nonzero. Divide each marginal slice's method (a) channel dollars by that
+channel's own marginal kWh and the two rates are directly measurable: on the measured year the
+marginal import channel is worth $0.3947/kWh at the first rung and $0.3883/kWh at the 1,000 W
+rung, while the marginal export channel is worth $0.2740/kWh and $0.2892/kWh at the same two
+rungs -- 69% and 74% of the import channel's own rate at the same rung, or about
+three-quarters as much. And the MIX drifts: `leftover` is 27.17% of the first rung's delivered
+energy, 33.44% at the 1,000 W rung and 38.73% at 1,200 W. A "per delivered kWh" rate is
+therefore an average over a changing blend of a dearer and a cheaper channel, and it falls
+partly because the blend shifts toward the cheaper one, not because either channel's price
+moved.
+
+Size the two with a shift-share on the flat method (a) price map, which -- unlike method (b)'s
+monthly netting -- factors exactly into per-channel rates times per-channel quantities. Priced
+that way, the per-delivered-100 W rate falls from $317.01 at the first rung to $311.12 at
+1,000 W, a residual of $5.89 after the delivery division. Hold the channel mix at the first
+rung's 27.17% leftover and let only the TOU rates drift, and the same rate falls from $317.01
+to $316.55 -- a residual of $0.46. So about 92% of what survives the delivery division is
+delivered-CHANNEL COMPOSITION, and genuine tariff curvature is worth roughly $0.5 per 100 W
+across the reachable ladder. Both figures are a decomposition of the measured slices at
+published rates, not a re-billed counterfactual. They also do not carry over unchanged to the
+published method (b) numbers, whose residual is larger ($10.92 against method (a)'s $5.89) and
+which differ from method (a) by the monthly netting the reconciliation above quantifies. So
+the safe reading of the published figures is the bounding one: the per-delivered-100 W figures
+($323.19 down to $312.27 reachable, $309.62 at 1,200 W) are an UPPER BOUND on curvature, not a
+measurement of it. Three mechanisms move the published marginal, in descending order of size
+-- incomplete delivery, the drifting import/export channel mix inside the delivered energy,
+and tariff curvature -- and dividing by `marginal_delivery_ratio` removes the first of the
+three and only the first.
+
+Prose that quotes the published spread must say the removal is partly unsupplied; quoting
+$289-323 as a range the metered load supplies repeats the error these fields exist to expose,
+and `marginal_range.note` states the same limitation on the artifact itself.
+
+The general linear-fit slope inherits the same dilution:
+`usd_per_100w_general_average.value_usd` ($303.76) fits the whole 100-1,200 W ladder and is
+pulled down hardest by the rungs above the floor, while `reachable_slope_usd` ($310.86) fits
+the 100-1,000 W rungs alone and is still pulled down by their own clamping.
+`linearity_note` carries both max deviations from the fit ($73.89, 2.03% of savings at
+1,200 W across the full ladder; $25.85, 0.83% at 1,000 W over the reachable rungs). Read both
+as an upper bound on curvature rather than a measurement of it: a bucket sign flip inside the
+tested range would show up as nonlinearity here, but so does dropped energy, and so does the
+drifting import/export channel mix. Dividing each rung's saving by its
+`marginal_delivery_ratio` separates out the dropped energy and nothing else -- the channel mix
+survives that division and carries most of what is left, per the shift-share above.
 
 **Battery interaction (issue AC5, `battery_interaction`).** Re-runs
 `battery_dispatch_policies.run_batt` (same greedy policy, same Powerwall 3 config, the same

@@ -868,7 +868,8 @@ _QUALIFIER_ACCOUNTED = {
     ("s9#5", "quiet_night_floor.json", "night_floor", "selection_caveat"): ("same", None),
     ("s9#5", "quiet_night_floor.json", "pricing", "floor_kw_basis"): ("same", None),
     # --- issue #140: the sensitivity ladder NIGHT_FLOOR_SENSITIVITY_PER_100W
-    # publishes. All three are this change's own debt, so all three are here.
+    # publishes, on the corrected reduction_w axis (issue #173). All four are
+    # this change's own debt, so all four are here.
     ("s13#11", "quiet_night_floor.json", "sensitivity_per_100w", "basis"):
         ("names the engine and step size the ladder was re-billed with (method b, 100 W "
          "steps) -- provenance for the arithmetic, not a condition on reading the rate; "
@@ -877,13 +878,21 @@ _QUALIFIER_ACCOUNTED = {
     ("s13#11", "quiet_night_floor.json", "sensitivity_per_100w",
      "linearity_note"):
         ("NIGHT_FLOOR_SENSITIVITY_PER_100W recomputes this note's argument from the "
-         "ladder's own marginal_usd_per_100w column and prints the spread, so the "
-         "curvature is stated as a range rather than quoted as a note", None),
+         "ladder's own marginal_usd_per_100w column and prints the spread across the "
+         "rungs this floor can reach, so the curvature is stated as a range rather than "
+         "quoted as a note", None),
     ("s13#11", "quiet_night_floor.json",
      "sensitivity_per_100w.usd_per_100w_at_current_floor", "note"):
-        ("NIGHT_FLOOR_SENSITIVITY_PER_100W states this note's own conclusion -- the rate "
-         "is read off the step nearest the measured floor, not computed at the "
-         "household's exact wattage -- and computes which step that was", None),
+        ("NIGHT_FLOOR_SENSITIVITY_PER_100W states this note's own conclusion -- the "
+         "published rate is the FIRST 100 W removed from the floor as measured, a rate "
+         "at that floor rather than a multiplier for any amount removed -- and names the "
+         "removal it prices, in watts taken off the floor", None),
+    ("s13#11", "quiet_night_floor.json", "sensitivity_per_100w.marginal_range", "note"):
+        ("the same token recomputes BOTH halves of this range from the ladder's own "
+         "marginal_usd_per_100w column and refuses the artifact when either disagrees, "
+         "then prints the reachable half with the floor that bounds it, so the clamping "
+         "this note warns about decides what the sentence quotes rather than being left "
+         "for the reader to apply", None),
 }
 
 # Candidates whose FIGURE comes from a token this PR did not add. Out of scope

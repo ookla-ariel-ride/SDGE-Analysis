@@ -10173,9 +10173,11 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
                 offsets = list(range(nights - 1)) + [hole_to]
             doc["night_floor"]["daily_series"] = [
                 {"date": (first + dt.timedelta(days=o)).isoformat(),
-                 "median_kw": 1.0, "excluded_high_demand": False}
+                 "median_kw": doc["night_floor"]["median_kw"],
+                 "excluded_high_demand": False}
                 for o in offsets]
             doc["night_floor"]["nights_total"] = nights
+            doc["night_floor"]["quiet_nights"] = nights
         return edit
 
     checked = {}
@@ -15274,31 +15276,77 @@ def _ladder_rungs():
     return sorted(s["reduction_w"] for s in steps)
 
 
-def _floor_at(median_kw, floor_w_used=None):
-    """A stub edit putting this household's measured floor at `median_kw`,
-    with the rest of the artifact made SELF-CONSISTENT the way
-    quiet_night_floor.py itself makes it: the step is the floor rounded onto
-    the ladder and then CLAMPED into [smallest rung, largest rung], and the
-    published rate is that step's own marginal.
+def _rebuild_marginal_range(sens):
+    """sensitivity_per_100w.marginal_range recomputed off `steps`, exactly the
+    way quiet_night_floor.sensitivity_per_100w() writes it -- including its
+    `or steps[:1]` fallback, so a floor smaller than one rung still publishes
+    a reachable block instead of dropping the key.
 
-    The clamp is re-implemented here rather than imported because
-    quiet_night_floor.py needs the private archive to run -- and because the
-    defect under test is precisely that report_tokens.py never read it.
-    `floor_w_used` overrides the clamp, which is how an artifact that
-    contradicts its own ladder is built."""
+    Re-implemented here rather than imported because quiet_night_floor.py
+    needs the private archive to run. It is a mechanical restatement of a
+    min/max over one column, not of the defect: the axis stays reduction_w
+    throughout."""
+    steps = sens["steps"]
+
+    def span(rows):
+        lo = min(rows, key=lambda s: s["marginal_usd_per_100w"])
+        hi = max(rows, key=lambda s: s["marginal_usd_per_100w"])
+        return {"min_usd": lo["marginal_usd_per_100w"],
+                "min_at_reduction_w": lo["reduction_w"],
+                "max_usd": hi["marginal_usd_per_100w"],
+                "max_at_reduction_w": hi["reduction_w"]}
+
+    reachable = [s for s in steps if not s["exceeds_measured_floor"]] or steps[:1]
+    rng = sens.setdefault("marginal_range", {})
+    rng["reachable"] = dict(span(reachable),
+                            through_reduction_w=reachable[-1]["reduction_w"])
+    rng["full_ladder"] = span(steps)
+
+
+def _floor_at(median_kw, reduction_w=None):
+    """A stub edit putting this household's measured floor at `median_kw`,
+    with the rest of the artifact made SELF-CONSISTENT the way the corrected
+    quiet_night_floor.sensitivity_per_100w() makes it (issue #173):
+    measured_floor_w is the floor in whole watts, usd_per_100w_at_current_floor
+    prices the ladder's SMALLEST rung -- the first 100 W off the floor as it
+    stands -- at that rung's own marginal, every step's exceeds_measured_floor
+    is recomputed as reduction_w > measured_floor_w, and both halves of
+    marginal_range are rebuilt off the steps.
+
+    THE VERSION THIS REPLACED WROTE THE DEFECT INTO THE FIXTURE (issue #173).
+    It rounded `median_kw` onto the ladder, clamped the result into [smallest
+    rung, largest rung] and wrote it to a `floor_w_used` field -- a floor
+    LEVEL laid onto an axis that counts watts REMOVED, so a 1,030 W floor was
+    "self-consistently" quoted the tenth 100 W (the rate for a household that
+    has already stripped 900 W) instead of the first. The field is gone from
+    the artifact and the mapping is gone from here; what a stub sets is the
+    floor, and what the ladder answers with is always its first rung.
+
+    `reduction_w` overrides which removal the artifact says it priced, with
+    value_usd kept honest to that rung, which is how an artifact that prices a
+    deeper removal than the first one is built. It is named for the axis the
+    ladder is indexed on -- watts REMOVED -- and never for a resulting floor
+    level, because naming it for the level is the whole of the defect."""
     def edit(doc):
         sens = doc["sensitivity_per_100w"]
-        rungs = sorted(s["reduction_w"] for s in sens["steps"])
-        step = rungs[0] if len(rungs) < 2 else rungs[1] - rungs[0]
-        w = int(round(median_kw * 1000 / step)) * step
-        w = min(max(w, rungs[0]), rungs[-1]) if floor_w_used is None else floor_w_used
+        steps = sens["steps"]
+        floor_w = int(round(median_kw * 1000))
         doc["night_floor"]["median_kw"] = median_kw
+        for row in doc["night_floor"].get("daily_series") or []:
+            if row.get("median_kw") is not None:
+                row["median_kw"] = median_kw
         doc["pricing"]["floor_kw_priced"] = round(median_kw, 4)
-        sens["usd_per_100w_at_current_floor"]["floor_w_used"] = w
-        marginal = next((s["marginal_usd_per_100w"] for s in sens["steps"]
+        sens["measured_floor_w"] = floor_w
+        for s in steps:
+            s["exceeds_measured_floor"] = bool(s["reduction_w"] > floor_w)
+        w = min(s["reduction_w"] for s in steps) if reduction_w is None else reduction_w
+        at = sens["usd_per_100w_at_current_floor"]
+        at["reduction_w"] = w
+        marginal = next((s["marginal_usd_per_100w"] for s in steps
                          if s["reduction_w"] == w), None)
         if marginal is not None:
-            sens["usd_per_100w_at_current_floor"]["value_usd"] = marginal
+            at["value_usd"] = marginal
+        _rebuild_marginal_range(sens)
     return edit
 
 
@@ -15359,80 +15407,103 @@ def _assert_no_new_refusals(baseline_refused, now_refused, what):
 
 
 @case
-def case_a_floor_outside_the_sensitivity_ladder_still_gets_a_whole_report():
-    """ISSUE #140, /review FINDING 1. NIGHT_FLOOR_SENSITIVITY_PER_100W checked
-    the published step against the measured floor with a bare 50 W tolerance
-    and REFUSED past it -- and generate_report.resolve_tokens_with_gaps folds
-    a refusal into `failures`, which stops the whole run.
+def case_a_floor_smaller_than_the_ladders_first_rung_still_gets_a_whole_report():
+    """ISSUE #173, and ISSUE #140, /review FINDING 1 BEFORE IT. The claim both
+    make is the same one -- a household whose floor is an unusual size still
+    gets a report -- and only the second one states it on the axis the ladder
+    is actually indexed on.
 
-    But quiet_night_floor.sensitivity_per_100w() never computes a step for an
-    arbitrary floor: it rounds the floor onto its ladder and then CLAMPS the
-    result into [STEP_W, MAX_REDUCTION_W], bounds whose own comment says they
-    bracket THIS household's ~1.0-1.1 kW floor. So a 1.40 kW floor pinned to
-    the 1,200 W end missed by 200 W, a 0.03 kW floor pinned to the 100 W end
-    missed by 70, and every household outside roughly 50-1,250 W got no
-    report. Third time this project has shipped a guard that compares two
-    artifact fields without reading the generator that writes both, which is
-    what report_tokens.py's own _require_derived preamble is about.
+    WHAT THIS CASE USED TO ASSERT, AND WHY IT CANNOT BE RESTORED. It fed the
+    token a floor "outside the ladder" and demanded a sentence naming the
+    ladder's top or bottom END, because the token then read a floor_w_used
+    field, rounded the measured floor onto the rungs, clamped it into [first
+    rung, last rung] and reported the clamped rung as the step "nearest the
+    measured floor". Every one of those comparisons puts a floor LEVEL on an
+    axis that counts watts REMOVED. They are both watts and neither is the
+    other: a 1,030 W floor does not mean the household should be quoted the
+    rung that removes 1,030 W (that rung is the tenth 100 W, priced for a
+    household that already stripped 900), and a floor bigger than the last
+    rung is not a reading at the ladder's top end -- it is a floor with more
+    rungs available than were re-billed. So the wording that case pinned was
+    the wrong figure wearing the right shape, and the clamp/nearness branches
+    it tested are DELETED rather than adjusted. Restoring any of it under the
+    banner of an older test would reintroduce the axis error itself.
 
-    Three floors, and the sweep is over EVERY token rather than this one:
-      1.40 kW -- above the ladder, renders the rate at its top end;
-      0.03 kW -- below it, renders the rate at its bottom end;
-      1.03 kW -- inside it, renders exactly what it renders today.
-    The bounds in the assertions are read off the artifact's own ladder, so
-    nothing here restates the generator's constants either."""
+    WHAT REPLACED IT is the same protection stated correctly. The rate at a
+    floor is the ladder's FIRST rung whatever the floor measures, so no floor
+    is outside the ladder any more and no floor is refused for its size. What
+    an unusual floor changes is only how much of the ladder the metered load
+    can supply, and that has exactly one honest edge: a floor smaller than the
+    first rung, where even the first 100 W asks for more than the floor holds
+    and _split_floor gives back only what was there. Three floors, and the
+    sweep is over EVERY token rather than this one, because a refusal stops
+    the whole run (generate_report.resolve_tokens_with_gaps folds it into
+    `failures`):
+      0.03 kW -- below the first rung: renders, and says the smallest step
+                 asks for more than the floor holds;
+      1.40 kW -- above the last rung: renders, and reports the first rung off
+                 that floor with every re-billed rung reachable;
+      1.03 kW -- this household: renders exactly what it renders today.
+    Every watt figure in the assertions is read off the artifact's own ladder,
+    so nothing here restates the generator's constants either."""
     _require_household()
     rungs = _ladder_rungs()
     lowest, highest = rungs[0], rungs[-1]
     live = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
-    got = {}
-    for median, end_w, side, where in (
-            ((highest + 200) / 1000.0, highest, "top", "above"),
-            (lowest / 1000.0 - 0.07, lowest, "bottom", "below")):
-        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", _floor_at(median))):
-            rendered = _resolve_every_token()
-            text = rendered["NIGHT_FLOOR_SENSITIVITY_PER_100W"]
-            got[median] = text
-        for phrase in (f"{end_w:,.0f} W step at the {side} of the re-billed ladder",
-                       f"({median * 1000:,.0f} W) sits {where} the "
-                       f"{lowest:,.0f}–{highest:,.0f} W range",
-                       "a rate at that end of the ladder"):
-            assert phrase in text, (
-                f"a {median} kW floor is {where} the ladder, so the sentence must say so "
-                f"({phrase!r}) rather than claim a step nearest it -- got: {text}")
-        assert "nearest the measured floor" not in text, (
-            f"a clamped step was published as the step 'nearest the measured floor': {text}")
-        for label, pattern in _MALFORMED_RENDER:
-            assert not pattern.search(text), f"the clamped rendering is {label}: {text}"
 
-    # The household inside the ladder is untouched: same sentence as today.
+    # BELOW the first rung: the rate is real, the wording degrades, and the
+    # report still ships.
+    small_kw = (lowest - 70) / 1000.0
+    small_w = lowest - 70
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", _floor_at(small_kw))):
+        small = _resolve_every_token()["NIGHT_FLOOR_SENSITIVITY_PER_100W"]
+    for phrase in (f"the ladder's smallest step, {lowest:,.0f} W, which already asks for "
+                   f"more than the {small_w:,.0f} W this floor holds",
+                   "so the re-billing gave back only what was there",
+                   "a rate at the ladder's smallest step"):
+        assert phrase in small, (
+            f"a {small_w:,.0f} W floor cannot supply the ladder's {lowest:,.0f} W first "
+            f"rung, so the sentence must say so ({phrase!r}): {small}")
+    assert f"the first {lowest:,.0f} W off the {small_w:,.0f} W floor as measured" not in small, (
+        f"a rung the floor cannot fill was published as watts actually taken off it: {small}")
+
+    # ABOVE the last rung: nothing degrades. The floor holds every rung that
+    # was re-billed, so the rate is the first rung and the spread runs the
+    # whole ladder -- a floor with more to give than the ladder priced, which
+    # is not the same thing as a reading at the ladder's top end.
+    big_kw = (highest + 200) / 1000.0
+    big_w = highest + 200
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", _floor_at(big_kw))):
+        big = _resolve_every_token()["NIGHT_FLOOR_SENSITIVITY_PER_100W"]
+    for phrase in (f"the first {lowest:,.0f} W off the {big_w:,.0f} W floor as measured",
+                   "a rate at this floor",
+                   f"across the first {highest:,.0f} W, as deep as a {big_w:,.0f} W "
+                   "floor reaches"):
+        assert phrase in big, (
+            f"a {big_w:,.0f} W floor holds every re-billed rung, so the sentence must "
+            f"price the first one off it ({phrase!r}): {big}")
+
+    for where, text in (("below the first rung", small), ("above the last rung", big)):
+        assert "nearest the measured floor" not in text, (
+            f"the floor {where} was quoted a step 'nearest the measured floor' -- the "
+            f"deleted comparison of a removal against a level: {text}")
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"the {where} rendering is {label}: {text}"
+
+    # This household is untouched: same sentence as today.
     inside = rt._json("quiet_night_floor.json")["night_floor"]["median_kw"]
     with _patched(rt, "_json", _stub_for("quiet_night_floor.json", _floor_at(inside))):
         same = _resolve_every_token()["NIGHT_FLOOR_SENSITIVITY_PER_100W"]
     assert same == live, f"the in-range rendering moved:\n  was {live!r}\n  now {same!r}"
-    assert "nearest the measured floor" in same, same
-
-    # What is STILL refused: an artifact that contradicts its own ladder -- a
-    # floor outside the range whose step is not the end the clamp produces.
-    with _patched(rt, "_json", _stub_for(
-            "quiet_night_floor.json",
-            _floor_at((highest + 200) / 1000.0, floor_w_used=lowest))):
-        try:
-            text = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
-        except SystemExit as exc:
-            assert "NIGHT_FLOOR_SENSITIVITY_PER_100W" in str(exc), exc
-            assert f"{lowest:,.0f} W step" in str(exc), exc
-        else:
-            raise AssertionError(
-                "a floor above the ladder whose rate was read off the ladder's BOTTOM "
-                f"rung was published anyway: {text}")
+    assert f"the first {lowest:,.0f} W off the" in same, same
 
     after = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
     assert after == live, f"the stubs leaked: {after!r} != {live!r}"
-    return (f"a floor above the {lowest}-{highest} W ladder and one below it both resolve "
-            f"the ENTIRE token set ({len(rt.TOKENS)} entries) and say the rate is the one "
-            f"at the ladder's end; a floor inside it still renders {live[:38]!r}...; and an "
-            "artifact whose step is not the clamp's own endpoint is still refused by name")
+    return (f"a {small_w:,.0f} W floor below the ladder's {lowest:,.0f} W first rung and a "
+            f"{big_w:,.0f} W floor above its {highest:,.0f} W last one both resolve the "
+            f"ENTIRE token set ({len(rt.TOKENS)} entries); the small one says the first "
+            "rung asks for more than it holds, the large one prices that first rung with "
+            f"every rung reachable, and this household still renders {live[:38]!r}...")
 
 
 @case
@@ -15503,20 +15574,125 @@ def case_the_sensitivity_ladder_refuses_a_shape_it_cannot_be_read_off():
 
 
 @case
+def case_the_sensitivity_ladder_refuses_an_artifact_that_contradicts_its_own_rungs():
+    """ISSUE #173. The four guards that replaced the clamp/nearness pair, each
+    provoked by the artifact state it exists to catch. All four stay on ONE
+    axis -- reduction_w, watts REMOVED from the floor -- which is the whole
+    correction: the guard they replaced compared a removal against a level,
+    made the wrong rung the passing one, and refused the corrected artifact.
+
+    The five edits below, and what each would publish unguarded:
+      * value_usd read off a DIFFERENT rung than the reduction_w beside it --
+        the sentence would quote a second copy of the ladder instead of the
+        ladder, which is how a stale hand-edit survives a regeneration;
+      * a reduction_w that is not the ladder's smallest rung -- the defect
+        itself, in its own words: a deeper rung is the rate for a household
+        that has ALREADY stripped the earlier ones, so publishing it as "the
+        rate at the current floor" prices watts that are not there yet;
+      * an exceeds_measured_floor flag that disagrees with reduction_w >
+        measured_floor_w -- the flags decide which rungs may be quoted as a
+        spread, so a wrong one silently moves an end of the published range;
+      * a marginal_range half that does not match a recomputation from steps
+        -- reachable and full_ladder both, since the token prints one of them
+        and the choice between them depends on the other.
+
+    Written the way this module's other refusal cases are: the message has to
+    NAME what is wrong, and a generic ValueError/KeyError is a failure even
+    when it stops the run, because a maintainer cannot route it."""
+    _require_household()
+    live = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    sens = rt._json("quiet_night_floor.json")["sensitivity_per_100w"]
+    rungs = _ladder_rungs()
+    lowest, deepest = rungs[0], rungs[-1]
+    inside = rt._json("quiet_night_floor.json")["night_floor"]["median_kw"]
+    by_rung = {s["reduction_w"]: s["marginal_usd_per_100w"] for s in sens["steps"]}
+    assert by_rung[deepest] != by_rung[lowest], (
+        f"the ladder's first ({lowest} W) and last ({deepest} W) rungs carry the same "
+        f"marginal (${by_rung[lowest]:,.2f}), so neither the mispriced-rate edit nor the "
+        "deeper-rung edit below would change anything and this case cannot test them")
+
+    def value_off_another_rung(doc):
+        at = doc["sensitivity_per_100w"]["usd_per_100w_at_current_floor"]
+        at["value_usd"] = by_rung[deepest]
+
+    def flag_disagrees_with_the_floor(doc):
+        first = min(doc["sensitivity_per_100w"]["steps"],
+                    key=lambda s: s["reduction_w"])
+        first["exceeds_measured_floor"] = not first["exceeds_measured_floor"]
+
+    def reachable_span_narrowed(doc):
+        rch = doc["sensitivity_per_100w"]["marginal_range"]["reachable"]
+        rch["min_usd"] = rch["max_usd"]
+
+    def reachable_reach_overstated(doc):
+        doc["sensitivity_per_100w"]["marginal_range"]["reachable"][
+            "through_reduction_w"] = deepest
+
+    def full_span_narrowed(doc):
+        full = doc["sensitivity_per_100w"]["marginal_range"]["full_ladder"]
+        full["min_usd"] = full["max_usd"]
+
+    refusals = {}
+    for label, edit, must_say in (
+            ("a rate that is not the rung's own marginal", value_off_another_rung,
+             "the sentence must quote the ladder, not a second copy of it"),
+            ("a rate priced at a deeper removal than the first",
+             _floor_at(inside, reduction_w=deepest),
+             f"the ladder's smallest rung is {lowest:,.0f} W"),
+            ("a flag that disagrees with the floor it names", flag_disagrees_with_the_floor,
+             "the steps flag"),
+            ("a reachable spread narrower than its own rungs", reachable_span_narrowed,
+             "marginal_range.reachable publishes"),
+            ("a reachable spread reaching past the floor", reachable_reach_overstated,
+             "marginal_range.reachable publishes"),
+            ("a full-ladder spread narrower than its own rungs", full_span_narrowed,
+             "marginal_range.full_ladder publishes")):
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", edit)):
+            try:
+                text = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+            except SystemExit as exc:
+                refusals[label] = str(exc)
+            else:
+                raise AssertionError(f"{label} was published anyway: {text}")
+        assert "NIGHT_FLOOR_SENSITIVITY_PER_100W" in refusals[label], refusals[label]
+        assert must_say in refusals[label], (
+            f"the refusal for {label} does not say what is wrong ({must_say!r}): "
+            f"{refusals[label]}")
+        for generic in ("ValueError", "IndexError", "KeyError", "TypeError", "Traceback"):
+            assert generic not in refusals[label], (
+                f"{label} reached a generic {generic} instead of this module's own named "
+                f"refusal: {refusals[label]}")
+
+    after = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    assert after == live, f"the stubs leaked: {after!r} != {live!r}"
+    return (f"{len(refusals)} artifact states that contradict the ladder they are read "
+            f"off -- a rate off another rung, a rate priced at the {deepest:,.0f} W "
+            f"removal instead of the {lowest:,.0f} W one, a flipped "
+            "exceeds_measured_floor flag, and three wrong marginal_range fields -- are "
+            "each refused by name rather than published")
+
+
+@case
 def case_the_sensitivity_spread_carries_the_window_at_its_own_endpoints():
-    """ISSUE #140, /review FINDING 5. On a partial corpus this sentence read
-    "about $289 across the 200 nights measured, less than a full year, for
-    every 100 W taken off it, read off the 1,000 W step ... the same ladder's
-    marginal runs from $249 to $323 per 100 W across the range it was
-    re-billed over".
+    """ISSUE #140, /review FINDING 5. On a partial corpus this sentence
+    published the rate with its window attached -- "about $323 across the 200
+    nights measured, spanning less than a full year" -- and then published the
+    two ends of the ladder's spread BARE, with no window on them at all.
 
     Both endpoints are sums over exactly the same window as the rate, and the
     docstring justified leaving them bare by saying the window is stated
     "immediately before them". It is not: on that render the window clause
-    sits about forty words and a complete clause earlier. Nor can
-    _ANNUAL_CLAIM catch it -- those figures carry no "/yr" -- so this is the
-    defect the structural guard exists for, at the one exit its regex cannot
-    see.
+    sits about forty words and a complete clause earlier, with the step and
+    the multiplier caveat in between. Nor can _ANNUAL_CLAIM catch it -- those
+    figures carry no "/yr" -- so this is the defect the structural guard
+    exists for, at the one exit its regex cannot see.
+
+    THE PAIR THIS CHECKS IS THE REACHABLE ONE (issue #173). The sentence
+    publishes the spread across the rungs at or below the measured floor,
+    because the rungs above it are clamped by _split_floor and their diluted
+    marginals would blame the tariff for the model's own truncation. So the
+    endpoints are read off the steps this floor can reach, not off every step
+    in the ladder.
 
     Asserted STRUCTURALLY, not by matching the whole sentence: the window has
     to appear within a short distance AFTER the endpoint pair, which is what
@@ -15530,15 +15706,18 @@ def case_the_sensitivity_spread_carries_the_window_at_its_own_endpoints():
         first = dt.date(2025, 7, 24)
         doc["night_floor"]["daily_series"] = [
             {"date": (first + dt.timedelta(days=i)).isoformat(),
-             "median_kw": 1.0, "excluded_high_demand": False}
+             "median_kw": doc["night_floor"]["median_kw"],
+             "excluded_high_demand": False}
             for i in range(nights)]
         doc["night_floor"]["nights_total"] = nights
+        doc["night_floor"]["quiet_nights"] = nights
 
     with _patched(rt, "_json", _stub_for("quiet_night_floor.json", short_corpus)):
         text = _renders("NIGHT_FLOOR_SENSITIVITY_PER_100W")
     assert not rt._ANNUAL_CLAIM.search(text), text
     steps = rt._json("quiet_night_floor.json")["sensitivity_per_100w"]["steps"]
-    marginals = [s["marginal_usd_per_100w"] for s in steps]
+    marginals = [s["marginal_usd_per_100w"] for s in steps
+                 if not s["exceeds_measured_floor"]]
     pair = f"${min(marginals):,.0f} to ${max(marginals):,.0f}"
     at = text.find(pair)
     assert at >= 0, f"the sentence no longer publishes the ladder's two ends ({pair}): {text}"
