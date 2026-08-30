@@ -520,11 +520,18 @@ def case_published_sensitivity_rate_is_pinned_to_the_step_it_is_drawn_from():
         f"a household that already stripped {at['reduction_w'] - min(by_reduction)} W; the "
         f"rate at the measured floor is the {min(by_reduction)} W rung's")
 
-    # (3) both marginal ranges reproduce from the rungs they claim to cover
+    # (3) both marginal ranges reproduce from the rungs they claim to cover.
+    # The reachable block is optional BY CONTRACT -- the generator publishes it
+    # as null when no rung sits at or below the measured floor, rather than
+    # naming a rung its own exceeds_measured_floor flag calls unreachable -- so
+    # the pairing of block against rungs is checked in the sibling case below,
+    # which covers both states. Here it is read only when it is there.
     reachable = [s for s in steps if not s["exceeds_measured_floor"]]
-    assert reachable, "no rung is at or below the measured floor"
     rng = sens["marginal_range"]
-    for name, rungs in (("reachable", reachable), ("full_ladder", steps)):
+    ranges = [("full_ladder", steps)]
+    if rng.get("reachable") is not None:
+        ranges.insert(0, ("reachable", reachable))
+    for name, rungs in ranges:
         block = rng[name]
         lo = min(rungs, key=lambda s: s["marginal_usd_per_100w"])
         hi = max(rungs, key=lambda s: s["marginal_usd_per_100w"])
@@ -532,10 +539,14 @@ def case_published_sensitivity_rate_is_pinned_to_the_step_it_is_drawn_from():
         assert block["min_at_reduction_w"] == lo["reduction_w"], (name, block, lo)
         assert block["max_usd"] == hi["marginal_usd_per_100w"], (name, block, hi)
         assert block["max_at_reduction_w"] == hi["reduction_w"], (name, block, hi)
-    assert rng["reachable"]["through_reduction_w"] == reachable[-1]["reduction_w"], rng
-    # the reachable fit is published beside the full-ladder one, so a reader is
-    # never left with only the figure the unreachable rungs pull down
-    assert isinstance(sens["usd_per_100w_general_average"]["reachable_slope_usd"], (int, float))
+    if rng.get("reachable") is not None:
+        assert rng["reachable"]["through_reduction_w"] == reachable[-1]["reduction_w"], rng
+        # the reachable fit is published beside the full-ladder one, so a reader
+        # is never left with only the figure the unreachable rungs pull down.
+        # It is null when one rung cannot be fitted, which is a different fact
+        # from "absent", so None is allowed and a string is not.
+        slope = sens["usd_per_100w_general_average"]["reachable_slope_usd"]
+        assert slope is None or isinstance(slope, (int, float)), slope
 
     # (4) the flag is exactly the arithmetic it stands for
     floor_w = sens["measured_floor_w"]
@@ -553,6 +564,159 @@ def case_published_sensitivity_rate_is_pinned_to_the_step_it_is_drawn_from():
     return (f"the published ${at['value_usd']}/100 W is the {at['reduction_w']} W rung's own "
            f"marginal and that rung is the ladder's smallest; both marginal ranges, all "
            f"{len(steps)} exceeds_measured_floor flags and the {floor_w} W floor reproduce")
+
+
+@case
+def case_every_rung_publishes_the_delivery_it_actually_achieved():
+    """Issue #173, adversarial review: the ladder's marginal falls along the
+    rungs, and the report reads that fall to the household. Most of it is not
+    tariff curvature -- it is energy the re-bill never removed.
+
+    `_split_floor` holds each interval's requested reduction to THAT
+    INTERVAL's own metered import, and the measured floor is a MEDIAN, so
+    every rung asks for more than some intervals hold and the shortfall is
+    dropped rather than credited. Each step therefore publishes what it asked
+    for, what it delivered, what it dropped, and its own slice's delivery
+    ratio, so the fall can be read for what it is.
+
+    Those four fields are what the artifact's own `marginal_range.note` and
+    `linearity_note` now assert to the reader, and nothing else in this suite
+    would notice if they were dropped, faked flat, or left as a copy of the
+    request. This case pins them:
+
+      (1) every step carries all four
+      (2) dropped = requested - delivered on every step
+      (3) delivered <= requested on every step -- the clamp can only remove
+          energy, never invent it
+      (4) the ratio is a real fraction that never RISES along the ladder, and
+          reproduces from the successive `delivered_kwh` themselves
+      (5) it starts effectively whole and is materially short by the deepest
+          rung the floor can reach, which is the property that makes the
+          reachable/full_ladder split mean anything
+      (6) `marginal_range.reachable` is published exactly when some rung is
+          reachable -- never a block naming a rung the flags call unreachable
+
+    Tolerances, not equality, wherever the artifact rounds: the energies are
+    stored at 2 dp and the ratios at 4 dp, so a recomputation off the stored
+    figures lands within rounding of the generator's full-precision value and
+    not on it."""
+    if not ARTIFACT.exists():
+        raise SkipCase(f"{ARTIFACT} not committed in this checkout")
+    doc = json.loads(ARTIFACT.read_text())
+    sens = doc["sensitivity_per_100w"]
+    steps = sorted(sens["steps"], key=lambda s: s["reduction_w"])
+    assert len(steps) >= 2, f"a one-rung ladder cannot show a fall: {steps}"
+
+    # (1) every step carries the four delivery fields
+    fields = ("requested_kwh", "delivered_kwh", "dropped_kwh",
+              "marginal_delivery_ratio")
+    for s in steps:
+        missing = [f for f in fields if f not in s]
+        assert not missing, (
+            f"the {s['reduction_w']} W rung publishes no {missing}; without them the "
+            "marginal's fall along the ladder reads as tariff curvature, which is what "
+            "it mostly is not")
+
+    prev_delivered = 0.0
+    prev_requested = 0.0
+    prev_ratio = None
+    for s in steps:
+        w = s["reduction_w"]
+        req, dlv, drop = s["requested_kwh"], s["delivered_kwh"], s["dropped_kwh"]
+        ratio = s["marginal_delivery_ratio"]
+
+        # (2) the drop is the arithmetic it stands for, not an independent
+        # figure that can drift from the pair it is differenced out of
+        assert abs(drop - (req - dlv)) <= 0.02, (
+            f"the {w} W rung drops {drop} kWh but requested {req} and delivered {dlv}, a "
+            f"shortfall of {req - dlv:.2f} kWh")
+
+        # (3) the clamp only ever removes energy. A rung delivering more than
+        # it asked for would mean the re-bill credited energy the meter never
+        # recorded, which is the error CLAUDE.md section 1b exists to stop.
+        assert dlv <= req + 0.01, (
+            f"the {w} W rung delivered {dlv} kWh against a {req} kWh request; the split "
+            "clamps to metered import and cannot invent energy")
+        assert drop >= -0.01, f"the {w} W rung drops {drop} kWh, a negative shortfall"
+
+        # (4) the ratio is a real fraction of ITS OWN slice's request, and it
+        # reproduces from the successive delivered_kwh. Recomputing it is what
+        # makes a constant stand-in fail: a flat ratio cannot be differenced
+        # back out of a delivered series that flattens.
+        assert 0 < ratio <= 1.001, (
+            f"the {w} W rung's marginal_delivery_ratio is {ratio}, not a fraction of the "
+            "slice it asks for")
+        slice_req = req - prev_requested
+        assert slice_req > 0, (
+            f"the {w} W rung asks for {req} kWh against the previous rung's "
+            f"{prev_requested} kWh; the ladder must ask for more at each step")
+        recomputed = (dlv - prev_delivered) / slice_req
+        assert abs(recomputed - ratio) <= 2e-4, (
+            f"the {w} W rung publishes marginal_delivery_ratio {ratio} but its own "
+            f"delivered_kwh series gives {recomputed:.4f}; the ratio is measured off the "
+            "split, not declared beside it")
+        if prev_ratio is not None:
+            assert ratio <= prev_ratio, (
+                f"the {w} W slice delivers {ratio} of its request against the previous "
+                f"slice's {prev_ratio}; each successive 100 W reaches further under the "
+                "metered import, so its delivery cannot improve")
+        prev_delivered, prev_requested, prev_ratio = dlv, req, ratio
+
+    # (5) the ladder starts effectively whole and ends materially short over
+    # the rungs this floor can reach. Bands, not the artifact's current 0.9999
+    # and 0.9259, so ordinary data drift does not fail the case -- but wide
+    # enough that removing the clamp (every ratio 1.0) or faking the field
+    # constant (first == deepest) fails it.
+    reachable = [s for s in steps if not s["exceeds_measured_floor"]]
+    first = steps[0]
+    assert first["marginal_delivery_ratio"] >= 0.99, (
+        f"the first {first['reduction_w']} W off the floor delivers only "
+        f"{first['marginal_delivery_ratio']} of its request; the published at-floor rate "
+        "is quoted as the rate for that slice and would be a diluted figure")
+    if len(reachable) >= 2:
+        deepest = reachable[-1]
+        assert deepest["marginal_delivery_ratio"] <= 0.96, (
+            f"the deepest reachable rung ({deepest['reduction_w']} W) delivers "
+            f"{deepest['marginal_delivery_ratio']} of its request, effectively all of it; "
+            "either the clamp is no longer applied or the ratio is a stand-in, and the "
+            "reachable range then reads as tariff curvature it is not")
+
+    # (6) the reachable block is published exactly when a rung is reachable.
+    # An earlier fallback published a one-rung block for a floor under the
+    # smallest rung, naming a rung the same step's own exceeds_measured_floor
+    # flag declared unreachable. Both directions are checked: a block with no
+    # reachable rung, and reachable rungs with no block.
+    rng = sens["marginal_range"]
+    block = rng.get("reachable")
+    if reachable:
+        assert block is not None, (
+            f"{len(reachable)} rungs sit at or below the {sens['measured_floor_w']} W "
+            "measured floor but marginal_range publishes no reachable block")
+        lo = min(reachable, key=lambda s: s["marginal_usd_per_100w"])
+        hi = max(reachable, key=lambda s: s["marginal_usd_per_100w"])
+        assert block["min_usd"] == lo["marginal_usd_per_100w"], (block, lo)
+        assert block["min_at_reduction_w"] == lo["reduction_w"], (block, lo)
+        assert block["max_usd"] == hi["marginal_usd_per_100w"], (block, hi)
+        assert block["max_at_reduction_w"] == hi["reduction_w"], (block, hi)
+        assert block["through_reduction_w"] == reachable[-1]["reduction_w"], block
+        worst = min(reachable, key=lambda s: s["marginal_delivery_ratio"])
+        assert block["min_marginal_delivery_ratio"] == worst["marginal_delivery_ratio"], (
+            block, worst)
+        assert block["min_marginal_delivery_ratio_at_reduction_w"] == worst["reduction_w"], (
+            block, worst)
+    else:
+        assert block is None, (
+            f"marginal_range publishes a reachable block {block} while every rung is "
+            f"flagged above the {sens['measured_floor_w']} W measured floor; the block "
+            "would name a rung its own exceeds_measured_floor flag calls unreachable")
+
+    dropped_total = sum(s["dropped_kwh"] for s in steps)
+    return (f"all {len(steps)} rungs publish requested/delivered/dropped kWh that add up, "
+            f"a delivery ratio that reproduces off delivered_kwh and never rises "
+            f"({steps[0]['marginal_delivery_ratio']} down to "
+            f"{steps[-1]['marginal_delivery_ratio']}, {dropped_total:,.0f} kWh dropped "
+            f"across the ladder), and marginal_range.reachable is "
+            f"{'published for ' + str(len(reachable)) + ' reachable rungs' if reachable else 'null'}")
 
 
 # ---------------------------------------------------------------------------

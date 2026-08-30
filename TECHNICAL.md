@@ -3807,23 +3807,47 @@ rung ($323.16), which is the rate a household standing at its own measured floor
 for; reading a deeper rung as "the step nearest this floor" prices the wrong slice, and the
 field's own `note` states the axis so a consumer cannot repeat that reading.
 
-`marginal_range` publishes the spread twice, because the two halves of the ladder are not
-measuring the same thing. `reachable` covers only the rungs at or below the measured floor
-(100-1,000 W, $289.13-$323.16) -- the removal the metered load can actually supply, and the
-range that describes this household. `full_ladder` also includes the 1,100 W and 1,200 W
-rungs ($249.03-$323.16), which ask for more than the floor holds: `_split_floor` clamps each
-interval's reduction to that interval's metered import and DROPS the remainder where there is
-no generation, so those rungs remove less energy than they request and their marginals are
-diluted by discarded energy instead of by tariff curvature. Publish or read the reachable
-range for this household; the full ladder only with that clamping in mind.
+`marginal_range` publishes the spread twice, and NEITHER half isolates tariff curvature.
+`reachable` covers the rungs at or below the measured floor (100-1,000 W, $289.13-$323.16);
+`full_ladder` adds the 1,100 W and 1,200 W rungs ($249.03-$323.16), which ask for more than
+the floor holds. The two labels differ only in where the boundary is drawn, and the boundary
+is drawn at the MEDIAN floor (1,030 W) while `_split_floor` clamps PER INTERVAL against that
+interval's own metered import and DROPS the remainder where there is no generation. A median
+is not a minimum, so rungs well below the boundary are clamped as well, and calling the lower
+range "the removal the metered load can supply" claims more than the split delivers.
 
-The general linear-fit slope is reported the same way and for the same reason:
+The 1,000 W rung measures the size of that error, and every figure below comes from the four
+per-rung fields the artifact publishes: `requested_kwh`, `delivered_kwh`, `dropped_kwh` and
+`marginal_delivery_ratio`. That rung asks for 8,760.0 kWh across the year and the meter
+supplies 8,569.38 of it, dropping 190.62 kWh, or 2.18% of the request. The dilution is
+concentrated in the rung's own marginal slice (the tenth 100 W), whose
+`marginal_delivery_ratio` is 0.9259: it delivers about 811 of the 876 kWh it asks for, so 7.41%
+of the slice is discarded before any rate is applied. Divide the slice's saving by that ratio
+and it prices at $312.27 per delivered 100 W instead of the published $289.13. That single
+correction accounts for $23.14 of the $34.03 `reachable` spread -- 68% of it -- and the first
+rung is essentially undiluted at 0.9999, so the top of the range needs no such correction.
+The floor's own distribution corroborates the mechanism independently: `night_floor.p10_kw`
+is 0.822 kW against a 1.030 kW median, so a low decile of quiet-night intervals already draws
+less than a reachable rung asks to remove.
+
+Apply the same division to every rung and the per-delivered-100W rate runs $323.19 down to
+$312.27 across the reachable range and $309.62 at 1,200 W: a spread of $10.92 reachable and
+$13.57 full-ladder, against $34.03 and $74.13 as published. The mechanism behind the
+published fall is therefore DELIVERY, not price -- each successive slice removes a smaller
+share of what it requests, while the rate per delivered kWh is nearly flat. Prose that quotes
+the published spread must say the removal is partly unsupplied; quoting $289-323 as a range
+the metered load supplies repeats the error these fields exist to expose, and
+`marginal_range.note` states the same limitation on the artifact itself.
+
+The general linear-fit slope inherits the same dilution:
 `usd_per_100w_general_average.value_usd` ($303.76) fits the whole 100-1,200 W ladder and is
-pulled down by the unreachable rungs, while `reachable_slope_usd` ($310.86) fits the reachable
-rungs alone. `linearity_note` carries both max deviations from the fit ($73.89, 2.03% of
-savings at 1,200 W across the full ladder; $25.85, 0.83% at 1,000 W over the reachable rungs)
-so the residual nonlinearity is readable without mistaking clamping for tariff structure -- a
-bucket sign flip inside the tested range would show up as measurable nonlinearity here.
+pulled down hardest by the rungs above the floor, while `reachable_slope_usd` ($310.86) fits
+the 100-1,000 W rungs alone and is still pulled down by their own clamping.
+`linearity_note` carries both max deviations from the fit ($73.89, 2.03% of savings at
+1,200 W across the full ladder; $25.85, 0.83% at 1,000 W over the reachable rungs). Read both
+as an upper bound on curvature rather than a measurement of it: a bucket sign flip inside the
+tested range would show up as nonlinearity here, but so does dropped energy, and the two are
+separated only by dividing each rung's saving by its `marginal_delivery_ratio`.
 
 **Battery interaction (issue AC5, `battery_interaction`).** Re-runs
 `battery_dispatch_policies.run_batt` (same greedy policy, same Powerwall 3 config, the same

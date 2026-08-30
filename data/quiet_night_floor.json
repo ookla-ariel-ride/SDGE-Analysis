@@ -2667,73 +2667,121 @@
     "reduction_w": 100,
     "annual_savings_usd": 323.16,
     "marginal_usd_per_100w": 323.16,
-    "exceeds_measured_floor": false
+    "exceeds_measured_floor": false,
+    "requested_kwh": 876.0,
+    "delivered_kwh": 875.93,
+    "dropped_kwh": 0.07,
+    "marginal_delivery_ratio": 0.9999
    },
    {
     "reduction_w": 200,
     "annual_savings_usd": 644.29,
     "marginal_usd_per_100w": 321.13,
-    "exceeds_measured_floor": false
+    "exceeds_measured_floor": false,
+    "requested_kwh": 1752.0,
+    "delivered_kwh": 1750.8,
+    "dropped_kwh": 1.2,
+    "marginal_delivery_ratio": 0.9987
    },
    {
     "reduction_w": 300,
     "annual_savings_usd": 964.03,
     "marginal_usd_per_100w": 319.74,
-    "exceeds_measured_floor": false
+    "exceeds_measured_floor": false,
+    "requested_kwh": 2628.0,
+    "delivered_kwh": 2623.6,
+    "dropped_kwh": 4.4,
+    "marginal_delivery_ratio": 0.9964
    },
    {
     "reduction_w": 400,
     "annual_savings_usd": 1282.05,
     "marginal_usd_per_100w": 318.03,
-    "exceeds_measured_floor": false
+    "exceeds_measured_floor": false,
+    "requested_kwh": 3504.0,
+    "delivered_kwh": 3493.45,
+    "dropped_kwh": 10.55,
+    "marginal_delivery_ratio": 0.993
    },
    {
     "reduction_w": 500,
     "annual_savings_usd": 1597.06,
     "marginal_usd_per_100w": 315.01,
-    "exceeds_measured_floor": false
+    "exceeds_measured_floor": false,
+    "requested_kwh": 4380.0,
+    "delivered_kwh": 4359.28,
+    "dropped_kwh": 20.72,
+    "marginal_delivery_ratio": 0.9884
    },
    {
     "reduction_w": 600,
     "annual_savings_usd": 1909.37,
     "marginal_usd_per_100w": 312.31,
-    "exceeds_measured_floor": false
+    "exceeds_measured_floor": false,
+    "requested_kwh": 5256.0,
+    "delivered_kwh": 5220.78,
+    "dropped_kwh": 35.22,
+    "marginal_delivery_ratio": 0.9834
    },
    {
     "reduction_w": 700,
     "annual_savings_usd": 2219.01,
     "marginal_usd_per_100w": 309.64,
-    "exceeds_measured_floor": false
+    "exceeds_measured_floor": false,
+    "requested_kwh": 6132.0,
+    "delivered_kwh": 6076.95,
+    "dropped_kwh": 55.05,
+    "marginal_delivery_ratio": 0.9774
    },
    {
     "reduction_w": 800,
     "annual_savings_usd": 2524.46,
     "marginal_usd_per_100w": 305.45,
-    "exceeds_measured_floor": false
+    "exceeds_measured_floor": false,
+    "requested_kwh": 7008.0,
+    "delivered_kwh": 6925.12,
+    "dropped_kwh": 82.88,
+    "marginal_delivery_ratio": 0.9682
    },
    {
     "reduction_w": 900,
     "annual_savings_usd": 2823.94,
     "marginal_usd_per_100w": 299.49,
-    "exceeds_measured_floor": false
+    "exceeds_measured_floor": false,
+    "requested_kwh": 7884.0,
+    "delivered_kwh": 7758.28,
+    "dropped_kwh": 125.72,
+    "marginal_delivery_ratio": 0.9511
    },
    {
     "reduction_w": 1000,
     "annual_savings_usd": 3113.07,
     "marginal_usd_per_100w": 289.13,
-    "exceeds_measured_floor": false
+    "exceeds_measured_floor": false,
+    "requested_kwh": 8760.0,
+    "delivered_kwh": 8569.38,
+    "dropped_kwh": 190.62,
+    "marginal_delivery_ratio": 0.9259
    },
    {
     "reduction_w": 1100,
     "annual_savings_usd": 3382.28,
     "marginal_usd_per_100w": 269.21,
-    "exceeds_measured_floor": true
+    "exceeds_measured_floor": true,
+    "requested_kwh": 9636.0,
+    "delivered_kwh": 9326.95,
+    "dropped_kwh": 309.05,
+    "marginal_delivery_ratio": 0.8648
    },
    {
     "reduction_w": 1200,
     "annual_savings_usd": 3631.31,
     "marginal_usd_per_100w": 249.03,
-    "exceeds_measured_floor": true
+    "exceeds_measured_floor": true,
+    "requested_kwh": 10512.0,
+    "delivered_kwh": 10031.5,
+    "dropped_kwh": 480.5,
+    "marginal_delivery_ratio": 0.8043
    }
   ],
   "usd_per_100w_at_current_floor": {
@@ -2747,7 +2795,9 @@
     "min_at_reduction_w": 1000,
     "max_usd": 323.16,
     "max_at_reduction_w": 100,
-    "through_reduction_w": 1000
+    "through_reduction_w": 1000,
+    "min_marginal_delivery_ratio": 0.9259,
+    "min_marginal_delivery_ratio_at_reduction_w": 1000
    },
    "full_ladder": {
     "min_usd": 249.03,
@@ -2755,14 +2805,14 @@
     "max_usd": 323.16,
     "max_at_reduction_w": 100
    },
-   "note": "the spread of the per-100W marginal, so the non-linearity is readable without recomputing it from `steps`. The REACHABLE range covers only the rungs at or below the measured floor (1030 W) -- the removal the metered load can actually supply. The FULL LADDER also includes rungs above that floor, where _split_floor clamps the request to each interval's metered import and drops the remainder: those rungs remove less energy than they ask for, so the full-ladder minimum is depressed by discarded energy and is not a tariff effect. Read the reachable range for what this household faces; read the full ladder only with that clamping in mind."
+   "note": "the spread of the per-100W marginal, so its fall along the ladder is readable without recomputing it from `steps`. EVERY rung here is clamped to some degree, including any at or below the measured floor -- read each step's own `marginal_delivery_ratio` before reading any spread as a tariff effect. The REACHABLE range covers the rungs at or below the measured floor (1030 W). It is NOT a clamping-free reading of tariff curvature. `_split_floor` clamps each interval's requested reduction to THAT INTERVAL's own metered import, and the measured floor is a MEDIAN, so a reachable rung still exceeds the metered import of every interval drawing less than the median (night_floor.p10_kw shows how far under a low decile of quiet-night intervals runs). Restricting to the reachable rungs NARROWS that dilution; it does not remove it. Size the residual from the reachable rung that delivers least: at 1000 W the rung's own 100 W slice delivers 0.9259 of the energy it asks for (190.62 kWh of its 8760.0 kWh cumulative request is dropped, never credited). Read the per-100 W marginal's fall along EITHER range as mainly a DELIVERY effect -- each successive slice removes less energy than the one before -- not as evidence that deeper removal is worth less per delivered kWh. The FULL LADDER adds the rungs above the measured floor, where the same per-interval clamp bites harder still, so its minimum is the most diluted figure in this section."
   },
   "usd_per_100w_general_average": {
    "value_usd": 303.76,
    "reachable_slope_usd": 310.86,
-   "note": "linear-fit slope across the full 100-1200 W range -- a general marginal rate, not specific to the current floor level. This fit spans rungs that exceed the measured floor (1030 W), where _split_floor drops the energy the metered load cannot supply, so the value is pulled DOWN by rungs the household cannot reach. reachable_slope_usd is the same fit over the reachable rungs only."
+   "note": "linear-fit slope across the full 100-1200 W range -- a general marginal rate, not specific to the current floor level. This fit spans rungs that exceed the measured floor (1030 W), where _split_floor drops the energy the metered load cannot supply, so the value is pulled DOWN by rungs the household cannot reach. reachable_slope_usd is the same fit over the reachable rungs only -- lower dilution, NOT zero dilution: the clamp is per interval and the measured floor is a median, so reachable rungs drop energy too (see marginal_range.reachable.min_marginal_delivery_ratio)."
   },
-  "linearity_note": "max deviation from the linear fit is $73.89 (2.03% of total savings at 1200 W) across the full 100-1200 W ladder -- measurably nonlinear; see sign_flip_buckets for why. That full-ladder figure includes rungs above the measured floor (1030 W), whose marginals are diluted by energy _split_floor drops rather than by tariff curvature; over the reachable 100-1000 W rungs alone the max deviation is $25.85 (0.83% of savings at 1000 W)."
+  "linearity_note": "max deviation from the linear fit is $73.89 (2.03% of total savings at 1200 W) across the full 100-1200 W ladder -- measurably nonlinear. Read that as a DELIVERY effect, not curvature: the full-ladder figure includes rungs above the measured floor (1030 W), whose marginals are diluted by energy _split_floor drops, and the rungs below the floor are diluted the same way for the same reason (per-interval clamp, median floor); over the reachable 100-1000 W rungs alone the max deviation is $25.85 (0.83% of savings at 1000 W), which is predominantly the same clamping -- the reachable rungs are clamped too (the clamp is per interval, the floor is a median), so read that deviation as incomplete delivery, not as residual tariff nonlinearity."
  },
  "battery_interaction": {
   "config": "13.5 kWh Powerwall 3 (bare unit), greedy policy, raw measured year (no EV-shift behavior model stacked on top -- isolates the floor's own effect on the battery)",

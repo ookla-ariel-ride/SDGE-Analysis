@@ -8225,18 +8225,29 @@ def _night_floor_sensitivity(ctx):
     asserting a relationship between two artifact fields without reading the
     generator that writes both.
 
-    SO THE CHECKS BELOW STAY ON ONE AXIS. Three of them, none comparing a
-    removal to a level:
+    SO THE CHECKS BELOW STAY ON ONE AXIS. Four of them, three on the ladder's
+    own axis and one comparing a removal to a level on purpose:
       * the published value_usd IS the marginal of the step at the published
         reduction_w (issue #173, acceptance criterion 5) -- the sentence
         quotes the ladder's own number rather than a second copy of it;
       * the published reduction_w IS the ladder's smallest rung, which is
         what "at the current floor" means;
       * every step's exceeds_measured_floor flag agrees with the arithmetic
-        comparison the flag names, reduction_w > measured_floor_w. That one
-        compares a removal to a level ON PURPOSE and it is the only honest
+        comparison the flag names, reduction_w > measured_floor_w. That is
+        the deliberate removal-against-level test, and it is the only honest
         version of that comparison: it asks whether the floor holds the watts
-        the rung wants to remove, which is a real physical question.
+        the rung wants to remove, which is a real physical question;
+      * the ladder's TWO COLUMNS agree with each other -- each step's
+        marginal_usd_per_100w is the difference between successive
+        annual_savings_usd values, which is how sensitivity_per_100w computes
+        it (`marginal = savings - prev_savings`, both columns then rounded to
+        the cent). Without this the columns were independent text: an
+        adversarial artifact tripled every annual_savings_usd and left the
+        marginals alone, and every check above still reported SUPPORTED. The
+        tolerance is one cent because each column is rounded separately, so
+        two rungs of the measured ladder (400 W and 900 W) differ from the
+        unrounded delta by exactly that -- the same slack
+        test_quiet_night_floor.py applies to the same pair of columns.
 
     A RUNG ABOVE THE FLOOR DEGRADES THE WORDING, IT DOES NOT REFUSE. Where
     the smallest rung already asks for more watts than the floor holds -- a
@@ -8247,12 +8258,41 @@ def _night_floor_sensitivity(ctx):
     ships, for the reason issue #140 recorded: an ordinary household must not
     be refused a report by a check about the shape of its own floor.
 
-    WHAT IS DELIBERATELY NOT CHECKED HERE is measured_floor_w against
-    night_floor.median_kw. They plainly describe the same floor, and the
-    rounding between a kW field and a whole-watt field is exactly the kind of
-    relationship the preamble above says may not be asserted until the
-    generator has been read. It has not been read from here, so the comparison
-    is not written.
+    SUCH A FLOOR REACHES NO RUNG, so the generator writes no
+    marginal_range.reachable block for it at all rather than one its own
+    exceeds_measured_floor flags contradict. This formula reads that block
+    only inside the branch where the steps themselves say a rung is reachable,
+    so an absent or null reachable is never dereferenced, and the wording
+    degrades from the same test either way -- the steps, not the range. Where
+    the steps DO report a reachable rung the block is mandatory: its two ends
+    and its through_reduction_w go through _amounts and _quantities, which
+    refuse a missing one instead of printing it.
+
+    AND measured_floor_w IS CHECKED AGAINST night_floor.median_kw (issue
+    #173, adversarial pass). This comparison used to be left out, on the
+    preamble's rule that a relationship between two artifact fields may not be
+    asserted until the generator that writes both has been read. THE GENERATOR
+    HAS NOW BEEN READ, and it establishes the relationship in a single line at
+    the top of quiet_night_floor.sensitivity_per_100w:
+
+        measured_floor_w = int(round(floor_kw_measured * 1000))
+
+    with main() passing night_floor.median_kw (already rounded to four
+    decimals) as floor_kw_measured. The two fields are therefore one number
+    written twice at two scales, and the derivation between them is exact, so
+    the check is _require_derived at zero tolerance rather than a nearness
+    test. The preamble's rule is satisfied here, not waived.
+
+    LEAVING IT UNCHECKED WAS THE HOLE, not caution. measured_floor_w is what
+    decides which rungs count as reachable, and every other check above reads
+    it rather than testing it. An adversarial artifact moved the floor from
+    1,030 W to 1,200 W and rebuilt the exceeds_measured_floor flags and
+    marginal_range.reachable to agree with the new value: every guard reported
+    SUPPORTED, and the sentence published the FULL ladder's minimum -- the
+    figure depressed by _split_floor's clamping, which the reachable spread
+    exists to keep out of the prose -- as the rate this household can reach. A
+    forged floor of 50 W was the same hole pointing the other way, degrading
+    the wording of a household whose floor is fine. Both are refusals now.
 
     AND THE LADDER IS NOT A STRAIGHT LINE, which is the difference between a
     rate and a multiplier. The artifact says so in linearity_note; this token
@@ -8332,6 +8372,18 @@ def _night_floor_sensitivity(ctx):
         "NIGHT_FLOOR_SENSITIVITY_PER_100W", "which removal the published rate prices",
         reduction_w=at_floor.get("reduction_w"),
         measured_floor_w=sens.get("measured_floor_w"))
+    median_kw, = _quantities(
+        "NIGHT_FLOOR_SENSITIVITY_PER_100W", "which floor the ladder was measured against",
+        night_floor_median_kw=_night_floor().get("median_kw"))
+    from_median_w = int(round(median_kw * 1000))
+    _require_derived(
+        "NIGHT_FLOOR_SENSITIVITY_PER_100W", "which floor the ladder was measured against",
+        from_median_w, floor_w, 0,
+        f"data/quiet_night_floor.json:sensitivity_per_100w.measured_floor_w says "
+        f"{floor_w:,.0f} W while night_floor.median_kw is {median_kw!r} kW, which "
+        f"quiet_night_floor.sensitivity_per_100w writes as int(round(median_kw * 1000)) = "
+        f"{from_median_w:,.0f} W -- the floor decides which rungs are reachable, so a floor "
+        "the run did not measure would publish a spread this household cannot reach")
     marginal_at = {s["reduction_w"]: s["marginal_usd_per_100w"] for s in steps}
     priced = marginal_at.get(published_w)
     _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
@@ -8368,6 +8420,27 @@ def _night_floor_sensitivity(ctx):
     all_marginals = _quantities(
         "NIGHT_FLOOR_SENSITIVITY_PER_100W", "how far the rate moves along the ladder",
         **{f"step_{s['reduction_w']}_w": s["marginal_usd_per_100w"] for s in steps})
+    # A cumulative saving can legitimately sit either side of zero, so the
+    # column is only required to be FINITE here; the marginals above already
+    # carry _quantities' non-negative test.
+    cumulative = _figures(
+        "NIGHT_FLOOR_SENSITIVITY_PER_100W", "how the ladder's two columns agree",
+        **{f"step_{s['reduction_w']}_w_savings": s.get("annual_savings_usd") for s in steps})
+    cent = 0.01 + 1e-9   # each column is rounded to the cent separately
+    drift, running = [], 0.0
+    for step, marginal, total in zip(steps, all_marginals, cumulative):
+        delta = round(total - running, 2)
+        if abs(marginal - delta) > cent:
+            drift.append((step["reduction_w"], marginal, delta))
+        running = total
+    _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W", "how the ladder's two columns agree",
+           SUPPORTED if not drift else NOT_DETERMINED,
+           "data/quiet_night_floor.json:sensitivity_per_100w.steps contradict themselves at "
+           + "; ".join(f"{w:,.0f} W, where marginal_usd_per_100w is ${m:,.2f} but the step in "
+                       f"annual_savings_usd is ${d:,.2f}" for w, m, d in drift)
+           + " -- the marginal column IS the difference between successive annual_savings_usd "
+             "values in the generator, so one column edited on its own leaves the other one "
+             "saying otherwise, and the sentence quotes both")
     rng = sens.get("marginal_range") or {}
     full = rng.get("full_ladder") or {}
     full_lo, full_hi = _amounts(
@@ -8420,17 +8493,25 @@ def _night_floor_sensitivity(ctx):
               f"100 W {extent}" if covers else
               f"the same ladder's marginal runs from ${span_lo:,.0f} to ${span_hi:,.0f} per "
               f"100 W over those same {nights:,.0f} nights, {extent}")
-    return (f"{rate} for every 100 W taken off it, {read_off} — and it is {near} rather "
-            f"than a multiplier for any amount removed, since {spread}")
+    # "for every 100 W taken off it" used to open this sentence. That is
+    # multiplier phrasing welded to the ladder's HIGHEST rung: the first 100 W
+    # is the best 100 W, so quoting its rate per every 100 W overstates every
+    # slice after it, and the sentence's own later clause said the opposite.
+    # The lead now names the rung it prices, the way section 9 words it.
+    return (f"{rate} for {read_off} — and it is {near} rather than a multiplier for any "
+            f"amount removed, since {spread}")
 
 
 _tok("NIGHT_FLOOR_SENSITIVITY_PER_100W", phrase=True, kind="derived", get=_night_floor_sensitivity,
      sources=["data/quiet_night_floor.json:sensitivity_per_100w."
               "usd_per_100w_at_current_floor (its reduction_w and value_usd)",
               "data/quiet_night_floor.json:sensitivity_per_100w.steps "
-              "(the re-billed ladder: its rungs, their marginals, their rung spacing and "
-              "each rung's exceeds_measured_floor flag)",
+              "(the re-billed ladder: its rungs, their marginals, their cumulative "
+              "annual_savings_usd, their rung spacing and each rung's "
+              "exceeds_measured_floor flag)",
               "data/quiet_night_floor.json:sensitivity_per_100w.measured_floor_w",
+              "data/quiet_night_floor.json:night_floor.median_kw (the floor "
+              "measured_floor_w is derived from, checked against it)",
               "data/quiet_night_floor.json:sensitivity_per_100w.marginal_range "
               "(reachable and full_ladder)"])
 

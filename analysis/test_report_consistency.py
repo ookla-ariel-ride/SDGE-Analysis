@@ -1814,10 +1814,11 @@ def _night_floor_published_figures():
     the energy and the cost drift apart on a re-run.
 
     The sensitivity rate is a bare dollar amount, deliberately. The three
-    sections phrase it three ways ("worth about $X/yr", "about $X/yr per 100 W
-    removed", "about $X/yr for every 100 W removed"), and asserting one
-    sentence shape across all three would fail on correct prose while catching
-    no wrong figure. What must agree section to section is the VALUE."""
+    sections phrase it three ways ("the first 100 W ... is worth about $X/yr",
+    "about $X/yr for the first 100 W removed", "priced as the first 100 W off
+    the floor as measured"), and asserting one sentence shape across all three
+    would fail on correct prose while catching no wrong figure. What must
+    agree section to section is the VALUE."""
     doc = _night_floor_artifact()
     nf, pr = doc["night_floor"], doc["pricing"]
     sens = doc["sensitivity_per_100w"]
@@ -1828,6 +1829,23 @@ def _night_floor_published_figures():
         "re-bill cost": f"${pr['method_b_rebill']['total_usd']:,.0f}",
         "sensitivity rate": f"${sens['usd_per_100w_at_current_floor']['value_usd']:,.0f}",
     }
+
+
+# Every per-100 W dollar amount the report states, in either form the prose
+# uses for it: a bare low end ("$289 per 100 W") or a compact en-dash range
+# ("$289-323 per 100 W", with U+2013). Matching the SHAPE and then checking
+# the amounts against the artifact is what makes the check independent of how
+# the sentence is written -- the same guard holds whether the section quotes
+# one end of the spread or both.
+_PER_100W_AMOUNT_RE = re.compile(r"\$([\d,]+)(?:–([\d,]+))? per 100 W")
+
+
+def _per_100w_amounts_stated(span):
+    """The set of per-100 W dollar amounts, as ints, that `span` states."""
+    found = set()
+    for m in _PER_100W_AMOUNT_RE.finditer(span):
+        found.update(int(g.replace(",", "")) for g in m.groups() if g)
+    return found
 
 
 def _report_span(what, start, end):
@@ -1878,9 +1896,12 @@ def case_night_floor_section_matches_the_artifact():
         "modeled, not measured",
         f"conservative by about ${pr['floor_assumption_violations']['usd_dropped_at_export_rate']:,.0f}",
         # What a household could act on, at the rate the sensitivity re-bill
-        # measured rather than an opinion about how much is removable.
+        # measured rather than an opinion about how much is removable. FIRST,
+        # not every: the rate is the ladder's smallest rung, and "for every
+        # 100 W" read it as a multiplier over rungs whose marginal is lower --
+        # the spread pinned below is what says by how much.
         f"about ${doc['sensitivity_per_100w']['usd_per_100w_at_current_floor']['value_usd']:,.0f}/yr "
-        "for every 100 W removed",
+        "for the first 100 W removed",
     ]
     for value in checks:
         assert value in section, (
@@ -1933,6 +1954,43 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
             f"({figures['re-bill cost']!r}); two live methods are reconciled where they "
             "are published, not left to the reader (CLAUDE.md §0)")
 
+    # The spread the rate is read against, in §9 and §13 only -- §0 states the
+    # rate with no spread beside it, so requiring one there would fail on
+    # correct prose.
+    #
+    # This was free prose asserted against NO artifact field: exactly the gap
+    # issue #173 closed one field over. The rate was pinned in all three
+    # sections while the spread beside it could drift, or go stale on a
+    # re-run, with this whole suite green. Both ends come from
+    # marginal_range.reachable, so both are checked -- the low end must be
+    # stated (it is the end that carries the "not a multiplier" warning) and
+    # NOTHING but those two ends may appear as a per-100 W amount, which is
+    # what catches a stale figure as well as a missing one.
+    sens = _night_floor_artifact()["sensitivity_per_100w"]
+    reachable = (sens.get("marginal_range") or {}).get("reachable")
+    for sid in ("§9", "§13"):
+        stated = _per_100w_amounts_stated(spans[sid])
+        if not reachable:
+            # The generator publishes no `reachable` block when the measured
+            # floor sits below the ladder's smallest rung. Prose still quoting
+            # a reachable spread would be quoting nothing at all.
+            assert not stated, (
+                f"{sid} states the per-100 W amount(s) {sorted(stated)} but "
+                "sensitivity_per_100w.marginal_range publishes no `reachable` block "
+                "(the measured floor is below the ladder's smallest rung); there is no "
+                "artifact figure behind them")
+            continue
+        ends = {round(reachable["min_usd"]), round(reachable["max_usd"])}
+        assert round(reachable["min_usd"]) in stated, (
+            f"{sid} states the per-100 W amount(s) {sorted(stated)} without the "
+            f"${round(reachable['min_usd'])} low end that marginal_range.reachable gives; "
+            "the rate is published as a rate near this floor and never as a multiplier, "
+            "which is a claim only the far end of the spread supports")
+        assert stated <= ends, (
+            f"{sid} states the per-100 W amount(s) {sorted(stated - ends)}, which are "
+            f"neither end of marginal_range.reachable ({sorted(ends)}); the spread the "
+            "rate is read against is an artifact figure, not free prose")
+
     # The superseded workpapers, checked absent BY VALUE and read out of the
     # artifacts themselves, so the check tracks them rather than a literal.
     # A value that happens to equal a live one is skipped and named in the
@@ -1971,7 +2029,9 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
             f"the report states {value!r}, which is {who} -- a superseded workpaper "
             "(TECHNICAL.md §3.5/§3.11), not the published figure for this load")
     return (f"§0, §9 and §13 all state the same {len(shared)} floor figures from "
-            f"quiet_night_floor.json, §0 and §13 both reconcile the two pricings, and "
+            f"quiet_night_floor.json, §0 and §13 both reconcile the two pricings, §9 and "
+            f"§13 both state the per-100 W spread marginal_range.reachable gives and no "
+            f"amount outside it, and "
             f"{len(retired)} superseded workpaper values are absent from the report")
 
 

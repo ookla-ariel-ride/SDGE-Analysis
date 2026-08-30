@@ -87,11 +87,17 @@ Methodology, acceptance-criterion by acceptance-criterion (issue #17):
    the FIRST rung (the next 100 W this household could strip), not the rung
    whose number matches the floor's wattage -- reading it the second way
    reports the tenth slice as if it were the first, and makes a household
-   with a deeper floor look CHEAPER to improve (issue #173). Rungs above the
-   measured floor cannot be fully delivered (`_split_floor` clamps to metered
-   import and drops the rest), so every step carries
+   with a deeper floor look CHEAPER to improve (issue #173). NO rung is fully
+   delivered: `_split_floor` clamps each interval's request to THAT interval's
+   own metered import and drops the rest, and since the measured floor is a
+   median, rungs below the floor are clamped too -- so the reachable/full
+   split narrows the dilution without separating clamping from curvature.
+   Every step therefore publishes its own `requested_kwh`, `delivered_kwh`,
+   `dropped_kwh` and `marginal_delivery_ratio` alongside
    `exceeds_measured_floor`, and `marginal_range` reports the reachable
-   spread separately from the full-ladder one.
+   spread (with its own worst delivery ratio) separately from the full-ladder
+   one. The marginal falls along the ladder mainly because each successive
+   slice DELIVERS less, not because deeper removal is worth less per kWh.
 
 5. Battery interaction, quantified. Re-runs battery_dispatch_policies.run_batt
    (same greedy policy, same Powerwall 3 config, same steady-state convergence
@@ -927,22 +933,41 @@ def sensitivity_per_100w(d, consumption, generation, floor_kw_measured):
     steps[0]'s marginal, so `usd_per_100w_at_current_floor` reads the ladder's
     SMALLEST rung (issue #173).
 
-    RUNGS ABOVE THE MEASURED FLOOR ARE NOT FULLY DELIVERED. `_split_floor`
-    clamps each interval's requested reduction to that interval's metered
-    import and DROPS the remainder wherever generation == 0 (see its docstring
-    and floor_assumption_violations). A rung that asks for more watts than the
-    house actually draws therefore removes less energy than it requests, and
-    its marginal is a diluted average of real removal plus discarded energy --
-    NOT tariff curvature. On the measured year the 1200 W rung drops ~4.6% of
-    the requested kWh and clamps ~53% of intervals, against ~0.01% dropped at
-    the 100 W rung. MAX_REDUCTION_W deliberately overshoots to bracket the
-    floor with headroom, so the fix is to FLAG the overshoot, not to shorten
-    the ladder: every step carries `exceeds_measured_floor`, `marginal_range`
-    reports the reachable and full-ladder spreads separately, and
-    `linearity_note` gives the deviation for both ranges."""
+    NO RUNG IS FULLY DELIVERED, AND THE REACHABLE/FULL SPLIT DOES NOT SEPARATE
+    CLAMPING FROM CURVATURE. `_split_floor` clamps each interval's requested
+    reduction to THAT INTERVAL's own metered import and DROPS the remainder
+    wherever generation == 0 (see its docstring and
+    floor_assumption_violations). The clamp is therefore PER INTERVAL, while
+    the measured floor is a MEDIAN: a rung sitting at or below the measured
+    floor still exceeds the metered import of every interval whose own draw is
+    under that median, so rungs below the floor are clamped too. Two
+    independent adversarial reviews of an earlier version of this function
+    caught it claiming the opposite -- that the reachable range shows tariff
+    curvature while only the full ladder is diluted. On the measured year the
+    1000 W rung (reachable) already drops ~2.2% of the requested kWh and clamps
+    ~40% of intervals, and its own 100 W slice delivers only ~92.6% of the
+    energy it asks for; the 1200 W rung drops ~4.6% and clamps ~53%, against
+    ~0.01% dropped at the 100 W rung. So the per-100 W marginal falls along the
+    ladder MAINLY because each successive slice DELIVERS less energy, not
+    because deeper removal is worth less per delivered kWh.
+
+    What the split does do: restricting to the reachable rungs NARROWS the
+    dilution, it does not remove it. MAX_REDUCTION_W deliberately overshoots to
+    bracket the floor with headroom, so the fix is to MEASURE and PUBLISH the
+    delivery rather than to shorten the ladder: every step carries
+    `exceeds_measured_floor` plus its own `requested_kwh`/`delivered_kwh`/
+    `dropped_kwh`/`marginal_delivery_ratio`, `marginal_range` reports the
+    reachable and full-ladder spreads separately WITH the reachable range's own
+    worst delivery ratio, and `linearity_note` gives the deviation for both
+    ranges and says which mechanism it reflects. Every delivery figure is
+    measured off `_split_floor`'s own return values: no unclamped counterfactual
+    is constructed, and no energy that was never metered is credited."""
     steps = []
     prev_savings = 0.0
+    prev_delivered_kwh = 0.0
     measured_floor_w = int(round(floor_kw_measured * 1000))
+    n_intervals = len(consumption)
+    slice_requested_kwh = (STEP_W / 1000.0) * 0.25 * n_intervals
     for w in range(STEP_W, MAX_REDUCTION_W + STEP_W, STEP_W):
         floor_kwh = (w / 1000.0) * 0.25
         reduce_i, leftover_i, new_c, new_g = _split_floor(consumption, generation, floor_kwh)
@@ -950,10 +975,22 @@ def sensitivity_per_100w(d, consumption, generation, floor_kw_measured):
         f2 = d.copy(); f2["imp"] = new_c; f2["exp"] = new_g
         savings = br.bill(f0, "imp", "exp") - br.bill(f2, "imp", "exp")
         marginal = savings - prev_savings
+        # Delivery, measured from the split itself: reduce_from_import is energy
+        # that really came off metered import, leftover is energy really credited
+        # to metered export. Their sum is what the rung DELIVERS; the rest of what
+        # it requested is the shortfall _split_floor drops (never credited here).
+        requested_kwh = floor_kwh * n_intervals
+        delivered_kwh = float(np.sum(reduce_i) + np.sum(leftover_i))
         steps.append({"reduction_w": w, "annual_savings_usd": round(savings, 2),
                      "marginal_usd_per_100w": round(marginal, 2),
-                     "exceeds_measured_floor": bool(w > measured_floor_w)})
+                     "exceeds_measured_floor": bool(w > measured_floor_w),
+                     "requested_kwh": round(requested_kwh, 2),
+                     "delivered_kwh": round(delivered_kwh, 2),
+                     "dropped_kwh": round(requested_kwh - delivered_kwh, 2),
+                     "marginal_delivery_ratio": round(
+                         (delivered_kwh - prev_delivered_kwh) / slice_requested_kwh, 4)})
         prev_savings = savings
+        prev_delivered_kwh = delivered_kwh
 
     ws = np.array([s["reduction_w"] for s in steps], dtype=float)
     savings_arr = np.array([s["annual_savings_usd"] for s in steps])
@@ -962,10 +999,13 @@ def sensitivity_per_100w(d, consumption, generation, floor_kw_measured):
     max_dev = float(np.max(np.abs(savings_arr - fit)))
     max_dev_pct = round(100.0 * max_dev / savings_arr[-1], 2) if savings_arr[-1] else 0.0
 
-    # The rungs the metered load can actually supply: everything at or below the
-    # measured floor. Never empty -- a floor below one step still gets steps[0],
-    # which is the rung usd_per_100w_at_current_floor reports.
-    reachable = [s for s in steps if not s["exceeds_measured_floor"]] or steps[:1]
+    # The rungs at or below the measured floor. CAN be empty -- a household whose
+    # measured floor sits under the ladder's smallest rung has no reachable rung
+    # at all, and an earlier `or steps[:1]` fallback published a `reachable` block
+    # naming a rung that the very same step's `exceeds_measured_floor` flag
+    # declared unreachable. That self-contradiction is now emitted as an explicit
+    # null instead (see the marginal_range note).
+    reachable = [s for s in steps if not s["exceeds_measured_floor"]]
     r_ws = np.array([s["reduction_w"] for s in reachable], dtype=float)
     r_savings = np.array([s["annual_savings_usd"] for s in reachable])
     if len(reachable) >= 2:
@@ -976,17 +1016,66 @@ def sensitivity_per_100w(d, consumption, generation, floor_kw_measured):
         reachable_slope_usd = round(float(r_slope) * 100, 2)
         reachable_linearity = (f"over the reachable {STEP_W}-{int(r_ws[-1])} W rungs alone "
                               f"the max deviation is ${r_max_dev:.2f} ({r_max_dev_pct}% of "
-                              f"savings at {int(r_ws[-1])} W)")
-    else:
+                              f"savings at {int(r_ws[-1])} W), which is predominantly the "
+                              "same clamping -- the reachable rungs are clamped too (the "
+                              "clamp is per interval, the floor is a median), so read that "
+                              "deviation as incomplete delivery, not as residual tariff "
+                              "nonlinearity")
+    elif len(reachable) == 1:
         reachable_slope_usd = None
         reachable_linearity = ("the reachable range holds a single rung, so it "
                               "admits no linear fit and no deviation figure")
+    else:
+        reachable_slope_usd = None
+        reachable_linearity = (f"no rung sits at or below the measured floor "
+                              f"({measured_floor_w} W), so there is no reachable "
+                              "range to fit and marginal_range.reachable is null")
 
     at_floor = steps[0]
-    r_lo = min(reachable, key=lambda s: s["marginal_usd_per_100w"])
-    r_hi = max(reachable, key=lambda s: s["marginal_usd_per_100w"])
     f_lo = min(steps, key=lambda s: s["marginal_usd_per_100w"])
     f_hi = max(steps, key=lambda s: s["marginal_usd_per_100w"])
+
+    if reachable:
+        r_lo = min(reachable, key=lambda s: s["marginal_usd_per_100w"])
+        r_hi = max(reachable, key=lambda s: s["marginal_usd_per_100w"])
+        r_worst = min(reachable, key=lambda s: s["marginal_delivery_ratio"])
+        reachable_block = {
+            "min_usd": r_lo["marginal_usd_per_100w"],
+            "min_at_reduction_w": r_lo["reduction_w"],
+            "max_usd": r_hi["marginal_usd_per_100w"],
+            "max_at_reduction_w": r_hi["reduction_w"],
+            "through_reduction_w": reachable[-1]["reduction_w"],
+            "min_marginal_delivery_ratio": r_worst["marginal_delivery_ratio"],
+            "min_marginal_delivery_ratio_at_reduction_w": r_worst["reduction_w"],
+        }
+        reachable_note = (
+            "The REACHABLE range covers the rungs at or below the measured "
+            f"floor ({measured_floor_w} W). It is NOT a clamping-free reading "
+            "of tariff curvature. `_split_floor` clamps each interval's "
+            "requested reduction to THAT INTERVAL's own metered import, and "
+            "the measured floor is a MEDIAN, so a reachable rung still "
+            "exceeds the metered import of every interval drawing less than "
+            "the median (night_floor.p10_kw shows how far under a low decile "
+            "of quiet-night intervals runs). Restricting to the reachable "
+            "rungs NARROWS that dilution; it does not remove it. Size the "
+            "residual from the reachable rung that delivers least: at "
+            f"{r_worst['reduction_w']} W the rung's own 100 W slice delivers "
+            f"{r_worst['marginal_delivery_ratio']} of the energy it asks for "
+            f"({r_worst['dropped_kwh']} kWh of its {r_worst['requested_kwh']} "
+            "kWh cumulative request is dropped, never credited). Read the "
+            "per-100 W marginal's fall along EITHER range as mainly a "
+            "DELIVERY effect -- each successive slice removes less energy "
+            "than the one before -- not as evidence that deeper removal is "
+            "worth less per delivered kWh.")
+    else:
+        reachable_block = None
+        reachable_note = (
+            f"`reachable` is NULL here (the key is present and null, not "
+            f"omitted): the measured floor ({measured_floor_w} W) sits below "
+            f"the ladder's smallest rung ({STEP_W} W), so no rung is "
+            "reachable. A one-rung stand-in would name a rung that the same "
+            "step's own `exceeds_measured_floor` flag declares unreachable, "
+            "so none is emitted.")
 
     return {
         "basis": (f"method b (full monthly re-bill) at {STEP_W} W steps from "
@@ -1009,31 +1098,23 @@ def sensitivity_per_100w(d, consumption, generation, floor_kw_measured):
                     "the ladder."),
         },
         "marginal_range": {
-            "reachable": {
-                "min_usd": r_lo["marginal_usd_per_100w"],
-                "min_at_reduction_w": r_lo["reduction_w"],
-                "max_usd": r_hi["marginal_usd_per_100w"],
-                "max_at_reduction_w": r_hi["reduction_w"],
-                "through_reduction_w": reachable[-1]["reduction_w"],
-            },
+            "reachable": reachable_block,
             "full_ladder": {
                 "min_usd": f_lo["marginal_usd_per_100w"],
                 "min_at_reduction_w": f_lo["reduction_w"],
                 "max_usd": f_hi["marginal_usd_per_100w"],
                 "max_at_reduction_w": f_hi["reduction_w"],
             },
-            "note": ("the spread of the per-100W marginal, so the non-linearity "
-                    "is readable without recomputing it from `steps`. The "
-                    "REACHABLE range covers only the rungs at or below the "
-                    f"measured floor ({measured_floor_w} W) -- the removal the "
-                    "metered load can actually supply. The FULL LADDER also "
-                    "includes rungs above that floor, where _split_floor clamps "
-                    "the request to each interval's metered import and drops "
-                    "the remainder: those rungs remove less energy than they "
-                    "ask for, so the full-ladder minimum is depressed by "
-                    "discarded energy and is not a tariff effect. Read the "
-                    "reachable range for what this household faces; read the "
-                    "full ladder only with that clamping in mind."),
+            "note": ("the spread of the per-100W marginal, so its fall along "
+                    "the ladder is readable without recomputing it from "
+                    "`steps`. EVERY rung here is clamped to some degree, "
+                    "including any at or below the measured floor -- read "
+                    "each step's own "
+                    "`marginal_delivery_ratio` before reading any spread as a "
+                    "tariff effect. " + reachable_note + " The FULL LADDER "
+                    "adds the rungs above the measured floor, where the same "
+                    "per-interval clamp bites harder still, so its minimum is "
+                    "the most diluted figure in this section."),
         },
         "usd_per_100w_general_average": {
             "value_usd": round(float(slope) * 100, 2),
@@ -1045,17 +1126,22 @@ def sensitivity_per_100w(d, consumption, generation, floor_kw_measured):
                     "drops the energy the metered load cannot supply, so the "
                     "value is pulled DOWN by rungs the household cannot reach. "
                     "reachable_slope_usd is the same fit over the reachable "
-                    "rungs only."),
+                    "rungs only -- lower dilution, NOT zero dilution: the "
+                    "clamp is per interval and the measured floor is a median, "
+                    "so reachable rungs drop energy too (see "
+                    "marginal_range.reachable.min_marginal_delivery_ratio)."),
         },
         "linearity_note": (
             f"max deviation from the linear fit is ${max_dev:.2f} "
             f"({max_dev_pct}% of total savings at {MAX_REDUCTION_W} W) across the "
             f"full {STEP_W}-{MAX_REDUCTION_W} W ladder -- " +
             ("effectively linear over this range" if max_dev_pct < 2
-             else "measurably nonlinear; see sign_flip_buckets for why") +
-            f". That full-ladder figure includes rungs above the measured floor "
-            f"({measured_floor_w} W), whose marginals are diluted by energy "
-            f"_split_floor drops rather than by tariff curvature; " +
+             else "measurably nonlinear") +
+            f". Read that as a DELIVERY effect, not curvature: the full-ladder "
+            f"figure includes rungs above the measured floor ({measured_floor_w} "
+            "W), whose marginals are diluted by energy _split_floor drops, and "
+            "the rungs below the floor are diluted the same way for the same "
+            "reason (per-interval clamp, median floor); " +
             reachable_linearity + "."),
     }
 
