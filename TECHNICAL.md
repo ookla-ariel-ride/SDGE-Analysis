@@ -3799,10 +3799,31 @@ constants themselves and not the physical floor-allocation model, where the larg
 separately-quantified `floor_assumption_violations` limitation actually lives.
 
 **Sensitivity (issue AC4, `sensitivity_per_100w`).** Re-bills (method b) at 100 W steps from
-100 to 1,200 W (`MAX_REDUCTION_W`) and reports both the marginal $/100W at the sensitivity
-step nearest the currently-measured floor and the general linear-fit slope across the whole
-range, stating explicitly which is which and how far the removal is from being perfectly
-linear (a bucket sign flip inside the tested range would show up as measurable nonlinearity).
+100 to 1,200 W (`MAX_REDUCTION_W`). The ladder's `reduction_w` axis counts watts REMOVED from
+the measured floor, not a resulting floor level: the 100 W rung is the first 100 W stripped
+off the 1,030 W floor as it stands, and the 1,000 W rung is the tenth such step, priced for a
+household that already stripped 900 W. `usd_per_100w_at_current_floor` is therefore the FIRST
+rung ($323.16), which is the rate a household standing at its own measured floor is asking
+for; reading a deeper rung as "the step nearest this floor" prices the wrong slice, and the
+field's own `note` states the axis so a consumer cannot repeat that reading.
+
+`marginal_range` publishes the spread twice, because the two halves of the ladder are not
+measuring the same thing. `reachable` covers only the rungs at or below the measured floor
+(100-1,000 W, $289.13-$323.16) -- the removal the metered load can actually supply, and the
+range that describes this household. `full_ladder` also includes the 1,100 W and 1,200 W
+rungs ($249.03-$323.16), which ask for more than the floor holds: `_split_floor` clamps each
+interval's reduction to that interval's metered import and DROPS the remainder where there is
+no generation, so those rungs remove less energy than they request and their marginals are
+diluted by discarded energy instead of by tariff curvature. Publish or read the reachable
+range for this household; the full ladder only with that clamping in mind.
+
+The general linear-fit slope is reported the same way and for the same reason:
+`usd_per_100w_general_average.value_usd` ($303.76) fits the whole 100-1,200 W ladder and is
+pulled down by the unreachable rungs, while `reachable_slope_usd` ($310.86) fits the reachable
+rungs alone. `linearity_note` carries both max deviations from the fit ($73.89, 2.03% of
+savings at 1,200 W across the full ladder; $25.85, 0.83% at 1,000 W over the reachable rungs)
+so the residual nonlinearity is readable without mistaking clamping for tariff structure -- a
+bucket sign flip inside the tested range would show up as measurable nonlinearity here.
 
 **Battery interaction (issue AC5, `battery_interaction`).** Re-runs
 `battery_dispatch_policies.run_batt` (same greedy policy, same Powerwall 3 config, the same

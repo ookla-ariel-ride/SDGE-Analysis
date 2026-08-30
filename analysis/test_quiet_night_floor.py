@@ -411,19 +411,148 @@ def case_sensitivity_steps_are_internally_consistent():
         assert abs(s["marginal_usd_per_100w"] - round(s["annual_savings_usd"] - prev, 2)) <= 0.01
         prev = s["annual_savings_usd"]
     at_current = sens["usd_per_100w_at_current_floor"]
-    assert at_current["floor_w_used"] == 1000  # nearest 100 W multiple of 1.0 kW
-    return f"{len(steps)} sensitivity steps, marginal figures reproduce the running difference exactly"
+    # The published rate is the ladder's FIRST rung -- the first 100 W taken
+    # off the floor as measured -- never a rung selected by the floor's level
+    # (issue #173). The level itself is recorded on measured_floor_w, which
+    # indexes nothing.
+    assert "floor_w_used" not in at_current, (
+        "`floor_w_used` is the retired key that indexed the ladder by floor LEVEL")
+    assert at_current["reduction_w"] == steps[0]["reduction_w"] == QNF.STEP_W
+    assert at_current["value_usd"] == steps[0]["marginal_usd_per_100w"]
+    assert sens["measured_floor_w"] == 1000, "1.0 kW floor, recorded as a level in watts"
+    return (f"{len(steps)} sensitivity steps, marginal figures reproduce the running "
+           "difference exactly, and the at-floor rate is the first rung's marginal")
 
 
 @case
-def case_sensitivity_current_floor_lookup_rounds_to_nearest_100w():
+def case_sensitivity_at_current_floor_is_the_first_rung_not_the_floor_level():
+    """The ladder's axis is WATTS REMOVED, not a resulting floor LEVEL, so the
+    rate a household standing at its measured floor faces is the ladder's FIRST
+    rung -- steps[0], the first 100 W it strips.
+
+    `steps[i].reduction_w` counts watts SUBTRACTED from the floor as measured.
+    The 100 W rung is the first 100 W taken off that floor; the 1000 W rung is
+    the tenth such slice, priced for a household that already stripped 900 W.
+    Those are opposite ends of one curve. `usd_per_100w_at_current_floor`
+    therefore reads steps[0], and the measured floor's own level lives on the
+    separate `measured_floor_w` key, where it indexes no rung at all.
+
+    This case replaces one that asserted the opposite: it required a 0.847 kW
+    floor to resolve to the 800 W rung, mapping the LEVEL onto the removal
+    axis, and so held issue #173's defect in place. The tell of that mapping is
+    checked directly here -- under it a household with a DEEPER floor is handed
+    a LOWER rate for its next 100 W, because the deeper level indexed a later,
+    cheaper rung. Two different floors, one ladder, one first-rung rate."""
     d = _toy_frame(ndays=10, night_kw=1.0, day_kw=1.0)
     consumption = d.Consumption.values.astype(float)
     generation = d.Generation.values.astype(float)
-    sens = QNF.sensitivity_per_100w(d, consumption, generation, floor_kw_measured=0.847)
-    # 847 W rounds to the nearest 100 W multiple: 800
-    assert sens["usd_per_100w_at_current_floor"]["floor_w_used"] == 800
-    return "0.847 kW floor resolves to the 800 W sensitivity step, as round-to-nearest-100 implies"
+    shallow = QNF.sensitivity_per_100w(d, consumption, generation, floor_kw_measured=0.847)
+    deep = QNF.sensitivity_per_100w(d, consumption, generation, floor_kw_measured=1.03)
+    for label, sens in (("0.847 kW floor", shallow), ("1.03 kW floor", deep)):
+        at = sens["usd_per_100w_at_current_floor"]
+        assert "floor_w_used" not in at, (
+            f"{label}: `floor_w_used` is the retired key that indexed the ladder by "
+            "floor LEVEL; the axis is watts REMOVED (issue #173)")
+        first = min(sens["steps"], key=lambda s: s["reduction_w"])
+        assert at["reduction_w"] == first["reduction_w"] == QNF.STEP_W, (
+            f"{label}: the at-floor rate must come from the ladder's smallest rung "
+            f"({first['reduction_w']} W), but it is published at {at['reduction_w']} W")
+        assert at["value_usd"] == first["marginal_usd_per_100w"], (
+            f"{label}: published ${at['value_usd']} is not the first rung's marginal "
+            f"${first['marginal_usd_per_100w']}")
+    # the floor LEVEL is recorded exactly, on its own key, and is not rounded
+    # onto a rung of the removal ladder
+    assert shallow["measured_floor_w"] == 847, shallow["measured_floor_w"]
+    assert deep["measured_floor_w"] == 1030, deep["measured_floor_w"]
+    # the defect's signature: a deeper floor must not buy a cheaper next 100 W
+    shallow_rate = shallow["usd_per_100w_at_current_floor"]["value_usd"]
+    deep_rate = deep["usd_per_100w_at_current_floor"]["value_usd"]
+    assert shallow_rate == deep_rate, (
+        f"a 0.847 kW floor is quoted ${shallow_rate}/100 W and a 1.03 kW floor "
+        f"${deep_rate}/100 W on the same ladder; a deeper floor buying a different "
+        "next-100 W rate is the level-onto-removal mapping issue #173 removed")
+    return (f"both a 0.847 kW and a 1.03 kW floor draw the at-floor rate from the "
+           f"{QNF.STEP_W} W rung (${shallow_rate}/100 W), and each floor's level is "
+           "kept on measured_floor_w")
+
+
+@case
+def case_published_sensitivity_rate_is_pinned_to_the_step_it_is_drawn_from():
+    """Issue #173 AC5: pin the relationship between the PUBLISHED $/100 W rate
+    and the ladder step it is drawn from, in the committed artifact itself.
+
+    The case above proves the generator computes the right rung; this proves
+    the artifact the report quotes still carries it. The defect that made both
+    necessary was not an arithmetic error -- every rung's marginal was correct
+    -- it was the artifact naming the wrong rung as "the rate at the current
+    floor", which no per-step check could see.
+
+    Also pins the three fields that make that naming readable: which rungs the
+    metered load can actually reach (`exceeds_measured_floor`), the marginal
+    spread over the reachable rungs and over the whole ladder
+    (`marginal_range`), and the measured floor level the flags are cut at
+    (`measured_floor_w`, which must be the night floor's own median)."""
+    if not ARTIFACT.exists():
+        raise SkipCase(f"{ARTIFACT} not committed in this checkout")
+    doc = json.loads(ARTIFACT.read_text())
+    sens = doc["sensitivity_per_100w"]
+    steps = sens["steps"]
+    at = sens["usd_per_100w_at_current_floor"]
+    by_reduction = {s["reduction_w"]: s for s in steps}
+    assert len(by_reduction) == len(steps), "the ladder repeats a reduction_w"
+
+    # (1) the published rate IS the marginal of the step it names
+    assert "floor_w_used" not in at, (
+        "`floor_w_used` indexed the ladder by floor LEVEL; the axis is watts "
+        "REMOVED and the key is `reduction_w` (issue #173)")
+    assert at["reduction_w"] in by_reduction, (
+        f"the published rate names a {at['reduction_w']} W removal that is not a rung: "
+        f"{sorted(by_reduction)}")
+    drawn_from = by_reduction[at["reduction_w"]]
+    assert at["value_usd"] == drawn_from["marginal_usd_per_100w"], (
+        f"the published ${at['value_usd']}/100 W is not the "
+        f"{at['reduction_w']} W rung's marginal ${drawn_from['marginal_usd_per_100w']}")
+
+    # (2) and that step is the ladder's SMALLEST rung -- the first 100 W off
+    # the floor as it stands, which is what a household at its own floor asks
+    assert at["reduction_w"] == min(by_reduction), (
+        f"the at-floor rate is published at the {at['reduction_w']} W rung, which prices "
+        f"a household that already stripped {at['reduction_w'] - min(by_reduction)} W; the "
+        f"rate at the measured floor is the {min(by_reduction)} W rung's")
+
+    # (3) both marginal ranges reproduce from the rungs they claim to cover
+    reachable = [s for s in steps if not s["exceeds_measured_floor"]]
+    assert reachable, "no rung is at or below the measured floor"
+    rng = sens["marginal_range"]
+    for name, rungs in (("reachable", reachable), ("full_ladder", steps)):
+        block = rng[name]
+        lo = min(rungs, key=lambda s: s["marginal_usd_per_100w"])
+        hi = max(rungs, key=lambda s: s["marginal_usd_per_100w"])
+        assert block["min_usd"] == lo["marginal_usd_per_100w"], (name, block, lo)
+        assert block["min_at_reduction_w"] == lo["reduction_w"], (name, block, lo)
+        assert block["max_usd"] == hi["marginal_usd_per_100w"], (name, block, hi)
+        assert block["max_at_reduction_w"] == hi["reduction_w"], (name, block, hi)
+    assert rng["reachable"]["through_reduction_w"] == reachable[-1]["reduction_w"], rng
+    # the reachable fit is published beside the full-ladder one, so a reader is
+    # never left with only the figure the unreachable rungs pull down
+    assert isinstance(sens["usd_per_100w_general_average"]["reachable_slope_usd"], (int, float))
+
+    # (4) the flag is exactly the arithmetic it stands for
+    floor_w = sens["measured_floor_w"]
+    flagged = {s["reduction_w"] for s in steps if s["exceeds_measured_floor"]}
+    expected = {s["reduction_w"] for s in steps if s["reduction_w"] > floor_w}
+    assert flagged == expected, (
+        f"exceeds_measured_floor is set on {sorted(flagged)} W but the rungs above the "
+        f"{floor_w} W measured floor are {sorted(expected)} W")
+
+    # (5) that floor is the night floor's own measured median, in watts
+    median_kw = doc["night_floor"]["median_kw"]
+    assert floor_w == int(round(median_kw * 1000)), (
+        f"sensitivity_per_100w.measured_floor_w is {floor_w} W but night_floor.median_kw "
+        f"is {median_kw} kW; the ladder is being cut at a floor the measurement never gave")
+    return (f"the published ${at['value_usd']}/100 W is the {at['reduction_w']} W rung's own "
+           f"marginal and that rung is the ladder's smallest; both marginal ranges, all "
+           f"{len(steps)} exceeds_measured_floor flags and the {floor_w} W floor reproduce")
 
 
 # ---------------------------------------------------------------------------

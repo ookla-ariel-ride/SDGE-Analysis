@@ -2661,78 +2661,108 @@
  },
  "sensitivity_per_100w": {
   "basis": "method b (full monthly re-bill) at 100 W steps from 100 to 1200 W",
+  "measured_floor_w": 1030,
   "steps": [
    {
     "reduction_w": 100,
     "annual_savings_usd": 323.16,
-    "marginal_usd_per_100w": 323.16
+    "marginal_usd_per_100w": 323.16,
+    "exceeds_measured_floor": false
    },
    {
     "reduction_w": 200,
     "annual_savings_usd": 644.29,
-    "marginal_usd_per_100w": 321.13
+    "marginal_usd_per_100w": 321.13,
+    "exceeds_measured_floor": false
    },
    {
     "reduction_w": 300,
     "annual_savings_usd": 964.03,
-    "marginal_usd_per_100w": 319.74
+    "marginal_usd_per_100w": 319.74,
+    "exceeds_measured_floor": false
    },
    {
     "reduction_w": 400,
     "annual_savings_usd": 1282.05,
-    "marginal_usd_per_100w": 318.03
+    "marginal_usd_per_100w": 318.03,
+    "exceeds_measured_floor": false
    },
    {
     "reduction_w": 500,
     "annual_savings_usd": 1597.06,
-    "marginal_usd_per_100w": 315.01
+    "marginal_usd_per_100w": 315.01,
+    "exceeds_measured_floor": false
    },
    {
     "reduction_w": 600,
     "annual_savings_usd": 1909.37,
-    "marginal_usd_per_100w": 312.31
+    "marginal_usd_per_100w": 312.31,
+    "exceeds_measured_floor": false
    },
    {
     "reduction_w": 700,
     "annual_savings_usd": 2219.01,
-    "marginal_usd_per_100w": 309.64
+    "marginal_usd_per_100w": 309.64,
+    "exceeds_measured_floor": false
    },
    {
     "reduction_w": 800,
     "annual_savings_usd": 2524.46,
-    "marginal_usd_per_100w": 305.45
+    "marginal_usd_per_100w": 305.45,
+    "exceeds_measured_floor": false
    },
    {
     "reduction_w": 900,
     "annual_savings_usd": 2823.94,
-    "marginal_usd_per_100w": 299.49
+    "marginal_usd_per_100w": 299.49,
+    "exceeds_measured_floor": false
    },
    {
     "reduction_w": 1000,
     "annual_savings_usd": 3113.07,
-    "marginal_usd_per_100w": 289.13
+    "marginal_usd_per_100w": 289.13,
+    "exceeds_measured_floor": false
    },
    {
     "reduction_w": 1100,
     "annual_savings_usd": 3382.28,
-    "marginal_usd_per_100w": 269.21
+    "marginal_usd_per_100w": 269.21,
+    "exceeds_measured_floor": true
    },
    {
     "reduction_w": 1200,
     "annual_savings_usd": 3631.31,
-    "marginal_usd_per_100w": 249.03
+    "marginal_usd_per_100w": 249.03,
+    "exceeds_measured_floor": true
    }
   ],
   "usd_per_100w_at_current_floor": {
-   "floor_w_used": 1000,
-   "value_usd": 289.13,
-   "note": "the marginal $/100W at the sensitivity step nearest the measured floor (1030 W rounds to the 1000 W step) -- an estimate of the rate a household near this floor level should expect per additional 100 W removed, not the exact marginal at the household's own precise wattage (PR #77 review nitpick: an earlier version of this note claimed this was exactly 'the next 100W', which overstated the precision of a value read off a 100 W grid rather than computed at the household's own exact floor level)"
+   "reduction_w": 100,
+   "value_usd": 323.16,
+   "note": "the marginal $/100W for the FIRST 100 W removed from the floor as measured (1030 W) -- the rate this household should expect for the next 100 W it strips, which is what a household standing at its own measured floor is asking. `reduction_w` counts watts REMOVED from that floor, not a resulting floor level: this is the ladder's first slice, and the ladder's later rungs price DEEPER removal (the 1000 W rung is the tenth 100 W, priced for a household that already stripped 900 W), not this one. See marginal_range for how far the rate moves across the ladder."
+  },
+  "marginal_range": {
+   "reachable": {
+    "min_usd": 289.13,
+    "min_at_reduction_w": 1000,
+    "max_usd": 323.16,
+    "max_at_reduction_w": 100,
+    "through_reduction_w": 1000
+   },
+   "full_ladder": {
+    "min_usd": 249.03,
+    "min_at_reduction_w": 1200,
+    "max_usd": 323.16,
+    "max_at_reduction_w": 100
+   },
+   "note": "the spread of the per-100W marginal, so the non-linearity is readable without recomputing it from `steps`. The REACHABLE range covers only the rungs at or below the measured floor (1030 W) -- the removal the metered load can actually supply. The FULL LADDER also includes rungs above that floor, where _split_floor clamps the request to each interval's metered import and drops the remainder: those rungs remove less energy than they ask for, so the full-ladder minimum is depressed by discarded energy and is not a tariff effect. Read the reachable range for what this household faces; read the full ladder only with that clamping in mind."
   },
   "usd_per_100w_general_average": {
    "value_usd": 303.76,
-   "note": "linear-fit slope across the full 100-1200 W range -- a general marginal rate, not specific to the current floor level"
+   "reachable_slope_usd": 310.86,
+   "note": "linear-fit slope across the full 100-1200 W range -- a general marginal rate, not specific to the current floor level. This fit spans rungs that exceed the measured floor (1030 W), where _split_floor drops the energy the metered load cannot supply, so the value is pulled DOWN by rungs the household cannot reach. reachable_slope_usd is the same fit over the reachable rungs only."
   },
-  "linearity_note": "max deviation from the linear fit is $73.89 (2.03% of total savings at 1200 W) across the tested range -- measurably nonlinear; see sign_flip_buckets for why"
+  "linearity_note": "max deviation from the linear fit is $73.89 (2.03% of total savings at 1200 W) across the full 100-1200 W ladder -- measurably nonlinear; see sign_flip_buckets for why. That full-ladder figure includes rungs above the measured floor (1030 W), whose marginals are diluted by energy _split_floor drops rather than by tariff curvature; over the reachable 100-1000 W rungs alone the max deviation is $25.85 (0.83% of savings at 1000 W)."
  },
  "battery_interaction": {
   "config": "13.5 kWh Powerwall 3 (bare unit), greedy policy, raw measured year (no EV-shift behavior model stacked on top -- isolates the floor's own effect on the battery)",

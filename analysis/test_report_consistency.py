@@ -1811,14 +1811,22 @@ def _night_floor_published_figures():
     The energy is floor_kw_priced x hours, not median_kw x hours: the priced
     floor is what both dollar figures were computed from (it is round(median,
     4) in the generator), so building the kWh off the other field would let
-    the energy and the cost drift apart on a re-run."""
+    the energy and the cost drift apart on a re-run.
+
+    The sensitivity rate is a bare dollar amount, deliberately. The three
+    sections phrase it three ways ("worth about $X/yr", "about $X/yr per 100 W
+    removed", "about $X/yr for every 100 W removed"), and asserting one
+    sentence shape across all three would fail on correct prose while catching
+    no wrong figure. What must agree section to section is the VALUE."""
     doc = _night_floor_artifact()
     nf, pr = doc["night_floor"], doc["pricing"]
+    sens = doc["sensitivity_per_100w"]
     return {
         "floor": f"{nf['median_kw']:,.2f} kW",
         "energy": f"{pr['floor_kw_priced'] * nf['nights_total'] * 24:,.0f} kWh/yr",
         "price map cost": f"${pr['method_a_price_map']['total_usd']:,.0f}",
         "re-bill cost": f"${pr['method_b_rebill']['total_usd']:,.0f}",
+        "sensitivity rate": f"${sens['usd_per_100w_at_current_floor']['value_usd']:,.0f}",
     }
 
 
@@ -1901,10 +1909,18 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
         "§13": _report_span("the §13 always-on-floor subsection",
                             r"<h3>Phantom baseload", r"<h3"),
     }
-    # The floor, its energy and its price-map cost are the three figures all
-    # three sections state. The full re-bill is a §0/§13 reconciliation, so it
-    # is required only where the two methods are set against each other.
-    shared = ("floor", "energy", "price map cost")
+    # The floor, its energy, its price-map cost and the rate for the next
+    # 100 W off it are the four figures all three sections state. The full
+    # re-bill is a §0/§13 reconciliation, so it is required only where the two
+    # methods are set against each other.
+    #
+    # The sensitivity rate joined this list with issue #173. Until then only
+    # §13's own case pinned it, while §0 and §9 published it unasserted -- so
+    # the artifact could be corrected and §13 updated with two stale figures
+    # left standing and the whole suite green. That is how #173's wrong rung
+    # survived. A figure any section publishes has to be pinned in EVERY
+    # section that publishes it, not in the one that happens to own a case.
+    shared = ("floor", "energy", "price map cost", "sensitivity rate")
     for sid, span in sorted(spans.items()):
         for name in shared:
             assert figures[name] in span, (
