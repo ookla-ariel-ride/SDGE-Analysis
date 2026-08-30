@@ -8189,6 +8189,18 @@ _tok("NIGHT_FLOOR_SEASONALITY", kind="derived", get=_night_floor_seasonality,
      sources=["data/quiet_night_floor.json:night_floor.monthly_median_kw"])
 
 
+# The slack in reproducing night_floor.median_kw from night_floor.daily_series.
+# quiet_night_floor.night_floor_series() rounds each NIGHT's median to four
+# decimals on its way into the series, but takes the summary median over the
+# UNROUNDED values and rounds that once at the end. So the reproduction below
+# can miss by one four-decimal rounding on the summary, one on each of the two
+# values an even-length sample averages, and one more where two nights that
+# differ by less than a rounding step change places in the sort. Three of them,
+# and no more; the forgeries this guards against move the floor by thousands of
+# times as much.
+_NIGHTLY_MEDIAN_ROUNDING = 3 * _FOUR_DECIMAL_ROUNDING
+
+
 def _night_floor_sensitivity(ctx):
     """What a watt off the floor is worth -- the one recoverable figure this
     repo can actually measure.
@@ -8294,6 +8306,90 @@ def _night_floor_sensitivity(ctx):
     forged floor of 50 W was the same hole pointing the other way, degrading
     the wording of a household whose floor is fine. Both are refusals now.
 
+    AND CHECKING measured_floor_w ALONE WAS STILL NOT ENOUGH, because the
+    field it was checked against was itself forgeable (issue #173, adversarial
+    pass 2). night_floor.median_kw is a summary the same artifact carries, so
+    an artifact that moved BOTH -- median_kw to 1.2 kW and measured_floor_w to
+    1,200 W, with the exceeds_measured_floor flags and marginal_range.reachable
+    rebuilt to agree -- satisfied every check above and published the full
+    ladder's clamping-diluted minimum as this household's reachable rate: the
+    exact outcome the guard was added to stop. A chain of checks is only as
+    good as its last link, and the last link was a summary a forger can move in
+    lockstep with everything derived from it. Two other tokens read the same
+    summary and were bypassed the same way -- NIGHT_FLOOR_ANNUAL_KWH ties
+    pricing.floor_kw_priced to median_kw (main() line
+    `"floor_kw_priced": round(floor_kw, 4)` over line
+    `floor_kw = night_stats["median_kw"]`, so that pair is exact and is
+    already asserted there, which is why this formula does not assert it a
+    second time), and the forged artifact moved floor_kw_priced too.
+
+    SO THE CHAIN NOW TERMINATES AT THE PER-NIGHT SERIES, which is data rather
+    than a summary. night_floor_series() walks the 1-5am group of every
+    calendar date, writes `median_kw: None` on the nights the high-demand gate
+    excludes and `round(that night's median import power, 4)` on the rest, and
+    collects the UNROUNDED value of each kept night; the summary is the median
+    of exactly that collection. Reading the generator (this module's standing
+    rule, not waived) gives three checks with no summary between them and the
+    nights:
+      * daily_series carries at least one usable per-night median_kw, and every
+        one of them is a finite number;
+      * the count of non-null nightly medians IS night_floor.quiet_nights --
+        the same loop writes the null and increments the count, so a series
+        with nights added or removed contradicts its own sample size;
+      * night_floor.median_kw IS the median of those non-null values, within
+        _NIGHTLY_MEDIAN_ROUNDING. The three published summaries all reproduce
+        this way on the measured artifact (median 1.03, p10 0.822, p90 1.36);
+        only the median is checked here, because only the median is what
+        measured_floor_w is derived from.
+    The three-field forgery now refuses at the median: 1.2 kW against 1.03 kW
+    reproduced from 43 nights.
+
+    THE THREE RUN ONLY WHERE THERE IS A SERIES TO RUN THEM AGAINST, and that
+    is a boundary rather than a hole. Issue #174 records the design constraint
+    that an artifact whose daily_series is absent, empty or null must still
+    render this sentence: the six figures that read this artifact each have a
+    window branch written for exactly that state, and refusing here would take
+    the whole report away over a container. The compensating control is
+    already in place and is not optional -- _night_floor_coverage reads the
+    window off the same series, so the same three shapes strip every annual
+    unit from every one of those six figures and force each to state the
+    corpus it really has and why it is not a year. An artifact with no series
+    therefore cannot carry an unanchored floor quietly; it announces its own
+    state in six places. What it CANNOT do is keep the dates (and so the
+    annual unit) while emptying the medians: a series with rows and no usable
+    median_kw is refused above, and the generator never writes one, because a
+    corpus with no quiet night has no median to summarise in the first place.
+
+    WHAT THIS STILL DOES NOT PROVE, stated rather than chased. An artifact
+    whose daily_series is itself rewritten -- every night's median_kw moved so
+    that their median really is the forged summary -- passes all three checks,
+    because at that point the artifact is internally consistent and nothing in
+    this repo re-derives the series from the interval data. That is the
+    boundary of a consistency guard: it can insist the published summaries
+    follow from the published data, and it cannot insist the published data
+    came from the meter. Re-deriving the series belongs to the regeneration
+    gate (CLAUDE.md section 9, which rebuilds the artifact from usage.csv and
+    diffs it byte for byte), not to a prose formula.
+
+    THE SENTENCE ALSO STOPPED CLAIMING THE RANGE IS FULLY SUPPLIED (issue
+    #173). The reachable branch used to close "across the first N W, which is
+    all an M W floor has to give up" -- a delivery claim, and a wrong one: the
+    artifact's own per-rung marginal_delivery_ratio runs from 0.9999 at the
+    first rung down to 0.9259 at the 1,000 W rung on the measured year, so
+    every rung of that range delivers less energy than it asks for and the
+    marginal falls mainly for that reason. The extent clause now names how deep
+    the floor reaches and says what each successive 100 W delivers. The clause
+    is EARNED, not asserted: it is read off the reachable rungs' own
+    marginal_delivery_ratio values, which go through _quantities first, and it
+    appears only where the LARGEST of them is under one -- the clause says
+    EVERY successive slice falls short, so the test is the best rung, not the
+    worst. A household whose reachable rungs are delivered in full gets the
+    extent without the caveat, which is the true sentence for that artifact.
+    marginal_range.reachable's own min_marginal_delivery_ratio is deliberately
+    NOT tested here: this sentence does not print it, and a check on a field a
+    formula does not read is a refusal a maintainer cannot act on from the
+    sentence in front of them. quiet_night_floor's own suite owns that field.
+
     AND THE LADDER IS NOT A STRAIGHT LINE, which is the difference between a
     rate and a multiplier. The artifact says so in linearity_note; this token
     does not quote that note, it recomputes the same argument from the
@@ -8375,6 +8471,41 @@ def _night_floor_sensitivity(ctx):
     median_kw, = _quantities(
         "NIGHT_FLOOR_SENSITIVITY_PER_100W", "which floor the ladder was measured against",
         night_floor_median_kw=_night_floor().get("median_kw"))
+    series = _night_floor().get("daily_series")
+    if isinstance(series, list) and series:
+        nightly = [r.get("median_kw") for r in series
+                   if isinstance(r, dict) and r.get("median_kw") is not None]
+        _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+               "which nights the floor was measured on",
+               SUPPORTED if nightly and _finite(*nightly) else NOT_DETERMINED,
+               f"data/quiet_night_floor.json:night_floor.daily_series carries "
+               f"{len(series):,.0f} nights and {len(nightly):,.0f} usable median_kw readings "
+               "between them -- night_floor_series nulls the excluded nights and takes the "
+               "floor over the rest, so a series of nothing but nulls is a floor no night "
+               "of this corpus measured")
+        quiet_nights, = _quantities(
+            "NIGHT_FLOOR_SENSITIVITY_PER_100W", "which nights the floor was measured on",
+            night_floor_quiet_nights=_night_floor().get("quiet_nights"))
+        _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+               "which nights the floor was measured on",
+               SUPPORTED if len(nightly) == quiet_nights else NOT_DETERMINED,
+               f"night_floor.quiet_nights says {quiet_nights:,.0f} while daily_series "
+               f"carries {len(nightly):,.0f} nights with a median_kw -- one loop writes the "
+               "null and counts the rest, so a series and a count that disagree cannot both "
+               "describe the sample the floor was taken over")
+        ordered = sorted(nightly)
+        mid = len(ordered) // 2
+        from_series = (ordered[mid] if len(ordered) % 2
+                       else (ordered[mid - 1] + ordered[mid]) / 2.0)
+        _require_derived(
+            "NIGHT_FLOOR_SENSITIVITY_PER_100W",
+            "which floor the ladder was measured against",
+            from_series, median_kw, _NIGHTLY_MEDIAN_ROUNDING,
+            f"data/quiet_night_floor.json:night_floor.median_kw publishes {median_kw!r} kW "
+            f"while the median of the {len(nightly):,.0f} non-null daily_series median_kw "
+            f"values is {from_series!r} kW -- night_floor_series takes that median over "
+            "exactly those nights, so a summary its own per-night series does not reproduce "
+            "is a floor no night of this corpus measured")
     from_median_w = int(round(median_kw * 1000))
     _require_derived(
         "NIGHT_FLOOR_SENSITIVITY_PER_100W", "which floor the ladder was measured against",
@@ -8472,6 +8603,12 @@ def _night_floor_sensitivity(ctx):
                f"marginal_range.reachable publishes ${lo:,.2f} to ${hi:,.2f} through "
                f"{through:,.0f} W while the rungs at or below the {floor_w:,.0f} W floor run "
                f"${min(seen):,.2f} to ${max(seen):,.2f} through {top:,.0f} W")
+        ratios = _quantities(
+            "NIGHT_FLOOR_SENSITIVITY_PER_100W",
+            "how much of each 100 W the re-billing took off the meter",
+            **{f"step_{s['reduction_w']}_w_delivery": s.get("marginal_delivery_ratio")
+               for s in reachable})
+        short_delivery = max(ratios) < 1.0
     covers, nights, why = _night_floor_coverage()
     rate = (f"about ${per_100w:,.0f}/yr" if covers else
             f"about ${per_100w:,.0f} across the {nights:,.0f} nights measured, {why},")
@@ -8480,8 +8617,11 @@ def _night_floor_sensitivity(ctx):
         read_off = (f"the first {published_w:,.0f} W off the {floor_w:,.0f} W floor as "
                     "measured")
         near = "a rate at this floor"
-        extent = (f"across the first {through:,.0f} W, which is all a {floor_w:,.0f} W "
-                  "floor has to give up")
+        extent = (f"across the first {through:,.0f} W, as deep as a {floor_w:,.0f} W floor "
+                  "reaches")
+        if short_delivery:
+            extent += (", with each successive 100 W delivering less measured energy than "
+                       "it asks for")
     else:
         span_lo, span_hi = full_lo, full_hi
         read_off = (f"the ladder's smallest step, {published_w:,.0f} W, which already asks "
@@ -8507,11 +8647,15 @@ _tok("NIGHT_FLOOR_SENSITIVITY_PER_100W", phrase=True, kind="derived", get=_night
               "usd_per_100w_at_current_floor (its reduction_w and value_usd)",
               "data/quiet_night_floor.json:sensitivity_per_100w.steps "
               "(the re-billed ladder: its rungs, their marginals, their cumulative "
-              "annual_savings_usd, their rung spacing and each rung's "
-              "exceeds_measured_floor flag)",
+              "annual_savings_usd, their rung spacing, each rung's "
+              "exceeds_measured_floor flag and each rung's "
+              "marginal_delivery_ratio)",
               "data/quiet_night_floor.json:sensitivity_per_100w.measured_floor_w",
               "data/quiet_night_floor.json:night_floor.median_kw (the floor "
               "measured_floor_w is derived from, checked against it)",
+              "data/quiet_night_floor.json:night_floor.daily_series and "
+              "night_floor.quiet_nights (the per-night data median_kw is "
+              "itself the median of, checked against it)",
               "data/quiet_night_floor.json:sensitivity_per_100w.marginal_range "
               "(reachable and full_ladder)"])
 

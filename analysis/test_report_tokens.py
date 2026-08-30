@@ -10173,9 +10173,11 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
                 offsets = list(range(nights - 1)) + [hole_to]
             doc["night_floor"]["daily_series"] = [
                 {"date": (first + dt.timedelta(days=o)).isoformat(),
-                 "median_kw": 1.0, "excluded_high_demand": False}
+                 "median_kw": doc["night_floor"]["median_kw"],
+                 "excluded_high_demand": False}
                 for o in offsets]
             doc["night_floor"]["nights_total"] = nights
+            doc["night_floor"]["quiet_nights"] = nights
         return edit
 
     checked = {}
@@ -15330,6 +15332,9 @@ def _floor_at(median_kw, reduction_w=None):
         steps = sens["steps"]
         floor_w = int(round(median_kw * 1000))
         doc["night_floor"]["median_kw"] = median_kw
+        for row in doc["night_floor"].get("daily_series") or []:
+            if row.get("median_kw") is not None:
+                row["median_kw"] = median_kw
         doc["pricing"]["floor_kw_priced"] = round(median_kw, 4)
         sens["measured_floor_w"] = floor_w
         for s in steps:
@@ -15472,8 +15477,8 @@ def case_a_floor_smaller_than_the_ladders_first_rung_still_gets_a_whole_report()
         big = _resolve_every_token()["NIGHT_FLOOR_SENSITIVITY_PER_100W"]
     for phrase in (f"the first {lowest:,.0f} W off the {big_w:,.0f} W floor as measured",
                    "a rate at this floor",
-                   f"across the first {highest:,.0f} W, which is all a {big_w:,.0f} W "
-                   "floor has to give up"):
+                   f"across the first {highest:,.0f} W, as deep as a {big_w:,.0f} W "
+                   "floor reaches"):
         assert phrase in big, (
             f"a {big_w:,.0f} W floor holds every re-billed rung, so the sentence must "
             f"price the first one off it ({phrase!r}): {big}")
@@ -15701,9 +15706,11 @@ def case_the_sensitivity_spread_carries_the_window_at_its_own_endpoints():
         first = dt.date(2025, 7, 24)
         doc["night_floor"]["daily_series"] = [
             {"date": (first + dt.timedelta(days=i)).isoformat(),
-             "median_kw": 1.0, "excluded_high_demand": False}
+             "median_kw": doc["night_floor"]["median_kw"],
+             "excluded_high_demand": False}
             for i in range(nights)]
         doc["night_floor"]["nights_total"] = nights
+        doc["night_floor"]["quiet_nights"] = nights
 
     with _patched(rt, "_json", _stub_for("quiet_night_floor.json", short_corpus)):
         text = _renders("NIGHT_FLOOR_SENSITIVITY_PER_100W")

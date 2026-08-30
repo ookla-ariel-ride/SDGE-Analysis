@@ -1831,20 +1831,88 @@ def _night_floor_published_figures():
     }
 
 
-# Every per-100 W dollar amount the report states, in either form the prose
-# uses for it: a bare low end ("$289 per 100 W") or a compact en-dash range
-# ("$289-323 per 100 W", with U+2013). Matching the SHAPE and then checking
-# the amounts against the artifact is what makes the check independent of how
-# the sentence is written -- the same guard holds whether the section quotes
-# one end of the spread or both.
-_PER_100W_AMOUNT_RE = re.compile(r"\$([\d,]+)(?:–([\d,]+))? per 100 W")
+# --- recognising a per-100 W money claim -----------------------------------
+#
+# NAME THE TWO FAILURE MODES, because this guard has already been wrong once in
+# exactly the shape it did not look at, and the temptation is always to narrow
+# it back to the one sentence the report happens to carry today.
+#
+#   TOO NARROW -> a false FAILURE on correct prose. The first version was
+#   `\$([\d,]+)(?:–([\d,]+))? per 100 W`: the compact en-dash form the
+#   hand-written §9/§13 sentences use. report-template.html injects
+#   {{NIGHT_FLOOR_SENSITIVITY_PER_100W}} into both sections, and that token
+#   renders the spread as "... runs from $289 to $323 per 100 W ...", the
+#   "X to Y" form. The pattern did not match it, so the guard saw a per-100 W
+#   claim it could not read and failed a household reproducing this report from
+#   the template on prose the repo itself generated. Reproduction is a product
+#   here (README, "Reproduce this for your own home"), so accepting only one
+#   author's wording is a defect, not strictness.
+#
+#   TOO LOOSE -> a MISSED wrong figure. The same version saw nothing written as
+#   "per 100 watts", "per 100W", "for each 100 W", "for every additional 100 W"
+#   or "$X per kW", so a stale or invented rate survived on phrasing alone:
+#   "each further 100 W is worth about $450/yr" passed the guard untouched.
+#
+# So the claim is recognised in two independent halves -- find the RATE UNIT in
+# every spelling, find the MONEY separately, and pair them when they sit close
+# enough together to be one claim, in EITHER order. Adding a phrasing means
+# adding a unit spelling, never a whole sentence shape.
+
+# Whitespace as it can appear in the report's HTML.
+_HTML_SPACE = r"(?:\s|&nbsp;|&#160;)"
+
+# The unit half. Either an explicit 100 W quantity ("100 W", "100W",
+# "100 watts", "100 Watts"), or a kW rate -- kW only counts behind a rate
+# preposition, so the report's many plain "1.03 kW" load figures are not
+# mistaken for prices. The lookbehind keeps "100" from matching inside a longer
+# number such as "9,100".
+_RATE_UNIT_RE = re.compile(
+    r"(?<![\d,.])100" + _HTML_SPACE + r"*(?:W|watts?)\b"
+    r"|(?:per|for" + _HTML_SPACE + r"+(?:each|every)(?:" + _HTML_SPACE
+    + r"+additional)?)" + _HTML_SPACE + r"+(?:kW|kilowatts?)\b",
+    re.I)
+
+# The money half. Cents are consumed here so a trailing ".16" cannot read as a
+# sentence break in the gap test below.
+_RATE_MONEY_RE = re.compile(r"\$(\d[\d,]*)(?:\.(\d+))?")
+
+# How far apart a money amount and its unit may sit and still be one claim.
+# Sized off the longest legitimate form the repo produces -- the token's
+# "$289 to $323 per 100 W" and the sections' "$323/yr for the first 100 W
+# removed" -- with room to spare, not off a round number.
+_RATE_PROXIMITY_CHARS = 80
+
+# What ends a claim inside that window: a sentence break, or a block boundary.
+# Without these an unrelated dollar figure one sentence away could be dragged
+# into a claim and fail the report on correct prose -- the false-failure mode
+# again, entering through the pairing rather than the pattern.
+_RATE_GAP_BARRIER_RE = re.compile(
+    r"\.(?:\s|<|$)|</?(?:p|h[1-6]|li|ul|ol|div|table|tr|td|th|section)\b", re.I)
 
 
 def _per_100w_amounts_stated(span):
-    """The set of per-100 W dollar amounts, as ints, that `span` states."""
+    """The set of per-100 W money amounts, as ints, that `span` states.
+
+    A money amount counts when a rate unit sits within
+    _RATE_PROXIMITY_CHARS of it, on either side, with no sentence or block
+    break in between. Amounts are rounded to whole dollars so they compare
+    against the artifact the way the prose writes them."""
+    units = [m.span() for m in _RATE_UNIT_RE.finditer(span)]
     found = set()
-    for m in _PER_100W_AMOUNT_RE.finditer(span):
-        found.update(int(g.replace(",", "")) for g in m.groups() if g)
+    for m in _RATE_MONEY_RE.finditer(span):
+        m_start, m_end = m.span()
+        for u_start, u_end in units:
+            if u_start >= m_end:                       # $X ... 100 W
+                gap = span[m_end:u_start]
+            elif m_start >= u_end:                     # 100 W ... $X
+                gap = span[u_end:m_start]
+            else:                                      # overlapping: one claim
+                gap = ""
+            if len(gap) > _RATE_PROXIMITY_CHARS or _RATE_GAP_BARRIER_RE.search(gap):
+                continue
+            found.add(round(float(m.group(1).replace(",", "")
+                                  + "." + (m.group(2) or "0"))))
+            break
     return found
 
 
