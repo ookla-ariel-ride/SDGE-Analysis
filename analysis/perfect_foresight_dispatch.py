@@ -43,7 +43,7 @@ Constraints:
               charge duty cycle AND a full discharge duty cycle in the same
               interval, regardless of whether its charge and discharge RATES
               are equal (Codex adversarial review, fourth pass -- see
-              TECHNICAL.md's "Do not ship: combined bidirectional power cap"
+              TECHNICAL.md's "Combined bidirectional power cap"
               for that original fix's own account of why). That prior fix
               assumed one shared power_kw; generalizing it to two
               independently-rated directions (Tesla's own datasheet gives

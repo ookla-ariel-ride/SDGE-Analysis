@@ -51,7 +51,7 @@ Captured 2026-07-25. Supports `analysis/extended_findings.py` → `data/extended
   Beach Cities vs ~350 min to Northeast.
 - **Defensible coastal exposure: ~1–2.5 outage-hours/yr all-in (point estimate ~1.5 h/yr).**
   At any plausible household outage cost ($25–100/h) that is **~$40–250/yr of expected
-  resilience value** — a real but small number; resilience remains a preference purchase,
+  resilience value** — a small number; resilience remains a preference purchase,
   now bounded instead of $0-or-∞.
 - Sources: SDG&E 2024 Electric System Reliability Annual Report (sdge.com; CPUC copy);
   CPUC PSPS post-event reports Dec 2024 / Jan 2025.

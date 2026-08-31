@@ -94,7 +94,7 @@ MEASURE the effect with a diff-in-diff: same multi-week daily windows around the
 date across several years — uncleaned years are the control for seasonal decline. Quantify
 soiling independently from rain recovery (daily precipitation from the free NOAA/RCC ACIS
 API, clear-sky-normalized production around rain-after-dry-spell events, plus a
-days-since-rain regression); if the two lines of evidence disagree, report the honest
+days-since-rain regression); if the two lines of evidence disagree, report the
 bracket. Then model optimal cleaning cadence, valuing recovered kWh at what a **marginal
 midday kWh** is worth on my tariff — not the blended rate.
 
@@ -129,9 +129,9 @@ battery — battery value depends on the plan's price spread. Check current ince
 (ITC, SGIP) — do not assume they exist. Run a Monte Carlo on payback AND an explicit
 rate-escalation ladder (e.g. 3/5/8/12%/yr → payback and 10-yr NPV). Compute the battery's
 marginal saving on the POST-behavior-fix year and state the behavior/battery overlap in
-dollars. Label paybacks honestly: PACKAGE payback ≠ BATTERY-ALONE payback — report both,
+dollars. Label paybacks by what they measure: package payback ≠ battery-alone payback; report both,
 never credit free behavior savings to hardware.
-**Dispatch policy is the biggest modeling lever — simulate at least three:** evening-only (discharge on-peak only), two-window (+morning house load), and **price-aware** (discharge against every import priced above the battery's stored-energy cost — typically all non-super-off-peak hours; a stored kWh costs only the forgone export credit ÷ RTE, or the super-off-peak rate ÷ RTE). Exclude EV-spillover intervals from battery service (the free schedule fix moves that load; don't double-pay for it), always charge from solar surplus before grid, and report kWh served and cycles/day per policy. In our run the price-aware policy was worth ~35% more per year than evening-only — publish it as the basis and show the others as the conservative bracket.
+**Dispatch policy is the biggest modeling lever; simulate at least three:** evening-only (discharge on-peak only), two-window (+morning house load), and **price-aware** (discharge against every import priced above the battery's stored-energy cost, typically all non-super-off-peak hours; a stored kWh costs only the forgone export credit ÷ RTE, or the super-off-peak rate ÷ RTE). Exclude EV-spillover intervals from battery service (the free schedule fix moves that load; don't double-pay for it). Always charge from solar surplus before grid, and report kWh served and cycles/day per policy. In our run the price-aware policy was worth ~35% more per year than evening-only. Publish it as the basis and show the others as the conservative bracket.
 
 **8. Solar expansion / repowering / inverter upgrade.** Value a marginal midday kWh at its
 ACTUAL export credit (often ~10¢ post-2024) vs cost; factor NEM expansion limits (adding
@@ -145,14 +145,14 @@ hourly kg CO2/MWh and apply to my 15-minute imports/exports: annual footprint, C
 exports, and the emissions delta of moving mistimed EV charging overnight vs to solar midday.
 Cross carbon with tariff — if midday and overnight price the same, the cleaner choice is free.
 
-**9b. Carbon depth & honest labeling (addendum to 9).** Sample as many real ISO days as the
-fetch channel practically allows — our run started at 4 seasonal days and was later expanded
-to 28 (~2 per calendar month). Interpolate uncovered days with **month-hour means** of the
+**9b. Carbon depth & evidence labeling (addendum to 9).** Sample as many real ISO days as the
+fetch channel practically allows; our run used 28 (~2 per calendar month). Interpolate uncovered days with **month-hour means** of the
 covered days in the same calendar month, commit the per-day hourly intensity table alongside
 the results, and **label the output by coverage** ("estimated · N days sampled" — never
-"measured" unless coverage is near-complete). Fuller sampling matters: it caught sunny spring
-middays where CAISO's import-inclusive accounting drives intensity to ~0, cutting our
-export-displacement estimate by 28% versus the 4-day version.
+"measured" unless coverage is near-complete). Sample across the full year: sunny spring
+middays, where CAISO's import-inclusive accounting drives intensity to ~0, pull the
+export-displacement estimate down, and a 4-day seasonal sample misses them (our 28-day
+estimate came out 28% below a 4-day one).
 
 **10. Gas + electrification (if I have gas).** Gas Green Button daily therms + rate
 schedule; split non-heating baseline from space heating; model a heat-pump water heater on a
@@ -160,7 +160,7 @@ midday-solar timer; note heat-pump space heating as a bundle-with-HVAC move. Che
 for whether gas has a real fixed monthly charge before claiming an all-electric
 "drop the connection fee" windfall — many gas bills are nearly purely volumetric.
 
-**11. Detailed bill audit — this is where the truth is.** Parse every monthly detailed PDF
+**11. Detailed bill audit (the primary source).** Parse every monthly detailed PDF
 (electric AND gas) line-by-line **with a committed script, not an ad-hoc extraction** — the
 bill-derived totals anchor every absolute dollar in the report, so they fall under the
 "every artifact regenerable by its committed script" gate like everything else. Have the
@@ -171,7 +171,7 @@ to publish when a statement is missing or periods fail to tile the window, and e
 personal identifiers. Where prior summaries exist, regenerating them byte-identically is the
 gate that validates the parser. This validates modeled rates to the penny, resolves what the
 model can't (whether a CCA credit actually applies, exact product, real climate zone), and
-reconciles MODEL vs ACTUAL. If they disagree, find the REAL driver before writing a story —
+reconciles MODEL vs ACTUAL. If they disagree, find the driver before explaining it —
 test candidates separately: netting methodology, **rate vintage** (a model priced entirely at
 current rates reads high against a year billed on older, cheaper tariffs — in our run this
 was nearly the whole gap; the netting methods agreed to well under 1%), and coverage gaps.
@@ -197,7 +197,7 @@ published) and the regulator's **PSPS post-event reports** for my district; conv
 expected outage-hours/yr for my circuit type, then multiply by a household outage-cost
 bracket ($/h) to get a $/yr resilience-value bracket, labeled estimated. In our run: coastal
 district ~57 SAIDI min/yr including major events and ~zero PSPS exposure → ~1–2.5
-outage-hours/yr → ~$40–250/yr — real but small.
+outage-hours/yr → ~$40–250/yr — small.
 
 **14. Fixed-charge restructure — VERIFY it isn't already in the bills before modeling it as
 a future.** Where a restructure like California's AB 205 income-graduated fixed charge
@@ -222,7 +222,7 @@ fleet fuel economy (FHWA Highway Statistics VM-1) × the cited state gasoline pr
 monthly series). Label the result estimated (its external constants are cited, not
 measured), and state it both at current charging times and post-schedule-fix.
 
-**17. Cheap cross-checks that harden the story:** (a) **away-day baseload** — days with no
+**17. Cheap cross-checks:** (a) **away-day baseload** — days with no
 EV charging and imports well below the median give an unattended-house floor (a lower bound:
 unattended load also eats solar midday); (b) **supercharging-vs-home delta** — DC-fast kWh ×
 (estimated DCFC price − home super-off-peak all-in), an upper bound since road-trip energy
@@ -293,11 +293,11 @@ spliced across models).
 
 ## PHASE D — DELIVERABLES
 
-**Prose quality pass (required, every regeneration):** finish all report and README prose
+**Prose quality pass (required on every regeneration):** finish all report and README prose
 with a de-AI-writing edit (in Claude Code, the [humanizer skill](https://github.com/blader/humanizer);
 otherwise its source checklist, Wikipedia's ["Signs of AI writing"](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing):
 no inflated symbolism, no promotional adjectives, no rule-of-three padding, no negative
-parallelisms, no filler transitions). Plain, specific, engineering-notebook voice.
+parallelisms, no filler transitions). Write in the plain voice of an engineering notebook.
 
 **The report must open with a Purpose block** (above the Bottom line): one paragraph stating
 what the document is — a decision document computed from measured data by committed scripts —
@@ -318,13 +318,13 @@ charts): bottom line → data & validation → solar system profile → plan com
 battery-change-the-plan matrix → usage/behavior findings (the four §5 charts) → battery
 hardware (arbitrage + outage endurance) → three costed packages (Low = behavior-only $0 /
 Mid = +battery / High = +expanded storage; each with annual cost, savings, projected bills
-at constant current rates, honest asset-alone payback, backup capability) → the "What to do
+at constant current rates, asset-alone payback, backup capability) → the "What to do
 Monday" appendix. ADVANCED tier (§8–§14, the audit trail, wrapped in ONE closed-by-default
 `<details id="advanced">`): expansion/clipping verdict → deep analyses → bill reconciliation
 + gas + electrification → lifetime payback → cleaning & soiling →
 carbon/NEM-value/escalation/price-map → methodology & caveats.
 
-**Navigation (build it in, keep it on every regeneration):** sticky TOC in three labeled
+**Navigation (required on every regeneration):** sticky TOC in three labeled
 groups — **Verdict / Evidence / Audit** — as compact pills under uppercase eyebrow labels;
 scroll-spy via ONE IntersectionObserver on the h2s (no scroll listeners), active pill
 highlighted; h2 `scroll-margin-top` ≥ nav height; smooth scrolling gated by
@@ -345,7 +345,7 @@ sections lazy-init on first open. Quiet back-to-top button (after §1, aria-labe
 ≤800px: grouped TOC collapses to ≤ ~2 rows with horizontal scroll. Keyboard `:focus-visible`
 on pills and summaries. The page must degrade cleanly with JS disabled.
 
-**Design system ("Solar ledger" — keep on every regeneration; full spec in CLAUDE.md §10):**
+**Design system ("Solar ledger"; required on every regeneration; full spec in CLAUDE.md §10):**
 light-first theme on warm-white paper with a dark variant via `[data-theme="dark"]` tokens
 and a ◐ toggle (localStorage-persisted; honors prefers-color-scheme on first visit). A
 SEMANTIC TOU palette — on-peak #BF3B2B, off-peak #C98A3D, super-off-peak #2E7D6B, solar
@@ -362,7 +362,7 @@ tokens — never hardcode hex), use the semantic palette for TOU-mapped series, 
 pinned with an SRI integrity hash — keep integrity/crossorigin attributes, and recompute the
 sha384 if the Chart.js version ever changes.
 
-**Provenance note (required; must survive every regeneration).** The methodology section's
+**Provenance note (required on every regeneration).** The methodology section's
 closing small-print in `index.html` ends with a "How this report was produced" sentence, and
 `README.md` carries the equivalent blockquote immediately before the report description.
 Keep the structure: *generated with [tool], independently reviewed with [second tool],
@@ -389,8 +389,8 @@ permanent — if PII ever lands in a commit, recommend delete-and-recreate over 
 After each commit, verify it actually landed on the remote before moving on.
 
 
-**README.md structure (required; keep on every regeneration):** (a) a "Companion documents" block immediately after the provenance blockquote, linking TECHNICAL.md, GLOSSARY.md, DATA-SOURCES-CHEATSHEET.md, and reusable-prompt.md with one-line descriptions; (b) a "Reproduce this for your own home - start here" section (blank-slate clone commands, cheatsheet data-gathering, personal private/pii-rules.toml setup, AI route vs manual route, the CLAUDE.md pre-publication gates, then publish); (c) a privacy note describing the MECHANICAL enforcement (pre-commit hook via core.hooksPath .githooks, CI gitleaks workflow, local-only private/pii-rules.toml) - never manual grepping alone; (d) a "Refreshing this analysis" flow reflecting the current pipeline (rates.py as single source of truth -> pipeline scripts -> regeneration diff-check -> report-template.html). Likewise preserve CLAUDE.md's "Commands" section, its mechanical-enforcement privacy text, and the committed requirements.txt in any regeneration of those files.
-**EV telemetry cross-validation (whenever the EVs expose their own charging data):** pull each car's charging summary (e.g. Tesla app Charge Stats: trailing-12-month energy by location and TOU bucket, battery-side kWh) and any wall-charger daily export (wall-side kWh), plus odometer + in-service date per car (cheatsheet E2). Cross-validate the session detector on energy (battery/wall ratio should imply an 8-12% charging loss), session counts, and TOU shares; reconcile odometer-implied wall energy against measured charging and attribute residuals to measured real-world consumption before suspecting the detector. Frame the result honestly: the detector is meter-derived and *cross-checked* by vehicle and charger telemetry — the battery/wall gap is an implied loss (windows rarely align exactly), wall-charger agreement is at the totals level over its clean window, and odometers are a scale sanity-check, not a third energy measurement. In our run: 99.6% aggregate agreement over a 20-day clean window.
+**README.md structure (required on every regeneration):** (a) a "Companion documents" block immediately after the provenance blockquote, linking TECHNICAL.md, GLOSSARY.md, DATA-SOURCES-CHEATSHEET.md, and reusable-prompt.md with one-line descriptions; (b) a "Reproduce this for your own home - start here" section (blank-slate clone commands, cheatsheet data-gathering, personal private/pii-rules.toml setup, AI route vs manual route, the CLAUDE.md pre-publication gates, then publish); (c) a privacy note describing the MECHANICAL enforcement (pre-commit hook via core.hooksPath .githooks, CI gitleaks workflow, local-only private/pii-rules.toml) - never manual grepping alone; (d) a "Refreshing this analysis" flow reflecting the current pipeline (rates.py as single source of truth -> pipeline scripts -> regeneration diff-check -> report-template.html). Likewise preserve CLAUDE.md's "Commands" section, its mechanical-enforcement privacy text, and the committed requirements.txt in any regeneration of those files.
+**EV telemetry cross-validation (whenever the EVs expose their own charging data):** pull each car's charging summary (e.g. Tesla app Charge Stats: trailing-12-month energy by location and TOU bucket, battery-side kWh) and any wall-charger daily export (wall-side kWh), plus odometer + in-service date per car (cheatsheet E2). Cross-validate the session detector on energy (battery/wall ratio should imply an 8-12% charging loss), session counts, and TOU shares; reconcile odometer-implied wall energy against measured charging and attribute residuals to measured real-world consumption before suspecting the detector. Frame the result as what it is: the detector is meter-derived and *cross-checked* by vehicle and charger telemetry — the battery/wall gap is an implied loss (windows rarely align exactly), wall-charger agreement is at the totals level over its clean window, and odometers are a scale sanity-check, not a third energy measurement. In our run: 99.6% aggregate agreement over a 20-day clean window.
 
 **Also deliver TECHNICAL.md and GLOSSARY.md** (the README links to both): TECHNICAL.md is the methods-section documentation — every script, data schema, algorithm, chart pipeline, and validation chain, written so the analysis can be audited or rebuilt; GLOSSARY.md defines every term of art in plain homeowner English with links to authoritative sources.
 
@@ -410,4 +410,4 @@ dates (SDG&E Jan 1/Jun 1, CEA Feb/Jun), regulator changes to the fixed charge,
 fleet/appliance changes, and before-quotes/after-install for a battery — plus a standing
 quarterly re-run if the tooling supports scheduled tasks.
 
-**Privacy tooling (create it, don't just describe it):** set up the mechanical enforcement the README documents — a gitleaks pre-commit hook under .githooks/ (enabled via git config core.hooksPath .githooks), a committed .gitleaks.toml with generic account-format rules, a CI workflow that rescans full history on push, a local-only private/pii-rules.toml carrying my person-specific patterns (never committed), and a committed requirements.txt for the Python environment.
+**Privacy tooling (create it):** set up the mechanical enforcement the README documents — a gitleaks pre-commit hook under .githooks/ (enabled via git config core.hooksPath .githooks), a committed .gitleaks.toml with generic account-format rules, a CI workflow that rescans full history on push, a local-only private/pii-rules.toml carrying my person-specific patterns (never committed), and a committed requirements.txt for the Python environment.

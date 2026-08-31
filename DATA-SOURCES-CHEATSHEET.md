@@ -58,9 +58,9 @@ steps are tried in order, and the first one that answers wins:
    itself (`monitoring_feeds` → `monitoring[]`, `panel_schedule` → `panel.schedule`) binds
    the container: publishing the whole list publishes its private-only keys with it. A
    resolver that walks dotted keys through dictionaries alone reaches none of these
-   `path[].key` fields, and skipping them silently is the failure mode this contract names.
+   `path[].key` fields, and skipping them silently is what this contract forbids.
 
-**A tier belongs to the field, not to one household's answer.** `monitoring[].url` is
+**A tier belongs to the field.** `monitoring[].url` is
 private-only because a monitoring site URL usually carries the site id that names the
 account. A household whose entry happens to hold a bare dashboard link with no id in it is
 still holding a private-only field.
@@ -71,12 +71,12 @@ still holding a private-only field.
   reads the value at that path;
 - **fails loudly** when an id resolves to no path and is not declared path-less below. A tier
   whose subject cannot be located is a broken rule, and a gate that reports it clean is the
-  exact failure this contract exists to prevent;
+  failure this contract prevents;
 - **separates *checked* from *unchecked*** in what it reports. A path that resolves to a key
   absent from `private/household.yaml` means the household does not hold that answer, which
   several blocks here sanction in terms (`panel_main_breaker_position`,
   `panel_battery_breaker_position` and `panel_meter_socket_continuous_a` all say to leave the
-  key out until someone has looked). That is not a failure and it is not a pass — a gate that
+  key out until someone has looked). It is neither a failure nor a pass: a gate that
   prints a clean bill for a field it never had a value for is telling the reader something
   false;
 - gets no new rows: a field added later SHOULD be given an id of the form `<block>_<key>` so
@@ -96,15 +96,16 @@ repo also tracks, where the search is for the dotted path as a whole token outsi
 reason: carrying every intake key is what makes it the schema. It stays subject to the value
 rules.
 
-**The class is derived, not listed.** `unsearchable_fields()` in `analysis/privacy_tiers.py`
+**The class is derived.** `unsearchable_fields()` in `analysis/privacy_tiers.py`
 takes every `private-only` or `secret` field whose declared `type` is one a literal scan can
 never search — a `bool` — and, where `private/household.yaml` is present, widens that with any
 field whose recorded answer is a scalar that produced no needle **the scanner can use**. That
 last qualifier is read off the same floor constant the scanner applies, so the two cannot
 disagree about which fields the value scan reaches: a needle exists for a bare string of any
 length, but the scanner skips one below the floor in every file it cannot parse, and a field
-answered with a short bare word would otherwise be claimed by neither half. A private-only
-boolean added next year is covered without anyone editing a list, and a field whose answer
+answered with a short bare word would otherwise be claimed by neither half.
+
+A private-only boolean added next year is covered without anyone editing a list, and a field whose answer
 turns out to be searchable in fact (a long free-text note, say) stays with the value scan
 rather than being swept in here. Both halves look for key names and dotted paths and never
 for a value, so both run in CI as well as in the pre-commit hook. Reformatting and
@@ -347,7 +348,7 @@ where: "If on a CCA: its residential rate schedule + the SDG&E–CCA Joint Rate 
 privacy: public-ok
 ```
 
-## D. Detailed monthly bills 📥🔒 (highly recommended — this is where the truth is)
+## D. Detailed monthly bills 📥🔒 (highly recommended: the primary source)
 
 ```yaml
 id: electric_bill_pdfs
@@ -628,7 +629,7 @@ to scope whether a new circuit fits. This section gathers the panel side of that
 > main switched off. Photographing each label and reading the values off the photos
 > afterwards works fine.
 >
-> **What comes out is a scoping estimate, not a permit calculation.** It tells you whether
+> **What comes out is a scoping estimate.** It tells you whether
 > a heat pump or a second charger is plausible on this service before you pay anyone to
 > look. A licensed electrician's load calculation and your building department's sign-off
 > are what actually authorize a circuit.
@@ -1112,7 +1113,7 @@ published verbatim, so they are a claim about your own process. They live in
 `GENERATION_TOOL` / `REVIEW_TOOL_1` / `REVIEW_TOOL_2` tokens.
 
 Answer the review questions **after** the analysis, not during intake — "nobody reviewed it"
-is the normal answer, and is the one this pipeline is built to state honestly.
+is the normal answer, and is the one this pipeline states.
 
 **Filling both review fields asserts three things**, because that is what the published
 sentence says: an independent review happened, an adversarial review happened, **and the

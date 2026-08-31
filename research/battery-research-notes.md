@@ -16,7 +16,7 @@ IQ System Controller for backup islanding.
 
 ### Powerwall 3 charge vs. discharge power (issue #40)
 
-Tesla's own official 2025 Powerwall 3 Datasheet gives four DIFFERENT continuous
+Tesla's 2025 Powerwall 3 Datasheet gives four DIFFERENT continuous
 power ratings depending on direction and configuration. This project models one
 bare Powerwall 3, on-grid, no expansion units — the row marked "modeled
 configuration" below is the one every script in this repo should use.
@@ -29,7 +29,7 @@ configuration" below is the one every script in this repo should use.
 | Maximum Continuous Charge Power, Powerwall 3 with up to 3 Expansion units | 8 kW AC, 33.3 A | No. This household's recommendation is one bare unit with no expansions; recorded here because it exists in the datasheet, not modeled. |
 
 Confirmed asymmetry: discharge continuous max 11.5 kW vs. charge continuous max
-5 kW for a single unit — a real, ~2.3x difference.
+5 kW for a single unit — a ~2.3x difference.
 
 ## Incentives status (as of Jul 2026)
 - Federal 25D residential 30% credit: **expired Dec 31, 2025** (no ITC for residential
@@ -59,10 +59,10 @@ load-shifting first — it competes for the same on-peak kWh.
   smartenergyusa.com (PW3 pricing), energyscout.org & solarwithwatts.com (SGIP 2026),
   exspenditure.com (NEM 2.0 + battery rules), teslamotorsclub/diysolarforum threads
   (AC-coupling with existing Enphase).
-- Tesla's own official 2025 Powerwall 3 Datasheet (charge/discharge power split,
+- Tesla's 2025 Powerwall 3 Datasheet (charge/discharge power split,
   issue #40): canonical URL
   https://energylibrary.tesla.com/docs/Public/EnergyStorage/Powerwall/3/Datasheet/en-us/Powerwall-3-Datasheet.pdf
-  — Tesla's own energylibrary.tesla.com domain blocks automated fetches, so this
+  — Tesla's energylibrary.tesla.com domain blocks automated fetches, so this
   was retrieved 2026-08-03 via an identical third-party-hosted mirror at
   longhornsolar.com (https://longhornsolar.com/wp-content/uploads/2025/10/Powerwall-3-Datasheet.pdf),
   a copy of the same 2025-dated Tesla document. Exact table rows, page 2,
