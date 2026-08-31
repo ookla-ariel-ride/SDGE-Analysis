@@ -65,8 +65,8 @@ CEA Feb 1 / Jun 1). Re-verify before reusing.
 ## Baseline (Schedule DR, kWh/day) — used for TOU-DR1/DR2/DR-P 130% baseline credit (−$0.10663/kWh, 6/1/26)
 | Zone | Summer basic | Winter basic | Summer all-elec | Winter all-elec |
 |---|---|---|---|---|
-| Coastal | 9.0 | 9.2 | 8.3 | 13.5 |
-| **Inland (this home)** | **10.4** | **9.6** | 10.1 | 15.8 |
+| **Coastal (this home)** | **9.0** | **9.2** | 8.3 | 13.5 |
+| Inland | 10.4 | 9.6 | 10.1 | 15.8 |
 | Mountain | 13.6 | 12.9 | 16.5 | 26.0 |
 | Desert | 15.9 | 10.9 | 18.5 | 20.0 |
 
