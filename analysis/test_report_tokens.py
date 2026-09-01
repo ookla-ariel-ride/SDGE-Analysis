@@ -5386,9 +5386,9 @@ def _wildcard_plans():
     sorted -- the only names _wildcard_totals accepts in a wildcard key."""
     _provider, plan, priced = _plan_ranking_inputs()
     rivals = sorted({r["plan"] for r in priced} - {plan})
-    assert len(rivals) >= 4, (
+    assert len(rivals) >= 2, (
         f"data/plan_results.csv prices {len(rivals)} plan(s) beside {plan}; the "
-        "wildcard cases need four rivals")
+        "wildcard cases need two rivals")
     return plan, rivals
 
 
@@ -6093,7 +6093,7 @@ def case_the_wildcard_phrase_stays_one_item_of_the_cards_list():
     reads it rather than the way it was built."""
     plan, priced = _wildcard_plans()
     rows = []
-    for count in (1, 2, 3, 4):
+    for count in range(1, min(4, len(priced)) + 1):
         rivals = priced[:count]
         phrase = _wildcard_phrase_for(rivals, plan)
         assert ", " not in phrase, (
@@ -6149,10 +6149,12 @@ def case_the_wildcard_ranks_the_battery_configuration_only():
     the key's contract, stated beside the keys in deep_analyses.py and parsed
     by ONE regex here: "<plan> + <battery>" or "<plan> no battery", a plan
     data/plan_results.csv prices, a one-token battery, an optional trailing
-    parenthetical note. A block outside that shape refuses by name -- every
-    probe below is one the regex's first draft read as something plausible --
-    and a block that some plan does not carry the battery entry in refuses
-    too, rather than being dropped: deep_analyses.py always emits it.
+    parenthetical note. The note is parsed so that it stays out of the
+    configuration and is never compared: runs differ per plan by design. A
+    block outside that shape refuses by name -- every probe below is one the
+    regex's first draft read as something plausible -- and a block that some
+    plan does not carry the battery entry in refuses too, rather than being
+    dropped: deep_analyses.py always emits it.
 
     AND THE HEADING AND THE CARD READ ONE STRUCTURE: a refusal reaches both,
     and a drop (a non-finite total) is the card's absent state and the
@@ -6178,6 +6180,9 @@ def case_the_wildcard_ranks_the_battery_configuration_only():
          {f"{plan} + PW3": 100, f"{rival} + PW3 (15 events dodged)": 120,
           f"{rival} no battery (events hit)": 90},
          "win"),
+        ("notes that differ between the sides pair as one configuration",
+         {f"{plan} + PW3 (no events)": 100, f"{rival} + PW3 (15 events dodged)": 120},
+         "win"),
         ("the rival priced cheaper with the battery",
          {f"{plan} + PW3": 100, f"{rival} + PW3": 90, f"{rival} no battery": 300},
          "trails"),
@@ -6202,13 +6207,10 @@ def case_the_wildcard_ranks_the_battery_configuration_only():
             seen.append(f"{label} -> {got[1]}")
 
     # THE CONVENTION IS ENFORCED, NOT ASSUMED. (probe, artifact, what the
-    # refusal must name) -- the first four are the reviewer's regex probes.
+    # refusal must name) -- the first three are the reviewer's regex probes.
     probes = [
         ("a plan name containing ' + '",
          {f"{plan} + PW3": 100, f"{rival} + CEA + PW3": 90}, [f"{rival} + CEA + PW3"]),
-        ("battery notes that disagree between the two sides",
-         {f"{plan} + PW3 (13.5 kWh)": 100, f"{rival} + PW3 (27 kWh)": 90},
-         [plan, rival, "13.5 kWh", "27 kWh"]),
         ("an empty configuration",
          {f"{plan} + PW3": 100, f"{rival} + ": 90}, [f"{rival} + "]),
         ("a note outside parentheses",

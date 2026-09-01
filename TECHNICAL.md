@@ -429,10 +429,11 @@ land in `deep_results.json`.
    against the cheapest rival's `+ PW3` total, because that is the question section 9's
    heading asks ("can TOU-DR-P + a battery beat EV-TOU-5?"); the no-battery total is context
    and never decides the standing, so a plan's cheapest entry is never compared with another
-   plan's cheapest entry in a different configuration (issue #202). A block in which any plan
-   lacks the battery entry, names two batteries, or carries battery notes that disagree is
-   refused by name rather than ranked, and a non-finite total drops the scenario from the card
-   and refuses the section 9 heading, so the two readers never disagree about the rival.
+   plan's cheapest entry in a different configuration (issue #202). The note is parsed only to
+   keep it out of the configuration and is never compared across plans. A block in which any
+   plan lacks the battery entry or names two batteries is refused by name rather than ranked,
+   and a non-finite total drops the scenario from the card and refuses the section 9 heading,
+   so the two readers never disagree about the rival.
 2. **Phantom/baseload — superseded workpaper (issue #140). Not published anywhere in the
    report; do not cite it.** Take 3–5 am intervals with `Consumption ≤ 0.5` kWh (excludes EV
    charging); baseload kW = 25th percentile × 4 → 1.02 kW → 8,935 kWh/yr. Energy only: this

@@ -2662,13 +2662,14 @@ _tok("S7_PLAN_FOOTING", kind="derived", get=_s7_plan_footing,
 # with no spaces, and either form may end in one parenthetical note. The note
 # says something about the run ("15 events dodged", "events hit") and NOTHING
 # about the configuration: "PW3 (15 events dodged)" and "PW3" are the same
-# battery. _wildcard_totals refuses, naming the key, on anything outside that
-# shape rather than reading it as something plausible: a plan the CSV does
-# not price, a configuration that is not one token ("CEA + PW3", "PW3 15
-# events"), two keys naming one (plan, configuration), more than one battery
-# across the block, a plan priced without the battery, or two battery entries
-# whose notes disagree ("(13.5 kWh)" beside "(27 kWh)" is two batteries
-# wearing one name).
+# battery. The note is parsed so that it stays OUT of the configuration, and
+# it is never compared across plans: runs differ per plan by design ("(no
+# events)" beside "(15 events dodged)"), so two notes that disagree are two
+# runs, not two configurations. _wildcard_totals refuses, naming the key, on
+# anything outside that shape rather than reading it as something plausible:
+# a plan the CSV does not price, a configuration that is not one token ("CEA
+# + PW3", "PW3 15 events"), two keys naming one (plan, configuration), more
+# than one battery across the block, or a plan priced without the battery.
 #
 # ONE regex, because the plan name used to be split off twice and the two
 # copies drifted: here without the battery's name and in _wildcard_plan as
@@ -2725,15 +2726,16 @@ def _wildcard_totals():
 
     VALIDATED HERE, ONCE, for both readers: every key parses, names a plan
     data/plan_results.csv prices and a configuration that plan has not been
-    given before; exactly one battery is named across the whole block; every
-    plan carries an entry for it; and where two of those battery entries
-    carry a note, the notes agree. Any of those failing is a SystemExit that
-    names the key, because the block is not in the shape deep_analyses.py
-    promised and a reading that guesses past that publishes a comparison the
-    artifact does not support.
+    given before; exactly one battery is named across the whole block; and
+    every plan carries an entry for it. Any of those failing is a SystemExit
+    that names the key, because the block is not in the shape
+    deep_analyses.py promised and a reading that guesses past that publishes
+    a comparison the artifact does not support. The parenthetical note is
+    not validated and not compared: it describes the run, and it is parsed
+    only so that it cannot leak into the configuration.
     """
     known = _known_plans()
-    totals, notes = {}, {}
+    totals = {}
     for key, value in _json("deep_results.json")["wildcard"].items():
         parsed = _wildcard_key(key)
         if parsed is None:
@@ -2741,7 +2743,7 @@ def _wildcard_totals():
                 f"{_WILDCARD_SOURCE} key {key!r} is outside the naming convention "
                 "'<plan> + <battery>' / '<plan> no battery' (one-token battery, optional "
                 "parenthetical note); see deep_analyses.py's wildcard block")
-        plan, configuration, note = parsed
+        plan, configuration, _note = parsed
         if plan not in known:
             raise SystemExit(
                 f"{_WILDCARD_SOURCE} key {key!r} names {plan!r}, a plan "
@@ -2752,7 +2754,6 @@ def _wildcard_totals():
                 "second time; a configuration is named once per plan, and a "
                 "parenthetical note does not make a new one")
         totals[plan][configuration] = value
-        notes[plan, configuration] = note
     batteries = sorted({c for priced in totals.values() for c in priced
                         if c != _WILDCARD_NO_BATTERY})
     if len(batteries) != 1:
@@ -2766,13 +2767,6 @@ def _wildcard_totals():
             f"{_WILDCARD_SOURCE} prices {', '.join(missing)} without a "
             f"'+ {battery}' entry; the ranking is on that configuration, so every plan "
             "in the block carries it")
-    noted = {plan: notes[plan, battery] for plan in totals
-             if notes[plan, battery] is not None}
-    if len(set(noted.values())) > 1:
-        raise SystemExit(
-            f"{_WILDCARD_SOURCE} '+ {battery}' entries carry notes that disagree "
-            f"({noted}); a note that differs between two plans is two configurations "
-            "wearing one name")
     return totals
 
 
@@ -2799,11 +2793,18 @@ def _wildcard_scenario(ctx):
     """(phrase, standing) for the section 9 wildcard, or None when that
     artifact cannot rank this household's plan against another.
 
-    None DROPS the scenario from the card's list rather than refusing: the
-    card's claim is "in every scenario tested", and a scenario that cannot be
-    ranked was not tested. Refusing would take the whole report down for a
-    household whose wildcard workup prices one plan -- the failure mode this
-    issue is about.
+    None reaches the two readers of this artifact differently, on purpose.
+    Section 0's card DROPS the scenario from its list: the card's claim is
+    "in every scenario tested", a scenario that cannot be ranked was not
+    tested, and one scenario fewer is a true sentence. Section 9's heading
+    (WILDCARD_PLAN, _wildcard_plan) REFUSES on the same None: it asks "can
+    <rival> + a battery beat <plan>?", and there is no true form of that
+    question about a rival the artifact did not rank against this plan, so
+    there is nothing shorter for it to say. The trade-off chosen is that a
+    workup which ranks nothing withholds the report rather than publishing a
+    heading beside a card that does not count it (issue #202's round-two
+    finding); the card keeps its absent state because that state IS a claim
+    the data supports, and the heading has none.
 
     A NON-FINITE TOTAL DROPS THE WHOLE SCENARIO, and it used to be filtered
     out of the ranking instead -- `[t for t in ... if _finite(t)]` on our side
@@ -3861,12 +3862,26 @@ def _wildcard_plan(ctx):
     beside a card that does not count it. This function used to carry its own
     split of the keys, with this household's battery ("PW3") written into it;
     see _WILDCARD_KEY_RE for what the two disagreed about.
+
+    THE USUAL WAY TO LAND HERE is a household on neither EV-TOU-5 nor
+    TOU-DR-P: deep_analyses.py's wildcard block prices only those two plans,
+    hardcoded, and never household.plan, so for any other plan the block
+    carries no entry for this household and ranks nothing. The refusal is
+    right (a heading off a block that never priced the plan is the false
+    claim), and the remedy is in the generator, not here: extend that block
+    to price household.plan. That generator defect is tracked as its own
+    issue; the message below points at it.
     """
     if _wildcard_scenario(ctx) is None:
         raise SystemExit(f"{_WILDCARD_SOURCE} does not rank this household's plan "
                          f"({hh1('household.plan')!r}) against another in its battery "
                          "configuration, so section 9's heading has no wildcard plan to "
-                         "name; section 0's card drops the scenario for the same reason")
+                         "name; section 0's card drops the scenario for the same reason. "
+                         "If the plan is missing from the block: deep_analyses.py's "
+                         "wildcard block prices only the two plans it hardcodes "
+                         "(EV-TOU-5 and TOU-DR-P), never household.plan, and must be "
+                         "extended to price this household's plan (a generator defect, "
+                         "tracked as issue #278)")
     return _wildcard_rivals(hh1("household.plan"))[0]
 
 

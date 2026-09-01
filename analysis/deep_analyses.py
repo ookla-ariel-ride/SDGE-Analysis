@@ -245,8 +245,8 @@ drp_nobatt_energy=(d.Consumption.values*(rates(UDCP,CEAP)+np.where(d.event,1.16,
 # section 0 card ranks on it alone (the no-battery entry is context). The note
 # describes the run and never the configuration: "PW3 (15 events dodged)" and
 # "PW3" are the same battery, so a configuration appears once per plan, and
-# where two "+ <battery>" entries both carry a note the notes must agree. A
-# block outside this shape refuses there by name.
+# the note is neither validated nor compared across plans. A block outside
+# this shape refuses there by name.
 out["wildcard"]={"TOU-DR-P + PW3 (15 events dodged)":round(drp_batt),
                  "EV-TOU-5 + PW3":round(ev5_batt),
                  "TOU-DR-P no battery (events hit)":round(drp_nobatt_energy+365*BSC)}
