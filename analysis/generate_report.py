@@ -952,8 +952,11 @@ def rhythm_failures(page_text):
     measures (basic, advanced, all), so the page this module publishes meets
     the gate the committed index.html is held to. One failure per tier that
     breaks a limit; its reason is the gate's own report for that tier, the
-    violations and then the offender sites, so the operator can find each one
-    by line. A page whose advanced-tier boundary is not exactly one element
+    violations and then the offender sites. The `L<line>` numbers in those
+    sites index the staged page, which is discarded with the refusal, so what
+    the operator can search for is each site's 60-character snippet, in the
+    template's fixed text, a token value or a cached fragment under
+    private/report_cache/. A page whose advanced-tier boundary is not exactly one element
     cannot be measured per tier at all; that is reported once as a failure of
     the same kind, because a gate that could not run has not been passed.
 
@@ -1089,7 +1092,7 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
     provider = provider or "anthropic"
     model = model or "(dry-run, no model configured)"
 
-    text = rt.TEMPLATE.read_text() if html is None else html
+    text = rt.TEMPLATE.read_text(encoding="utf-8") if html is None else html
     blocks = rb.validate_classification(text)
     if only:
         blocks = [b for b in blocks if b.section == only]
@@ -1215,7 +1218,7 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
 
     with tempfile.TemporaryDirectory() as td:
         staged = pathlib.Path(td) / "index.generated.html"
-        staged.write_text(rendered)
+        staged.write_text(rendered, encoding="utf-8")
         # Issue #251: the Version row's build is a fingerprint of the finished
         # page, so it is applied to the staged file (before promotion, so the
         # promoted page is stamped in the same crash-consistent step) and never
@@ -1226,7 +1229,10 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
         # that is what `prose_rhythm.py --strict index.html` measures on the
         # committed page. A refusal here promotes nothing: the staged file
         # is discarded with the temp directory, and dest_dir is untouched.
-        failures = rhythm_failures(staged.read_text())
+        # UTF-8 explicitly: prose_rhythm.main reads the committed page as UTF-8,
+        # and under a non-UTF-8 locale the default codec would read every em
+        # dash as something the gate does not count.
+        failures = rhythm_failures(staged.read_text(encoding="utf-8"))
         if failures:
             manifest["failures"] = [{"id": i, "kind": k, "reason": r} for i, k, r in failures]
             manifest_path.write_text(json.dumps(manifest, indent=2))

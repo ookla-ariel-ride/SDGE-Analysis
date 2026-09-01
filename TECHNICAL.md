@@ -4659,9 +4659,11 @@ row directly after Window, `<span class="meta-v" id="report-version">YYYY-MM-DD 
   modes (neither inserts one), and that `--check` leaves bytes and mtime untouched.
 - **The generated page.** `report-template.html` carries the same row as `{{REPORT_VERSION}}`,
   which `report_tokens.py` resolves to `<date> · build unstamped`; `generate_report.py` then
-  stamps the staged `index.generated.html` before promoting it, so the generated page carries a
-  real build too. Writes are atomic (temp file beside the page + `os.replace`) and preserve
-  the page's mode; a page that did not exist gets 0644 masked by the process umask.
+  stamps the staged `index.generated.html`, runs the whole-page prose-rhythm gate of §5.3 on
+  the stamped bytes, and promotes the page only when that gate is clean, so the generated page
+  carries a real build and meets the same rhythm limits as the committed one. Writes are
+  atomic (temp file beside the page + `os.replace`) and preserve the page's mode; a page
+  that did not exist gets 0644 masked by the process umask.
 
 ### 5.2 Prose-block length (`analysis/prose_blocks.py`, issue #255)
 
@@ -5206,7 +5208,15 @@ into a finished report with a paid LLM API key and no agentic coding tool at all
   non-zero. On success, the fully spliced document (including the `<script>` block's
   `const D` chart-data placeholders, filled mechanically from the same artifacts
   `test_report_consistency.py` already checks `index.html`'s hand-written arrays against)
-  is staged to a temp file and handed to `analysis/publish.py`'s `promote_set()` as
+  is staged to a temp file, stamped (§5.1), and measured by the whole-page prose-rhythm
+  gate (`prose_rhythm.check()`, §5.3) over the same three tiers `prose_rhythm.py --strict`
+  holds the committed page to. `prose_lint.py` sees one fragment at a time; the em-dash and
+  tail limits are rates over a tier, so a run whose every fragment cleared the fragment gate
+  can still assemble a page that breaks them (issue #263). A page that breaks any limit is
+  not promoted: the run records one failure of kind `prose-rhythm` per violating tier in the
+  manifest, carrying the gate's own violation list and offender snippets, and exits
+  non-zero, so the previous `index.generated.html` survives intact. Otherwise the staged
+  file is handed to `analysis/publish.py`'s `promote_set()` as
   `index.generated.html`, the same crash-consistent, single-writer promotion
   `battery_plan_matrix.py` and its siblings use for `data/*.json`. `index.html` is never
   written to; `test_generate_report.py` proves this by running a full generation into a

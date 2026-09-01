@@ -75,10 +75,11 @@ def _require_household():
 # fragment those dozen dashes read as 4 per 1,000 words and the gate refuses
 # the page; against the roughly one hundred words per block a real run writes
 # they sit far under the ceiling, as they do on the committed index.html. So
-# the fixture writes what a real block looks like, and stays under the
-# 800-character block cap with the longest fixed lead the template puts in
-# front of a fragment (about 240 characters: the packages footing sentence a
-# household ranked second gets, see the second-ranked case below).
+# the fixture writes what a real block looks like. Measured on the fake run:
+# the largest block holding a fragment is the "Paid off" recommendation at
+# 608 visible characters against the 800 cap, and the advanced tier's em-dash
+# rate is 2.18 per 1,000 words against the 3.0 ceiling (its nine fixed dashes
+# over about 4,100 non-heading words), so both sides have headroom.
 SAFE_FRAGMENT = ("This part of the report explains the finding using only the values "
                  "already shown above, staying within the analysis's own evidence. The "
                  "figures come from the committed data artifacts and the billing model "
@@ -1339,8 +1340,9 @@ def _assert_refused_by_the_rhythm_gate(r, dest_dir, before, manifest_path, expec
 def case_a_clean_full_run_publishes_a_page_that_passes_the_rhythm_gate():
     """The positive case, and the proof that the fixture is realistic: the
     published page passes prose_rhythm.check() on every tier the CLI's
-    --strict run measures, so a green full-run case means the gate was run
-    and cleared, never that it was skipped."""
+    --strict run measures. That is a fact about the fixture page, checked
+    here directly; the proof that generate_report itself runs the gate is the
+    three refusal cases below, which fail against a generator that skips it."""
     _require_gitleaks()
     _require_household()
     with tempfile.TemporaryDirectory() as td:
