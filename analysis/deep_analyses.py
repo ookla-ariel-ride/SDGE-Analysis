@@ -288,27 +288,58 @@ r5=rates(UDC5,CEA5)
 # on one rate vintage (CLAUDE.md section 9). It replaces a hardcoded 0.1257,
 # which was the second flat $/kWh literal issue #172 found in this file.
 SOP5={s:UDC5[s]["sop"]+WFNBC+PCIA+CEA5[s]["sop"] for s in ("S","W")}
+# House draw ASSUMED to run underneath the charger during a session, in kW.
+# It is an assumption, not a measurement: a single whole-house meter cannot
+# separate the house from the charger while both run, so no interval inside a
+# session can measure it. The two measured floors in this repo (this script's
+# own base_kw above, 1.02 kW; quiet_night_floor.json, 1.03 kW) are read on
+# EV-free nights, and whether the house draws the same while the charger runs
+# is not determined. The base enters the fields below two ways:
+#   * kwh_total / avg_kwh / cost_if_all_sop (and the 3 kWh session cutoff,
+#     hence count) scale with it directly;
+#   * wasted_vs_perfect feels it ONLY through session intervals outside
+#     super-off-peak: with the base allocated per interval the figure is
+#     sum_i ev_i*(r_i - sop_s), and the base's share of that is
+#     -base*0.25*sum_i (r_i - sop_s), zero wherever r_i == sop_s. A larger
+#     base lowers the figure.
+# Replacing it with a measured floor is a change to the session energy
+# accounting itself, not to the pricing below, and is left as a separate
+# decision (issue #267).
+EV_SESSION_HOUSE_BASE_KW=0.4
 d["kw"]=d.Consumption*4
 ev=d.kw>6.5   # EV charger signature ~7-11.5 kW
 d["evblk"]=(ev!=ev.shift()).cumsum()
 sess=[]
 for k,g in d[ev].groupby(d.evblk[ev]):
-    kwh=g.Consumption.sum()-0.4*len(g)*0.25  # subtract house base
+    # EV-only energy per INTERVAL: the house base comes off each 15-minute
+    # reading before anything is priced, so the same kWh meets its own
+    # interval's rate below and its season's sop rate in sop_ref. Summing a
+    # scalar session total and then pricing the raw draw put the house base
+    # (priced at whatever period it fell in) inside wasted_vs_perfect (issue
+    # #229).
+    ev_kwh=g.Consumption.values-EV_SESSION_HOUSE_BASE_KW*0.25
+    kwh=float(ev_kwh.sum())
     if kwh<3: continue
     r=r5[g.index]
-    cost=(g.Consumption.values*r).sum()
+    cost=float((ev_kwh*r).sum())   # EV-only kWh at actual timing and rates
     sess.append({"start":g.dt.iloc[0],"h":len(g)*0.25,"kwh":kwh,"cost":cost,
                  "seas":g.seas.iloc[0],
+                 # gross session imports by period, house base INCLUDED: these
+                 # two fields describe where the sessions sat, not EV-only energy
                  "on_kwh":g[g.p=="on"].Consumption.sum(),"off_kwh":g[g.p=="off"].Consumption.sum()})
 S=pd.DataFrame(sess)
-# each session's energy at ITS OWN season's super-off-peak rate, not a
-# calendar-weighted scalar: the counterfactual moves a session in time of day,
-# never across seasons.
+# each session's EV-only energy at ITS OWN season's super-off-peak rate, not
+# a calendar-weighted scalar: the counterfactual moves a session in time of
+# day, never across seasons. S.kwh is the same per-interval EV-only energy
+# S.cost priced, so cost_total and cost_if_all_sop price ONE quantity and
+# their difference is the timing cost alone.
 sop_ref=float((S.kwh*S.seas.map(SOP5)).sum())
 out["ev_sessions"]={"count":len(S),"kwh_total":round(S.kwh.sum()),"cost_total":round(S.cost.sum()),
   "avg_kwh":round(S.kwh.mean(),1),"sessions_touching_onpeak":int((S.on_kwh>1).sum()),
   "onpeak_kwh_in_sessions":round(S.on_kwh.sum()),"offpeak_kwh_in_sessions":round(S.off_kwh.sum()),
   "cost_if_all_sop":round(sop_ref),
+  # EV-only energy at actual timing minus the same energy at sop: what the
+  # mistiming of the sessions cost, with the house base on neither side
   "wasted_vs_perfect":round(float(S.cost.sum())-sop_ref)}
 
 # ---------- 4. Vacation detection ----------

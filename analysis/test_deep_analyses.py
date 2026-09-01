@@ -67,12 +67,32 @@ def _generator_constants():
 _WFNBC, _PCIA, _UDC5, _CEA5 = _generator_constants()
 
 
+def _house_base_kw():
+    """deep_analyses.py's EV_SESSION_HOUSE_BASE_KW, exec'd out of its own
+    source for the same reason _generator_constants() does: a hand-copied
+    0.4 here would keep the hand computations below agreeing with a generator
+    whose base had moved, for the wrong reason."""
+    src = (ANALYSIS / "deep_analyses.py").read_text()
+    line = src[src.index("EV_SESSION_HOUSE_BASE_KW="):]
+    line = line[:line.index("\n")]
+    ns = {}
+    exec(line, ns)
+    return float(ns["EV_SESSION_HOUSE_BASE_KW"])
+
+
+_HOUSE_BASE_KW = _house_base_kw()
+
+
 def _rate_sop(season):
     return _UDC5[season]["sop"] + _WFNBC + _PCIA + _CEA5[season]["sop"]
 
 
 def _rate_off(season):
     return _UDC5[season]["off"] + _WFNBC + _PCIA + _CEA5[season]["off"]
+
+
+def _rate_on(season):
+    return _UDC5[season]["on"] + _WFNBC + _PCIA + _CEA5[season]["on"]
 
 
 def _season(month):
@@ -84,23 +104,69 @@ def _season(month):
 # transitions only ever touch 01:00-03:00, so none of these three windows is
 # ever shortened or duplicated by a spring-forward/fall-back day):
 #   [3, 5)   -- phantom-load probe: flat 0.3 kWh/slot every night, every day
-#   [22, 24) -- one clean recurring EV-charger block every night, 2.0 kWh/slot
+#   [20, 23) -- one clean recurring EV-charger block every night that CROSSES
+#               the 21:00 on-peak/off-peak boundary with UNEQUAL slots:
+#               2.0 kWh/slot for the 4 on-peak slots [20, 21), 3.0 kWh/slot
+#               for the 8 off-peak slots [21, 23). rates.period gives 16-21
+#               "on" and 21-24 "off" on every day type (weekend and holiday
+#               branches only differ below 14:00), so the split is the same
+#               on all 365 nights. The asymmetry is what lets the #229 case
+#               tell per-interval pricing from any session-scalar pricing:
+#               with equal slots in one period, kwh * r.mean() or kwh * r[0]
+#               equals sum(ev_i * r_i) exactly and no assertion can see it.
 #   everywhere else -- flat 0.15 kWh/slot baseline (never trips the >6.5 kW EV
 #   gate, never exceeds the phantom probe's <=0.5 kWh clean threshold)
 # All Generation is zero (no solar) -- keeps the un-verified wildcard section
 # from depending on anything this fixture does not control.
 # ---------------------------------------------------------------------------
 PHANTOM_KWH = 0.3
-EV_KWH = 2.0
+EV_ON_KWH = 2.0      # per slot, [20, 21): 8 kW, above the 6.5 kW gate
+EV_OFF_KWH = 3.0     # per slot, [21, 23): 12 kW
+EV_ON_SLOTS = 4
+EV_OFF_SLOTS = 8
 BASE_KWH = 0.15
 
 
 def _shape(h):
     if 3.0 <= h < 5.0:
         return PHANTOM_KWH
-    if 22.0 <= h < 24.0:
-        return EV_KWH
+    if 20.0 <= h < 21.0:
+        return EV_ON_KWH
+    if 21.0 <= h < 23.0:
+        return EV_OFF_KWH
     return BASE_KWH
+
+
+def _session_expectations():
+    """Hand computation of ONE nightly session, per season: EV-only energy
+    (house base off every slot), its cost at each slot's own rate, its cost if
+    it had all charged super-off-peak, and the raw draw priced the way the
+    unfixed generator did (issue #229). Also the two session-scalar mispricings
+    the crossing fixture exists to expose."""
+    base_slot = _HOUSE_BASE_KW * 0.25
+    on_ev = (EV_ON_KWH - base_slot) * EV_ON_SLOTS       # 7.6 kWh
+    off_ev = (EV_OFF_KWH - base_slot) * EV_OFF_SLOTS    # 23.2 kWh
+    kwh = on_ev + off_ev                                # 30.8 kWh
+    raw = EV_ON_KWH * EV_ON_SLOTS + EV_OFF_KWH * EV_OFF_SLOTS   # 32.0 kWh
+    n = EV_ON_SLOTS + EV_OFF_SLOTS
+    out = {}
+    for s in ("S", "W"):
+        on, off, sop = _rate_on(s), _rate_off(s), _rate_sop(s)
+        out[s] = {
+            "kwh": kwh, "raw_kwh": raw,
+            "actual": on_ev * on + off_ev * off,            # per-interval, EV-only
+            "sop": kwh * sop,
+            "raw_actual": EV_ON_KWH * EV_ON_SLOTS * on + EV_OFF_KWH * EV_OFF_SLOTS * off,
+            "scalar_mean": kwh * (EV_ON_SLOTS * on + EV_OFF_SLOTS * off) / n,
+            "scalar_first": kwh * on,
+        }
+    return out
+
+
+def _season_days():
+    n_summer = sum(1 for i in range((END - START).days)
+                   if _season((START + dt.timedelta(days=i)).month) == "S")
+    return n_summer, (END - START).days - n_summer
 
 
 def _write_meter_csv(path):
@@ -244,9 +310,7 @@ def _monte_carlo_oracle(base_save):
 
 
 def case_deep_analyses_end_to_end_matches_hand_and_oracle_computations():
-    n_summer = sum(1 for i in range((END - START).days)
-                   if _season((START + dt.timedelta(days=i)).month) == "S")
-    n_winter = (END - START).days - n_summer
+    n_summer, n_winter = _season_days()
     assert n_summer == 153 and n_winter == 212, (n_summer, n_winter)
 
     got = _run_generator()
@@ -284,29 +348,27 @@ def case_deep_analyses_end_to_end_matches_hand_and_oracle_computations():
     # ---- EV sessions: 365 identical nightly blocks, hand-computed exactly --
     ev = got["ev_sessions"]
     assert ev["count"] == 365, ev
-    per_session_kwh = EV_KWH * 8 - 0.4 * 8 * 0.25   # 16.0 - 0.8 = 15.2
+    X = _session_expectations()
+    per_session_kwh = X["S"]["kwh"]                     # 32.0 - 1.2 = 30.8
     exp_kwh_total = round(365 * per_session_kwh)
     assert abs(ev["kwh_total"] - exp_kwh_total) <= 1, ev
     assert abs(ev["avg_kwh"] - round(per_session_kwh, 1)) < 0.05, ev
-    # the block sits at 22:00-23:45, never inside 16:00-21:00 ("on") or
-    # labelled "off" (hour<6-style sop only applies elsewhere, but 22-24 is
-    # "off" under rates.period -- NOT on-peak, and it is never "sop" either,
-    # so on_kwh must be exactly zero and off_kwh must equal the whole session)
-    assert ev["onpeak_kwh_in_sessions"] == 0, ev
-    assert ev["sessions_touching_onpeak"] == 0, ev
-    # "cost" sums RAW Consumption * rate (NOT the baseline-adjusted "kwh"
-    # field) -- 22:00-23:45 is "off" under rates.period (never "on", never
-    # "sop": h>=14 rules both the weekend and holiday branches out too), so
-    # this uses the OFF entries of the script's own UDC5/CEA5 tables.
-    raw_session_kwh = EV_KWH * 8   # 16.0, unadjusted
-    exp_cost_total = (n_summer * raw_session_kwh * _rate_off("S")
-                      + n_winter * raw_session_kwh * _rate_off("W"))
+    # the block sits at 20:00-22:45: its first 4 slots are "on" (16-21) and
+    # the other 8 "off" (21-24) under rates.period on every day type, and it
+    # is never "sop". on_kwh/off_kwh are GROSS imports by period, base
+    # included, so every session touches on-peak and the two split 8.0/24.0.
+    assert ev["sessions_touching_onpeak"] == 365, ev
+    assert ev["onpeak_kwh_in_sessions"] == round(365 * EV_ON_KWH * EV_ON_SLOTS), ev
+    assert ev["offpeak_kwh_in_sessions"] == round(365 * EV_OFF_KWH * EV_OFF_SLOTS), ev
+    # "cost" prices the SAME base-adjusted EV-only kWh as the "kwh" field, each
+    # interval at its own rate (issue #229): the 4 on slots at the ON entry and
+    # the 8 off slots at the OFF entry of the script's own UDC5/CEA5 tables.
+    exp_cost_total = n_summer * X["S"]["actual"] + n_winter * X["W"]["actual"]
     assert abs(ev["cost_total"] - round(exp_cost_total)) <= 2, (ev, exp_cost_total)
     # "if every session had charged super-off-peak": each session's own
     # baseline-adjusted kwh at ITS OWN season's sop rate, off the same UDC5 /
     # CEA5 table cost_total uses. Was a flat 0.1257 $/kWh literal (issue #172).
-    exp_sop_ref = (n_summer * per_session_kwh * _rate_sop("S")
-                   + n_winter * per_session_kwh * _rate_sop("W"))
+    exp_sop_ref = n_summer * X["S"]["sop"] + n_winter * X["W"]["sop"]
     assert abs(ev["cost_if_all_sop"] - round(exp_sop_ref)) <= 1, (ev, exp_sop_ref)
     assert abs(ev["wasted_vs_perfect"]
                - round(exp_cost_total - exp_sop_ref)) <= 2, (ev, exp_sop_ref)
@@ -326,6 +388,72 @@ def case_deep_analyses_end_to_end_matches_hand_and_oracle_computations():
     return ("deep_analyses.py runs end to end on a synthetic house; phantom "
             "load, EV-session aggregates and the Monte Carlo battery-ROI "
             "block all match hand/oracle computations")
+
+
+def case_wasted_vs_perfect_prices_the_same_ev_only_energy_on_both_sides():
+    """issue #229: wasted_vs_perfect is cost_total minus cost_if_all_sop, and
+    both must price the SAME EV-only kWh, each interval at its own rate.
+
+    The generator subtracted the assumed house base from each session once, as
+    a scalar, to get the EV-only kwh that cost_if_all_sop prices -- but priced
+    the RAW draw, house base included, for cost_total. The published
+    difference then carried the house base at whatever rate it fell under,
+    and was described as the cost of mistimed charging alone.
+
+    Three wrong pricings are ruled out here, each by a KNOWN amount on this
+    fixture. Every one of the 365 sessions is 4 on-peak slots of 2.0 kWh then
+    8 off-peak slots of 3.0 kWh (raw 32.0 kWh, EV-only 30.8 kWh):
+      * raw draw at actual rates (the defect): overstates cost_total by
+        365 * 1.2 kWh of house base at the on/off rates;
+      * kwh * r.mean() (a scalar session price): puts the session's energy
+        on the slots evenly, 1/3 on-peak, where only 7.6/30.8 of it sits;
+      * kwh * r[0] (the first slot's rate for the whole session): prices all
+        of it on-peak.
+    The equal-slot single-period fixture this file used before could not see
+    the last two: with every slot alike, sum(ev_i * r_i) IS kwh * r.mean()
+    and kwh * r[0]. Each miss is well past the $2 rounding tolerance, so this
+    case fails on the unfixed generator and on either scalar variant.
+    """
+    n_summer, n_winter = _season_days()
+    ev = _run_generator()["ev_sessions"]
+    X = _session_expectations()
+
+    def year(key):
+        return n_summer * X["S"][key] + n_winter * X["W"][key]
+
+    assert abs(ev["kwh_total"] - round(365 * X["S"]["kwh"])) <= 1, ev
+
+    exp_actual = year("actual")            # EV-only, each slot at its own rate
+    exp_sop = year("sop")                  # EV-only, all at sop
+    wrong = {"raw draw, house base included": year("raw_actual"),
+             "kwh * r.mean()": year("scalar_mean"),
+             "kwh * r[0]": year("scalar_first")}
+    for label, w in wrong.items():
+        assert abs(w - exp_actual) > 20, (
+            f"the fixture cannot see the '{label}' mispricing: it lands "
+            f"{w - exp_actual:.2f} from the per-interval EV-only cost")
+
+    # the two operands, and the published difference, all on EV-only energy
+    assert abs(ev["cost_total"] - round(exp_actual)) <= 2, (
+        f"cost_total {ev['cost_total']} is not the per-interval EV-only cost "
+        f"{exp_actual:.2f}; " + "; ".join(
+            f"'{k}' would give {v:.2f}" for k, v in wrong.items()))
+    assert abs(ev["cost_if_all_sop"] - round(exp_sop)) <= 1, (ev, exp_sop)
+    assert abs(ev["wasted_vs_perfect"] - round(exp_actual - exp_sop)) <= 2, (
+        f"wasted_vs_perfect {ev['wasted_vs_perfect']} is not the EV-only "
+        f"timing cost {exp_actual - exp_sop:.2f}; " + "; ".join(
+            f"'{k}' would push it to {v - exp_sop:.2f}" for k, v in wrong.items()))
+    # the identity the field name promises, from the published fields alone
+    assert abs(ev["wasted_vs_perfect"]
+               - (ev["cost_total"] - ev["cost_if_all_sop"])) <= 1, ev
+    # and every wrong value is ruled out by more than the tolerance
+    for label, w in wrong.items():
+        assert abs(ev["wasted_vs_perfect"] - round(w - exp_sop)) > 2, (
+            f"wasted_vs_perfect {ev['wasted_vs_perfect']} matches the "
+            f"'{label}' pricing ({w - exp_sop:.2f})")
+    gaps = ", ".join(f"{k} by ${v - exp_actual:+,.0f}" for k, v in wrong.items())
+    return ("wasted_vs_perfect prices EV-only energy per interval on both "
+            f"sides; on this fixture the mispricings miss it: {gaps}")
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +655,7 @@ def case_dispatch_artifact_from_the_other_household_is_refused():
 
 
 CASES = [case_deep_analyses_end_to_end_matches_hand_and_oracle_computations,
+         case_wasted_vs_perfect_prices_the_same_ev_only_energy_on_both_sides,
          case_no_published_dollar_figure_survives_a_change_to_its_rate_table,
          case_dispatch_artifact_from_the_other_household_is_refused]
 
