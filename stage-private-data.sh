@@ -2451,10 +2451,10 @@ esac
 # earlier copies have landed. A source holding last year's export beside this
 # year's is the shape that produces it, and this run cannot pick between them.
 #
-# NOT covered here, and deliberately: an I/O error, a full filesystem or a
-# revoked permission DURING a copy. Closing that needs a copy-aside-and-swap,
-# which needs the old directories removed; see DESTINATION STALENESS GUARD
-# below for why this script does not delete anything in the destination.
+# NOT covered here: an I/O error, a full filesystem or a revoked permission
+# DURING a copy. Those are not decidable up front, so they are handled where
+# they happen -- see STAGED COPY below, which copies beside the target and
+# renames into place only after every copy has landed.
 # ---------------------------------------------------------------------------
 _missing_src=()
 for _need in "private/1-raw-data/gas.csv" \
@@ -2549,16 +2549,15 @@ fi
 # directory with the staged contents, and the run still printed "nothing was
 # written outside the gitignored tree".
 #
-# REFUSE rather than replace atomically. Writing each output to a temp name in
-# the same directory and `mv`-ing it over the target would also spare the
-# existing inode, but only for the copies this file spells out: `cp -R` creates
-# the entire electric-bills/, gas-bills/ and caiso_raw/ subtrees, and a shell
-# `cp -R` offers no hook to route each of those files through a rename. That
-# fix would be partial while looking total, precisely on the paths the archive
-# is bulkiest. Refusing is also the same answer this guard already gives
-# symbolic links one paragraph up, and it needs no re-staging semantics (the
-# broader stale-destination question is issue #185, deliberately not touched
-# here).
+# REFUSE, and do not rely on the rename below to make it moot. Since issue
+# #214 every copy lands in a staging directory beside its target and is
+# renamed into place (STAGED COPY below), so `cp` never opens a destination
+# inode at all and a shared one is not written through. The guard is kept as
+# it was: it is the check that makes the claim, the rename is the mechanism
+# that happens to honour it, and a later edit that copies straight to the
+# target again would reopen the hazard with the guard the only thing left
+# standing. Refusing is also the same answer this guard already gives
+# symbolic links one paragraph up.
 #
 # THE COST, named so it is a decision and not a surprise: hard-linked backups
 # are how this rule is most likely to fire on someone doing nothing wrong.
@@ -2839,8 +2838,8 @@ _reject_multilinked_under() {   # $1 = a directory `cp -R` may write anywhere be
 # skip an unwritten subtree because `cp` never opens it; this one reads it
 # because nothing will ever replace it.
 #
-# IT REFUSES; IT DOES NOT DELETE. The alternative shapes -- clear the managed
-# directories first, or copy aside and swap -- both put an rm -rf of a
+# IT REFUSES; IT DOES NOT DELETE. The alternative shape -- clear the managed
+# directories first, or swap whole directories out -- puts an rm -rf of a
 # destination directory in this file, and the destination this script accepts
 # is not always a scratch worktree: a main checkout is a registered worktree
 # too, and staging into one is a documented flow (README, "Refreshing this
@@ -2852,6 +2851,19 @@ _reject_multilinked_under() {   # $1 = a directory `cp -R` may write anywhere be
 # a fresh clone instead. The trade this accepts, named so it is a decision: a
 # legitimate re-stage after the source's file names change costs one manual
 # step.
+#
+# AND IT IS WHAT LETS THE COPY BE ATOMIC WITHOUT ONE (issue #214). Once this
+# guard has passed, every name in the destination's managed paths is a name
+# this source supplies, so the source's exact set is reached by REPLACING names
+# one by one -- never by removing any. STAGED COPY below copies into a
+# directory beside each target and renames each copy over its target; a rename
+# replaces exactly the entry `cp` used to overwrite, and no other. The one
+# removal this script performs is of its own staging directory: created by
+# this run with a bare mkdir that fails if the name exists (_create_staging_dir,
+# which records the name only after that mkdir succeeded), so nothing that
+# was in the destination before the run can be under it, and fenced to that
+# name and nothing else in _discard_staging. Nothing that existed before the
+# run started is ever deleted by it, on any path.
 #
 # The list is printed IN FULL rather than counted, because "delete these and
 # re-run" is only actionable if the operator can see what "these" are.
@@ -3030,37 +3042,383 @@ if [ ${#_stale_paths[@]} -ne 0 ]; then
     "             read by the pipeline's globs afterwards, beside the files" \
     "             that replace them. If they came from another household, they" \
     "             would also still be here after that household was gone." \
-    "This script does not delete anything in a destination: the destination may" \
-    "be a main checkout whose private/1-raw-data is the only copy of the raw" \
+    "This script deletes nothing it did not create in the same run: the destination" \
+    "may be a main checkout whose private/1-raw-data is the only copy of the raw" \
     "archive, and a deletion there is not recoverable by re-running. Delete the" \
     "paths listed above yourself and re-run, or stage into a fresh clone."
 fi
 
-_ensure_contained_dir "$DST_REAL/private"
-_ensure_contained_dir "$DST_REAL/private/1-raw-data"
-_ensure_contained_dir "$DST_REAL/private/verify"
+# ---------------------------------------------------------------------------
+# STAGED COPY (issue #214) -- the copies land beside their targets and are
+# renamed into place only after every one of them has landed.
+#
+# Every guard above is decided before the first byte, and SOURCE COMPLETENESS
+# settles the ordinary way a run fails part-way. What none of them can decide
+# is a failure DURING a copy: an I/O error, a disk that fills, a permission
+# revoked mid-run. With the copies written straight to their targets, `set -e`
+# aborted on the failing `cp` and whatever had landed before it stayed --
+# reproduced with the fourth copy failing: household.yaml, the interval export
+# and both SAM files already in the destination, gas.csv truncated, exit 1,
+# and no line saying which half was new. The whole-script invariant this file
+# states for itself -- either it writes nothing, or it completes -- did not
+# hold for that class.
+#
+# THE SHAPE: a .staging-<pid> directory INSIDE each of the three directories
+# the copies write (private/, private/1-raw-data/, private/verify/), every
+# copy made into it, and then each staged entry renamed over its target.
+# Beside the target rather than in one place, so each rename stays inside the
+# directory tree it lands in: rename(2) is atomic on one filesystem and `mv`
+# falls back to a copy across two, and a volume mounted at one of the three
+# directories is a shape this file already measures for (issue #231).
+#
+# WHAT THIS BUYS. A failure in the COPY phase leaves the archive byte-identical:
+# nothing in it has been touched, and the staging directory is removed. A
+# failure in the RENAME phase is narrower than a copy failure -- each rename
+# moves a whole, finished file, so no file is ever truncated in place -- but a
+# rename can still fail, and then the run says exactly which paths already
+# hold the new copy and that every other path is as it was. Never "nothing
+# happened" when something did (issue #214's second criterion).
+#
+# WHY NO DELETE IS NEEDED, and what the one removal is. The DESTINATION
+# STALENESS GUARD has already established that every name under the managed
+# paths is one this source supplies, so replacing names one by one reaches the
+# source's exact set; a rename over an existing file replaces precisely the
+# entry the old `cp` overwrote. A directory the destination lacks is renamed
+# in whole; one it already has is merged entry by entry, recursively, and the
+# emptied staged directory is rmdir'd -- which can remove nothing that holds
+# data. The only recursive removal in this file is _discard_staging, of the
+# staging directory this run created: _create_staging_dir's bare mkdir fails
+# if the name exists, and records the name only after it succeeded, so nothing
+# pre-existing can be under it; and the removal is fenced to those three
+# names. A run killed outright (SIGKILL, power loss)
+# cannot run it, so the next run refuses on a leftover .staging-* and names
+# it, above, rather than deleting what it did not create.
+#
+# STAYS INSIDE THE GUARDS: the staging directories are asked the same three
+# ignore questions as the managed paths (see the loop after the declared
+# _require_uncommittable calls), are created with the same non-following
+# _ensure_contained_dir, and hold nothing that is not on its way into a path
+# every guard above already accepted.
+# ---------------------------------------------------------------------------
+_STAGING_NAME=".staging-$$"
+_STAGING_SLOTS=("$DST_REAL/private" "$DST_REAL/private/1-raw-data" "$DST_REAL/private/verify")
 
-cp "$SRC/private/household.yaml"                      "$DST_REAL/private/household.yaml"
-cp "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv "$DST_REAL/private/1-raw-data/"
-cp "$SRC"/private/1-raw-data/enphase_sam8760_*.csv    "$DST_REAL/private/1-raw-data/"
-cp "$SRC/private/1-raw-data/gas.csv"                  "$DST_REAL/private/1-raw-data/"
-cp -R "$SRC/private/1-raw-data/electric-bills"        "$DST_REAL/private/1-raw-data/"
-cp "$SRC/private/1-raw-data/electric_billing_history_2024-2026.csv" \
-   "$DST_REAL/private/1-raw-data/"
+# The staging directories are asked the same three ignore questions as the
+# declared managed paths (DESTINATION IGNORE GUARD). Two of them sit under a
+# directory that verdict already settles whole; the third,
+# private/.staging-<pid>, does not -- private/ holds the committed README and
+# is never asked about as a directory -- and it is where the intake file waits
+# before its rename. All three are asked, because a temporary copy of the
+# archive is the archive. Asked HERE, after _check_dir_slot has refused a link
+# at any of the three slots: git will not answer for a path beyond a symbolic
+# link, and the refusal for a planted link should name the link. Derived names
+# rather than declared managed paths, which is why they are asked in a loop:
+# the three column-0 declarations are what analysis/test_private_egress.py
+# reads as the write set.
+for _slot in private private/1-raw-data private/verify; do
+  _require_uncommittable "$_slot/$_STAGING_NAME"
+done
+
+# A staging directory left by a run this script could not finish cleaning up
+# is refused rather than reused or removed: it holds a partial copy of some
+# household's archive, and this script deletes nothing it did not create in
+# the same run. Before the first write, like every refusal.
+_leftovers=()
+for _slot in "${_STAGING_SLOTS[@]}"; do
+  for _left in "$_slot"/.staging-*; do
+    if [ -e "$_left" ] || [ -L "$_left" ]; then
+      _leftovers[${#_leftovers[@]}]="  ${_left#"$DST_REAL/"}"
+    fi
+  done
+done
+if [ ${#_leftovers[@]} -ne 0 ]; then
+  _refuse "the destination holds a staging directory left by an interrupted run" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "found:       ${#_leftovers[@]} path(s), relative to the destination root:" \
+    "${_leftovers[@]}" \
+    "expected:    none. This script copies into a .staging-<pid> directory beside" \
+    "             each target and renames the copies into place; a run that was" \
+    "             killed could not remove its own, and what is in there is a" \
+    "             partial copy of some household's archive." \
+    "This script deletes nothing it did not create in the same run. Inspect and" \
+    "delete the paths listed above yourself, then re-run."
+fi
+
+# After the first write nothing is a refusal: the message says what happened.
+_fail() {   # $1 = headline, remaining args = detail lines.
+  echo "stage-private-data.sh: FAILED -- $1" >&2
+  shift
+  for _line in "$@"; do echo "  $_line" >&2; done
+  exit 1
+}
+
+# The staging directories THIS run created, appended only after their mkdir
+# succeeded; the one list _discard_staging will remove from.
+_STAGING_CREATED=()
+_STAGING_REPORT=()
+_discard_staging() {   # remove this run's own staging directories; fills _STAGING_REPORT
+  local d
+  _STAGING_REPORT=()
+  for d in ${_STAGING_CREATED[@]+"${_STAGING_CREATED[@]}"}; do
+    if [ ! -e "$d" ] && [ ! -L "$d" ]; then continue; fi
+    # Fenced to the three names this run stages under, whatever the list holds:
+    # this is the only recursive removal in the file, and it can name nothing
+    # else.
+    case "$d" in
+      "$DST_REAL/private/$_STAGING_NAME"|"$DST_REAL/private/1-raw-data/$_STAGING_NAME"|"$DST_REAL/private/verify/$_STAGING_NAME") ;;
+      *) _STAGING_REPORT+=("NOT removed: $d -- not a staging directory of this run"); continue ;;
+    esac
+    if [ -L "$d" ] || [ ! -d "$d" ] || [ "$(_physical "$d" || true)" != "$d" ]; then
+      _STAGING_REPORT+=("NOT removed: ${d#"$DST_REAL/"} -- no longer the directory this run created")
+      continue
+    fi
+    if rm -rf -- "$d" 2>/dev/null && [ ! -e "$d" ]; then
+      _STAGING_REPORT+=("removed:     ${d#"$DST_REAL/"}  (this run's staging copy)")
+    else
+      _STAGING_REPORT+=("NOT removed: ${d#"$DST_REAL/"} -- it holds a partial copy; delete it yourself")
+    fi
+  done
+  _STAGING_CREATED=()
+  # And the managed directories this run itself created, if the failure left
+  # them empty. rmdir removes nothing that holds data, so a directory the
+  # rename phase already filled stays, as the report above says it does.
+  # Deepest first, so private/ can go after its children have.
+  local i=${#_SLOTS_CREATED[@]}
+  while [ "$i" -gt 0 ]; do
+    i=$((i - 1))
+    d=${_SLOTS_CREATED[$i]}
+    if [ ! -d "$d" ] || [ -L "$d" ]; then continue; fi
+    if _rmdir_err=$(rmdir -- "$d" 2>&1); then
+      _STAGING_REPORT+=("removed:     ${d#"$DST_REAL/"}  (an empty directory this run created)")
+    else
+      _STAGING_REPORT+=("not removed: ${d#"$DST_REAL/"}  (a directory this run created; rmdir said: ${_rmdir_err##*: })")
+    fi
+  done
+  _SLOTS_CREATED=()
+}
+
+_copy_failed() {   # $1 = what was being copied, relative to the source root
+  _discard_staging
+  _fail "a copy into the staging directory failed" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "copying:     $1" \
+    "found:       cp exited non-zero; its own message is above" \
+    "The archive is unchanged: every copy lands in a $_STAGING_NAME directory" \
+    "beside its target, and nothing is renamed into place until all of them" \
+    "have landed." \
+    ${_STAGING_REPORT[@]+"${_STAGING_REPORT[@]}"} \
+    "Fix what cp reported (a full disk, a permission, an unreadable source" \
+    "file) and re-run."
+}
+
+_swapped=()
+_swap_failed() {   # $1 = what was being renamed, $2 = onto what, $3 = what mv said
+  local -a lines
+  local p
+  lines=()
+  for p in ${_swapped[@]+"${_swapped[@]}"}; do
+    lines[${#lines[@]}]="  ${p#"$DST_REAL/"}"
+  done
+  _discard_staging
+  _fail "a staged copy could not be renamed into place" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "renaming:    $1" \
+    "onto:        $2" \
+    "mv said:     ${3:-(nothing)}" \
+    "in place:    ${#_swapped[@]} path(s) now hold this source's copy, whole -- new" \
+    "             where the destination had none, replaced where it had one --" \
+    "             relative to the destination root:" \
+    ${lines[@]+"${lines[@]}"} \
+    "every other path this script writes still holds what it held before this run." \
+    ${_STAGING_REPORT[@]+"${_STAGING_REPORT[@]}"} \
+    "Re-run once the cause is fixed: a re-stage from the same source replaces" \
+    "every path again, and the staleness guard accepts it."
+}
+
+# Rename one staged entry over its target. A target that is absent takes the
+# whole entry in one rename, file or directory alike; a target that is an
+# existing directory is merged into, entry by entry (below); a target that is
+# an existing file is replaced in one rename. Kinds that differ are a failure,
+# as they were for `cp -R`. Checked in that order because `mv` of a file onto
+# an existing DIRECTORY would move it inside, one level down.
+_swap_entry() {   # $1 = a staged path, $2 = its final path
+  local from=$1 to=$2 said
+  if [ -L "$to" ]; then
+    _swap_failed "$from" "$to" "the target is a symbolic link, which no guard above saw there"
+  fi
+  if [ -d "$from" ] && [ ! -L "$from" ] && [ -d "$to" ]; then
+    _swap_dir "$from" "$to"
+    return 0
+  fi
+  if [ -e "$to" ] && { [ -d "$to" ] || { [ -d "$from" ] && [ ! -L "$from" ]; }; }; then
+    _swap_failed "$from" "$to" "a file and a directory carry the same name"
+  fi
+  if ! said=$(mv -f -- "$from" "$to" 2>&1); then
+    _swap_failed "$from" "$to" "$said"
+  fi
+  _swapped[${#_swapped[@]}]="$to"
+}
+
+# Merge a staged directory into an existing one and remove the emptied shell.
+# The glob is taken under LC_ALL=C with nullglob and dotglob, the same way
+# _dir_folds_case lists a directory, so the order is fixed and no entry hides
+# behind a leading dot.
+_swap_dir() {   # $1 = a staged directory, $2 = an existing final directory
+  local from=$1 to=$2 entry said
+  local LC_ALL=C
+  local had_nullglob=0 had_dotglob=0
+  local -a entries
+  if shopt -q nullglob; then had_nullglob=1; fi
+  if shopt -q dotglob; then had_dotglob=1; fi
+  shopt -s nullglob dotglob
+  entries=("$from"/*)
+  if [ "$had_nullglob" = 0 ]; then shopt -u nullglob; fi
+  if [ "$had_dotglob" = 0 ]; then shopt -u dotglob; fi
+  for entry in ${entries[@]+"${entries[@]}"}; do
+    _swap_entry "$entry" "$to/${entry##*/}"
+  done
+  if ! said=$(rmdir -- "$from" 2>&1); then
+    _swap_failed "$from" "(removing the emptied staging directory)" "$said"
+  fi
+}
+
+# A backstop for an exit this block did not handle itself -- `set -e` on a
+# command outside the wrapped copies and renames. Installed only once a
+# staging directory exists, and inert after the swap has cleared the list.
+_on_exit() {
+  local rc=$? p had_staging=${#_STAGING_CREATED[@]}
+  if [ "$rc" -eq 0 ]; then return 0; fi
+  if [ "$had_staging" -eq 0 ] && [ ${#_SLOTS_CREATED[@]} -eq 0 ]; then return 0; fi
+  _discard_staging
+  if [ "$had_staging" -gt 0 ]; then
+    echo "stage-private-data.sh: FAILED -- the run stopped (exit $rc) with its staging copy still in place" >&2
+    echo "  in place:    ${#_swapped[@]} path(s) now hold this source's copy (new where the destination had none," >&2
+    echo "               replaced where it had one), relative to the destination root:" >&2
+    for p in ${_swapped[@]+"${_swapped[@]}"}; do echo "    ${p#"$DST_REAL/"}" >&2; done
+    echo "  every other path this script writes still holds what it held before this run." >&2
+  else
+    # Only the managed directories had been created: no copy had started, so
+    # the refusal above is right that nothing was written, and this says what
+    # became of the empty directories it made on the way.
+    echo "stage-private-data.sh: the run stopped (exit $rc) before any copy; directories it had created:" >&2
+  fi
+  for p in ${_STAGING_REPORT[@]+"${_STAGING_REPORT[@]}"}; do echo "  $p" >&2; done
+}
+
+# The three directories the copies write into, noting which of them this run
+# created: a failure below removes those again if they are still empty, so the
+# archive is left as it was found -- no empty directory included, which is the
+# same standard every refusal above holds itself to.
+# Create ONE staging directory and record it as this run's. A BARE mkdir --
+# no -p, and no existence test ahead of it -- so a name that is already there
+# fails the mkdir instead of being adopted: _ensure_contained_dir accepts an
+# existing directory, which is right for the three managed slots and wrong
+# here, because this list is the one _discard_staging removes from, and an
+# entry planted between the leftover check above and this mkdir (or a
+# leftover from a run whose pid this one reuses) must never be on it. The
+# recorded name is appended only after the mkdir has succeeded, so the list
+# holds nothing this run did not create -- which is the whole claim the
+# removal rests on. The containment check is the one _ensure_contained_dir
+# makes, for the same reason: a component above turned into a link would make
+# the literal path and the real one differ.
+_create_staging_dir() {   # $1 = absolute path of a staging directory to create
+  local said real
+  if ! said=$(mkdir -- "$1" 2>&1); then
+    _discard_staging
+    _refuse "a staging directory could not be created" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "path:        $1" \
+      "mkdir said:  ${said:-(nothing)}" \
+      "expected:    a name this run can create -- only a directory it created" \
+      "             may hold its staging copy or be removed afterwards. If the" \
+      "             path already exists, it appeared after this run's check for" \
+      "             leftovers: inspect and delete it yourself, then re-run." \
+      ${_STAGING_REPORT[@]+"${_STAGING_REPORT[@]}"}
+  fi
+  _STAGING_CREATED[${#_STAGING_CREATED[@]}]="$1"
+  real=$(_physical "$1" || true)
+  if [ "$real" != "$1" ]; then
+    _discard_staging
+    _refuse "a staging directory does not resolve to itself" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "path:        $1" \
+      "resolves to: ${real:-<unresolvable>}" \
+      "expected:    a path whose every component is a real directory inside" \
+      "             $DST_REAL" \
+      ${_STAGING_REPORT[@]+"${_STAGING_REPORT[@]}"}
+  fi
+}
+
+# The trap goes on BEFORE the slot loop: a refusal on the second or third
+# slot (a mkdir that fails, a component that resolves elsewhere) exits from
+# inside _ensure_contained_dir, and the empty slot this run created a moment
+# earlier must be removed and named rather than left as a silent leftover.
+_SLOTS_CREATED=()
+trap _on_exit EXIT
+for _d in "${_STAGING_SLOTS[@]}"; do
+  if [ ! -e "$_d" ] && [ ! -L "$_d" ]; then
+    # Recorded BEFORE the call: its resolve check can refuse on the directory
+    # it just made, and the trap must still know to remove that directory. A
+    # mkdir that failed leaves no directory, and the discard skips a name
+    # that is not one.
+    _SLOTS_CREATED[${#_SLOTS_CREATED[@]}]="$_d"
+    _ensure_contained_dir "$_d"
+  else
+    _ensure_contained_dir "$_d"
+  fi
+done
+
+_STAGE_HH="$DST_REAL/private/$_STAGING_NAME"
+_STAGE_RAW="$DST_REAL/private/1-raw-data/$_STAGING_NAME"
+_STAGE_VERIFY="$DST_REAL/private/verify/$_STAGING_NAME"
+for _d in "$_STAGE_HH" "$_STAGE_RAW" "$_STAGE_VERIFY"; do
+  _create_staging_dir "$_d"
+done
+
+# THE COPY PHASE. `|| _copy_failed` rather than `set -e`'s silent abort: the
+# handler removes the staging copy and says what the archive holds, which is
+# what it held.
+cp "$SRC/private/household.yaml"                      "$_STAGE_HH/household.yaml" \
+  || _copy_failed "private/household.yaml"
+cp "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv "$_STAGE_RAW/" \
+  || _copy_failed "private/1-raw-data/Electric_15_Minute_*.csv"
+cp "$SRC"/private/1-raw-data/enphase_sam8760_*.csv    "$_STAGE_RAW/" \
+  || _copy_failed "private/1-raw-data/enphase_sam8760_*.csv"
+cp "$SRC/private/1-raw-data/gas.csv"                  "$_STAGE_RAW/" \
+  || _copy_failed "private/1-raw-data/gas.csv"
+cp -R "$SRC/private/1-raw-data/electric-bills"        "$_STAGE_RAW/" \
+  || _copy_failed "private/1-raw-data/electric-bills"
+cp "$SRC/private/1-raw-data/electric_billing_history_2024-2026.csv" "$_STAGE_RAW/" \
+  || _copy_failed "private/1-raw-data/electric_billing_history_2024-2026.csv"
 
 # The gas statements, on the flag the SOURCE GUARD above already validated --
 # both directions of it, so by here this is a copy and not a decision.
 if [ "$HAS_GAS" = True ]; then
-  cp -R "$SRC/private/1-raw-data/gas-bills" "$DST_REAL/private/1-raw-data/"
+  cp -R "$SRC/private/1-raw-data/gas-bills" "$_STAGE_RAW/" \
+    || _copy_failed "private/1-raw-data/gas-bills"
 fi
 
-cp "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv "$DST_REAL/private/verify/usage.csv"
-cp "$SRC/private/1-raw-data/enphase_sam8760_2026.csv" "$DST_REAL/private/verify/samA.csv"
-cp "$SRC/private/1-raw-data/enphase_sam8760_2025.csv" "$DST_REAL/private/verify/samB.csv"
+cp "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv "$_STAGE_VERIFY/usage.csv" \
+  || _copy_failed "private/1-raw-data/Electric_15_Minute_*.csv -> private/verify/usage.csv"
+cp "$SRC/private/1-raw-data/enphase_sam8760_2026.csv" "$_STAGE_VERIFY/samA.csv" \
+  || _copy_failed "private/1-raw-data/enphase_sam8760_2026.csv -> private/verify/samA.csv"
+cp "$SRC/private/1-raw-data/enphase_sam8760_2025.csv" "$_STAGE_VERIFY/samB.csv" \
+  || _copy_failed "private/1-raw-data/enphase_sam8760_2025.csv -> private/verify/samB.csv"
 
 if [ "$STAGE_CAISO" = 1 ]; then
-  cp -R "$SRC/private/1-raw-data/caiso_raw" "$DST_REAL/private/1-raw-data/"
+  cp -R "$SRC/private/1-raw-data/caiso_raw" "$_STAGE_RAW/" \
+    || _copy_failed "private/1-raw-data/caiso_raw"
 fi
+
+# THE RENAME PHASE. Every copy has landed; from here each step moves a whole
+# file. The intake file first, then the archive, then the verify sandbox --
+# the order the old copies wrote in, so a failure report reads the same way.
+_swap_dir "$_STAGE_HH"     "$DST_REAL/private"
+_swap_dir "$_STAGE_RAW"    "$DST_REAL/private/1-raw-data"
+_swap_dir "$_STAGE_VERIFY" "$DST_REAL/private/verify"
+_STAGING_CREATED=()
+_SLOTS_CREATED=()
+trap - EXIT
 
 # ---------------------------------------------------------------------------
 # POST-WRITE VERIFICATION -- what the closing line is allowed to claim.
@@ -3100,3 +3458,5 @@ echo "  every directory written through is a real directory inside that working 
 echo "  nothing was written outside the gitignored tree"
 echo "  (that tree's own git reported every path written here ignored and untracked"
 echo "   before the first byte -- see DESTINATION IGNORE GUARD)"
+echo "  each file was copied into a staging directory beside its target and renamed"
+echo "  into place only after every copy had landed -- see STAGED COPY"
