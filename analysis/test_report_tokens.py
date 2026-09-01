@@ -2201,10 +2201,10 @@ def case_plan_lead_tokens_report_a_gap_the_matrix_does_not_call_a_lead():
             "S4_VERDICT_SHORT", published, "the published branch")
 
         for label, beaten, margin, standing in (
-                ("tie", plans[best]["no_battery"], "$0", f"ties {runner_up}"),
+                ("tie", _bill_of(plans[best], "no_battery"), "$0", f"ties {runner_up}"),
                 ("beaten", plans[best]["no_battery"] - 500, "-$500",
                  f"trails {runner_up} by $500/yr")):
-            with _swapped(plans[runner_up], "no_battery", beaten):
+            with _cell_priced(plans[runner_up], "no_battery", beaten):
                 got_margin = rt.resolve_token("PLAN_MARGIN_VS_RUNNER_UP")
                 value = rt.resolve_token("S4_VERDICT_SHORT")
             assert got_margin == margin, (
@@ -2277,13 +2277,79 @@ def _matrix_priced(plans, cells):
     reason: battery_plan_matrix.py writes it as round(no_b - with_b) off the
     same two bills, so a case that moves a column and leaves battery_value
     behind is not describing a household, it is describing an artifact no run
-    of the generator could produce."""
+    of the generator could produce.
+
+    EVERY CELL IS WRITTEN THE WAY THE GENERATOR WRITES IT (issue #177). A
+    value here is a modeled bill in dollars and cents; it lands as the
+    whole-dollar display cell round(v) AND as the integer-cents ranking cell
+    round(v * 100), the two fields battery_plan_matrix.py writes side by side.
+    A case that wants the cents to disagree with the dollars -- two bills
+    that round to the same dollar, say -- passes values with cents in them;
+    integer values behave exactly as they did before the cents existed."""
     with contextlib.ExitStack() as stack:
         for plan, (no_b, with_b) in cells.items():
-            stack.enter_context(_swapped(plans[plan], "no_battery", no_b))
-            stack.enter_context(_swapped(plans[plan], "with_battery", with_b))
-            stack.enter_context(_swapped(plans[plan], "battery_value", no_b - with_b))
+            for column, v in (("no_battery", no_b), ("with_battery", with_b)):
+                for swap in _cell_swaps(plans[plan], column, v):
+                    stack.enter_context(swap)
+            stack.enter_context(_swapped(plans[plan], "battery_value",
+                                         round(no_b - with_b)))
+            stack.enter_context(_swapped(plans[plan], "battery_value_cents",
+                                         round(no_b * 100) - round(with_b * 100)))
         yield
+
+
+def _cell_swaps(row, column, value):
+    """The two swaps that put ONE matrix cell at `value` the way
+    battery_plan_matrix.py would have written it: the whole-dollar display
+    field round(value) and its integer-cents ranking twin round(value * 100).
+
+    report_tokens ranks the columns on the cents and refuses a row whose two
+    fields disagree by more than the dollar rounding (a half-updated artifact
+    is not a household), so a case that moves a dollar cell alone is not
+    describing a matrix the generator could produce -- it is describing the
+    refusal. Cases that want a household use this; the one case that wants
+    the refusal swaps the dollar field by itself and says so."""
+    return [_swapped(row, column, round(value)),
+            _swapped(row, f"{column}_cents", round(value * 100))]
+
+
+@contextlib.contextmanager
+def _cell_priced(row, column, value):
+    """_cell_swaps as one context manager."""
+    with contextlib.ExitStack() as stack:
+        for swap in _cell_swaps(row, column, value):
+            stack.enter_context(swap)
+        yield
+
+
+def _matrix_row(no_b, with_b):
+    """A whole matrix row the way battery_plan_matrix.py writes one: the two
+    bills as whole-dollar cells and as integer cents, and the battery value
+    as the rounded difference and the exact difference of the cents. A
+    non-finite bill is carried through as itself in both fields, which is
+    what a case poisoning a cell wants the ranking to meet."""
+    def dollars(v):
+        return round(v) if rt._finite(v) else v
+
+    def cents(v):
+        return round(v * 100) if rt._finite(v) else v
+
+    row = {"no_battery": dollars(no_b), "with_battery": dollars(with_b),
+           "battery_value": dollars(no_b - with_b),
+           "no_battery_cents": cents(no_b), "with_battery_cents": cents(with_b)}
+    row["battery_value_cents"] = (row["no_battery_cents"] - row["with_battery_cents"]
+                                  if rt._finite(no_b, with_b) else no_b - with_b)
+    return row
+
+
+def _bill_of(row, column):
+    """The modeled bill a matrix cell carries, in dollars and cents -- what a
+    case prices a rival AT when it wants a TIE. The whole-dollar cell is not
+    that bill: this household's no-battery total is $4,881.73, stored as
+    4882, and a rival priced at 4882 flat is 27 cents dearer, which the
+    ranking now sees. A tie is two bills equal to the cent, so it is built
+    from the cents."""
+    return row[f"{column}_cents"] / 100
 
 
 def _matrix_pair():
@@ -2327,16 +2393,43 @@ def case_the_matrix_rounding_settles_the_order_and_only_blurs_the_size():
     which the sweep below exhibits at both ends.
 
     The rounding itself is asserted against the artifact: every published
-    cell is a whole number of dollars. If a future generator keeps the cents,
-    this case fails and both constants have to be re-derived rather than
-    silently applied to values that no longer need them."""
+    dollar cell is a whole number of dollars. If a future generator keeps the
+    cents in those cells, this case fails and both constants have to be
+    re-derived rather than silently applied to values that no longer need
+    them.
+
+    WHAT THE BAND NO LONGER DECIDES (issue #177). The bounds above are for
+    the SIZES the sentences quote, which are still differences of whole-dollar
+    cells. Which plan is cheapest is not read off those cells any more: the
+    generator writes each modeled bill a second time as integer cents
+    (`no_battery_cents`, `with_battery_cents`), and report_tokens ranks on
+    those, with a tie meaning two bills that agree to the cent
+    (_BPM_MATERIAL_USD, one cent: the resolution a bill is settled in, not a
+    rounding the artifact applied). Both fields are asserted here against
+    each other: the cents are integers, and every dollar cell is within the
+    half-dollar its rounding allows of its cents twin."""
     plans = rt._json("battery_plan_matrix.json")["plans"]
     fractional = [f"{p}.{k} = {v!r}" for p, row in sorted(plans.items())
-                  for k, v in sorted(row.items()) if float(v) != int(v)]
+                  for k, v in sorted(row.items())
+                  if not k.endswith("_cents") and float(v) != int(v)]
     assert not fractional, (
-        "data/battery_plan_matrix.json no longer rounds every cell to whole dollars ("
-        + ", ".join(fractional) + "), so report_tokens._BPM_TIE_USD is derived from a "
-        "rounding the generator has stopped applying")
+        "data/battery_plan_matrix.json no longer rounds every display cell to whole "
+        "dollars (" + ", ".join(fractional) + "), so report_tokens._BPM_TIE_USD is "
+        "derived from a rounding the generator has stopped applying")
+    assert rt._BPM_MATERIAL_USD == 0.01, (
+        f"_BPM_MATERIAL_USD is {rt._BPM_MATERIAL_USD}, not the one cent a bill is settled "
+        "in; anything wider is a band, and a band on 'cheapest' admits a runner-up")
+    for plan, row in sorted(plans.items()):
+        for column in ("no_battery", "with_battery", "battery_value"):
+            cents = row.get(f"{column}_cents")
+            assert isinstance(cents, int) and not isinstance(cents, bool), (
+                f"data/battery_plan_matrix.json:plans.{plan}.{column}_cents is {cents!r}, "
+                "not the integer cents report_tokens ranks on")
+            assert abs(cents / 100 - row[column]) <= 0.5 + 1e-9, (
+                f"data/battery_plan_matrix.json:plans.{plan}.{column} ({row[column]}) is "
+                f"not the whole-dollar rounding of its cents twin ({cents})")
+        assert row["battery_value_cents"] == row["no_battery_cents"] - row["with_battery_cents"], (
+            f"plans.{plan}.battery_value_cents is not no_battery_cents - with_battery_cents")
     # ORDER. Every half-dollar boundary in a $200 window, plus a 1-cent sweep
     # across a narrower one: round(a) > round(b) must never hold for a <= b.
     probes = [n / 2 for n in range(-100, 301)]
@@ -2513,6 +2606,171 @@ def case_the_widens_verb_needs_a_gap_change_the_rounding_can_resolve():
     return ("the widens/narrows verb needs a gap change bigger than the "
             f"${rt._BPM_GAP_TIE_USD:.2f} four rounded cells can invent ("
             + ", ".join(f"{k} {v}w" for k, v in seen.items()) + ")")
+
+
+# ---------------------------------------------------------------------------
+# THE RANKING IS TAKEN ON THE CENTS, NOT ON THE DOLLAR CELLS (issue #177).
+#
+# Every case above this line lived with the whole-dollar cells as the only
+# thing the artifact carried, and derived what could and could not be read
+# off them. That derivation was right about the cells and wrong about the
+# household: two bills a few cents apart round to the same dollar, and the
+# heading then called a real ordering a tie -- or, the other way round, two
+# bills that round a dollar apart were reported as a settled ordering across
+# both columns when the battery had in fact flipped them by cents. On this
+# checkout's household the margins are hundreds of dollars and nothing
+# published depended on it; the exposure is the reproducing household whose
+# plans sit close together, which is the household section 4 exists for.
+#
+# battery_plan_matrix.py now writes each modeled bill twice: the whole-dollar
+# cell the tables display, and its integer-cents twin. report_tokens ranks on
+# the cents. The cases below drive both directions the issue named, with
+# matrices whose dollar cells cannot tell the plans apart.
+# ---------------------------------------------------------------------------
+@case
+def case_a_winner_flip_of_cents_is_ranked_on_the_cents_not_the_dollar_cells():
+    """THE MASKED FLIP. us 100.40 / 90.60, B 100.49 / 90.51.
+
+    Every dollar cell agrees: both plans store 100 without a battery and 91
+    with one. On the cells alone that is a tie in both columns, and the
+    heading used to say "Too close to call" over a row badged "tie". The
+    bills say otherwise: we are nine cents cheaper without a battery and nine
+    cents dearer with one, so the battery really does change which plan is
+    cheapest. The ranking has to come from the cents, the heading has to say
+    "Yes", and the row has to say we win one column and trail the other.
+
+    The SIZES are still quoted off the dollar cells, which are what the table
+    under the heading shows, so a nine-cent margin is stated as a bound the
+    display can carry ("under $1/yr") and never as "$0/yr"."""
+    plans, best, rival, rest = _matrix_pair()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    with _stub_plan(best, provider):
+        published = {t: rt.resolve_token(t)
+                     for t in ("S4_VERDICT_SHORT", "S4_ROW_CLASS") + _MATRIX_PLAN_TOKENS}
+        cells = {best: (100.40, 90.60), rival: (100.49, 90.51)}
+        cells.update({p: (9_000, 9_000) for p in rest})
+        value, (no_batt, with_batt) = _s4_at(plans, cells)
+        with _matrix_priced(plans, cells):
+            for plan, column in ((best, "no_battery"), (rival, "no_battery"),
+                                 (best, "with_battery"), (rival, "with_battery")):
+                assert plans[plan][column] == plans[best][column], (
+                    f"the fixture no longer puts {best} and {rival} on the same dollar "
+                    f"cell in the {column} column, so it is not driving a masked flip")
+            row_class = rt.resolve_token("S4_ROW_CLASS")
+        assert (no_batt, with_batt) == ({best}, {rival}), (
+            f"a nine-cent winner flip hidden inside equal dollar cells was not ranked on "
+            f"the cents: without a battery {sorted(no_batt)}, with one {sorted(with_batt)}")
+        assert value.startswith("Yes"), (
+            f"S4_VERDICT_SHORT does not report a winner flip the cents settle: {value}")
+        assert "Too close to call" not in value, value
+        assert f"{best} leads {rival} by under {rt._usd0(rt._BPM_TIE_USD)}/yr without a battery" in value, (
+            f"S4_VERDICT_SHORT does not state the sub-dollar no-battery lead as a bound "
+            f"the dollar cells can carry: {value}")
+        assert f"trails by under {rt._usd0(rt._BPM_TIE_USD)}/yr with one" in value, (
+            f"S4_VERDICT_SHORT does not state the sub-dollar with-battery deficit: {value}")
+        assert "$0/yr" not in value and "ties" not in value, value
+        assert row_class == "trails-win", (
+            f"section 4's row reads {row_class!r} where the cents put {best} alone "
+            f"cheapest without a battery and behind {rival} with one")
+        words = _assert_within_density_cap("S4_VERDICT_SHORT", value, "a flip of cents")
+        for token, was in published.items():
+            assert rt.resolve_token(token) == was, (
+                f"the synthetic matrix leaked out of this case ({token})")
+    return (f"a winner flip of nine cents inside equal dollar cells is ranked on the cents "
+            f"({sorted(no_batt)} -> {sorted(with_batt)}) and reported ({value!r}, "
+            f"{row_class}, {words}w)")
+
+
+@case
+def case_a_rounding_tie_the_cents_resolve_is_not_reported_as_a_tie():
+    """THE ISSUE'S FIRST EXAMPLE. us 100.49 / 90.40, B 100.51 / 90.49.
+
+    Without a battery the dollar cells store 100 and 101; with one they both
+    store 90. Read off the cells, the battery turned a sole win into a tie
+    and the row was badged "tie-win". Read off the bills, we are cheaper at
+    both battery states -- by two cents, then by nine -- so nothing tied and
+    the row is a plain "win". The dollar cells' equality is a rounding
+    artifact, and it may not be reported as a change of standing.
+
+    ONE CENT IS ENOUGH, and no less is: the third matrix prices B one cent
+    dearer without a battery and to the cent with one, which is a sole win in
+    the first column and a real tie in the second. _BPM_MATERIAL_USD is the
+    cent because a bill is settled in cents; two totals that agree to the
+    cent are one bill, and two that differ by one are not."""
+    plans, best, rival, rest = _matrix_pair()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    with _stub_plan(best, provider):
+        published = {t: rt.resolve_token(t)
+                     for t in ("S4_VERDICT_SHORT", "S4_ROW_CLASS") + _MATRIX_PLAN_TOKENS}
+        seen = {}
+        for label, cells, expect_sets, expect_class, expect_with in (
+                ("a rounding tie with the battery",
+                 {best: (100.49, 90.40), rival: (100.51, 90.49)},
+                 ({best}, {best}), "win",
+                 f"leads by under {rt._usd0(rt._BPM_TIE_USD)}/yr with one"),
+                ("one cent without, to the cent with",
+                 {best: (100.00, 100.00), rival: (100.01, 100.00)},
+                 ({best}, {best, rival}), "tie-win", "ties with one")):
+            cells = dict(cells)
+            cells.update({p: (9_000, 9_000) for p in rest})
+            value, sets = _s4_at(plans, cells)
+            with _matrix_priced(plans, cells):
+                assert plans[best]["with_battery"] == plans[rival]["with_battery"], (
+                    f"{label}: the fixture no longer stores equal with-battery dollar "
+                    "cells, so it is not driving a rounding tie")
+                row_class = rt.resolve_token("S4_ROW_CLASS")
+            assert sets == expect_sets, (
+                f"{label}: the cheapest sets were read off the dollar cells, not the cents: "
+                f"{[sorted(x) for x in sets]}")
+            assert value.startswith("No —"), (
+                f"{label}: S4_VERDICT_SHORT stopped answering 'No' for a plan the cents "
+                f"price cheapest at both battery states: {value}")
+            assert expect_with in value, (
+                f"{label}: S4_VERDICT_SHORT does not state the with-battery standing the "
+                f"cents settle ({expect_with!r}): {value}")
+            assert "Too close to call" not in value and "$0/yr" not in value, value
+            assert row_class == expect_class, (
+                f"{label}: section 4's row reads {row_class!r}, not {expect_class!r}")
+            seen[label] = f"{value!r} / {row_class}"
+        for token, was in published.items():
+            assert rt.resolve_token(token) == was, (
+                f"the synthetic matrix leaked out of this case ({token})")
+    return ("equal dollar cells are not a tie when the cents disagree, and one cent is: "
+            + "; ".join(f"{k}: {v}" for k, v in seen.items()))
+
+
+@case
+def case_a_dollar_cell_moved_without_its_cents_is_refused_not_ranked():
+    """The two fields describe ONE bill, and the ranking says so. A matrix
+    whose dollar cell and cents twin disagree by more than the half-dollar
+    the rounding allows was not written by battery_plan_matrix.py -- it was
+    hand-edited, or half-updated -- and ranking it would publish a standing
+    off whichever field the reader did not look at. Every ranked token
+    refuses it, naming itself, the plan and the column.
+
+    This is also why every fixture in this suite that moves a ranked cell
+    goes through _cell_priced: moving the dollar field alone is this
+    refusal, not a household."""
+    plans, best, rival, rest = _matrix_pair()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    refused = []
+    with _stub_plan(best, provider):
+        for column, token in (("no_battery", "S4_ROW_CLASS"),
+                              ("with_battery", "S4_VERDICT_SHORT"),
+                              ("no_battery", "PLAN_MARGIN_VS_RUNNER_UP")):
+            with _swapped(plans[rival], column, plans[best][column] - 500):
+                try:
+                    value = rt.resolve_token(token)
+                    raise AssertionError(
+                        f"{token} ranked a matrix whose {rival}.{column} dollar cell "
+                        f"moved $500 while its cents twin did not: {value!r}")
+                except SystemExit as e:
+                    for needle in (token, rival, column):
+                        assert needle in str(e), (
+                            f"{token}'s refusal does not name {needle!r}: {e}")
+            refused.append(f"{token}:{column}")
+    return ("a dollar cell that disagrees with its cents twin is refused by name ("
+            + ", ".join(refused) + ")")
 
 
 # ---------------------------------------------------------------------------
@@ -3005,9 +3263,7 @@ def case_a_non_finite_rival_cell_refuses_rather_than_electing_a_runner_up_by_key
                     # rival ahead of it, the nan loses the min() and the
                     # margin that reaches the caller's guard is a real number.
                     for order in (others + [poisoned], [poisoned] + others):
-                        priced = {p: dict(zip(columns, cells[p]),
-                                          battery_value=cells[p][0] - cells[p][1])
-                                  for p in order}
+                        priced = {p: _matrix_row(*cells[p]) for p in order}
                         with _swapped(root, "plans", priced):
                             for token in ranked[column]:
                                 try:
@@ -6646,8 +6902,8 @@ def case_section_4s_row_class_tracks_the_matrix_its_cells_come_from():
             # goes from "win" to "trails-win" or "tie-win" and says which
             # column it lost rather than writing off both.
             for state, moved in (("trails-win", best[column] - 500),
-                                 ("tie-win", best[column])):
-                with _swapped(plans[rival], column, moved):
+                                 ("tie-win", _bill_of(best, column))):
+                with _cell_priced(plans[rival], column, moved):
                     assert rt.resolve_token("S4_ROW_CLASS") == state, (
                         f"battery_plan_matrix.json prices {rival} at {moved} against "
                         f"{cheapest}'s {best[column]} in its {column} column, which is a "
@@ -6777,8 +7033,9 @@ def case_no_verdict_prints_a_minus_inside_the_dollar_sigil():
         for label, with_battery, expect in (
                 ("trails with a battery", plans[best]["with_battery"] - 500,
                  "trails by $500/yr with one"),
-                ("ties with a battery", plans[best]["with_battery"], "ties with one")):
-            with _swapped(plans[runner_up], "with_battery", with_battery):
+                ("ties with a battery", _bill_of(plans[best], "with_battery"),
+                 "ties with one")):
+            with _cell_priced(plans[runner_up], "with_battery", with_battery):
                 value = rt.resolve_token("S4_VERDICT_SHORT")
             assert expect in value, (
                 f"S4_VERDICT_SHORT does not say where {best} stands when it {label}: "
@@ -6797,8 +7054,8 @@ def case_no_verdict_prints_a_minus_inside_the_dollar_sigil():
 
         # And the whole no-battery sign grid, for both plan tokens at once.
         for label, no_battery in (("beaten", plans[best]["no_battery"] - 500),
-                                  ("tied", plans[best]["no_battery"])):
-            with _swapped(plans[runner_up], "no_battery", no_battery):
+                                  ("tied", _bill_of(plans[best], "no_battery"))):
+            with _cell_priced(plans[runner_up], "no_battery", no_battery):
                 for token in ("S4_VERDICT_SHORT", "PLAN_MARGIN_VS_RUNNER_UP"):
                     value = rt.resolve_token(token)
                     assert "$-" not in value, (

@@ -1095,6 +1095,27 @@ table-rate column are the rate basis (published tables vs bill-derived) and the 
 convention (§6.5). Run from `private/verify` (repo root found by walking up); writes
 `data/battery_plan_matrix.json` atomically.
 
+**Two fields per bill (issue #177).** Every modeled total is written twice. The bare field
+(`no_battery`, `with_battery`, `battery_value`, `package_bill`, `package_save`) is the
+whole-dollar value the report's tables print. Its `_cents` twin (`no_battery_cents`,
+`with_battery_cents`, `battery_value_cents`, `package_bill_cents`, `package_save_cents`) is
+the same total in integer cents, and it is the field a consumer ranks or differences: the
+report's §4 verdict, its row class, and the runner-up margin (`report_tokens._bpm_cheapest`,
+`_bpm_rivals`) take which plan is cheapest off the cents, where a tie is two totals equal
+to the cent (`_BPM_MATERIAL_USD`, one cent, the resolution a bill is settled in). The
+whole-dollar cells used to be the only copy and the report ranked on them; two bills a few
+cents apart round to the same dollar and read as a tie, and a battery that flips two plans
+by cents leaves every dollar cell where it was. The sizes the verdict quotes still come
+from the whole-dollar cells, so the heading, the table under it, §3's table and §0's
+runner-up margin print one figure for one quantity. `battery_value_cents` and
+`package_save_cents` are exact integer differences of the cents fields they come from;
+their whole-dollar neighbours are rounded independently off the unrounded difference and
+can sit a dollar from the cents' own rounding. `report_tokens` refuses a row whose dollar
+cell is more than $0.50 from its cents twin, since the generator writes both from one bill
+and a wider gap means a hand-edited or half-updated artifact. On this household the cents
+are 488173 / 256417 (EV-TOU-5), 584296 / 417564 (EV-TOU-2), 635622 / 534897 (TOU-ELEC),
+margins of hundreds of dollars, so the ranked verdict is the same as on the dollar cells.
+
 **Mid package on every plan (`mid_package_on_plans`, issue #200).** The same artifact also
 prices the report's mid package (EV shift scenario a, all sessions,
 `behavior_rebuild.shift_ev`, first, then the 13.5 kWh greedy dispatch on the shifted
