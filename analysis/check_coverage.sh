@@ -10,14 +10,74 @@
 # Usage, from the repo root:  ./analysis/check_coverage.sh
 # Requires: ./.venv with coverage installed (pip install coverage), the private
 # archive staged per CLAUDE.md (private/verify/usage.csv etc.).
+#
+# One run at a time (issue #233). Every suite and generator accumulates into the
+# single data file $ROOT/.coverage, which a run erases at startup, so a second
+# run started while the first is still going (the suite takes ~10 minutes)
+# destroys the first run's measurement and both then print a percentage from
+# whatever survived. The run therefore takes an exclusive kernel lock (flock)
+# before it touches the data file, and a second run refuses to start while the
+# lock is held. The lock is on the analysis/ DIRECTORY, not on a file: a flock
+# binds to an inode, so a lock file that anyone can `rm` mid-run (the old
+# `rm -f .coverage*` reset idiom, `git clean -fdX`) would let a second run
+# start against a fresh inode, which is the original defect again. Nobody
+# deletes analysis/ by accident. The kernel drops the lock the instant every
+# process holding it exits, crash or kill included, so a dead run never blocks
+# anyone and nothing needs clearing by hand. The lock is held on fd 9, which
+# each direct child of this script (every `coverage run`) inherits: a child
+# that outlives the script, such as a stuck `coverage run`, keeps the next run
+# refused until it exits, which is the correct answer, since that child is the
+# one writing the data file. Grandchildren do not hold it: Python's subprocess
+# closes inherited descriptors above 2, so a process a suite spawns cannot keep
+# the lock after `coverage run` itself is gone.
+#
+# "Is one already running?" Do not trust `ps aux | grep check_coverage`: most
+# of the wall time is spent inside child `coverage run` processes, and the
+# script's own name is easy to miss in that list. Ask instead:
+#     cat .check_coverage.holder    # pid, start time and data file of the LAST run to start
+#     lsof analysis                 # a `9r` row while a run (or a child of it) holds the lock
+# The holder file is informational only; deleting it neither releases nor
+# breaks the lock. The end of a run prints the data file it measured and the
+# statement count it saw, so a truncated measurement is visible in the output
+# itself.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 COV="$ROOT/.venv/bin/coverage"
+PY="$ROOT/.venv/bin/python"
 export COVERAGE_FILE="$ROOT/.coverage"
+LOCK_DIR="$ROOT/analysis"
+HOLDER="$ROOT/.check_coverage.holder"
 
 [ -x "$COV" ] || { echo "coverage not installed: ./.venv/bin/pip install coverage"; exit 2; }
+[ -x "$PY" ] || { echo "$PY missing -- create the venv first (CLAUDE.md)"; exit 2; }
 [ -f private/verify/usage.csv ] || { echo "private/verify/usage.csv missing -- stage the sandbox first (CLAUDE.md)"; exit 2; }
+
+# Take the lock on fd 9, which stays open (and so held) for the rest of this
+# script and is inherited by every child it starts. The python child locks the
+# inherited descriptor; a flock lives on the open file description, not on the
+# process, so it outlives the child that took it. Only EAGAIN/EWOULDBLOCK means
+# "held by another run"; any other error (a filesystem without flock, a broken
+# venv) is reported as what it is instead of being blamed on a phantom run.
+exec 9<"$LOCK_DIR"
+lock_rc=0
+"$PY" -c 'import errno, fcntl, sys
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError as e:
+    if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+        sys.exit(1)
+    sys.stderr.write(f"check_coverage: could not take the lock on {sys.argv[1]}: {e}\n")
+    sys.exit(2)' "$LOCK_DIR" || lock_rc=$?
+if [ "$lock_rc" -ne 0 ]; then
+  if [ "$lock_rc" -eq 1 ]; then
+    holder="$( [ -f "$HOLDER" ] && tr '\n' ' ' < "$HOLDER" || echo "holder file $HOLDER missing" )"
+    echo "check_coverage: another check_coverage.sh run holds the lock on $LOCK_DIR ($holder)" >&2
+    echo "check_coverage: refusing to start -- two runs share one data file and would destroy each other's measurement; wait for it (lsof $LOCK_DIR) and re-run" >&2
+  fi
+  exit 2
+fi
+printf 'pid=%s started=%s data=%s\n' "$$" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$COVERAGE_FILE" > "$HOLDER"
 
 rm -f "$COVERAGE_FILE" "$COVERAGE_FILE".*
 
@@ -60,8 +120,27 @@ for g in behavior_rebuild battery_dispatch_policies battery_plan_matrix \
 done
 cd "$ROOT"
 
-"$COV" combine >/dev/null
-"$COV" report --rcfile=.coveragerc
+# 3) combine and report. Both coverage commands exit 1 when there is no data
+# ("No data to combine" / "No data to report."), the same code as a gate
+# FAIL, so each failure is caught here and reported as what it is (exit 2,
+# nothing measured) with coverage's own text, never as a coverage verdict.
+if ! combined=$("$COV" combine 2>&1); then
+  echo "check_coverage: coverage combine failed -- nothing was measured"
+  printf '%s\n' "$combined"
+  exit 2
+fi
+if ! report=$("$COV" report --rcfile=.coveragerc 2>&1); then
+  echo "check_coverage: coverage report failed -- nothing was measured"
+  printf '%s\n' "$report"
+  exit 2
+fi
+printf '%s\n' "$report"
+# The TOTAL row's Stmts column: how much the run actually measured. A number
+# far below the usual (~14,500 in 2026-09) means a truncated measurement, not
+# a coverage change.
+stmts=$(printf '%s\n' "$report" | awk '$1 == "TOTAL" { print $2 }')
+[ -n "$stmts" ] || { echo "check_coverage: no TOTAL row in the coverage report -- nothing was measured"; exit 2; }
+echo "measured $stmts statements from $COVERAGE_FILE"
 "$COV" report --rcfile=.coveragerc --fail-under=90 >/dev/null \
   && echo "COVERAGE GATE: PASS (>= 90%)" \
   || { echo "COVERAGE GATE: FAIL (< 90%)"; exit 1; }
