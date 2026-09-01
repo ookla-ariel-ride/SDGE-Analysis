@@ -421,7 +421,13 @@ land in `deep_results.json`.
    generation row (§3.0), plus a Reduce-Your-Use surcharge of **$1.16/kWh** on 15 assumed event
    days (the 15 summer days with the highest on-peak imports), 4–9 pm. Three scenarios: TOU-DR-P
    with a PW3 that dodges every event ($6,757), EV-TOU-5 with the same PW3 ($3,202), TOU-DR-P
-   with no battery and all events hit ($7,527).
+   with no battery and all events hit ($7,527). Each key names its plan and its configuration
+   (`<plan> + <battery>` or `<plan> no battery`, plus an optional parenthetical note that is
+   not part of the configuration), and `report_tokens.py` enforces that shape when it reads
+   the block. Section 0's card ranks the household's plan against each rival configuration
+   by configuration, at the worst of the pairs, so a plan's cheapest entry is never compared
+   with another plan's cheapest entry in a different configuration (issue #202); a rival
+   that shares no configuration with the household's plan drops the wildcard from the card.
 2. **Phantom/baseload — superseded workpaper (issue #140). Not published anywhere in the
    report; do not cite it.** Take 3–5 am intervals with `Consumption ≤ 0.5` kWh (excludes EV
    charging); baseload kW = 25th percentile × 4 → 1.02 kW → 8,935 kWh/yr. Energy only: this

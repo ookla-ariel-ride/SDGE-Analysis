@@ -6094,6 +6094,139 @@ def case_the_wildcard_phrase_stays_one_item_of_the_cards_list():
             "rival count (" + "; ".join(rows) + ")")
 
 
+def _wildcard_refusal(totals, plan="TEST-PLAN"):
+    """The SystemExit message _wildcard_scenario fails closed with over a
+    wildcard artifact whose keys break the naming convention, with a render
+    treated as the failure -- _refuses' contract, narrowed to this one
+    artifact."""
+    with _stub_household({"household.plan": plan}), _wildcard_priced(totals):
+        try:
+            got = rt._wildcard_scenario(rt.CTX)
+        except SystemExit as e:
+            return str(e)
+    raise AssertionError(
+        f"_wildcard_scenario RANKED {got!r} off a wildcard artifact whose keys do not "
+        f"follow the naming convention, instead of failing closed: {totals}")
+
+
+@case
+def case_the_wildcard_ranks_like_for_like_configurations_only():
+    """issue #202: _wildcard_scenario used to rank min() over EVERY total on
+    each side of data/deep_results.json:wildcard, so a plan priced in several
+    configurations was represented by its cheapest one, whichever that was.
+    This household's artifact prices the rival with and without a battery and
+    its own plan only with one, and the rival's minimum HAPPENED to be the
+    battery entry, which is the only reason the published card compared like
+    with like. A rival whose no-battery total came in cheapest would have been
+    ranked, without a battery, against this plan with one, and the card would
+    have counted that as a scenario it scored.
+
+    The configuration is now part of the key's contract (stated beside the
+    keys in deep_analyses.py, parsed by ONE regex here): "<plan> + <battery>"
+    or "<plan> no battery", each with an optional trailing parenthetical that
+    is a note and never a configuration. Totals are paired by configuration,
+    each pair ranked on its own, and the scenario's standing is the WORST of
+    the pairs, so a "win" is never published over a configuration the rival
+    prices cheaper. A rival that shares no configuration with this plan drops
+    the scenario -- the absent state the card already has -- rather than being
+    ranked against something else. A key outside the convention, or two keys
+    naming one configuration twice, refuses by name: the artifact is not in
+    the shape the reader was promised.
+
+    Every household answer is stubbed and every artifact substituted in
+    memory, so this runs with or without the private archive."""
+    plan, rival = "TEST-PLAN", "RIVAL-PLAN"
+    # (artifact, expected standing, why) -- the first three are the ones the
+    # min()-over-everything ranking answered differently (trails, win, trails).
+    drives = [
+        ("the rival's cheapest entry is a configuration this plan is not priced in",
+         {f"{plan} + PW3": 100, f"{rival} + PW3": 120, f"{rival} no battery": 90},
+         "win"),
+        ("each side's cheapest entry is a different configuration",
+         {f"{plan} + PW3": 100, f"{plan} no battery": 140,
+          f"{rival} + PW3": 130, f"{rival} no battery": 120},
+         "trails"),
+        ("the two sides share no configuration at all",
+         {f"{plan} + PW3": 100, f"{rival} no battery": 90},
+         None),
+        ("this household's own key shape: a parenthetical note is not a configuration",
+         {f"{plan} + PW3": 100, f"{rival} + PW3 (15 events dodged)": 120,
+          f"{rival} no battery (events hit)": 90},
+         "win"),
+        ("the same rival priced cheaper in the shared configuration",
+         {f"{plan} + PW3": 100, f"{rival} + PW3": 90, f"{rival} no battery": 300},
+         "trails"),
+        ("level in one shared configuration, ahead in the other",
+         {f"{plan} + PW3": 100, f"{plan} no battery": 140,
+          f"{rival} + PW3": 100, f"{rival} no battery": 150},
+         "tie"),
+        ("two rivals, one of them level, neither ahead",
+         {f"{plan} + PW3": 100, f"{rival} + PW3": 100, "OTHER-PLAN + PW3": 120},
+         "tie"),
+        ("two rivals, one of them sharing no configuration with this plan",
+         {f"{plan} + PW3": 100, f"{rival} + PW3": 120, "OTHER-PLAN no battery": 50},
+         None),
+    ]
+    seen = []
+    with _stub_household({"household.plan": plan}):
+        for label, totals, expected in drives:
+            with _wildcard_priced(totals):
+                got = rt._wildcard_scenario(rt.CTX)
+            if expected is None:
+                assert got is None, (
+                    f"{label}: the wildcard was ranked ({got!r}) off {totals}; nothing "
+                    "in that artifact is comparable like for like")
+            else:
+                assert got is not None and got[1] == expected, (
+                    f"{label}: expected {expected!r}, got {got!r} off {totals}")
+            seen.append(f"{label} -> {got[1] if got else None}")
+
+    # THE CONVENTION IS ENFORCED, NOT ASSUMED: a key it cannot parse, or two
+    # keys that collapse to one (plan, configuration), refuse by name.
+    malformed = {f"{plan} + PW3": 100, f"{rival} PW3": 90}
+    doubled = {f"{plan} + PW3": 100, f"{rival} + PW3 (5 events)": 90,
+               f"{rival} + PW3 (15 events)": 120}
+    for label, totals, key in (("a key outside the convention", malformed,
+                                f"{rival} PW3"),
+                               ("one configuration priced twice", doubled,
+                                f"{rival} + PW3 (15 events)")):
+        msg = _wildcard_refusal(totals, plan=plan)
+        assert key in msg and "deep_results.json:wildcard" in msg, (
+            f"{label}: the refusal names neither the key nor the artifact: {msg}")
+
+    # AND THE CARD: the unlike artifact must not publish a standing derived
+    # from the rival's no-battery entry, and the disjoint one must land on
+    # exactly the label a household whose workup prices ONE plan gets.
+    provider, cheapest, priced = _plan_ranking_inputs()
+    named = f"{rival} wildcard"
+    unlike = {f"{cheapest} + PW3": 100, f"{rival} + PW3": 120, f"{rival} no battery": 90}
+    disjoint = {f"{cheapest} + PW3": 100, f"{rival} no battery": 90}
+    absent = {f"{cheapest} + PW3": 100}
+    cards = {}
+    with _stub_plan(cheapest, provider):
+        published = rt.resolve_token("S0_BEST_PLAN_CARD")
+        for label, totals in (("unlike", unlike), ("disjoint", disjoint),
+                              ("absent", absent)):
+            with _wildcard_priced(totals):
+                cards[label] = rt.resolve_token("S0_BEST_PLAN_CARD")
+        assert rt.resolve_token("S0_BEST_PLAN_CARD") == published, (
+            "a substituted artifact leaked out of this case")
+    assert named in cards["unlike"] and "beaten" not in cards["unlike"], (
+        "the card counts the wildcard as lost off a rival priced cheaper only in a "
+        f"configuration this plan was never priced in: {cards['unlike']}")
+    assert named not in cards["disjoint"], (
+        f"the card still counts a wildcard with nothing comparable in it: "
+        f"{cards['disjoint']}")
+    assert cards["disjoint"] == cards["absent"], (
+        "a dropped wildcard does not land where an absent one does: "
+        f"{cards['disjoint']!r} vs {cards['absent']!r}")
+    return ("the wildcard is ranked configuration by configuration, over the "
+            "configurations both sides price, at the worst of the pairs "
+            f"({'; '.join(seen)}); a key outside the convention and a configuration "
+            "priced twice both refuse by name; the card drops a wildcard with nothing "
+            "comparable in it exactly as it drops an absent one")
+
+
 # What section 3's row is allowed to stamp on the plan-name cell, per state:
 #
 #     state -> (badge text, whether this plan is a cheapest plan in the one

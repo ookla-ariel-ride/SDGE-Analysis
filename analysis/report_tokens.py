@@ -2651,38 +2651,89 @@ _tok("S7_PLAN_FOOTING", kind="derived", get=_s7_plan_footing,
 
 
 # data/deep_results.json:wildcard's keys are PROSE ("TOU-DR-P + PW3 (15 events
-# dodged)", "EV-TOU-5 no battery"), so the plan name is the leading run before
-# the "+ <battery>" or "no battery" qualifier. ONE regex, read here and nowhere
-# else, because the card and section 9's heading both name "the wildcard plan"
-# and a second split drifts from the first silently.
+# dodged)", "EV-TOU-5 no battery"), and the plan name and the CONFIGURATION are
+# both read out of them, here and nowhere else. The convention, stated beside
+# the keys where deep_analyses.py writes them:
 #
-# IT ALREADY HAD. This split used to be written twice: here without the
-# battery's name and in _wildcard_plan as r"\s*\+\s*PW3|\s+no battery", with
-# this household's battery hardcoded into the second copy. Both agree on the
-# keys THIS checkout happens to carry and part company on any other battery: a
-# workup labelled "Powerwall 3" rather than "PW3" left the card saying
-# "TOU-DR-P wildcard" while WILDCARD_PLAN resolved to the whole prose key, so
-# section 9's heading read "can TOU-DR-P + Powerwall 3 (15 events dodged) + a
-# battery beat EV-TOU-5?" beside a section 0 card naming something else. A
-# hardcoded product name is not a parse rule; the qualifier is whatever follows
-# the "+".
-_WILDCARD_KEY_QUALIFIER_RE = re.compile(r"\s*\+|\s+no battery")
+#     "<plan> + <battery>"     the plan priced with that battery
+#     "<plan> no battery"      the plan priced without one
+#
+# either followed by an optional parenthetical note ("(15 events dodged)",
+# "(events hit)") that says something about the run and NOTHING about the
+# configuration -- "PW3 (15 events dodged)" and "PW3" are the same battery. A
+# key outside that shape, or two keys that collapse to one (plan,
+# configuration), refuses by name in _wildcard_totals rather than being read
+# as something plausible.
+#
+# ONE regex, because the plan name used to be split off twice and the two
+# copies drifted: here without the battery's name and in _wildcard_plan as
+# r"\s*\+\s*PW3|\s+no battery", with this household's battery hardcoded
+# into the second. Both agreed on the keys THIS checkout happens to carry and
+# parted company on any other battery: a workup labelled "Powerwall 3" rather
+# than "PW3" left the card saying "TOU-DR-P wildcard" while WILDCARD_PLAN
+# resolved to the whole prose key, so section 9's heading read "can TOU-DR-P +
+# Powerwall 3 (15 events dodged) + a battery beat EV-TOU-5?" beside a section 0
+# card naming something else. A hardcoded product name is not a parse rule;
+# the qualifier is whatever follows the "+".
+#
+# AND THE CONFIGURATION IS READ FOR A REASON (issue #202). _wildcard_scenario
+# used to rank min() over every total on each side, so a plan priced in
+# several configurations was represented by its cheapest one, whichever that
+# was. The rival's cheapest entry HAPPENED to be its battery entry, which is
+# the only reason the published comparison was like for like; a no-battery
+# total that came in cheaper would have been ranked against this plan with a
+# battery, and nothing would have said so. The pairing needs the
+# configuration, so the parse hands it over.
+_WILDCARD_KEY_RE = re.compile(
+    r"^(?P<plan>.+?)\s*(?:\+\s*(?P<battery>[^()]+?)|(?P<none>no battery))"
+    r"\s*(?:\([^()]*\))?\s*$")
+_WILDCARD_NO_BATTERY = "no battery"
+
+
+def _wildcard_key(key):
+    """(plan, configuration) one data/deep_results.json:wildcard key names,
+    or None when the key is outside the convention above."""
+    m = _WILDCARD_KEY_RE.match(key)
+    if not m or not m.group("plan").strip():
+        return None
+    battery = m.group("battery")
+    configuration = battery.strip() if battery else _WILDCARD_NO_BATTERY
+    return m.group("plan").strip(), configuration
 
 
 def _wildcard_key_plan(key):
     """The plan name one data/deep_results.json:wildcard key is about."""
-    return _WILDCARD_KEY_QUALIFIER_RE.split(key)[0].strip()
+    parsed = _wildcard_key(key)
+    return parsed[0] if parsed else key.strip()
 
 
 def _wildcard_totals():
-    """{plan: [modeled annual totals]} off data/deep_results.json:wildcard,
-    keyed by _wildcard_key_plan -- the one split every reader of that artifact
-    takes, so the card and the section 9 heading cannot disagree about which
-    plan the wildcard is about.
+    """{plan: {configuration: modeled annual total}} off
+    data/deep_results.json:wildcard, through _wildcard_key -- the one parse
+    every reader of that artifact takes, so the card and the section 9 heading
+    cannot disagree about which plan the wildcard is about, and the ranking
+    knows which of a plan's totals answers to which of another's.
+
+    Refuses, naming the key, on a key outside the convention or on two keys
+    that name one (plan, configuration) twice: a parenthetical that carried
+    configuration information would make two configurations look like one,
+    and the ranking below would pair a total with the wrong counterpart.
     """
     totals = {}
     for key, value in _json("deep_results.json")["wildcard"].items():
-        totals.setdefault(_wildcard_key_plan(key), []).append(value)
+        parsed = _wildcard_key(key)
+        if parsed is None:
+            raise SystemExit(
+                f"report_tokens: deep_results.json:wildcard key {key!r} is outside the "
+                "naming convention '<plan> + <battery>' / '<plan> no battery' (optional "
+                "parenthetical note); see deep_analyses.py's wildcard block")
+        plan, configuration = parsed
+        if configuration in totals.setdefault(plan, {}):
+            raise SystemExit(
+                f"report_tokens: deep_results.json:wildcard key {key!r} prices "
+                f"{plan} {configuration!r} a second time; a configuration is named "
+                "once per plan, and a parenthetical note does not make a new one")
+        totals[plan][configuration] = value
     return totals
 
 
@@ -2719,13 +2770,19 @@ def _wildcard_scenario(ctx):
     it does so silently, which is the same shape as the mixed-matrix finding
     one input along.
 
-    EVERY total in the artifact is required, not just the two min() lands on:
-    `theirs` is a minimum over every rival total and `ours` over every one of
-    ours, so any one of them can move the answer, and a rival whose totals are
-    ALL non-finite was dropped out of `rivals` entirely -- the same partial
-    ranking, one step further along, and it also decides whether there is a
-    rival to name at all. One rule instead of three: an artifact that is not
-    made of numbers ranks nothing here.
+    EVERY total in the artifact is required, not just the ones a pair lands
+    on: the standing is the worst over every shared configuration of every
+    rival, so any one of them can move the answer, and a rival whose totals
+    are ALL non-finite was dropped out of `rivals` entirely -- the same
+    partial ranking, one step further along, and it also decides whether there
+    is a rival to name at all. One rule instead of three: an artifact that is
+    not made of numbers ranks nothing here.
+
+    AND THE PAIRS ARE LIKE FOR LIKE (issue #202): this plan's total in a
+    configuration against the rival's total in the SAME configuration, never
+    each side's cheapest entry against the other's. A rival that shares no
+    configuration with this plan is the same None as a workup pricing one
+    plan: there is nothing to rank, so nothing is counted.
 
     DROP RATHER THAN REFUSE, which is the opposite of what _bpm_cheapest and
     _plan_ranking do with a non-finite cell, and for a reason that is about
@@ -2745,15 +2802,31 @@ def _wildcard_scenario(ctx):
     """
     plan = hh1("household.plan")
     totals = _wildcard_totals()
-    if not _finite(*(t for values in totals.values() for t in values)):
+    if not _finite(*(t for priced in totals.values() for t in priced.values())):
         return None
-    ours = totals.get(plan, [])
+    ours = totals.get(plan, {})
     rivals = _wildcard_rivals(plan)
     if not ours or not rivals:
         return None
-    theirs = min(t for name in rivals for t in totals[name])
-    ours = min(ours)
-    standing = "win" if ours < theirs else "tie" if ours == theirs else "trails"
+    # LIKE FOR LIKE (issue #202): each of this plan's totals is ranked against
+    # the rival's total for the SAME configuration, and the scenario's standing
+    # is the worst of those pairs -- "win" only when every shared configuration
+    # prices this plan cheaper, "trails" once any prices a rival cheaper. It
+    # used to be min() over everything on each side, which compared whichever
+    # configuration each plan was cheapest in, and those need not be the same
+    # one. A rival with no configuration in common with this plan cannot be
+    # ranked against it at all, and that is the None above, not a ranking over
+    # something else.
+    standings = []
+    for name in rivals:
+        shared = sorted(set(ours) & set(totals[name]))
+        if not shared:
+            return None
+        for configuration in shared:
+            mine, theirs = ours[configuration], totals[name][configuration]
+            standings.append("win" if mine < theirs else "tie" if mine == theirs
+                             else "trails")
+    standing = max(standings, key=_PLAN_STANDINGS.index)
     # SLASH-JOINED, never _join_plan_names, and this is about the CARD's
     # punctuation rather than about prose. _plan_card_label lists the scenarios
     # it scored in a parenthetical joined with ", ", and _join_plan_names emits
@@ -3739,7 +3812,7 @@ def _wildcard_plan(ctx):
     _wildcard_key_plan -- so this token and section 0's card read that
     artifact's prose keys through one split instead of two. This function used
     to carry its own, with this household's battery ("PW3") written into it;
-    see _WILDCARD_KEY_QUALIFIER_RE for what the two disagreed about.
+    see _WILDCARD_KEY_RE for what the two disagreed about.
     """
     best = hh1("household.plan")
     rivals = _wildcard_rivals(best)
