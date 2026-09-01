@@ -304,7 +304,7 @@ SOP5={s:UDC5[s]["sop"]+WFNBC+PCIA+CEA5[s]["sop"] for s in ("S","W")}
 #     base lowers the figure.
 # Replacing it with a measured floor is a change to the session energy
 # accounting itself, not to the pricing below, and is left as a separate
-# decision (issue #229).
+# decision (issue #267).
 EV_SESSION_HOUSE_BASE_KW=0.4
 d["kw"]=d.Consumption*4
 ev=d.kw>6.5   # EV charger signature ~7-11.5 kW

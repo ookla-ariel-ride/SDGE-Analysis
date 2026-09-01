@@ -470,12 +470,13 @@ land in `deep_results.json`.
    super-off-peak (its share is −base × 0.25 h × Σ(interval rate − sop rate) over those
    intervals), so a larger base lowers the figure; it also scales `kwh_total`,
    `cost_if_all_sop` and the 3 kWh cutoff directly, which is why swapping in a measured
-   floor is a change to the session accounting itself and is left open in issue #229. All
+   floor is a change to the session accounting itself and is left open in issue #267. All
    three dollar figures are workpaper values, not published ones: the report's EV-mistiming
    numbers come from `behavior_rebuild.py`'s canonical NEM re-bill ($1,221/yr at 100%
-   compliance, a different session detector and a full monthly re-bill; the $1,214 here
-   lands within $7 of it) and `extended_findings.py`'s `home_ev_cost_if_all_sop`
-   ($1,742/yr), both priced through `rates.py`.
+   compliance) and `extended_findings.py`'s `home_ev_cost_if_all_sop` ($1,742/yr), both
+   priced through `rates.py`. Those use a different session detector (563 sessions, 13,806
+   kWh, against 580 and 14,226 kWh here) and a different method, and this workpaper figure
+   is not reconciled to them.
 4. **Vacation detection.** Daily sums of the SAM hourly load excluding hours > 7 kWh (crude
    non-EV load); away threshold = max(10th percentile, 20 kWh/day) = 26.3; 37 away-days detected
    against a 37.7 kWh/day non-EV median.
