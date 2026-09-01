@@ -45,7 +45,16 @@ PIPELINE
      global {{TOKEN}} substitution pass over the whole document (this also
      resolves any {{TOKEN}} a data-builder's own output referenced, e.g.
      {{PEAK_WINDOW}} inside the price-map table). Stage the result to a temp
-     file and hand it to analysis.publish.
+     file, stamp it (issue #251), then run the whole-page prose-rhythm gate
+     on the staged page (issue #263, see rhythm_failures() below): the same
+     `prose_rhythm.py --strict` check the committed index.html is held to,
+     over the same three tiers. prose_lint guards each fragment on its own;
+     the em-dash and tail limits are rates over a tier, which no fragment
+     can see, so a model can clear every fragment check and still hand back
+     a page the committed one would fail. A page that breaks a limit is
+     reported with the gate's own offender list and not promoted, so the
+     previous index.generated.html survives intact. Otherwise hand the
+     staged file to analysis.publish.
      promote_set() as "index.generated.html" -- the same crash-consistent,
      single-writer promotion battery_plan_matrix.py and friends use for
      data/*.json. index.html is never touched.
@@ -128,6 +137,7 @@ from html.parser import HTMLParser as _HTMLParser
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import llm_providers as lp   # noqa: E402
 import prose_lint             # noqa: E402
+import prose_rhythm           # noqa: E402
 import publish               # noqa: E402
 import report_blocks as rb   # noqa: E402
 import report_tokens as rt   # noqa: E402
@@ -932,6 +942,44 @@ def rewrite_provenance_sentence(html):
     return html.replace(PROVENANCE_SENTENCE_LITERAL, PROVENANCE_SENTENCE_REPLACEMENT, 1)
 
 
+RHYTHM_GATE_NAME = "analysis/prose_rhythm.py --strict"
+
+
+def rhythm_failures(page_text):
+    """The whole-page prose-rhythm gate (issue #263), as (id, kind, reason) failures.
+
+    Runs prose_rhythm.check() over every tier `prose_rhythm.py --strict`
+    measures (basic, advanced, all), so the page this module publishes meets
+    the gate the committed index.html is held to. One failure per tier that
+    breaks a limit; its reason is the gate's own report for that tier, the
+    violations and then the offender sites, so the operator can find each one
+    by line. A page whose advanced-tier boundary is not exactly one element
+    cannot be measured per tier at all; that is reported once as a failure of
+    the same kind, because a gate that could not run has not been passed.
+
+    Empty list means the page is clean and may be promoted.
+    """
+    failures = []
+    boundary_errors = set()
+    for tier in prose_rhythm.TIERS:
+        try:
+            m = prose_rhythm.measure(page_text, tier)
+        except prose_rhythm.TierBoundaryError as e:
+            boundary_errors.add(str(e))
+            continue
+        found = prose_rhythm.check(page_text, tier)
+        if not found:
+            continue
+        reason = f"{RHYTHM_GATE_NAME} refuses the page: " + "; ".join(found)
+        for metric, sites in prose_rhythm.offenders(m).items():
+            reason += f"\n      {metric}:" + "".join(f"\n        {site}" for site in sites)
+        failures.append((f"index.generated.html ({tier} tier)", "prose-rhythm", reason))
+    for message in sorted(boundary_errors):
+        failures.append(("index.generated.html", "prose-rhythm",
+                         f"{RHYTHM_GATE_NAME} could not measure the page: {message}"))
+    return failures
+
+
 def render(html, fragments, resolved):
     """fragments: {block_id: html_fragment}. Splices every classified block's
     fragment into its exact comment span (blocks missing from `fragments`
@@ -1173,6 +1221,16 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
         # promoted page is stamped in the same crash-consistent step) and never
         # to a token value. A template with no Version row is refused here.
         srv.stamp(staged)
+        # Issue #263: the whole-page rhythm gate runs on the exact bytes that
+        # would be promoted (rendered and stamped), after the stamp because
+        # that is what `prose_rhythm.py --strict index.html` measures on the
+        # committed page. A refusal here promotes nothing: the staged file
+        # is discarded with the temp directory, and dest_dir is untouched.
+        failures = rhythm_failures(staged.read_text())
+        if failures:
+            manifest["failures"] = [{"id": i, "kind": k, "reason": r} for i, k, r in failures]
+            manifest_path.write_text(json.dumps(manifest, indent=2))
+            return {"wrote": False, "dry_run": False, "failures": failures}
         publish.promote_set({"index.generated.html": str(staged)}, str(dest_dir))
 
     return {"wrote": True, "dry_run": False, "failures": []}
@@ -1229,8 +1287,8 @@ def main(argv=None):
         return 0
 
     if not result["wrote"]:
-        print(f"{len(result['failures'])} block(s)/token(s) unresolved -- "
-              "index.generated.html was NOT written:")
+        print(f"{len(result['failures'])} failure(s) -- unresolved block(s)/token(s), or "
+              "the whole-page prose-rhythm gate -- index.generated.html was NOT written:")
         for i, k, r in result["failures"]:
             print(f"  {i} ({k}): {r}")
         return 1

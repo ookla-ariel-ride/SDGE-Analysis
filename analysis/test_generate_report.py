@@ -19,7 +19,9 @@ installed.
 Run from the repo root:  ./.venv/bin/python analysis/test_generate_report.py
 """
 import ast
+import contextlib
 import csv
+import io
 import json
 import pathlib
 import re
@@ -32,6 +34,7 @@ import suite_runner  # noqa: E402
 
 import generate_report as gr   # noqa: E402
 import llm_providers as lp     # noqa: E402
+import prose_rhythm            # noqa: E402
 import report_blocks as rb     # noqa: E402
 import report_tokens as rt     # noqa: E402
 # Cross-suite import, the convention test_battery_plan_matrix set with
@@ -64,8 +67,26 @@ def _require_household():
 
 # A universally safe fragment: no digits, no {{TOKEN}}, clears prose_lint and
 # the numeral guard for ANY of the 105 blocks regardless of instruction text.
+# It is paragraph-length on purpose (issue #263). The page gate generate_report
+# runs before it publishes (prose_rhythm.check) measures em dashes and tails as
+# rates per 1,000 words over a tier, and the template's own fixed text and a
+# few token values carry a dozen em dashes between them (a heading verdict, the
+# confidence-label legend, the data-sources inventory). Against a one-sentence
+# fragment those dozen dashes read as 4 per 1,000 words and the gate refuses
+# the page; against the roughly one hundred words per block a real run writes
+# they sit far under the ceiling, as they do on the committed index.html. So
+# the fixture writes what a real block looks like, and stays under the
+# 800-character block cap with the longest fixed lead the template puts in
+# front of a fragment (about 240 characters: the packages footing sentence a
+# household ranked second gets, see the second-ranked case below).
 SAFE_FRAGMENT = ("This part of the report explains the finding using only the values "
-                 "already shown above, staying within the analysis's own evidence.")
+                 "already shown above, staying within the analysis's own evidence. The "
+                 "figures come from the committed data artifacts and the billing model "
+                 "that reproduces the household's actual statements, and each one is "
+                 "labelled with the evidence behind it. Where the model and the bills "
+                 "disagree, the section states the size of the gap and which driver "
+                 "explains it before drawing a conclusion. A reader who wants the "
+                 "derivation can follow the section reference into the audit trail.")
 
 
 def make_fake_call(text=SAFE_FRAGMENT, finish_reason="end_turn", calls=None):
@@ -86,6 +107,11 @@ def make_fake_call(text=SAFE_FRAGMENT, finish_reason="end_turn", calls=None):
 _GAP_ANSWER_FIXTURES = {
     "UTILITY_TOOL_BEST_PLAN_FIGURE": "$4,519.65",
     "UTILITY_TOOL_BEST_PLAN_VERDICT": "\u2713",
+    # Lands in an <h3>. The generic "(operator-supplied placeholder for NAME)"
+    # fallback would put the token's own ALL-CAPS name on the page, which the
+    # whole-page rhythm gate counts as shouting (issue #263).
+    "ELECTRIFICATION_VERDICT_SHORT": ("A heat-pump water heater is worth a look, but "
+                                      "the payback isn't one number"),
 }
 
 
@@ -1247,6 +1273,164 @@ def case_index_html_is_byte_unchanged_across_a_full_run():
             "ever touch index.generated.html")
     assert real_index.read_bytes() == original_bytes, "the REAL index.html changed on disk"
     return "index.html is byte-unchanged (both the promotion-dir copy and the real file)"
+
+
+# ---------------------------------------------------------------------------
+# Issue #263: the whole-page prose-rhythm gate. prose_lint guards each fragment
+# for banned constructions; the em-dash and tail limits in prose_rhythm are
+# rates over a tier, which no single fragment can see. An LLM can therefore
+# clear every fragment check and still hand back a page the committed
+# index.html would fail `prose_rhythm.py --strict` on. generate_report runs
+# prose_rhythm.check() on the rendered, stamped page before promote_set and
+# refuses to publish when any tier breaks a limit.
+# ---------------------------------------------------------------------------
+# Clears the numeral guard, the HTML guard and prose_lint (none of which looks
+# at an em dash), and puts two em dashes into every prose block: about ninety
+# per 1,000 words against a ceiling of 3.0.
+_EM_DASH_SPLICED_FRAGMENT = ("This part of the report \u2014 the section the reader is on "
+                             "\u2014 explains the finding using only the values already "
+                             "shown above, staying within the analysis's own evidence.")
+# Clean by every fragment gate, and over the 800 visible-character block cap on
+# its own, before the template puts a lead sentence in front of it.
+_OVER_CAP_FRAGMENT = SAFE_FRAGMENT + (" The same figures appear in the tables of the audit "
+                                      "trail, where each row names the artifact it was read "
+                                      "from and the script that wrote that artifact, so a "
+                                      "reader can check any one of them against the "
+                                      "committed data without trusting this paragraph. The "
+                                      "scripts live beside the data they write, and each one "
+                                      "regenerates its artifact byte for byte from the raw "
+                                      "export, which is the test the methodology section "
+                                      "asks of every figure on the page.")
+
+
+def _seeded_dest(td):
+    """A promotion directory holding an index.html and an earlier
+    index.generated.html, so a refused run can be shown to have touched
+    neither: index.html is never this module's to write, and the previous
+    generated page must survive a failed regeneration intact."""
+    dest_dir = pathlib.Path(td) / "dest"
+    dest_dir.mkdir()
+    real_index = rt.ROOT / "index.html"
+    if real_index.is_file():
+        shutil.copy(real_index, dest_dir / "index.html")
+    else:
+        (dest_dir / "index.html").write_text("<p>stand-in index.html</p>\n")
+    (dest_dir / "index.generated.html").write_text("<p>an earlier generated page</p>\n")
+    return dest_dir, {n: (dest_dir / n).read_bytes()
+                      for n in ("index.html", "index.generated.html")}
+
+
+def _assert_refused_by_the_rhythm_gate(r, dest_dir, before, manifest_path, expect_text):
+    assert not r["wrote"], "a page that breaks a rhythm limit was published"
+    kinds = {k for _, k, _ in r["failures"]}
+    assert kinds == {"prose-rhythm"}, r["failures"]
+    reasons = "\n".join(reason for _, _, reason in r["failures"])
+    assert expect_text in reasons, reasons
+    for name, bytes_before in before.items():
+        assert (dest_dir / name).read_bytes() == bytes_before, (
+            f"{name} in the promotion directory changed across a refused run")
+    manifest = json.loads(manifest_path.read_text())
+    assert [f["kind"] for f in manifest["failures"]] == ["prose-rhythm"] * len(r["failures"]), (
+        "the manifest does not record the rhythm refusal")
+    return reasons
+
+
+@case
+def case_a_clean_full_run_publishes_a_page_that_passes_the_rhythm_gate():
+    """The positive case, and the proof that the fixture is realistic: the
+    published page passes prose_rhythm.check() on every tier the CLI's
+    --strict run measures, so a green full-run case means the gate was run
+    and cleared, never that it was skipped."""
+    _require_gitleaks()
+    _require_household()
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td) / "cache"
+        dest_dir, _ = _seeded_dest(td)
+        manifest_path = pathlib.Path(td) / "manifest.json"
+        r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call())
+        assert r["wrote"], r["failures"]
+        html_out = (dest_dir / "index.generated.html").read_text()
+        assert "an earlier generated page" not in html_out
+        found = {tier: prose_rhythm.check(html_out, tier) for tier in prose_rhythm.TIERS}
+        assert not any(found.values()), found
+        words = {tier: prose_rhythm.measure(html_out, tier)["prose_words"]
+                 for tier in prose_rhythm.TIERS}
+    return ("a clean full run publishes, and the published page passes the rhythm gate on "
+            f"every tier (non-heading words per tier: {words})")
+
+
+@case
+def case_the_rhythm_gate_refuses_an_em_dash_rate_no_fragment_check_can_see():
+    _require_gitleaks()
+    _require_household()
+    frag = _EM_DASH_SPLICED_FRAGMENT
+    assert gr.find_fragment_violations(frag, set()) == [], (
+        "the spliced fragment must clear every fragment gate, or this case is testing "
+        "the wrong gate")
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td) / "cache"
+        dest_dir, before = _seeded_dest(td)
+        manifest_path = pathlib.Path(td) / "manifest.json"
+        r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call(text=frag))
+        reasons = _assert_refused_by_the_rhythm_gate(r, dest_dir, before, manifest_path,
+                                                    "em dashes")
+        assert "prose_rhythm.py --strict" in reasons, reasons
+    return ("a page whose every fragment clears prose_lint but whose em-dash rate breaks "
+            "the tier limit is refused, index.html and the earlier index.generated.html "
+            "are byte-unchanged, and the failure names the gate")
+
+
+@case
+def case_the_rhythm_gate_refuses_a_block_over_the_cap():
+    _require_gitleaks()
+    _require_household()
+    frag = _OVER_CAP_FRAGMENT
+    assert len(frag) > prose_rhythm.LIMITS["max_block_chars"], len(frag)
+    assert gr.find_fragment_violations(frag, set()) == []
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td) / "cache"
+        dest_dir, before = _seeded_dest(td)
+        manifest_path = pathlib.Path(td) / "manifest.json"
+        r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call(text=frag))
+        _assert_refused_by_the_rhythm_gate(r, dest_dir, before, manifest_path,
+                                           f"over {prose_rhythm.LIMITS['max_block_chars']} "
+                                           "characters")
+    return ("a page with a block over the character cap is refused and nothing in the "
+            "promotion directory changes")
+
+
+@case
+def case_main_exits_non_zero_and_names_the_gate_on_a_rhythm_failure():
+    """The CLI's own contract: exit 1, the gate named in what it prints, and
+    the promotion directory (ROOT, for main()) untouched. ROOT, the default
+    cache and manifest paths and lp.call are pointed at a temp directory and
+    the fake for the duration, so a defect here could only ever write there."""
+    _require_gitleaks()
+    _require_household()
+    saved = (gr.ROOT, gr.DEFAULT_CACHE_DIR, gr.DEFAULT_MANIFEST_PATH, lp.call)
+    with tempfile.TemporaryDirectory() as td:
+        dest_dir, before = _seeded_dest(td)
+        answers_path = pathlib.Path(td) / "answers.json"
+        answers_path.write_text(json.dumps(_all_human_answers()))
+        gr.ROOT = dest_dir
+        gr.DEFAULT_CACHE_DIR = pathlib.Path(td) / "cache"
+        gr.DEFAULT_MANIFEST_PATH = pathlib.Path(td) / "manifest.json"
+        lp.call = make_fake_call(text=_EM_DASH_SPLICED_FRAGMENT)
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                code = gr.main(["--provider", "anthropic", "--model",
+                                "claude-fabricated-for-tests",
+                                "--human-answers", str(answers_path)])
+        finally:
+            gr.ROOT, gr.DEFAULT_CACHE_DIR, gr.DEFAULT_MANIFEST_PATH, lp.call = saved
+        printed = out.getvalue()
+        assert code == 1, (code, printed)
+        assert "prose-rhythm" in printed and "em dashes" in printed, printed
+        assert "NOT written" in printed, printed
+        for name, bytes_before in before.items():
+            assert (dest_dir / name).read_bytes() == bytes_before, name
+    return "main() exits 1 on a rhythm failure, prints the gate's report, and writes nothing"
 
 
 @case
