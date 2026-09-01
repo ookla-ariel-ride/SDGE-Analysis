@@ -176,6 +176,10 @@ credit free behavior savings to hardware. (We mislabeled a battery as "5.4-yr" w
 When a rigorous simulation supersedes an early estimate, replace EVERY instance — headline,
 cards, findings, packages, methodology. (We left an early "$1,939/yr battery" in one finding
 after the sim said $1,669.) After any figure change, grep the report for the old number.
+GLOSSARY.md is pinned positively, not by blocklist: every figure it states with an artifact or
+token behind it has a pin in `analysis/test_report_consistency.py`'s
+`case_glossary_figures_match_the_artifacts_that_derive_them`, so a figure added there gets a
+pin (or a line in that case's unpinnable list) in the same change (issue #216).
 
 ## 4. Privacy is non-negotiable and verified, not assumed.
 - All raw PII (Green Button CSVs, bill PDFs, solar-monitoring exports) lives in `private/`,

@@ -751,6 +751,13 @@ def _derive_qualifier_candidates(html, blocks, block_ids):
 # `todo_phrase` is checked against the block's own TODO text, so an entry
 # claiming the instruction carries the qualification is held to it.
 _QUALIFIER_ACCOUNTED = {
+    ("s12#5", "soiling_results.json", "annual_economics", "caveat"):
+        ("raised because {{SOILING_RATE_RANGE}} is live in section 12 (issue #217) and so "
+         "in this block's scope; the caveat (scenario A assumes no 2025 cleaning, the "
+         "alternatives being a partial rain-cleaning or saturation) is s12#4's own "
+         "subject one paragraph up, whose TODO requires the two scenarios be reconciled "
+         "or the reason they cannot be stated; this block reads the bracket only as the "
+         "span its cadence figures cover", None),
     ("s2#4", "gross_import_decomposition.json", "degradation", "clearsky_note"):
         ("the basic-tier line states the weather-corrected rate is not determined and "
          "points at section 9, where the full caveat is rendered",
