@@ -20,6 +20,7 @@ import json
 import pathlib
 import re
 import sys
+import textwrap
 
 import suite_runner
 
@@ -4964,8 +4965,8 @@ def _heading_verdict_agreement(rendered_headings, resolved_tokens):
     return agreeing, diverged, unresolved
 
 
-# The one module whose except clause may rewrap the household loader's
-# SystemExit and keep the pardon: report_tokens.resolve_token (see _raised_in).
+# The one function whose except clause may rewrap the household loader's
+# SystemExit and keep the pardon: resolve_token in this file (see _raised_in).
 _TOKEN_WRAPPER = ROOT / "analysis" / "report_tokens.py"
 
 
@@ -4981,8 +4982,9 @@ def _raise_site(exc):
 
 def _rewrapped_in(outer, wrapper):
     """Whether `outer` was raised by the except clause that caught its
-    __context__, in that same frame, and that frame's code is in the file
-    `wrapper`.
+    __context__, in that same frame, and that frame is `resolve_token` in the
+    file `wrapper`. Any other except clause in that file, present or future,
+    that rewraps in its own frame is not the wrapper and is not pardoned.
 
     The head of a caught exception's traceback is the frame that caught it, so
     a rewrap by the catching clause leaves the outer exception's raise site
@@ -4993,6 +4995,7 @@ def _rewrapped_in(outer, wrapper):
     return (frame is not None and inner is not None
             and inner.__traceback__ is not None
             and inner.__traceback__.tb_frame is frame
+            and frame.f_code.co_name == "resolve_token"
             and pathlib.Path(frame.f_code.co_filename).resolve() == wrapper)
 
 
@@ -5425,11 +5428,24 @@ def case_the_two_structural_guards_reject_the_defects_they_exist_to_catch():
         raise AssertionError(f"probe under {filename} did not raise")
 
     handling = "try:\n    exec(raise_from_loader, {})\nexcept SystemExit:\n"
+
+    def in_function(name, body):
+        """`handling` as the body of a function called `name`, then a call to it,
+        so the rewrap's frame carries that function name."""
+        return (f"def {name}():\n" + textwrap.indent(handling + body, "    ")
+                + f"\n{name}()\n")
+
     direct = caught("exec(raise_from_loader, {})", wrapper)
     # resolve_token's own shape: the except clause that caught the loader's exit
-    # raises the wrapper's SystemExit, in the same frame, in report_tokens.py.
-    wrapped = caught(handling + "    raise SystemExit('report_tokens: failed to resolve "
-                     "token S4_VERDICT_SHORT')", wrapper)
+    # raises the wrapper's SystemExit, in the same frame, in report_tokens.py's
+    # resolve_token.
+    wrapped = caught(in_function("resolve_token", "    raise SystemExit('report_tokens: "
+                                 "failed to resolve token S4_VERDICT_SHORT')"), wrapper)
+    # The same shape in report_tokens.py under any other name is a broken handler,
+    # not the wrapper.
+    rewrapped_elsewhere_in_wrapper = caught(
+        in_function("_format_spec", "    raise SystemExit('report_tokens: unknown format "
+                    "spec for S4_VERDICT_SHORT')"), wrapper)
     # Issue #225: the same shape raised anywhere else. Python sets __context__ on
     # whatever is raised while another exception is being handled, so a broken
     # handler carries the loader's frames on its chain without being the
@@ -5450,11 +5466,12 @@ def case_the_two_structural_guards_reject_the_defects_they_exist_to_catch():
         disclaimed_here = e
     # ... and a handler inside report_tokens.py that disclaims its context, or
     # that catches the loader's exit and then fails in some other frame.
-    disclaimed_in_wrapper = caught(handling + "    raise SystemExit('report_tokens: bad "
-                                   "format spec') from None", wrapper)
+    disclaimed_in_wrapper = caught(
+        in_function("resolve_token", "    raise SystemExit('report_tokens: bad format "
+                    "spec') from None"), wrapper)
     failed_deeper_in_wrapper = caught(
         "def fallback():\n    raise SystemExit('report_tokens: fallback is broken')\n"
-        + handling + "    fallback()", wrapper)
+        + in_function("resolve_token", "    fallback()"), wrapper)
     # An explicit `from e` is the raiser saying what it failed because of, and
     # is followed from any file.
     try:
@@ -5483,6 +5500,9 @@ def case_the_two_structural_guards_reject_the_defects_they_exist_to_catch():
     for probe, what in ((rewrapped_here, "a SystemExit raised outside report_tokens' wrapper "
                                          "while the loader's exit was being handled"),
                         (disclaimed_here, "a `raise ... from None` outside the wrapper"),
+                        (rewrapped_elsewhere_in_wrapper, "a same-frame rewrap in "
+                                                         "report_tokens.py under a name "
+                                                         "other than resolve_token"),
                         (disclaimed_in_wrapper, "a `raise ... from None` inside report_tokens.py"),
                         (failed_deeper_in_wrapper, "a handler in report_tokens.py that caught "
                                                    "the loader's exit and then failed in "
