@@ -2859,7 +2859,8 @@ _reject_multilinked_under() {   # $1 = a directory `cp -R` may write anywhere be
 # directory beside each target and renames each copy over its target; a rename
 # replaces exactly the entry `cp` used to overwrite, and no other. The one
 # removal this script performs is of its own staging directory: created by
-# this run with a plain mkdir that fails if the name exists, so nothing that
+# this run with a bare mkdir that fails if the name exists (_create_staging_dir,
+# which records the name only after that mkdir succeeded), so nothing that
 # was in the destination before the run can be under it, and fenced to that
 # name and nothing else in _discard_staging. Nothing that existed before the
 # run started is ever deleted by it, on any path.
@@ -3041,8 +3042,8 @@ if [ ${#_stale_paths[@]} -ne 0 ]; then
     "             read by the pipeline's globs afterwards, beside the files" \
     "             that replace them. If they came from another household, they" \
     "             would also still be here after that household was gone." \
-    "This script does not delete anything in a destination: the destination may" \
-    "be a main checkout whose private/1-raw-data is the only copy of the raw" \
+    "This script deletes nothing it did not create in the same run: the destination" \
+    "may be a main checkout whose private/1-raw-data is the only copy of the raw" \
     "archive, and a deletion there is not recoverable by re-running. Delete the" \
     "paths listed above yourself and re-run, or stage into a fresh clone."
 fi
@@ -3086,9 +3087,10 @@ fi
 # in whole; one it already has is merged entry by entry, recursively, and the
 # emptied staged directory is rmdir'd -- which can remove nothing that holds
 # data. The only recursive removal in this file is _discard_staging, of the
-# staging directory this run created: a plain mkdir that fails if the name
-# exists proves nothing pre-existing can be under it, and the function is
-# fenced to those three names. A run killed outright (SIGKILL, power loss)
+# staging directory this run created: _create_staging_dir's bare mkdir fails
+# if the name exists, and records the name only after it succeeded, so nothing
+# pre-existing can be under it; and the removal is fenced to those three
+# names. A run killed outright (SIGKILL, power loss)
 # cannot run it, so the next run refuses on a leftover .staging-* and names
 # it, above, rather than deleting what it did not create.
 #
@@ -3218,7 +3220,8 @@ _swap_failed() {   # $1 = what was being renamed, $2 = onto what, $3 = what mv s
     "renaming:    $1" \
     "onto:        $2" \
     "mv said:     ${3:-(nothing)}" \
-    "replaced:    ${#_swapped[@]} path(s) already hold this source's copy, whole," \
+    "in place:    ${#_swapped[@]} path(s) now hold this source's copy, whole -- new" \
+    "             where the destination had none, replaced where it had one --" \
     "             relative to the destination root:" \
     ${lines[@]+"${lines[@]}"} \
     "every other path this script writes still holds what it held before this run." \
@@ -3279,10 +3282,12 @@ _swap_dir() {   # $1 = a staged directory, $2 = an existing final directory
 # staging directory exists, and inert after the swap has cleared the list.
 _on_exit() {
   local rc=$? p
-  if [ "$rc" -eq 0 ] || [ ${#_STAGING_CREATED[@]} -eq 0 ]; then return 0; fi
+  if [ "$rc" -eq 0 ]; then return 0; fi
+  if [ ${#_STAGING_CREATED[@]} -eq 0 ] && [ ${#_SLOTS_CREATED[@]} -eq 0 ]; then return 0; fi
   _discard_staging
   echo "stage-private-data.sh: FAILED -- the run stopped (exit $rc) with its staging copy still in place" >&2
-  echo "  replaced:    ${#_swapped[@]} path(s) already held this source's copy, relative to the destination root:" >&2
+  echo "  in place:    ${#_swapped[@]} path(s) now hold this source's copy (new where the destination had none," >&2
+  echo "               replaced where it had one), relative to the destination root:" >&2
   for p in ${_swapped[@]+"${_swapped[@]}"}; do echo "    ${p#"$DST_REAL/"}" >&2; done
   echo "  every other path this script writes still holds what it held before this run." >&2
   for p in ${_STAGING_REPORT[@]+"${_STAGING_REPORT[@]}"}; do echo "  $p" >&2; done
@@ -3292,6 +3297,44 @@ _on_exit() {
 # created: a failure below removes those again if they are still empty, so the
 # archive is left as it was found -- no empty directory included, which is the
 # same standard every refusal above holds itself to.
+# Create ONE staging directory and record it as this run's. A BARE mkdir --
+# no -p, and no existence test ahead of it -- so a name that is already there
+# fails the mkdir instead of being adopted: _ensure_contained_dir accepts an
+# existing directory, which is right for the three managed slots and wrong
+# here, because this list is the one _discard_staging removes from, and an
+# entry planted between the leftover check above and this mkdir (or a
+# leftover from a run whose pid this one reuses) must never be on it. The
+# recorded name is appended only after the mkdir has succeeded, so the list
+# holds nothing this run did not create -- which is the whole claim the
+# removal rests on. The containment check is the one _ensure_contained_dir
+# makes, for the same reason: a component above turned into a link would make
+# the literal path and the real one differ.
+_create_staging_dir() {   # $1 = absolute path of a staging directory to create
+  local said real
+  if ! said=$(mkdir -- "$1" 2>&1); then
+    _discard_staging
+    _refuse "a staging directory could not be created" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "path:        $1" \
+      "mkdir said:  ${said:-(nothing)}" \
+      "expected:    a name this run can create -- only a directory it created" \
+      "             may hold its staging copy or be removed afterwards. If the" \
+      "             path already exists, it appeared after this run's check for" \
+      "             leftovers: inspect and delete it yourself, then re-run."
+  fi
+  _STAGING_CREATED[${#_STAGING_CREATED[@]}]="$1"
+  real=$(_physical "$1" || true)
+  if [ "$real" != "$1" ]; then
+    _discard_staging
+    _refuse "a staging directory does not resolve to itself" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "path:        $1" \
+      "resolves to: ${real:-<unresolvable>}" \
+      "expected:    a path whose every component is a real directory inside" \
+      "             $DST_REAL"
+  fi
+}
+
 _SLOTS_CREATED=()
 for _d in "${_STAGING_SLOTS[@]}"; do
   if [ ! -e "$_d" ] && [ ! -L "$_d" ]; then
@@ -3307,8 +3350,7 @@ _STAGE_RAW="$DST_REAL/private/1-raw-data/$_STAGING_NAME"
 _STAGE_VERIFY="$DST_REAL/private/verify/$_STAGING_NAME"
 trap _on_exit EXIT
 for _d in "$_STAGE_HH" "$_STAGE_RAW" "$_STAGE_VERIFY"; do
-  _ensure_contained_dir "$_d"
-  _STAGING_CREATED[${#_STAGING_CREATED[@]}]="$_d"
+  _create_staging_dir "$_d"
 done
 
 # THE COPY PHASE. `|| _copy_failed` rather than `set -e`'s silent abort: the

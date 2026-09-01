@@ -3395,7 +3395,7 @@ def case_a_swap_that_fails_part_way_says_which_files_it_replaced():
             assert all(p.startswith("private/verify/") for p in kept), (
                 f"a file outside the interrupted staging directory kept its "
                 f"old bytes while later files were replaced: {kept}")
-            listed = result.stderr.partition("replaced:")[2].partition("every other")[0]
+            listed = result.stderr.partition("in place:")[2].partition("every other")[0]
             assert listed.strip(), (
                 f"the run does not list what it replaced: {result.stderr}")
             for p in replaced:
@@ -3439,6 +3439,67 @@ def case_a_staging_leftover_from_an_interrupted_run_is_refused_and_named():
             checked.append(slot)
     return (f"a staging directory left by an interrupted run is refused and "
             f"named in each of the {len(checked)} directories staged beside")
+
+
+_CREATE_STAGING_FN = re.compile(r"^_create_staging_dir\(\) \{[^\n]*\n(.*?)\n\}$", re.M | re.S)
+_CREATE_STAGING_HARNESS = """set -uo pipefail
+DST=$1; DST_REAL=$1
+_STAGING_CREATED=()
+_physical() { (cd -- "$1" >/dev/null 2>&1 && pwd -P); }
+_discard_staging() { :; }
+_refuse() { echo "REFUSED -- $1" >&2; shift; for _l in "$@"; do echo "  $_l" >&2; done
+            echo "created=${_STAGING_CREATED[*]+${_STAGING_CREATED[*]}}"; exit 1; }
+_create_staging_dir() {
+%s
+}
+_create_staging_dir "$2"
+echo "created=${_STAGING_CREATED[*]+${_STAGING_CREATED[*]}}"
+"""
+
+
+@case
+def case_a_staging_directory_that_already_exists_is_never_adopted():
+    """issue #214, review. _STAGING_CREATED is the list _discard_staging runs
+    `rm -rf` over, so it may hold only directories this run created. The
+    leftover check refuses a .staging-* it can see, but a name that appears
+    between that check and the mkdir -- or a leftover from a run whose pid
+    this one reuses -- is not covered by it. Routing the creation through
+    _ensure_contained_dir, which accepts an existing directory, would adopt
+    such a name onto the removal list; a bare mkdir fails on it instead.
+
+    There is no honest way to plant the name inside the window from outside
+    the process, so the script's OWN _create_staging_dir is run here, out of
+    its text, against a pre-existing directory: it must refuse, record
+    nothing, and leave the directory and its contents alone. The control is
+    the same function creating an absent name and recording it."""
+    body = _CREATE_STAGING_FN.search(SCRIPT.read_text())
+    assert body, ("stage-private-data.sh no longer defines _create_staging_dir, "
+                  "so nothing guarantees the removal list holds only what this "
+                  "run created")
+    harness = _CREATE_STAGING_HARNESS % body.group(1)
+    with tempfile.TemporaryDirectory() as td:
+        # Resolved, as the script's DST_REAL is: the containment check compares
+        # the literal path with `pwd -P`, and $TMPDIR is a symlink on macOS.
+        root = pathlib.Path(td).resolve()
+        planted = root / ".staging-4242"
+        planted.mkdir()
+        (planted / "household.yaml").write_text("someone else's file\n")
+        r = subprocess.run(["/bin/bash", "-c", harness, "bash", str(root), str(planted)],
+                           capture_output=True, text=True)
+        assert r.returncode != 0, (
+            f"an existing directory was accepted as this run's own: {r.stdout}")
+        assert "could not be created" in r.stderr and str(planted) in r.stderr, r.stderr
+        assert "created=\n" in r.stdout, (
+            f"the existing directory was recorded for removal: {r.stdout}")
+        assert (planted / "household.yaml").read_text() == "someone else's file\n", (
+            "the refusal touched the directory it refused")
+        fresh = root / ".staging-4243"
+        r = subprocess.run(["/bin/bash", "-c", harness, "bash", str(root), str(fresh)],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, f"a fresh name must be created: {r.stderr}"
+        assert fresh.is_dir() and f"created={fresh}" in r.stdout, r.stdout
+    return ("an existing .staging-<pid> fails the bare mkdir and is never "
+            "recorded for removal; a fresh one is created and recorded")
 
 
 @case
