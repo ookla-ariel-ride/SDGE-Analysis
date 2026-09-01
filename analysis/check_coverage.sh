@@ -10,16 +10,58 @@
 # Usage, from the repo root:  ./analysis/check_coverage.sh
 # Requires: ./.venv with coverage installed (pip install coverage), the private
 # archive staged per CLAUDE.md (private/verify/usage.csv etc.).
+#
+# One run at a time (issue #233). Every suite and generator accumulates into the
+# single data file $ROOT/.coverage, which a run erases at startup, so a second
+# run started while the first is still going (the suite takes ~10 minutes)
+# destroys the first run's measurement and both then print a percentage from
+# whatever survived. The run therefore takes an exclusive kernel lock (flock)
+# on $ROOT/.coverage.lock before it touches the data file, and a second run
+# refuses to start while the lock is held. The kernel drops the lock the
+# instant the holder exits, crash or kill included, so a lock file left behind
+# by a dead run never blocks anyone and never needs clearing by hand.
+#
+# "Is one already running?" Do not trust `ps aux | grep check_coverage`: most
+# of the wall time is spent inside child `coverage run` processes, and the
+# script's own name is easy to miss in that list. Ask the lock instead:
+#     cat .coverage.lock            # pid, start time and data file of the LAST holder
+#     lsof .coverage.lock           # non-empty while a run (or its children) holds it
+# The end of a run prints the data file it measured and the statement count it
+# saw, so a truncated measurement is visible in the output itself.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 COV="$ROOT/.venv/bin/coverage"
+PY="$ROOT/.venv/bin/python"
 export COVERAGE_FILE="$ROOT/.coverage"
+LOCK="$COVERAGE_FILE.lock"
 
 [ -x "$COV" ] || { echo "coverage not installed: ./.venv/bin/pip install coverage"; exit 2; }
+[ -x "$PY" ] || { echo "$PY missing -- create the venv first (CLAUDE.md)"; exit 2; }
 [ -f private/verify/usage.csv ] || { echo "private/verify/usage.csv missing -- stage the sandbox first (CLAUDE.md)"; exit 2; }
 
-rm -f "$COVERAGE_FILE" "$COVERAGE_FILE".*
+# Take the lock on fd 9, which stays open (and so held) for the rest of this
+# script and is inherited by every child it starts. Opened for APPEND so that
+# opening never truncates a live holder's pid line; the python child locks the
+# inherited descriptor, and a flock lives on the open file, not on the process,
+# so it outlives the child that took it.
+exec 9>>"$LOCK"
+if ! "$PY" -c 'import fcntl, sys
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    sys.exit(1)'; then
+  echo "check_coverage: another check_coverage.sh run holds $LOCK ($(tr '\n' ' ' < "$LOCK"))" >&2
+  echo "check_coverage: refusing to start -- two runs share one data file and would destroy each other's measurement; wait for it (lsof $LOCK) and re-run" >&2
+  exit 2
+fi
+: > "$LOCK"
+printf 'pid=%s started=%s data=%s\n' "$$" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$COVERAGE_FILE" >&9
+
+# Erase the previous run's data (but never the lock file this run is holding).
+for f in "$COVERAGE_FILE" "$COVERAGE_FILE".*; do
+  [ "$f" = "$LOCK" ] || rm -f "$f"
+done
 
 # 1) the test suites, in-process
 for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
@@ -61,7 +103,14 @@ done
 cd "$ROOT"
 
 "$COV" combine >/dev/null
-"$COV" report --rcfile=.coveragerc
+report=$("$COV" report --rcfile=.coveragerc)
+printf '%s\n' "$report"
+# The TOTAL row's Stmts column: how much the run actually measured. A number
+# far below the usual (~14,500 in 2026-09) means a truncated measurement, not
+# a coverage change.
+stmts=$(printf '%s\n' "$report" | awk '$1 == "TOTAL" { print $2 }')
+[ -n "$stmts" ] || { echo "check_coverage: no TOTAL row in the coverage report -- nothing was measured"; exit 2; }
+echo "measured $stmts statements from $COVERAGE_FILE"
 "$COV" report --rcfile=.coveragerc --fail-under=90 >/dev/null \
   && echo "COVERAGE GATE: PASS (>= 90%)" \
   || { echo "COVERAGE GATE: FAIL (< 90%)"; exit 1; }

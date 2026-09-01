@@ -2005,6 +2005,161 @@ def case_every_check_coverage_suite_is_wired_into_ci():
            f"CI step in {CI_WORKFLOW.name}")
 
 
+# ---------------------------------------------------------------------------
+# Issue #233: check_coverage.sh accumulates every suite and generator into ONE
+# data file, $ROOT/.coverage, which it erases at startup. Two overlapping runs
+# therefore destroy each other's measurement and both still print a percentage
+# with a PASS/FAIL verdict attached (observed: 91.8% PASS and 81.6% FAIL from
+# the same tree, the second missing a whole module). The fixture below runs the
+# REAL script against a repo-shaped throwaway root whose `.venv/bin/coverage`
+# is a stub, so the locking is exercised end to end in a second or two
+# without the private archive or the ten-minute suite.
+# ---------------------------------------------------------------------------
+_COVERAGE_STUB = r"""#!/bin/bash
+# Stand-in for the coverage CLI. `run` records a statement into the data file
+# and, while $STUB_HOLD names an existing file, parks there so the invoking
+# check_coverage.sh stays "in flight" for as long as the test wants. `report`
+# prints a table in coverage's own shape; STUB_FAIL_UNDER=1 makes the
+# --fail-under probe fail, so the 90% gate's FAIL branch is reachable too.
+case "${1:-}" in
+  run)
+    echo "run $*" >> "$COVERAGE_FILE"
+    while [ -n "${STUB_HOLD:-}" ] && [ -e "$STUB_HOLD" ]; do sleep 0.05; done
+    ;;
+  combine) : ;;
+  report)
+    for a in "$@"; do
+      if [ "$a" = "--fail-under=90" ] && [ -n "${STUB_FAIL_UNDER:-}" ]; then exit 2; fi
+    done
+    printf 'Name    Stmts   Miss  Cover\nanalysis/stub.py   4321   300  93.1%%\nTOTAL   4321   300  93.1%%\n'
+    ;;
+  *) echo "stub coverage: unexpected verb $*" >&2; exit 99 ;;
+esac
+"""
+
+
+def _coverage_stub_root(tmp):
+    """A root shaped the way check_coverage.sh expects (it derives $ROOT from
+    its own location), with every executable it calls replaced by a stub:
+    `.venv/bin/coverage` is _COVERAGE_STUB and `.venv/bin/python` execs this
+    interpreter (the lock step needs only the stdlib). Returns the script path
+    to invoke."""
+    for d in ("analysis", "data", "private/verify", ".venv/bin"):
+        (tmp / d).mkdir(parents=True)
+    script = tmp / "analysis" / "check_coverage.sh"
+    shutil.copy(COVERAGE_SCRIPT, script)
+    (tmp / "analysis" / "stub.py").write_text("x = 1\n")
+    (tmp / ".coveragerc").write_text("[run]\nparallel = true\n")
+    for f in ("pvoutput_daily.csv", "enphase_daily_production.csv"):
+        (tmp / "data" / f).write_text("date,kwh\n")
+    (tmp / "private" / "verify" / "usage.csv").write_text("fixture\n")
+    cov = tmp / ".venv" / "bin" / "coverage"
+    cov.write_text(_COVERAGE_STUB)
+    py = tmp / ".venv" / "bin" / "python"
+    py.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    for f in (script, cov, py):
+        f.chmod(0o755)
+    return script
+
+
+def _run_coverage_script(script, env_extra=None, wait=True):
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+           "HOME": os.environ.get("HOME", "/"), **(env_extra or {})}
+    if wait:
+        return subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                              env=env, timeout=120)
+    return subprocess.Popen(["bash", str(script)], stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, env=env,
+                            start_new_session=True)
+
+
+def _wait_for(pred, what, seconds=20):
+    import time
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if pred():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def case_check_coverage_refuses_to_overlap_a_live_run():
+    """Issue #233 AC2/AC5: while one run is in flight, a second invocation
+    must refuse with an explicit message and a non-zero exit, and must leave
+    the first run's data file alone -- never share the file and print a
+    percentage computed from whatever survived. Then AC "stale lock": the
+    lock is a kernel flock, released the instant the holder dies, so a lock
+    file left behind by a killed run must NOT block the next one. Reverting
+    the protection makes the second run complete with exit 0, which fails the
+    first assertion below."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        script = _coverage_stub_root(tmp)
+        hold = tmp / "hold"
+        hold.write_text("")
+        data_file = tmp / ".coverage"
+        lock_file = tmp / ".coverage.lock"
+        first = _run_coverage_script(script, {"STUB_HOLD": str(hold)}, wait=False)
+        try:
+            _wait_for(data_file.exists, "the first run to start writing its data file")
+            # No STUB_HOLD here: without the protection this run shares the data
+            # file and completes with exit 0, which is the fast, visible failure.
+            second = _run_coverage_script(script)
+            assert second.returncode != 0, (
+                "a second check_coverage.sh started while the first was in flight "
+                f"and exited {second.returncode}:\n{second.stdout[-400:]}")
+            out = second.stdout + second.stderr
+            assert "another check_coverage.sh run" in out and "refusing" in out, (
+                f"refused, but without saying why: {out[-400:]}")
+            assert f"pid={first.pid}" in out, (
+                f"the refusal does not name the holder's pid ({first.pid}): {out[-400:]}")
+            assert data_file.exists(), (
+                "the refused second run deleted the first run's data file")
+            assert first.poll() is None, "the first run died while the second was refused"
+            assert lock_file.exists(), f"{lock_file.name} was not left for the operator"
+            # A crashed run: kill the whole process group (the script and the
+            # stub it is waiting on) so nothing holds the lock, then prove the
+            # lock FILE it left behind, still naming the dead pid, blocks nobody.
+            os.killpg(first.pid, 9)
+            first.wait(timeout=30)
+        finally:
+            if first.poll() is None:
+                os.killpg(first.pid, 9)
+                first.wait(timeout=30)
+        assert f"pid={first.pid}" in lock_file.read_text(), (
+            f"the dead run's lock file does not carry its pid: {lock_file.read_text()!r}")
+        hold.unlink()
+        third = _run_coverage_script(script)
+        assert third.returncode == 0, (
+            f"a stale lock file from a dead run blocked the next run "
+            f"(exit {third.returncode}):\n{third.stdout[-400:]}{third.stderr[-400:]}")
+        assert "COVERAGE GATE: PASS" in third.stdout, third.stdout[-400:]
+    return ("check_coverage.sh refuses to overlap a live run, names its pid, and a "
+            "dead run's lock file blocks nobody")
+
+
+def case_check_coverage_names_its_data_file_and_still_gates_at_90():
+    """Issue #233 AC3/AC4: a completed run states which data file it measured
+    and how many statements it saw (so a truncated measurement is visible in
+    the output, not only by comparing two runs), and the 90% floor still
+    decides PASS (exit 0) versus FAIL (exit 1) exactly as before."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        script = _coverage_stub_root(tmp)
+        ok = _run_coverage_script(script)
+        assert ok.returncode == 0, ok.stdout[-400:] + ok.stderr[-400:]
+        assert "COVERAGE GATE: PASS (>= 90%)" in ok.stdout, ok.stdout[-400:]
+        assert f"measured 4321 statements" in ok.stdout, (
+            f"the run does not state its statement count: {ok.stdout[-400:]}")
+        assert str(tmp / ".coverage") in ok.stdout, (
+            f"the run does not name its data file: {ok.stdout[-400:]}")
+        bad = _run_coverage_script(script, {"STUB_FAIL_UNDER": "1"})
+        assert bad.returncode == 1, f"FAIL branch exited {bad.returncode}, not 1"
+        assert "COVERAGE GATE: FAIL (< 90%)" in bad.stdout, bad.stdout[-400:]
+    return ("check_coverage.sh names its data file and statement count, and still "
+            "gates at 90%")
+
+
 CASES = [
     case_manifest_is_complete_and_exact,
     case_no_two_generators_own_the_same_artifact,
@@ -2022,6 +2177,8 @@ CASES = [
     case_verified_elsewhere_mapping_is_real_and_wired_into_ci,
     case_ci_wired_test_files_ignores_disabled_and_non_gating_steps,
     case_every_check_coverage_suite_is_wired_into_ci,
+    case_check_coverage_refuses_to_overlap_a_live_run,
+    case_check_coverage_names_its_data_file_and_still_gates_at_90,
     case_generators_run_on_the_real_archive,
     case_the_real_archive_copy_excludes_unread_raw_data_subdirs,
     case_the_real_archive_sandbox_is_removed_even_when_a_generator_run_raises,
