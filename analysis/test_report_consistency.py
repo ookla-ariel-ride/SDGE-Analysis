@@ -4964,17 +4964,66 @@ def _heading_verdict_agreement(rendered_headings, resolved_tokens):
     return agreeing, diverged, unresolved
 
 
-def _raised_in(exc, path):
-    """Whether `exc` -- or any exception it chains from -- has a frame in the
-    file `path`.
+# The one module whose except clause may rewrap the household loader's
+# SystemExit and keep the pardon: report_tokens.resolve_token (see _raised_in).
+_TOKEN_WRAPPER = ROOT / "analysis" / "report_tokens.py"
+
+
+def _raise_site(exc):
+    """The frame `exc` was raised in: the innermost entry of its traceback."""
+    tb = exc.__traceback__
+    if tb is None:
+        return None
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    return tb.tb_frame
+
+
+def _rewrapped_in(outer, wrapper):
+    """Whether `outer` was raised by the except clause that caught its
+    __context__, in that same frame, and that frame's code is in the file
+    `wrapper`.
+
+    The head of a caught exception's traceback is the frame that caught it, so
+    a rewrap by the catching clause leaves the outer exception's raise site
+    and the inner exception's head on one frame object. A handler that catches
+    the inner exception and then fails in a call it makes raises from a frame
+    the inner exception never passed through, and does not match."""
+    inner, frame = outer.__context__, _raise_site(outer)
+    return (frame is not None and inner is not None
+            and inner.__traceback__ is not None
+            and inner.__traceback__.tb_frame is frame
+            and pathlib.Path(frame.f_code.co_filename).resolve() == wrapper)
+
+
+def _raised_in(exc, path, via=None):
+    """Whether `exc` -- or an exception it is attributed to -- has a frame in
+    the file `path`.
 
     Attribution by RAISE SITE, which is a fact about the stack, rather than by
     message text, which is prose the raising module is free to reword. The
-    chain matters: report_tokens catches the household loader's SystemExit and
-    re-raises its own ("failed to resolve token X: ..."), so the loader's
-    frames sit on the chained __context__, not on the exception the caller
-    catches. Both are walked, and a self-referential chain terminates."""
+    chain matters: report_tokens.resolve_token catches the household loader's
+    SystemExit and re-raises its own ("failed to resolve token X: ..."), so
+    the loader's frames sit on the chained __context__, not on the exception
+    the caller catches.
+
+    Where the walk stops (issue #225). Python sets __context__ on anything
+    raised while another exception is being handled, so following it freely
+    attributes a failure to whatever happened to be on the stack: a handler
+    that caught the loader's exit and then broke for its own reasons would be
+    read as the loader failing, and on a machine with no archive (CI) that
+    failure would pardon itself. So a link is followed only when it is one of:
+      * an explicit `raise ... from e` (__cause__): the raiser named its cause;
+      * an implicit __context__ that is a direct rewrap -- raised by the
+        except clause that caught it, in the same frame -- from the file
+        `via`, which is the one module whose wrapper is the reason the chain
+        is walked at all. `via=None` follows explicit causes only.
+    A `raise ... from None` (__suppress_context__) is the raiser disclaiming
+    its context and ends the walk; so does a rewrap from any other file, and a
+    handler that fails in a call it makes rather than in its own clause.
+    A self-referential chain terminates."""
     target = pathlib.Path(path).resolve()
+    via = pathlib.Path(via).resolve() if via is not None else None
     seen, cur = set(), exc
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
@@ -4983,7 +5032,12 @@ def _raised_in(exc, path):
             if pathlib.Path(tb.tb_frame.f_code.co_filename).resolve() == target:
                 return True
             tb = tb.tb_next
-        cur = cur.__cause__ or cur.__context__
+        if cur.__cause__ is not None:
+            cur = cur.__cause__
+        elif cur.__suppress_context__ or via is None or not _rewrapped_in(cur, via):
+            break
+        else:
+            cur = cur.__context__
     return False
 
 
@@ -5003,12 +5057,14 @@ def _missing_archive_exit(exc, archive_present, loader_path):
         loader's OWN precondition, the one household._load() tests before it
         raises, so this tracks the loader rather than paraphrasing it;
       * the failure really came out of that loader -- a frame in household.py
-        somewhere on the exception chain.
+        on the exception itself, on an explicit cause, or across
+        report_tokens' own rewrap of it (_raised_in says where that walk
+        stops, and why).
     Each condition alone is too weak. Frames alone would write off a missing
     household KEY, which raises from the same module while the archive is
     present and is a real defect. Absence alone would write off any unrelated
     breakage on a machine that happens to have no archive, which is CI."""
-    return not archive_present and _raised_in(exc, loader_path)
+    return not archive_present and _raised_in(exc, loader_path, via=_TOKEN_WRAPPER)
 
 
 def _resolve_heading_verdict_tokens(scaffold):
@@ -5354,19 +5410,60 @@ def case_the_two_structural_guards_reject_the_defects_they_exist_to_catch():
     #    loader-side ones are compiled under household.py's own path so they
     #    carry a real frame in that file, which is what the classifier reads.
     loader = str(ROOT / "analysis" / "household.py")
+    wrapper = str(_TOKEN_WRAPPER)
     raise_from_loader = compile("raise SystemExit('missing private/household.yaml')",
                                 loader, "exec")
-    try:
-        exec(raise_from_loader, {})
-    except SystemExit as e:
-        direct = e
+
+    def caught(src, filename):
+        """The SystemExit that `src` raises when run as module code under `filename`
+        (compile() takes the name on trust, so the frame carries it without the
+        file being read), with `raise_from_loader` in scope."""
+        try:
+            exec(compile(src, filename, "exec"), {"raise_from_loader": raise_from_loader})
+        except SystemExit as e:
+            return e
+        raise AssertionError(f"probe under {filename} did not raise")
+
+    handling = "try:\n    exec(raise_from_loader, {})\nexcept SystemExit:\n"
+    direct = caught("exec(raise_from_loader, {})", wrapper)
+    # resolve_token's own shape: the except clause that caught the loader's exit
+    # raises the wrapper's SystemExit, in the same frame, in report_tokens.py.
+    wrapped = caught(handling + "    raise SystemExit('report_tokens: failed to resolve "
+                     "token S4_VERDICT_SHORT')", wrapper)
+    # Issue #225: the same shape raised anywhere else. Python sets __context__ on
+    # whatever is raised while another exception is being handled, so a broken
+    # handler carries the loader's frames on its chain without being the
+    # wrapper. Both of these are built in this frame, so the file is this one.
     try:
         try:
             exec(raise_from_loader, {})
         except SystemExit:
-            raise SystemExit("report_tokens: failed to resolve token S4_VERDICT_SHORT")
+            raise SystemExit("report_tokens: unknown format spec for S4_VERDICT_SHORT")
     except SystemExit as e:
-        wrapped = e
+        rewrapped_here = e
+    try:
+        try:
+            exec(raise_from_loader, {})
+        except SystemExit:
+            raise SystemExit("report_tokens: unknown format spec for S4_VERDICT_SHORT") from None
+    except SystemExit as e:
+        disclaimed_here = e
+    # ... and a handler inside report_tokens.py that disclaims its context, or
+    # that catches the loader's exit and then fails in some other frame.
+    disclaimed_in_wrapper = caught(handling + "    raise SystemExit('report_tokens: bad "
+                                   "format spec') from None", wrapper)
+    failed_deeper_in_wrapper = caught(
+        "def fallback():\n    raise SystemExit('report_tokens: fallback is broken')\n"
+        + handling + "    fallback()", wrapper)
+    # An explicit `from e` is the raiser saying what it failed because of, and
+    # is followed from any file.
+    try:
+        try:
+            exec(raise_from_loader, {})
+        except SystemExit as inner:
+            raise SystemExit("generate_report: could not resolve S4_VERDICT_SHORT") from inner
+    except SystemExit as e:
+        caused_here = e
     try:
         raise SystemExit("report_tokens: unknown format spec for S4_VERDICT_SHORT")
     except SystemExit as e:
@@ -5376,10 +5473,26 @@ def case_the_two_structural_guards_reject_the_defects_they_exist_to_catch():
         "checkout (CI) would fail this case instead of reporting the token uncompared"
     assert _missing_archive_exit(wrapped, False, loader), \
         "report_tokens' wrapper hides the loader failure it chains from -- the exception " \
-        "chain has to be walked, not just the exception that was caught"
+        "chain has to be walked across that wrapper, not just the exception that was caught"
     assert not _missing_archive_exit(wrapped, True, loader), \
         "a token failure on a checkout that HAS the private archive is being written off " \
         "as 'needs the archive'"
+    assert _missing_archive_exit(caused_here, False, loader), \
+        "an explicit `raise ... from e` naming the loader's exit as its cause is not " \
+        "followed, so a caller that attributes its failure honestly loses the pardon"
+    for probe, what in ((rewrapped_here, "a SystemExit raised outside report_tokens' wrapper "
+                                         "while the loader's exit was being handled"),
+                        (disclaimed_here, "a `raise ... from None` outside the wrapper"),
+                        (disclaimed_in_wrapper, "a `raise ... from None` inside report_tokens.py"),
+                        (failed_deeper_in_wrapper, "a handler in report_tokens.py that caught "
+                                                   "the loader's exit and then failed in "
+                                                   "another frame")):
+        for present in (False, True):
+            assert not _missing_archive_exit(probe, present, loader), (
+                f"{what} is pardoned as 'this checkout has no private archive' (archive "
+                f"present: {present}) -- the classifier follows a __context__ Python "
+                f"attached to whatever was raised during handling, so on an archive-less "
+                f"machine (CI) that failure drops its own pin and reports green (issue #225)")
     assert not _missing_archive_exit(unrelated, False, loader), \
         "a token failure with nothing to do with the private archive is still being " \
         "swallowed as one, which is what makes the agreement check a silent no-op"
