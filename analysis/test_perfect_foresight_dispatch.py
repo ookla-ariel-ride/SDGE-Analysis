@@ -1028,13 +1028,15 @@ def case_exclusion_mask_is_keyed_off_the_intake_flag_not_the_detector():
 # and announced, not refused, so the synthetic CI run (test_scripts_runnable.py)
 # keeps this generator's optional-cross-check contract.
 # ---------------------------------------------------------------------------
-def _canon_copy(scenario, drop=False, baseline_shift=0.0):
+def _canon_copy(scenario, drop=False, baseline_shift=0.0, baseline_nan=False):
     doc = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
     if drop:
         del doc["post_behavior"]["free_fix_scenario"]
     else:
         doc["post_behavior"]["free_fix_scenario"] = scenario
     doc["baseline_bill_current_rates"] += baseline_shift
+    if baseline_nan:
+        doc["baseline_bill_current_rates"] = float("nan")   # json emits NaN
     fd, tmp = tempfile.mkstemp(suffix=".json")
     with open(fd, "w") as fh:
         json.dump(doc, fh)
@@ -1119,13 +1121,22 @@ def case_greedy_comparison_drops_an_artifact_built_on_a_different_frame():
     path, _ = _canon_copy("a")
     outcome, canon = _load_canon_under(True, path, base_bill=_COMMITTED_BASE + 0.49)
     assert outcome == "ok" and canon is not None, "a baseline inside the whole-dollar rounding was dropped"
+    # The tolerance IS the whole-dollar rounding: pin it, +$0.49 in, +$0.51 out.
+    assert pfd.BASELINE_TOL_USD == 0.5, pfd.BASELINE_TOL_USD
     path, _ = _canon_copy("a")
     with contextlib.redirect_stderr(io.StringIO()):
-        outcome, canon = _load_canon_under(True, path, base_bill=_COMMITTED_BASE + 1.5)
-    assert outcome == "ok" and canon is None, "a baseline $1.50 off was quoted"
-    return ("an artifact whose baseline_bill_current_rates is $100 off its frame is "
-            "dropped from the comparison and announced; the real one and one "
-            "within $1 are accepted")
+        outcome, canon = _load_canon_under(True, path, base_bill=_COMMITTED_BASE + 0.51)
+    assert outcome == "ok" and canon is None, "a baseline $0.51 off was quoted"
+    # A NaN baseline compares False against every tolerance; it must be dropped by name too.
+    path, _ = _canon_copy("a", baseline_nan=True)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        outcome, canon = _load_canon_under(True, path)
+    assert outcome == "ok" and canon is None, "a NaN baseline was quoted"
+    assert "baseline_bill_current_rates" in err.getvalue() and "nan" in err.getvalue(), err.getvalue()
+    return ("an artifact whose baseline_bill_current_rates is $100 off, $0.51 off, or NaN "
+            "is dropped from the comparison and announced; the real one and one "
+            "within $0.50 are accepted")
 
 
 @case

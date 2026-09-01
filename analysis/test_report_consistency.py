@@ -605,6 +605,8 @@ def case_optimality_gap_table_matches_the_artifact():
     pfd_path = ROOT / "data" / "perfect_foresight_dispatch.json"
     assert pfd_path.exists(), f"{pfd_path} is committed public data and must exist"
     pfd = json.loads(pfd_path.read_text())
+    assert "greedy_comparison" in pfd, (
+        "perfect_foresight_dispatch.json has no greedy_comparison: perfect_foresight_dispatch dropped the greedy comparison (see its NOTICE); run battery_dispatch_policies.py on this frame, then regenerate perfect_foresight_dispatch.py")
     gc = pfd["greedy_comparison"]
     da = pfd["day_ahead_forecast"]
     ps = pfd["purchasing_statement"]
@@ -5889,6 +5891,8 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
     soil = json.loads((ROOT / "data" / "soiling_results.json").read_text())
     carbon = json.loads((ROOT / "data" / "carbon_fullyear_results.json").read_text())
     disp = DISPATCH
+    assert "greedy_comparison" in pfd, (
+        "perfect_foresight_dispatch.json has no greedy_comparison: perfect_foresight_dispatch dropped the greedy comparison (see its NOTICE); run battery_dispatch_policies.py on this frame, then regenerate perfect_foresight_dispatch.py")
     gap = pfd["greedy_comparison"]
     div = ext["electrification_dividend"]
     nbt_cents = sorted(int(k.rstrip("c")) for k in

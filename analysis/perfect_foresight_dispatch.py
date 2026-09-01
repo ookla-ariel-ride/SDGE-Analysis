@@ -158,6 +158,7 @@ Output: perfect_foresight_dispatch.json. This script fully regenerates the
 committed artifact.
 """
 import json
+import math
 import os
 import sys
 
@@ -229,7 +230,7 @@ _METHOD_EV = ("linear program minimizing the exact rates.bill_nem_monthly "
               "policy, with a cyclic (steady-state) SOC boundary")
 
 
-BASELINE_TOL_USD = 1.0   # the artifact rounds its baseline to whole dollars
+BASELINE_TOL_USD = 0.5   # the artifact rounds its baseline to whole dollars: |x - round(x)| <= 0.5
 
 
 def load_canon(path, base_bill):
@@ -250,7 +251,8 @@ def load_canon(path, base_bill):
     on the same frame the two agree to the artifact's whole-dollar rounding
     (BASELINE_TOL_USD). A larger gap means the artifact was built on a
     different frame; its greedy saving is then NOT quoted (the comparison is
-    dropped exactly as if no artifact existed, greedy_save_usd null) and the
+    dropped exactly as if no artifact existed: the top-level greedy_comparison
+    key is absent and purchasing_statement.greedy_save_usd is null) and the
     mismatch is announced by name on stderr. Dropping rather than refusing
     keeps this generator's documented CI contract (test_scripts_runnable.py
     runs it on a synthetic frame beside the committed data/, where the
@@ -276,6 +278,7 @@ def load_canon(path, base_bill):
     if artifact_has_ev == ev_applies:
         artifact_base = canon.get("baseline_bill_current_rates")
         if not isinstance(artifact_base, (int, float)) or \
+                not math.isfinite(float(artifact_base)) or \
                 abs(float(artifact_base) - float(base_bill)) > BASELINE_TOL_USD:
             print(
                 f"NOTICE: perfect_foresight_dispatch: {path} was built on a "
@@ -284,8 +287,9 @@ def load_canon(path, base_bill):
                 "through the same battery_dispatch_policies.billed() engine "
                 f"(tolerance ${BASELINE_TOL_USD:.2f}, the artifact's whole-dollar "
                 "rounding). Its pw3.greedy.save is another frame's saving and is "
-                "NOT quoted: greedy_comparison is omitted and greedy_save_usd is "
-                "null. Run battery_dispatch_policies.py on THIS frame first to "
+                "NOT quoted: the top-level greedy_comparison key is omitted and "
+                "purchasing_statement.greedy_save_usd is null. Run "
+                "battery_dispatch_policies.py on THIS frame first to "
                 "get the comparison.", file=sys.stderr)
             return None
         return canon
