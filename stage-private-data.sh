@@ -3188,10 +3188,10 @@ _discard_staging() {   # remove this run's own staging directories; fills _STAGI
     i=$((i - 1))
     d=${_SLOTS_CREATED[$i]}
     if [ ! -d "$d" ] || [ -L "$d" ]; then continue; fi
-    if rmdir -- "$d" 2>/dev/null; then
+    if _rmdir_err=$(rmdir -- "$d" 2>&1); then
       _STAGING_REPORT+=("removed:     ${d#"$DST_REAL/"}  (an empty directory this run created)")
     else
-      _STAGING_REPORT+=("kept:        ${d#"$DST_REAL/"}  (a directory this run created; not empty, so left alone)")
+      _STAGING_REPORT+=("not removed: ${d#"$DST_REAL/"}  (a directory this run created; rmdir said: ${_rmdir_err##*: })")
     fi
   done
   _SLOTS_CREATED=()
@@ -3357,8 +3357,12 @@ _SLOTS_CREATED=()
 trap _on_exit EXIT
 for _d in "${_STAGING_SLOTS[@]}"; do
   if [ ! -e "$_d" ] && [ ! -L "$_d" ]; then
-    _ensure_contained_dir "$_d"
+    # Recorded BEFORE the call: its resolve check can refuse on the directory
+    # it just made, and the trap must still know to remove that directory. A
+    # mkdir that failed leaves no directory, and the discard skips a name
+    # that is not one.
     _SLOTS_CREATED[${#_SLOTS_CREATED[@]}]="$_d"
+    _ensure_contained_dir "$_d"
   else
     _ensure_contained_dir "$_d"
   fi
