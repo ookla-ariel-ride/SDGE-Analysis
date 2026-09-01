@@ -179,12 +179,14 @@ CHARGE_KW_WITH_EXPANSION = 8.0
 
 # Which discharge the "value" policy's charge test compares a stored kWh against
 # (issue #240). The policy cannot see the future, so it does not know WHICH
-# import a stored kWh will serve; what it can know is the range of imports it
-# is allowed to serve. "floor" stores a kWh only when the LEAST valuable import
-# the policy serves in that season would cover its delivered cost, so nothing
-# stored ever waits for a better import. "best" stores it whenever the MOST
-# valuable such import would, and relies on the discharge rule to hold that
-# kWh until one arrives. Both are causal. On this house's measured year
+# import a stored kWh will serve; what it can know is the range of import
+# values over the intervals it is allowed to discharge into. "floor" is the
+# smallest import value over the season's discharge-window intervals, whether
+# or not an import occurs in them: a kWh is stored only when that value covers
+# its delivered cost, so nothing stored ever waits for a better import. "best"
+# is the largest such value, and relies on the discharge rule to hold the kWh
+# until an import worth that much arrives. Both read only the tariff and the
+# bucket signs known from the pre-battery frame. On this house's measured year
 # "floor" wins by a wide margin ($2,466/yr against greedy's $2,328 for one
 # Powerwall 3; "best" $2,335): a shoulder kWh held for the evening occupies
 # room that the cheaper midday surplus, arriving a few hours later, then
@@ -318,8 +320,9 @@ def _run_batt_value(d, imp0, gen0, cap, power_kw, charge_kw, soc0, charge_ref, t
 
     Charge rule: surplus in interval i is stored only if E_i / RTE is below the
     reference discharge value for its season (see VALUE_CHARGE_REF): the
-    smallest I_j over the intervals the policy may discharge into ("floor",
-    the default), or the largest ("best"). Grid top-up is tested the same way.
+    smallest I_j over the season's discharge-window intervals, whether or not
+    an import occurs in them ("floor", the default), or the largest ("best").
+    Grid top-up is tested the same way.
     On this tariff "floor" means: midday super-off-peak surplus (11.7c
     delivered) is stored, 6-10h and 14-16h off-peak surplus (51-55c) and
     on-peak surplus are exported. The gain is mostly not the 2-3c margin on

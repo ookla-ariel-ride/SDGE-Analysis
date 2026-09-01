@@ -964,9 +964,11 @@ expensive eligible lot first. So no served import is ever cheaper than the energ
 it, by construction; `run_batt`'s optional `trace` records every charge, skip and
 discharge with the two figures compared, and `test_battery_dispatch_policies.py` checks
 the invariant on a synthetic shoulder day and on every discharge of the measured year.
-The reference import is a choice (`VALUE_CHARGE_REF`): "floor", the cheapest import the
-policy serves, stores nothing that would have to wait for a better import; "best", the
-dearest, stores shoulder surplus and holds it for the evening. Everything else is greedy:
+The reference import is a choice (`VALUE_CHARGE_REF`), taken over the season's
+discharge-window intervals whether or not an import occurs in them: "floor", the smallest
+import value among them, stores nothing that would have to wait for a better import;
+"best", the largest, stores shoulder surplus and holds it for the evening. Both read only
+the tariff and the bucket signs known from the pre-battery frame. Everything else is greedy:
 the same discharge window and EV-spillover gate, the same both-flows rule, the same
 super-off-peak top-up toward full, and super-off-peak imports still never served (a
 11.7c midday lot would clear a 12.5c import by 0.8c and the 14.0c top-up that refilled
@@ -985,19 +987,19 @@ morning shoulder first, so the cheaper midday surplus that follows finds no room
 exported at 10.4c while a 49c export was given up in its place. "Best" recovers almost
 none of that (+$6.80) because a shoulder lot held for the evening occupies the same room,
 and a shoulder lot still in the pack at 21:00 displaces a 14.0c grid top-up rather than
-an 86.8c on-peak import. A variant that used "floor" before 14:00 and "best" after it
-was tried and landed within $1 of "floor", so the afternoon shoulder is not worth
-storing either. "Floor" is therefore the default, and it closes 63% of the $217.39/yr gap
-between greedy and the perfect-foresight optimum (§3.23, $2,545.39/yr), leaving
-$79.65/yr, 3.2% of its own saving. Served energy and cycling are unchanged (4,710 kWh
-and 1.006 cycles/day against 4,720 and 1.008).
+an 86.8c on-peak import. "Floor" is therefore the default, and it closes 63% of the
+$217.08/yr gap between greedy ($2,328.31) and the perfect-foresight optimum (§3.23,
+$2,545.39/yr), leaving $79.65/yr, 3.2% of its own saving. (`perfect_foresight_dispatch.json`
+states that gap as $217.39 because it takes greedy from the artifact's whole-dollar
+$2,328.) Served energy and cycling are unchanged (4,710 kWh and 1.006 cycles/day against
+4,720 and 1.008).
 
-The published figures stay on the greedy policy in this revision. Adopting "value" moves
+The published figures use the greedy policy. Adopting "value" moves
 `pw3`, `pw3x` and `post_behavior` in `battery_dispatch_policies.json` and, through them,
 `tou_spread.json`, `irreducible_bill.json`, `package_results.json`,
 `deep_results.json`, `uncertainty_results.json`, `battery_plan_matrix.json`, the
 sizing curve, the perfect-foresight comparison and report §6's figures and prose (which
-now call greedy a heuristic with no proof that it is the optimum, and say which import a
+call greedy a heuristic with no proof that it is the optimum, and say which import a
 shoulder kWh serves is not determined); that is one regeneration of the whole chain and
 a separate change from establishing the policy. The greedy artifact regenerates
 byte-identically with the "value" code in place (`cmp`), and the three original policies

@@ -434,8 +434,9 @@ def case_greedy_stores_shoulder_surplus_that_crowds_out_the_cheaper_midday_surpl
 @case
 def case_value_policy_stores_no_shoulder_surplus_and_all_the_midday_surplus():
     """Same day, the "value" policy. Its charge test prices the shoulder kWh at
-    energy(S, off) / RTE = 54.5c delivered against the cheapest import the
-    policy serves this season, allin(S, off) = 51.1c, and declines it; the
+    energy(S, off) / RTE = 54.5c delivered against the smallest import value
+    over the season's discharge-window intervals, allin(S, off) = 51.1c, and
+    declines it; the
     whole 12 kWh of midday surplus then fits. The trace names the kWh it
     declined and the two figures it compared, so the comparison is checked
     off the run rather than off this docstring."""
@@ -520,24 +521,41 @@ def case_value_policy_never_serves_an_import_below_the_cost_of_the_energy_servin
     pool that holds 54.5c shoulder energy. Greedy carries no lot ledger, so
     the exception is documented here rather than traced: its pool is untagged,
     which is the reason the published section 6 prose says which import a
-    shoulder kWh serves is not determined."""
+    shoulder kWh serves is not determined.
+
+    Run with charge_ref="best" on purpose: under the default "floor" no 54.5c
+    lot is ever stored, so the discharge gate would have nothing to refuse and
+    a build that dropped the gate would still pass. Under "best" the 8 kWh
+    shoulder lot IS in the pack at 15:00, most-expensive-first would reach for
+    it, and the gate is the only thing that sends the 51.1c import to the
+    midday lots instead."""
     d, imp0, gen0 = _shoulder_day()
     tr = []
-    imp, exp, served, _ = _run(d, imp0, gen0, "value", trace=tr)
+    imp, exp, served, _ = _run(d, imp0, gen0, "value", charge_ref="best", trace=tr)
+    assert abs(_stored_by_period(d, gen0, exp)["off"] - SHOULDER_KWH) < 1e-6, (
+        "under charge_ref='best' the shoulder lot was not stored, so this case "
+        "no longer exercises the discharge gate")
     dis = _assert_no_import_served_below_its_energy_cost(tr)
     p = d.p.values
     off_served = float((imp0 - imp)[p == "off"].sum())
     assert abs(off_served - OFFPEAK_IMPORT_KWH) < 1e-6, off_served
-    # every kWh that served the off-peak import came from a midday lot
+    # every kWh that served the off-peak import came from a midday lot, none
+    # from the 54.5c shoulder lot sitting in the same pack
     off_rows = [r for r in dis if p[r["i"]] == "off"]
     assert off_rows and all(abs(r["cost"] - MIDDAY_COST) < 1e-9
                             for r in off_rows), off_rows
+    shoulder_cost = R.energy("S", "off") / RTE
+    on_rows = [r for r in dis if p[r["i"]] == "on"]
+    assert any(abs(r["cost"] - shoulder_cost) < 1e-9 for r in on_rows), (
+        "the shoulder lot was never discharged on-peak either", on_rows[:3])
     g_imp, g_exp, _, _ = _run(d, imp0, gen0, "greedy")
     g_stored_off = _stored_by_period(d, gen0, g_exp)["off"]
     g_off_served = float((imp0 - g_imp)[p == "off"].sum())
     assert g_stored_off > 0 and g_off_served > 0, (g_stored_off, g_off_served)
-    return (f"value: {len(dis)} discharge decisions, none below cost; the off-peak "
-            f"import is served from {MIDDAY_COST*100:.1f}c midday lots. Greedy on "
+    return (f"value/best: {len(dis)} discharge decisions, none below cost; with an "
+            f"8 kWh {shoulder_cost*100:.1f}c lot in the pack the off-peak import is "
+            f"served from {MIDDAY_COST*100:.1f}c midday lots and the shoulder lot "
+            f"waits for on-peak. Greedy on "
             f"the same day serves it from a pool holding {g_stored_off:.0f} kWh of "
             f"{R.energy('S', 'off') / RTE * 100:.1f}c energy")
 
