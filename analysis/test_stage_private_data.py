@@ -3215,6 +3215,232 @@ def case_an_incomplete_source_is_refused_before_the_first_copy():
             f"({len(checked)} injected failures), and a complete one stages")
 
 
+# --------------------------------------------------------------------------
+# issue #214: a failure DURING a copy. Everything above is decided before the
+# first byte; these cases inject the failure at a copy that has already
+# started, after earlier copies have landed, and read the destination's
+# CONTENTS afterwards -- not just its path set, since a mid-copy failure's
+# signature is a file that exists with the wrong bytes.
+# --------------------------------------------------------------------------
+def _content_snapshot(root):
+    """_snapshot with the bytes: every path under `root` mapped to its file
+    contents (None for a directory), git's own internals excluded. A path set
+    cannot see a file that was truncated or half-replaced in place."""
+    out = {}
+    root = pathlib.Path(root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != ".git"]
+        for name in dirnames:
+            out[str((pathlib.Path(dirpath) / name).relative_to(root))] = None
+        for name in filenames:
+            if name == ".git":
+                continue
+            p = pathlib.Path(dirpath) / name
+            out[str(p.relative_to(root))] = p.read_bytes() if p.is_file() else b"<special>"
+    return out
+
+
+def _failing_tool_shim(td, tool, needle, partial=False, name="failing-tool"):
+    """A directory holding a `tool` (cp or mv) that behaves as the real one
+    until an invocation whose arguments mention `needle`, which it fails with
+    exit 1 -- an I/O error arriving on that file and no other. Every
+    invocation is logged to <dir>/<tool>.log, so a case can prove the failure
+    landed AFTER earlier copies rather than at a guard.
+
+    `partial=True` makes the failing invocation leave a truncated file at its
+    target first, which is what ENOSPC and a lost device really leave behind;
+    the default fails before touching the target."""
+    real = shutil.which(tool)
+    if not real:
+        raise SkipCase(f"no {tool} on PATH to shim")
+    d = pathlib.Path(td) / name
+    d.mkdir(exist_ok=True)
+    log = d / f"{tool}.log"
+    write_partial = ""
+    if partial:
+        write_partial = (
+            '    target=${@: -1}\n'
+            '    src=${@: -2:1}\n'
+            '    if [ -d "$target" ]; then target="$target/$(basename -- "$src")"; fi\n'
+            '    printf "partial" > "$target"\n')
+    (d / tool).write_text(
+        "#!/bin/bash\n"
+        f'printf "%s\\n" "$*" >> {shlex.quote(str(log))}\n'
+        'for a in "$@"; do\n'
+        f'  case "$a" in *{shlex.quote(needle)}*)\n'
+        f'{write_partial}'
+        f'    echo "{tool}: $a: Input/output error (injected)" >&2\n'
+        '    exit 1 ;;\n'
+        '  esac\n'
+        'done\n'
+        f'exec {shlex.quote(real)} "$@"\n')
+    (d / tool).chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{d}{os.pathsep}{env.get('PATH', '')}"
+    return env, log
+
+
+def _write_household_bytes(src, tag):
+    """Give every staged input distinctive contents, so a snapshot can tell an
+    untouched file from one replaced with the same name."""
+    raw = src / "private" / "1-raw-data"
+    for rel in ("gas.csv", "electric_billing_history_2024-2026.csv",
+                "Electric_15_Minute_test.csv", "enphase_sam8760_2025.csv",
+                "enphase_sam8760_2026.csv"):
+        (raw / rel).write_text(f"{tag} {rel}\n")
+    (raw / "electric-bills" / "jan.pdf").write_text(f"{tag} electric bill\n")
+    (raw / "gas-bills" / "jan.pdf").write_text(f"{tag} gas bill\n")
+    (src / "private" / "household.yaml").write_text(
+        f"# {tag} intake file\nhousehold:\n  has_gas: true\n")
+
+
+def _tag_of(content):
+    """The first word of a file written by _write_household_bytes, past a
+    leading YAML comment marker; b"" for anything else."""
+    return content.lstrip(b"# ").split(b"\n", 1)[0].split(b" ", 1)[0]
+
+
+@case
+def case_a_copy_that_fails_mid_run_leaves_the_archive_byte_identical():
+    """issue #214. `set -e` aborted on the failing `cp` and whatever had landed
+    before it stayed: reproduced on this fixture before the fix, with the
+    fourth copy (gas.csv) failing after household.yaml, the interval export
+    and both SAM files had already been written into the destination -- a
+    half-updated archive, exit 1, and no line saying which half.
+
+    The failure is injected AT A COPY, not at a guard: a `cp` on PATH that
+    behaves normally until it is handed gas.csv, leaves a truncated file at
+    its target (what a full disk leaves), and exits 1. The log proves at
+    least three copies succeeded before it. Both destination shapes are
+    checked -- a fresh worktree, and a re-stage over an archive whose every
+    file the new source replaces -- and each must hold exactly the BYTES it
+    held before, with nothing of this run left anywhere under it."""
+    checked = []
+    for label, restage in (("a fresh destination", False),
+                           ("a re-stage over an already staged archive", True)):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: true\n",
+                                 has_gas_bills_dir=True)
+            _write_household_bytes(src, "first")
+            with _linked_worktree(td) as dst:
+                if restage:
+                    control = _run_script(src, dst, cwd=src, timeout=120)
+                    assert control.returncode == 0, (
+                        f"the first stage must succeed or this case proves "
+                        f"nothing: {control.stderr}")
+                    _write_household_bytes(src, "second")
+                before = _content_snapshot(dst)
+                env, log = _failing_tool_shim(td, "cp", "gas.csv", partial=True)
+                result = _run_script(src, dst, cwd=src, env=env, timeout=120)
+                assert result.returncode != 0, (
+                    f"{label}: the injected copy failure was not reported: "
+                    f"{result.stdout}")
+                calls = [ln for ln in log.read_text().splitlines() if ln.strip()]
+                landed = [ln for ln in calls[:-1] if str(dst) in ln]
+                assert "gas.csv" in calls[-1] and len(landed) >= 3, (
+                    f"{label}: the failure did not land mid-run -- the shim saw "
+                    f"{len(landed)} earlier copies into the destination before "
+                    f"the failing one: {calls}")
+                after = _content_snapshot(dst)
+                assert after == before, (
+                    f"{label}: a copy that failed part-way left the destination "
+                    f"changed: {sorted(set(after) ^ set(before)) or 'same paths, different bytes'}")
+                assert "FAILED" in result.stderr and "gas.csv" in result.stderr, (
+                    f"{label}: the failure does not name the copy that failed: "
+                    f"{result.stderr}")
+                assert "unchanged" in result.stderr, (
+                    f"{label}: the run does not say what the destination holds "
+                    f"now: {result.stderr}")
+                assert not any(".staging-" in p for p in after), (
+                    f"{label}: a staging directory survived the failure: "
+                    f"{sorted(p for p in after if '.staging-' in p)}")
+            checked.append(label)
+    return (f"a copy failing after three earlier copies landed leaves the "
+            f"destination byte-identical ({len(checked)} shapes)")
+
+
+@case
+def case_a_swap_that_fails_part_way_says_which_files_it_replaced():
+    """issue #214, the other half of AC-2. The copies land in a staging
+    directory beside each target and are renamed into place afterwards, so
+    the window in which a failure can change the archive is the renames. One
+    of those can still fail, and when it does the run must say exactly what
+    it replaced before it stopped -- never "nothing happened" when something
+    did. Injected on the rename of samA.csv: everything ahead of it in the
+    swap (household.yaml, the whole of 1-raw-data) is already the new
+    household's bytes, everything after it is still the old, and the message
+    names each replaced path and the file the failure landed on."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: true\n",
+                             has_gas_bills_dir=True)
+        _write_household_bytes(src, "first")
+        with _linked_worktree(td) as dst:
+            control = _run_script(src, dst, cwd=src, timeout=120)
+            assert control.returncode == 0, control.stderr
+            _write_household_bytes(src, "second")
+            env, log = _failing_tool_shim(td, "mv", "samA.csv")
+            result = _run_script(src, dst, cwd=src, env=env, timeout=120)
+            assert result.returncode != 0, (
+                f"the injected rename failure was not reported: {result.stdout}")
+            assert "FAILED" in result.stderr and "samA.csv" in result.stderr, (
+                f"the failure does not name the rename that failed: {result.stderr}")
+            after = _content_snapshot(dst)
+            replaced = sorted(p for p, b in after.items()
+                              if b is not None and _tag_of(b) == b"second")
+            kept = sorted(p for p, b in after.items()
+                          if b is not None and _tag_of(b) == b"first")
+            assert replaced and kept, (
+                f"the failure did not land mid-swap: replaced={replaced} kept={kept}")
+            assert "private/household.yaml" in replaced, replaced
+            assert all(p.startswith("private/verify/") for p in kept), (
+                f"a file outside the interrupted staging directory kept its "
+                f"old bytes while later files were replaced: {kept}")
+            listed = result.stderr.partition("replaced:")[2].partition("every other")[0]
+            assert listed.strip(), (
+                f"the run does not list what it replaced: {result.stderr}")
+            for p in replaced:
+                assert p in listed, (
+                    f"the run replaced {p} and does not say so: {result.stderr}")
+            for p in kept:
+                assert p not in listed, (
+                    f"{p} was not replaced, but the message lists it as if it "
+                    f"were: {result.stderr}")
+            assert not any(".staging-" in p for p in after), (
+                f"a staging directory survived the failure: "
+                f"{sorted(p for p in after if '.staging-' in p)}")
+            assert not any(b == b"partial" or b == b"" for b in after.values()
+                           if b is not None), "a file was left truncated"
+    return (f"a rename failing part-way reports the {len(replaced)} paths it "
+            f"replaced and leaves the other {len(kept)} at their old bytes")
+
+
+@case
+def case_a_staging_leftover_from_an_interrupted_run_is_refused_and_named():
+    """issue #214. A run killed outright (SIGKILL, power loss) cannot remove
+    its own staging directory, so the next run has to notice one: it holds a
+    partial copy of some household's archive under a name the pipeline's globs
+    never read, and nothing else in this script deletes it. Refused before the
+    first write, with the path named, in each of the three directories the
+    copies stage beside."""
+    checked = []
+    for slot in ("private", "private/1-raw-data", "private/verify"):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                 has_gas_bills_dir=False)
+            with _linked_worktree(td) as dst:
+                leftover = dst / slot / ".staging-4242"
+                leftover.mkdir(parents=True)
+                (leftover / "household.yaml").write_text("someone's intake file\n")
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=120)
+                _assert_refused(result, dst, before, f"a leftover under {slot}/")
+                assert f"{slot}/.staging-4242" in result.stderr, (
+                    f"the refusal does not name the leftover: {result.stderr}")
+            checked.append(slot)
+    return (f"a staging directory left by an interrupted run is refused and "
+            f"named in each of the {len(checked)} directories staged beside")
+
+
 @case
 def case_has_gas_is_read_with_real_yaml_semantics_not_text_scanning():
     """Codex review, issue #33, pass 3: an earlier version grepped the
