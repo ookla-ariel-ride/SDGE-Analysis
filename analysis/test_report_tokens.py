@@ -4053,116 +4053,97 @@ def case_s2_verdict_refuses_to_time_exports_it_cannot_rebuild():
             f"rebuilding the year's exports (live midday share {live:.1%})")
 
 
-# THE TWO §8 VERDICT TOKENS AND THE REFERENT EACH ONE MAY TIME OR PRICE
-# (issue #183). Both S8_VERDICT_SHORT and EXPANSION_VERDICT_SHORT quote the
-# ALL-HOURS export share, exports over production, the figure EXPORTED_SHARE
-# publishes. That ratio is the same number whether the exports leave at noon or
-# at dusk, so a clause that puts it "at the wrong time of day" or "at low
-# value" is describing the midday slice and pointing at the whole; the heading
-# carried the second wording and the expansion token still carried the first.
-# Only the midday share, which the hour-of-day profiles support, may sit next
-# to a time of day. The vocabulary is kept local and short on purpose: this is
-# a generator-side pin on two token strings, not the page-wide referent guard
-# in test_report_consistency.py, which reads the rendered prose and cannot
-# reach a token the page does not render yet.
-_S8_TIMING_OR_VALUE_WORDS = (
-    "time of day", "wrong time", "wrong hours", "midday", "mid-day",
-    "middle of the day", "daytime", "noon", "afternoon", "while the sun",
-    "low value", "little value", "worth little", "earns little", "cheap", "at low",
-)
-_S8_PERCENT_RE = re.compile(r"\d+(?:\.\d+)?%")
-
-
-def _clauses_beside_the_all_hours_share(value, exp_pct):
-    """Every clause of `value` that carries the all-hours share, read outward
-    from the percentage to the neighbouring percentage or sentence end in each
-    direction, the same cut the page-wide guard makes, so a phrase belonging to
-    the midday figure next door is never read as this one's."""
-    out = []
-    for sentence in re.split(r"\.(?:\s|$)", value):
-        hits = list(_S8_PERCENT_RE.finditer(sentence))
-        for i, m in enumerate(hits):
-            if m.group(0) != f"{exp_pct}%":
-                continue
-            start = hits[i - 1].end() if i else 0
-            end = hits[i + 1].start() if i + 1 < len(hits) else len(sentence)
-            out.append(sentence[start:end])
-    return out
-
-
-def _timing_or_value_words_beside_the_all_hours_share(value, exp_pct):
-    return sorted({w for clause in _clauses_beside_the_all_hours_share(value, exp_pct)
-                   for w in _S8_TIMING_OR_VALUE_WORDS if w in clause.casefold()})
-
-
-def _s8_share_percentages():
-    exp_pct = round(rt._json("report_data.json")["totals"]["exp"]
-                    / rt._annual_production_kwh(rt.CTX) * 100)
+# THE TWO §8 VERDICT TOKENS ARE PINNED BY VALUE, NOT BY VOCABULARY (issue
+# #183). Both quote the ALL-HOURS export share, exports over production, the
+# figure EXPORTED_SHARE publishes. That ratio is the same number whether the
+# exports leave at noon or at dusk, so a clause that put it "at the wrong time
+# of day" or "at low value" was describing the midday slice and pointing at
+# the whole; the heading carried the second wording and the expansion token
+# the first. A blocklist of time and value words was the first pin written
+# here and it was the wrong shape: "for pennies", "into a glut", "when the
+# grid least needs it" and "60 percent" all walked past it (the same hole
+# issue #180 names in the page-wide guard). So each token is asserted EQUAL
+# to the sentence built from its own helper values -- the all-hours share, the
+# grandfathering bracket, the midday share and the tariff window -- and any
+# wording change, in either direction, fails by value. The retired-wording
+# case below feeds the pin the two retired strings and shows it refusing them,
+# so the pin stays a test of the defect rather than of a spelling.
+def _s8_scaffolds():
+    """{token: the sentence it must render}, from the helpers the tokens read."""
+    exp_pct = rt._all_hours_export_pct(rt.CTX)
     midday_pct = round(rt._midday_export_share(rt.CTX) * 100)
-    if exp_pct == midday_pct:
-        raise SkipCase(f"the all-hours and midday export shares both round to {exp_pct}% "
-                       "on this archive, so a clause cannot be told to belong to one")
-    return exp_pct, midday_pct
-
-
-@case
-def case_s8_verdict_tokens_attach_timing_only_to_the_midday_share():
-    """The heading and the expansion verdict may state the all-hours share,
-    and may time the midday slice, but may not do the second with the first's
-    figure. The expansion token has to name the slice it times, with the share
-    and the window the hour-of-day profiles actually support."""
-    exp_pct, midday_pct = _s8_share_percentages()
-    for token in ("S8_VERDICT_SHORT", "EXPANSION_VERDICT_SHORT"):
-        value = rt.resolve_token(token)
-        words = _timing_or_value_words_beside_the_all_hours_share(value, exp_pct)
-        assert not words, (
-            f"{token} attaches {words} to the all-hours export share ({exp_pct}%), "
-            f"which is exports over production at every hour and says nothing about "
-            f"when they leave or what they earn: {value!r}")
-    expansion = rt.resolve_token("EXPANSION_VERDICT_SHORT")
-    expected = (f"{midday_pct}% of the year's exports leave in the "
-                f"{rt._cheap_window()} window")
-    assert expected in expansion, (
-        f"EXPANSION_VERDICT_SHORT does not time the midday slice by its own share "
-        f"({expected!r}): {expansion!r}")
-    assert expansion.startswith("No"), expansion
-    _assert_within_density_cap("S8_VERDICT_SHORT", rt.resolve_token("S8_VERDICT_SHORT"),
-                               "the in-heading verdict")
-    return (f"S8_VERDICT_SHORT and EXPANSION_VERDICT_SHORT put no time or value word "
-            f"beside the {exp_pct}% all-hours share; the expansion token times the "
-            f"{midday_pct}% midday slice by name")
-
-
-@case
-def case_s8_referent_pin_rejects_both_retired_wordings():
-    """The pin above must fail on the two strings the issue retired, or it is
-    pinning a wording rather than the defect. Both are fed to the checker with
-    the live share, then the checker is shown accepting the live tokens and a
-    sentence that times the midday slice beside the all-hours figure."""
-    exp_pct, midday_pct = _s8_share_percentages()
     window = rt._cheap_window()
+    return {
+        "S8_VERDICT_SHORT": (
+            f"No, no, and not yet — the array already exports {exp_pct}% of production, "
+            f"and expansion risks the {rt._grandfathering_bracket('S8_VERDICT_SHORT')} "
+            "NEM 2.0 grandfathering"),
+        "EXPANSION_VERDICT_SHORT": (
+            f"No — expansion risks the "
+            f"{rt._grandfathering_bracket('EXPANSION_VERDICT_SHORT')} NEM 2.0 "
+            f"grandfathering, and {midday_pct}% of the year's exports already leave in "
+            f"the {window} window"),
+    }
+
+
+def _assert_s8_tokens_match_their_scaffolds():
+    for token, expected in sorted(_s8_scaffolds().items()):
+        value = rt.resolve_token(token)
+        assert value == expected, (
+            f"{token} renders {value!r}, not the sentence its own helper values build "
+            f"({expected!r}) -- the wording moved, and the only wordings this pin has "
+            "ever refused attached a time of day or a value to the all-hours export "
+            "share, which says nothing about either")
+
+
+@case
+def case_s8_verdict_tokens_render_exactly_their_helper_values():
+    """The heading and the expansion verdict each render the one sentence
+    their helpers build: the all-hours share (a plain fraction), the
+    grandfathering bracket (the reason for the "no"), and, on the expansion
+    token, the midday slice timed by its own share. Both stay inside the
+    basic-tier density cap."""
+    _assert_s8_tokens_match_their_scaffolds()
+    for token in ("S8_VERDICT_SHORT", "EXPANSION_VERDICT_SHORT"):
+        _assert_within_density_cap(token, rt.resolve_token(token), "the §8 verdict")
+    exp_pct = rt._all_hours_export_pct(rt.CTX)
+    midday_pct = round(rt._midday_export_share(rt.CTX) * 100)
+    return (f"S8_VERDICT_SHORT and EXPANSION_VERDICT_SHORT render exactly their helper "
+            f"values (all-hours {exp_pct}%, midday {midday_pct}%, "
+            f"{rt._grandfathering_bracket('S8_VERDICT_SHORT')} at risk), inside the "
+            "density cap")
+
+
+@case
+def case_s8_value_pin_refuses_both_retired_wordings():
+    """Self-test of the pin above: each retired wording, rendered with the live
+    figures, is put behind the token's own `get` and the pin has to refuse it.
+    Without this the pin is a spelling check that happens to pass today."""
+    exp_pct = rt._all_hours_export_pct(rt.CTX)
+    bracket = rt._grandfathering_bracket("S8_VERDICT_SHORT")
     retired = (
-        f"No, no, and not yet — the array already exports {exp_pct}% of production at "
-        "low value, and expansion risks the $1–2/yr NEM 2.0 grandfathering",
-        f"No — already exports {exp_pct}% of production at the wrong time of day",
-        # The timing moved one clause to the left of the figure.
-        f"No — at midday the array already exports {exp_pct}% of production",
+        ("S8_VERDICT_SHORT",
+         f"No, no, and not yet — the array already exports {exp_pct}% of production at "
+         f"low value, and expansion risks the {bracket} NEM 2.0 grandfathering"),
+        ("EXPANSION_VERDICT_SHORT",
+         f"No — already exports {exp_pct}% of production at the wrong time of day"),
+        # The same conflation past the old blocklist: no listed word, same claim.
+        ("EXPANSION_VERDICT_SHORT",
+         f"No — already exports {exp_pct}% of production for pennies"),
     )
-    for wording in retired:
-        words = _timing_or_value_words_beside_the_all_hours_share(wording, exp_pct)
-        assert words, f"the §8 referent pin accepts the retired wording {wording!r}"
-    accepted = (
-        f"No — the array already exports {exp_pct}% of production, and {midday_pct}% "
-        f"of those exports leave in the {window} window",
-        f"No — {midday_pct}% of the year's exports leave in the {window} window. "
-        f"The array exports {exp_pct}% of what it makes",
-    )
-    for wording in accepted:
-        words = _timing_or_value_words_beside_the_all_hours_share(wording, exp_pct)
-        assert not words, (
-            f"the §8 referent pin rejects a correctly scoped wording {wording!r}: {words}")
-    return (f"the §8 referent pin rejects all {len(retired)} retired wordings and accepts "
-            f"{len(accepted)} that time only the midday slice")
+    for token, wording in retired:
+        with _swapped(rt.TOKENS[token], "get", lambda ctx, w=wording: w):
+            try:
+                _assert_s8_tokens_match_their_scaffolds()
+            except AssertionError as e:
+                assert token in str(e) and wording in str(e), e
+            else:
+                raise AssertionError(
+                    f"the §8 value pin accepts the retired wording {wording!r} for {token}")
+    # Nothing leaked: the live tokens pass again.
+    _assert_s8_tokens_match_their_scaffolds()
+    return (f"the §8 value pin refuses all {len(retired)} retired wordings, including one "
+            "no vocabulary list would have caught")
 
 
 # The two published ends of what an exported kWh is worth, and the rates.py

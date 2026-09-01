@@ -3353,7 +3353,7 @@ def _time_of_day_words_in(clause):
 # EXPANSION_VERDICT_SHORT, the §8 body's own verdict slot, times the midday
 # slice by its own share instead of putting the all-hours share "at the wrong
 # time of day" (issue #183; both tokens are pinned by
-# test_report_tokens.case_s8_verdict_tokens_attach_timing_only_to_the_midday_share);
+# test_report_tokens.case_s8_verdict_tokens_render_exactly_their_helper_values);
 # and what the year's exports are worth is the EXPORT_VALUE_SURPLUS_BOUND /
 # EXPORT_VALUE_NETTING_BOUND range, the whole export profile priced through both
 # NEM 2.0 settlement treatments instead of read off the midday cell. The

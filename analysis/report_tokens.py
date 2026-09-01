@@ -3927,12 +3927,28 @@ _tok("NEM_GRANDFATHER_VALUE_RANGE", kind="derived", dim="$",
      sources=["data/nem3_grandfathering.json:grandfathering_value_range_usd_per_yr"])
 
 
-def _s8_verdict_short(ctx):
+def _grandfathering_bracket(token):
+    """What NEM 2.0 grandfathering is worth, as the "$low–high/yr" bracket the
+    two section 8 verdicts print. One helper for both so the heading and the
+    expansion verdict cannot state the cap's stake from different reads of
+    data/nem3_grandfathering.json (issue #183 review)."""
     nem = _json("nem3_grandfathering.json")["grandfathering_value_range_usd_per_yr"]
-    low, high = _amounts("S8_VERDICT_SHORT", "what NEM 2.0 grandfathering is worth",
+    low, high = _amounts(token, "what NEM 2.0 grandfathering is worth",
                          grandfathering_low=nem["low"], grandfathering_high=nem["high"])
-    exp_pct = round(_json("report_data.json")["totals"]["exp"] /
-                     _annual_production_kwh(ctx) * 100)
+    return f"${low:,.0f}–{high:,.0f}/yr"
+
+
+def _all_hours_export_pct(ctx):
+    """Exports over production at every hour of the year, in whole percent:
+    the same figure EXPORTED_SHARE publishes, and a number that says nothing
+    about WHEN the exports leave."""
+    return round(_json("report_data.json")["totals"]["exp"] /
+                 _annual_production_kwh(ctx) * 100)
+
+
+def _s8_verdict_short(ctx):
+    bracket = _grandfathering_bracket("S8_VERDICT_SHORT")
+    exp_pct = _all_hours_export_pct(ctx)
     # NOT "at low value". That clause priced the ALL-HOURS export share at the
     # midday cell of the price map, and the section's most-read sentence was
     # where it read hardest. The exports are worth somewhere between
@@ -3943,8 +3959,7 @@ def _s8_verdict_short(ctx):
     # NEM 2.0 growth cap and the grandfathering it puts at risk -- and that one
     # is artifact-backed.
     return (f"No, no, and not yet — the array already exports {exp_pct}% of "
-            f"production, and expansion risks the "
-            f"${low:,.0f}–{high:,.0f}/yr NEM 2.0 grandfathering")
+            f"production, and expansion risks the {bracket} NEM 2.0 grandfathering")
 
 
 _tok("S8_VERDICT_SHORT", phrase=True, kind="derived", get=_s8_verdict_short,
@@ -3958,20 +3973,26 @@ def _expansion_verdict_short(ctx):
     # same number whether the exports leave at noon or at dusk, so the timing
     # clause was describing the midday slice and pointing at the whole; the
     # same conflation the heading above carried as "at low value" (issue
-    # #183). The token now times the slice it can actually time: the share of
-    # the year's exports that leaves inside the tariff's own daytime
-    # super-off-peak run, off the hour-of-day profiles, through the same
-    # rebuild gate section 2's verdict uses. The all-hours share it used to
-    # quote follows in the template's own next sentence as EXPORTED_SHARE,
-    # with no judgement attached.
+    # #183). The reason the answer is "no" is the one the heading gives and
+    # the section's body rests on: the NEM 2.0 growth cap and the
+    # grandfathering it puts at risk, read through the same helper as the
+    # heading. The timing fact follows as a second clause, scoped to the slice
+    # the hour-of-day profiles can actually time (the share of the year's
+    # exports leaving in the tariff's daytime super-off-peak run, through the
+    # same rebuild gate section 2's verdict uses). The all-hours share follows
+    # in the template's own next sentence as EXPORTED_SHARE, with no judgement
+    # attached.
+    bracket = _grandfathering_bracket("EXPANSION_VERDICT_SHORT")
     share = _midday_export_share(ctx, "EXPANSION_VERDICT_SHORT")
-    return (f"No — {round(share * 100)}% of the year's exports leave in the "
+    return (f"No — expansion risks the {bracket} NEM 2.0 grandfathering, and "
+            f"{round(share * 100)}% of the year's exports already leave in the "
             f"{_cheap_window()} window")
 
 
 _tok("EXPANSION_VERDICT_SHORT", phrase=True, kind="derived",
      get=_expansion_verdict_short,
-     sources=["data/report_data.json:hourly_S.exp / hourly_W.exp",
+     sources=["data/nem3_grandfathering.json:grandfathering_value_range_usd_per_yr",
+              "data/report_data.json:hourly_S.exp / hourly_W.exp",
               "data/report_data.json:totals.exp (rebuild check)",
               "analysis/rates.py:period() (the daytime super-off-peak window)"])
 
