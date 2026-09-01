@@ -1481,12 +1481,13 @@ def case_a_second_ranked_household_renders_packages_and_plans_on_one_stated_foot
     # (0) THE ARTIFACT RELATIONSHIP THE SENTENCE RESTS ON, asserted before a
     # single line is rendered. battery_plan_matrix.py fail-closed asserts each
     # plan's no_battery within $1.00 of plan_results.csv's CEA total (its ref
-    # reads the provider == "CEA" rows) BEFORE rounding, then stores
-    # round(no_b) -- one rounding, adding at most $0.50 -- so the stored cell
-    # can sit at most $1.50 from the CSV total; $2.00 bounds that with margin.
-    # (Not $3.00: that figure belongs to test_report_consistency's comparison
-    # of two MARGINS, where two such cells each contribute, and is too loose
-    # for a single level.) Read the COMMITTED csv, not trt's parsed rows: the
+    # reads the provider == "CEA" rows) BEFORE rounding, then stores it twice:
+    # round(no_b) for display and round(no_b * 100) as no_battery_cents
+    # (issue #177). This pin reads the cents, so the only slack past the
+    # generator's own $1.00 is half a cent of cents rounding: $1.01. (It was
+    # $2.00 while the whole-dollar cell was the only copy; $2.01 belongs to
+    # test_report_consistency's comparison of two MARGINS, where two such
+    # cells each contribute.) Read the COMMITTED csv, not trt's parsed rows: the
     # repricing fixture below edits rt's PARSED rows only, and the matrix was
     # built against the committed totals -- the committed file is the side
     # the tie-out actually ran against.
@@ -1503,14 +1504,15 @@ def case_a_second_ranked_household_renders_packages_and_plans_on_one_stated_foot
         (rt.ROOT / "data" / "plan_results.csv").read_text().splitlines()))
     csv_total = float(next(r["total"] for r in committed
                            if r["provider"] == "CEA" and r["plan"] == rival))
-    no_batt = rt._json("battery_plan_matrix.json")["plans"][rival]["no_battery"]
-    assert abs(no_batt - csv_total) <= 2.0, (
+    row = rt._json("battery_plan_matrix.json")["plans"][rival]
+    no_batt, no_batt_exact = row["no_battery"], row["no_battery_cents"] / 100
+    assert abs(no_batt_exact - csv_total) <= 1.0 + 0.005, (
         f"the ranking and the switch pricing are NOT on one footing: "
-        f"battery_plan_matrix.json plans[{rival!r}].no_battery (${no_batt:,}) is "
-        f"${abs(no_batt - csv_total):,.2f} from plan_results.csv's CEA total "
-        f"(${csv_total:,.2f}) -- past the generator's own $1.00 pre-rounding "
-        "tie-out plus its one $0.50 rounding, so the two artifacts no longer "
-        "reconcile")
+        f"battery_plan_matrix.json plans[{rival!r}].no_battery_cents "
+        f"(${no_batt_exact:,.2f}) is ${abs(no_batt_exact - csv_total):,.2f} from "
+        f"plan_results.csv's CEA total (${csv_total:,.2f}) -- past the generator's "
+        "own $1.00 pre-rounding tie-out plus half a cent of cents rounding, so the "
+        "two artifacts no longer reconcile")
     # ... and the identity that makes "baseline = the same plan's no-package
     # year" checkable: package_save = no_battery - package_bill, up to $1
     # because the three fields are rounded independently by the generator.

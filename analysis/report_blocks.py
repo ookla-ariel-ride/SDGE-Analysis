@@ -555,8 +555,11 @@ def _s3_plan_rows():
 def _s4_battery_plan_rows():
     plans = rt._json("battery_plan_matrix.json")["plans"]
     current_plan = rt.hh1("household.plan")
+    # Ordered on the cents, not the whole-dollar cell (issue #177): two rivals
+    # that round to the same dollar would otherwise take the JSON's key order,
+    # which is not a ranking. The cells printed stay the whole-dollar ones.
     others = sorted((p for p in plans if p != current_plan),
-                     key=lambda p: plans[p]["no_battery"])
+                     key=lambda p: plans[p]["no_battery_cents"])
     out = []
     for p in others:
         d = plans[p]

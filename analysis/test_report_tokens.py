@@ -2745,8 +2745,14 @@ def case_a_dollar_cell_moved_without_its_cents_is_refused_not_ranked():
     whose dollar cell and cents twin disagree by more than the half-dollar
     the rounding allows was not written by battery_plan_matrix.py -- it was
     hand-edited, or half-updated -- and ranking it would publish a standing
-    off whichever field the reader did not look at. Every ranked token
-    refuses it, naming itself, the plan and the column.
+    off whichever field the reader did not look at. Every token that ranks
+    or differences the matrix refuses it, naming itself, the plan and the
+    column -- for a RIVAL's row and for the HOUSEHOLD'S OWN row alike. The
+    own row is the one the first version of this case did not move: the
+    rivals were checked where they were ranked, but PLAN_MARGIN_VS_RUNNER_UP
+    subtracts the household's own cell without ranking it, so an own cell
+    moved $500 priced a $1,461 margin while S4_VERDICT_SHORT refused the
+    same matrix (issue #177 review).
 
     This is also why every fixture in this suite that moves a ranked cell
     goes through _cell_priced: moving the dollar field alone is this
@@ -2755,22 +2761,106 @@ def case_a_dollar_cell_moved_without_its_cents_is_refused_not_ranked():
     provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
     refused = []
     with _stub_plan(best, provider):
-        for column, token in (("no_battery", "S4_ROW_CLASS"),
-                              ("with_battery", "S4_VERDICT_SHORT"),
-                              ("no_battery", "PLAN_MARGIN_VS_RUNNER_UP")):
-            with _swapped(plans[rival], column, plans[best][column] - 500):
+        for moved_plan, column, token in (
+                (rival, "no_battery", "S4_ROW_CLASS"),
+                (rival, "with_battery", "S4_VERDICT_SHORT"),
+                (rival, "no_battery", "PLAN_MARGIN_VS_RUNNER_UP"),
+                (best, "no_battery", "S4_ROW_CLASS"),
+                (best, "with_battery", "S4_VERDICT_SHORT"),
+                (best, "no_battery", "S4_VERDICT_SHORT"),
+                (best, "no_battery", "PLAN_MARGIN_VS_RUNNER_UP")):
+            with _swapped(plans[moved_plan], column, plans[moved_plan][column] - 500):
                 try:
                     value = rt.resolve_token(token)
                     raise AssertionError(
-                        f"{token} ranked a matrix whose {rival}.{column} dollar cell "
-                        f"moved $500 while its cents twin did not: {value!r}")
+                        f"{token} ranked a matrix whose {moved_plan}.{column} dollar "
+                        f"cell moved $500 while its cents twin did not: {value!r}")
                 except SystemExit as e:
-                    for needle in (token, rival, column):
+                    for needle in (token, moved_plan, column):
                         assert needle in str(e), (
                             f"{token}'s refusal does not name {needle!r}: {e}")
-            refused.append(f"{token}:{column}")
-    return ("a dollar cell that disagrees with its cents twin is refused by name ("
-            + ", ".join(refused) + ")")
+            refused.append(f"{token}:{'own' if moved_plan == best else 'rival'}.{column}")
+    return ("a dollar cell that disagrees with its cents twin is refused by name, in a "
+            "rival's row and in the household's own (" + ", ".join(refused) + ")")
+
+
+@case
+def case_a_matrix_without_cents_fields_is_refused_naming_the_generator():
+    """A data/battery_plan_matrix.json written before issue #177 has dollar
+    cells and no _cents twins. That is not a bad cell the ranking can report
+    as "None"; it is an artifact of the wrong shape, and the refusal has to
+    tell whoever reads it what to run. Every ranked token refuses it, and the
+    message names the token, the missing field and battery_plan_matrix.py."""
+    plans, best, rival, rest = _matrix_pair()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    root = rt._json("battery_plan_matrix.json")
+    stripped = {p: {k: v for k, v in row.items() if not k.endswith("_cents")}
+                for p, row in plans.items()}
+    assert all("no_battery_cents" not in row for row in stripped.values())
+    refused = []
+    with _stub_plan(best, provider), _swapped(root, "plans", stripped):
+        for token in ("S4_ROW_CLASS", "S4_VERDICT_SHORT", "PLAN_MARGIN_VS_RUNNER_UP"):
+            try:
+                value = rt.resolve_token(token)
+                raise AssertionError(
+                    f"{token} ranked a matrix with no _cents fields: {value!r}")
+            except SystemExit as e:
+                msg = str(e)
+                for needle in (token, "_cents", "regenerate", "battery_plan_matrix.py"):
+                    assert needle.lower() in msg.lower(), (
+                        f"{token}'s refusal of a pre-#177 matrix does not say {needle!r}: "
+                        f"{msg}")
+                assert "is None" not in msg, (
+                    f"{token} reports a missing field as a None it cannot settle instead "
+                    f"of naming the remedy: {msg}")
+            refused.append(token)
+    return ("a matrix with no _cents fields is refused naming battery_plan_matrix.py as "
+            "the remedy (" + ", ".join(refused) + ")")
+
+
+@case
+def case_section_4s_rival_rows_and_the_runner_up_follow_the_cents_when_the_dollars_tie():
+    """Two rankings outside the verdict read the same column: section 4's
+    table orders its rival rows, and section 0 names the runner-up. Both used
+    to sort on the whole-dollar cell, so two rivals that round to the same
+    dollar took the JSON's key order, which is not a ranking. Priced 100.49
+    first in key order and 100.40 second, the dollar cells tie at 100 and the
+    cents put the second rival first. The row order and the runner-up pick
+    have to follow the cents; the cells printed stay the whole-dollar ones.
+
+    Confirmed against this household's own rows as well: its real rivals are
+    dollars apart, so the committed section 4 rows are the same either way."""
+    import report_blocks as rb
+    plans, best, near, far, rest = _matrix_trio()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    first, second = [p for p in plans if p in (near, far)]   # JSON key order
+    cells = {best: (50, 50), first: (100.49, 100.49), second: (100.40, 100.40)}
+    cells.update({p: (9_000, 9_000) for p in rest})
+    with _stub_plan(best, provider):
+        live = rb._s4_battery_plan_rows()
+        with _matrix_priced(plans, cells):
+            assert plans[first]["no_battery"] == plans[second]["no_battery"] == 100, (
+                "the fixture no longer stores the two rivals on the same dollar cell")
+            assert plans[first]["no_battery_cents"] > plans[second]["no_battery_cents"]
+            rows = rb._s4_battery_plan_rows()
+            assert rows.index(f">{second}<") < rows.index(f">{first}<"), (
+                f"section 4 orders {first} (100.49) ahead of {second} (100.40): the row "
+                f"order followed the JSON key order, not the cents: {rows}")
+            assert rows.count("<td>$100</td>") == 4, rows   # both rivals, both columns
+            runner_up = rt._runner_up("PLAN_MARGIN_VS_RUNNER_UP", "no_battery")[0]
+            assert runner_up == second, (
+                f"the runner-up is {runner_up}, not the rival the cents rank second")
+            assert rt._bpm_rivals("PLAN_MARGIN_VS_RUNNER_UP", "no_battery") == {second}
+        assert rb._s4_battery_plan_rows() == live, "the synthetic matrix leaked out"
+    # This household's own rows: the cents and the dollars rank the rivals the
+    # same way, so the published table is unchanged by the re-ranking.
+    rivals = [p for p in plans if p != best]
+    by_dollars = sorted(rivals, key=lambda p: plans[p]["no_battery"])
+    by_cents = sorted(rivals, key=lambda p: plans[p]["no_battery_cents"])
+    assert by_dollars == by_cents, (by_dollars, by_cents)
+    return (f"with {first} at 100.49 ahead of {second} at 100.40 in key order, section 4 "
+            f"lists {second} first and the runner-up is {second}; this household's own "
+            f"rows rank the same on cents and dollars ({by_cents})")
 
 
 # ---------------------------------------------------------------------------

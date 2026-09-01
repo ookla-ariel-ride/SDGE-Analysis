@@ -1115,6 +1115,11 @@ cell is more than $0.50 from its cents twin, since the generator writes both fro
 and a wider gap means a hand-edited or half-updated artifact. On this household the cents
 are 488173 / 256417 (EV-TOU-5), 584296 / 417564 (EV-TOU-2), 635622 / 534897 (TOU-ELEC),
 margins of hundreds of dollars, so the ranked verdict is the same as on the dollar cells.
+The §4 table's rival-row order (`report_blocks._s4_battery_plan_rows`) and the §0 runner-up
+pick read the cents too, and the #141 margin pins now read them: `test_report_consistency.py`
+holds each plan's no-battery margin over the household's plan to `plan_results.csv` within
+$2.01 (two of the generator's $1.00 tie-outs plus two cents roundings; it was $3.00 with the
+whole-dollar cells), and `test_generate_report.py` holds a single level within $1.01.
 
 **Mid package on every plan (`mid_package_on_plans`, issue #200).** The same artifact also
 prices the report's mid package (EV shift scenario a, all sessions,

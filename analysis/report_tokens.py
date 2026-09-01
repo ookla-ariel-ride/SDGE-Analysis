@@ -3035,6 +3035,18 @@ def _bpm_column_cents(token, column, rows, subject):
     other left behind -- and ranking it would publish a standing off the
     field the reader is not looking at."""
     key = f"{column}_cents"
+    # A matrix written before issue #177 has no _cents fields at all. That is
+    # not a bad cell, it is an artifact of the wrong shape, and the refusal
+    # has to name the remedy rather than report a None it cannot settle.
+    missing = [p for p, row in rows.items() if key not in row]
+    if missing:
+        raise SystemExit(
+            f"report_tokens: {token} cannot rank data/battery_plan_matrix.json's "
+            f"{column} column: plans.{missing[0]} has no {key} field (missing for "
+            f"{', '.join(missing)}). The artifact predates issue #177, which added "
+            "the integer-cents fields the ranking reads. Regenerate it with "
+            "battery_plan_matrix.py (the private/verify sandbox pattern in "
+            "CLAUDE.md's Commands section)")
     _require_finite(token, subject,
                     **{f"{p}_{column}": row.get(column) for p, row in rows.items()},
                     **{f"{p}_{key}": row.get(key) for p, row in rows.items()})
@@ -3750,9 +3762,18 @@ def _plan_margin_vs_runner_up(ctx):
     fmt="usd0", so the negative reads "-$500" and not "$-500" -- shared,
     because building that string inline here is exactly what left the
     identical defect standing next door in _s4_verdict_short."""
-    gap = (_runner_up("PLAN_MARGIN_VS_RUNNER_UP")[1]["no_battery"]
-           - _bpm_best()[1]["no_battery"])
+    plan, own = _bpm_best()
+    gap = _runner_up("PLAN_MARGIN_VS_RUNNER_UP")[1]["no_battery"] - own["no_battery"]
     _require_finite("PLAN_MARGIN_VS_RUNNER_UP", "what this plan's margin is", margin=gap)
+    # The household's OWN cell, checked the way the rivals' were (issue #177
+    # review): _runner_up ranks the rivals through _bpm_column_cents, which
+    # refuses a dollar cell that disagrees with its cents twin, but the cell
+    # subtracted above is this plan's and was never ranked. A hand-moved own
+    # cell therefore priced a margin here while S4_VERDICT_SHORT refused the
+    # same matrix. After the margin's own finiteness check, so a nan own cell
+    # is still refused naming the margin it broke.
+    _bpm_column_cents("PLAN_MARGIN_VS_RUNNER_UP", "no_battery", {plan: own},
+                      "what this plan's own no_battery cell is")
     return gap
 
 
