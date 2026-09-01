@@ -4645,6 +4645,25 @@ def case_the_case_fold_table_is_generated_from_pythons_own_fold():
         ("length-changing pairs of the COMMITTED table, private_egress.py",
          module, r"DOES NOT PRESERVE BYTE LENGTH, for (\d+) of its pairs",
          sum(1 for a, b in pairs if len(a.encode()) != len(b.encode()))),
+        # The residue the str.lower() table left, as the comment states it:
+        # derived here per interpreter (3b's casefold_only), never literal.
+        ("casefold-only code points, private_egress.py",
+         module, r"differs from its lowercase: (\d+) under Unicode",
+         len(casefold_only)),
+        ("casefold-only code points folding to ONE code point, private_egress.py",
+         module, r"of which (\d+) fold to one code point",
+         sum(1 for _, b in casefold_only if len(b) == 1)),
+        ("casefold-only code points folding to a SEQUENCE, private_egress.py",
+         module, r"one code point and (\d+) to two or three",
+         sum(1 for _, b in casefold_only if len(b) > 1)),
+        ("Cherokee capitals str.lower() joined from the other side, private_egress.py",
+         module, r"the other (\d+) are the Cherokee capitals",
+         sum(1 for cp in range(sys.maxunicode + 1)
+             if chr(cp).lower() != chr(cp) and chr(cp).casefold() == chr(cp))),
+        ("issue #234's own count, private_egress.py",
+         module, r"Issue #234 counted (\d+)",
+         sum(1 for cp in range(sys.maxunicode + 1)
+             if chr(cp).casefold() != chr(cp).lower())),
     ]
     for label, haystack in (("private_egress.py", module),
                             ("stage-private-data.sh", flat_script)):
@@ -4719,6 +4738,18 @@ def case_the_case_fold_table_is_generated_from_pythons_own_fold():
     assert changing, (
         "the table has no length-changing pair, so this check is vacuous -- and "
         "the shell's LENGTH skip could then be unconditional again")
+    # THE PREMISE THE SKIP RESTS ON, stated in the shell's comment and asserted
+    # here: no ASCII code point is the SOURCE of a rule whose target is not one
+    # ASCII byte. ASCII appears as a TARGET (long s -> 's', KELVIN SIGN -> 'k',
+    # sharp s -> 'ss'), and those sources carry a byte >= 0x80, which is the
+    # other branch of the gate.
+    ascii_sources = [(a, b) for a, b in pairs
+                     if a.isascii() and (len(b.encode()) != 1 or not b.isascii())]
+    assert not ascii_sources, (
+        f"{len(ascii_sources)} ASCII source(s) fold to something other than one "
+        f"ASCII byte: {ascii_sources[:5]}. The shell's LENGTH skip is sound only "
+        "because an all-ASCII component folds to an all-ASCII component of its "
+        "own length, and this breaks that")
     rows = ([(f"{b}rivate/x", f"{a}rivate/x", False) for a, b in changing]
             + [("private/household.yaml", "private/household.yaml", False),
                ("private/household.yaml", "private/HOUSEHOLD.yaml", False),
@@ -4950,6 +4981,35 @@ def case_regenerating_the_case_fold_writes_both_files_or_neither():
             "the python half was rewritten while the shell half was refused "
             "for narrowing")
 
+        # A RULE WRITTEN THE OTHER WAY ROUND IS NOT A LOSS (issue #234). The
+        # Cherokee pairs fold toward the capital under str.casefold() and toward
+        # the small letter under str.lower(), so a table carrying one of them in
+        # the direction this generator does NOT write is the same fold in a
+        # different spelling. Comparing rule TEXT (`held - fresh`) refused that
+        # as narrowing; what is compared is whether the two names still fold
+        # together. The pair is taken from the generator's own output and
+        # reversed, so the fixture is the opposite direction on any interpreter.
+        cherokee = next((a, b) for a, b in PE.case_fold_pairs()
+                        if 0x13A0 <= ord(a) <= 0x13F5 or 0xAB70 <= ord(a) <= 0xABBF)
+        root, module, script = _case_fold_fixture(td, "reversed")
+        for path in (module, script):
+            path.write_text(path.read_text().replace(
+                "s/A/a/g", f"s/A/a/g\ns/{cherokee[1]}/{cherokee[0]}/g"))
+        try:
+            moved = PE.regenerate_case_fold(root=root)
+        except AssertionError as e:
+            raise AssertionError(
+                f"a table carrying {cherokee[1]!r} -> {cherokee[0]!r}, the same "
+                f"fold as the generator's {cherokee[0]!r} -> {cherokee[1]!r} "
+                f"written the other way round, was refused as narrowing: {e}")
+        assert sorted(moved) == ["private_egress.py", "stage-private-data.sh"], (
+            f"the reversed rule was accepted but the files were not rewritten: "
+            f"{moved}")
+        for path in (module, script):
+            assert f"s/{cherokee[0]}/{cherokee[1]}/g" in path.read_text(), (
+                f"{path.name} does not carry the pair in the generator's own "
+                "direction after regeneration")
+
         # AND A FAILURE IN THE WRITE ITSELF, which is the phase that cannot be
         # validated away: the first file's directory is unwritable, so the
         # temporary cannot even be created.
@@ -5171,7 +5231,8 @@ def case_regenerating_the_case_fold_writes_both_files_or_neither():
                 "being recoverable")
     return ("a malformed second block leaves the first file byte-identical (the "
             "retired shape rewrote it), so do a missing begin marker, a block "
-            "this interpreter would narrow, and a write that cannot happen; a "
+            "this interpreter would narrow (while a rule written the other way "
+            "round is accepted as the same fold), and a write that cannot happen; a "
             "failure on the SECOND replace reverts the first file rather than "
             "leaving the two on different tables (the retired publication shape "
             "diverges on the same injection); both files land by replace rather "

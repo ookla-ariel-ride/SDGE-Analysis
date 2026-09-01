@@ -1862,9 +1862,13 @@ _dest_folds_vector() {   # $1 = a path this script writes, relative to $DST_REAL
 #           U+023A grows from two UTF-8 bytes to three, U+212A shrinks from
 #           three to one; issue #234: sharp s folds to 'ss'). So the length
 #           skip is taken only where it is SOUND,
-#           which is where BOTH first components are pure ASCII: no ASCII byte
-#           appears in any multi-byte pair, so an all-ASCII component's folded
-#           length is its own length. A component carrying any byte >= \200
+#           which is where BOTH first components are pure ASCII: no ASCII code
+#           point is the SOURCE of a length-changing rule -- the only ASCII
+#           sources are A-Z, each folded to one ASCII byte -- so an all-ASCII
+#           component's folded length is its own length. (ASCII does appear as
+#           a TARGET: long s folds to 's', KELVIN SIGN to 'k', sharp s to 'ss';
+#           those sources carry a byte >= \200 and take the other branch.) A
+#           component carrying any byte >= \200
 #           falls through to the full comparison and pays the forks. In this
 #           repository's own index that is no entries at all.
 #
