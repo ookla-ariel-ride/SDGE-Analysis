@@ -746,6 +746,18 @@ MOVERS = {
         guard="analysis/test_stage_private_data.py::"
               "case_accepts_a_registered_linked_worktree_and_the_register_names_it"),
 
+    ("analysis/test_marginal_capacity_value.py", "_stage_root"): Mover(
+        moves="household.yaml plus usage.csv, samA.csv and samB.csv from the "
+              "staged private/verify sandbox, in the archive-present cases only",
+        destination="a private/verify tree inside a tempfile.TemporaryDirectory "
+                    "created and removed by the calling case's context manager, "
+                    "so the copies live only for one subprocess run of the "
+                    "generator and are deleted with the directory on exit",
+        unguarded="The destination is a per-case TemporaryDirectory the standard "
+                  "library removes when the with-block closes; no path outside "
+                  "it is written, and the no-archive case stages no private "
+                  "file at all."),
+
     ("analysis/test_private_egress.py", "<invokes a mover script>"): Mover(
         moves="a SYNTHETIC source only -- empty files with the archive's names. "
               "This suite never stages the real archive anywhere",
