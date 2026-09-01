@@ -6212,9 +6212,10 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
         "index counts the behaviors (Four); the count has no token"),
     ("s6", "Price-aware (all non-super-off-peak imports)"): ("c0c52fc7d519",
         "index's expansion cell adds cycles/day; no token for pw3x cycles exists"),
-    ("s8", "<b>More panels:"): ("8e05a5f45d23",
+    ("s8", "<b>More panels:"): ("854cec05cb9e",
         "deliberate divergence (#182): the template refuses to price added capacity "
-        "(pinned by its own case); index still publishes the priced timing paragraph"),
+        "(pinned by its own case); index still publishes the priced timing paragraph; re-pinned after #183 hung "
+        "the timing sentence on the midday clause"),
     ("s9", "degradation trend</h3>"): ("8da8f6ba573b",
         "index's heading carries the measured span (6-year); no token owns it"),
     ("s9", "Inverter clipping"): ("f861755778ff",
