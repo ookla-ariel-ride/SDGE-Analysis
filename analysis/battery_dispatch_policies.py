@@ -60,6 +60,11 @@ as sqrt-eta per direction):
   twowin   + 6-9am house load
   greedy   price-aware: any non-super-off-peak import; top-up toward full in any
            super-off-peak gap; solar surplus always charges first
+  value    greedy with both decisions priced at the margin (issue #240): a kWh
+           of surplus is stored only when its forgone export, divided by the
+           round trip, is below the import it can serve, and a stored kWh
+           serves only an import worth more than it cost. Not the published
+           basis; see _run_batt_value() and TECHNICAL.md section 3.13.
 EV exclusion (twowin and greedy, and ONLY on a household that has an EV):
 intervals >= 2.5 kW outside on-peak are EV spillover; the (free) schedule fix
 moves that load, so the battery never serves it outside on-peak. The exclusion
@@ -172,12 +177,40 @@ CHARGE_KW = 5.0
 # expansion capacity, so only the charge constant differs by configuration.
 CHARGE_KW_WITH_EXPANSION = 8.0
 
-def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, charge_kw=None, soc0=None):
+# Which discharge the "value" policy's charge test compares a stored kWh against
+# (issue #240). The policy cannot see the future, so it does not know WHICH
+# import a stored kWh will serve; what it can know is the range of imports it
+# is allowed to serve. "floor" stores a kWh only when the LEAST valuable import
+# the policy serves in that season would cover its delivered cost, so nothing
+# stored ever waits for a better import. "best" stores it whenever the MOST
+# valuable such import would, and relies on the discharge rule to hold that
+# kWh until one arrives. Both are causal. On this house's measured year
+# "floor" wins by a wide margin ($2,466/yr against greedy's $2,328 for one
+# Powerwall 3; "best" $2,335): a shoulder kWh held for the evening occupies
+# room that the cheaper midday surplus, arriving a few hours later, then
+# cannot use, and a shoulder kWh still in the pack at 21:00 displaces a
+# 14c grid top-up instead of an 87c on-peak import. See TECHNICAL.md
+# section 3.13 and test_battery_dispatch_policies.py's measured-year case.
+VALUE_CHARGE_REF = "floor"
+
+
+def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, charge_kw=None, soc0=None,
+             charge_ref=None, trace=None):
     """power_kw is the discharge cap; charge_kw is the charge cap (solar-surplus
     and grid-top-up charging both use it), defaulting to power_kw so a caller
     that does not pass charge_kw gets the prior symmetric behavior byte-for-
     byte. See the module docstring for the datasheet citation behind the real
-    asymmetric figures (11.5 kW discharge / 5 kW charge, single unit)."""
+    asymmetric figures (11.5 kW discharge / 5 kW charge, single unit).
+
+    policy "value" (issue #240) is the price-aware policy with its charge and
+    discharge decisions priced at the margin; see _run_batt_value() for the
+    rule, and VALUE_CHARGE_REF for what `charge_ref` selects (None reads that
+    constant at call time). `trace`, a list, receives one row per decision that
+    policy takes; both are ignored by the three original policies, whose code
+    path below is unchanged."""
+    if policy == "value":
+        return _run_batt_value(d, imp0, gen0, cap, power_kw, charge_kw, soc0,
+                               charge_ref, trace)
     imp = imp0.copy(); exp = gen0.copy()
     pwrq_dis = power_kw / 4
     pwrq_chg = (power_kw if charge_kw is None else charge_kw) / 4
@@ -240,6 +273,164 @@ def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, charge_kw=None, soc0=Non
         raise SystemExit("run_batt: energy-conservation identity failed — "
                           "soc drifted from the charge/discharge throughput")
     return imp, exp, served, thru
+
+
+def bucket_net_sign(d, imp, gen):
+    """Per interval: is its (month, season, TOU period) bucket net >= 0?
+
+    This is the one test rates.bill_nem_monthly() applies when it decides
+    whether a bucket bills at rates.energy() or credits at rates.credit(),
+    evaluated on the frame given. The "value" policy evaluates it on the
+    PRE-battery frame: the sign of a month's bucket is a fact about the house
+    (does it import more than it exports in that period, that month), which a
+    controller knows from its own history, and it is the sign every bucket of
+    this house keeps unless the battery itself flips it. Where the battery
+    does flip one, stored_energy_cost() publishes the count, and the priced
+    figures it reports are on the post-dispatch frame, not this one.
+    """
+    f = pd.DataFrame({"ym": d.ym.astype(str).values, "seas": d.seas.values,
+                      "p": d.p.values, "n": np.asarray(imp) - np.asarray(gen)})
+    return (f.groupby(["ym", "seas", "p"]).n.transform("sum").values >= 0)
+
+
+def _run_batt_value(d, imp0, gen0, cap, power_kw, charge_kw, soc0, charge_ref, trace):
+    """The price-aware policy with both decisions priced at the margin (issue #240).
+
+    The original "greedy" policy stores every kWh of solar surplus it has room
+    for and discharges against every non-super-off-peak import. Half the
+    surplus it stores on this house is not midday surplus but 6-10h and 14-16h
+    off-peak surplus, whose forgone export is worth rates.energy(off) in a
+    net-import bucket: 49-50c, or 54-55c per kWh delivered after the round
+    trip. Served against an off-peak import worth allin(off) = 51-52c, that
+    kWh loses 2-3c. Nothing in "greedy" can see that, because it prices
+    neither side.
+
+    This policy prices both sides with the same rule bill_nem_monthly() bills
+    by. For every interval, from the bucket sign bucket_net_sign() returns:
+
+      export value  E_i = energy(seas, p) if the bucket is net >= 0 else credit(seas, p)
+      import value  I_i = E_i + NBC   (a displaced import also stops paying NBC;
+                                       a grid top-up starts paying it)
+
+    A kWh stored from surplus in interval i costs E_i / RTE per kWh delivered;
+    a kWh of grid top-up costs I_i / RTE. Every kWh in the pack carries that
+    cost with it, as a lot.
+
+    Charge rule: surplus in interval i is stored only if E_i / RTE is below the
+    reference discharge value for its season (see VALUE_CHARGE_REF): the
+    smallest I_j over the intervals the policy may discharge into ("floor",
+    the default), or the largest ("best"). Grid top-up is tested the same way.
+    On this tariff "floor" means: midday super-off-peak surplus (11.7c
+    delivered) is stored, 6-10h and 14-16h off-peak surplus (51-55c) and
+    on-peak surplus are exported. The gain is mostly not the 2-3c margin on
+    the shoulder kWh itself but the room it frees: greedy fills the pack from
+    the morning shoulder first, so the cheaper midday surplus that follows has
+    nowhere to go and is exported at 10.4c while the 49c shoulder export was
+    forgone in its place.
+
+    Discharge rule: an import of value I_i may be served only from lots whose
+    delivered cost is below I_i, most expensive eligible lot first, so cheap
+    lots stay available for cheap imports. No served import is therefore ever
+    cheaper than the energy serving it, by construction; the optional `trace`
+    records every charge, skip and discharge with the two figures compared, so
+    a test can check that on the actual run rather than on this paragraph.
+
+    Everything else is "greedy": the discharge window is every non-super-off-
+    peak import (with the EV-spillover gate), an interval carrying both flows
+    inside that window serves its import rather than storing its surplus, and
+    super-off-peak gaps top the pack up toward full. Super-off-peak imports
+    are still never served: a midday lot at 11.7c delivered would clear a
+    12.5c import by 0.8c, and the grid top-up that then refilled the pack for
+    the evening would cost 14.0c, a losing round trip the window rule spares.
+    """
+    imp = imp0.copy(); exp = gen0.copy()
+    pwrq_dis = power_kw / 4
+    pwrq_chg = (power_kw if charge_kw is None else charge_kw) / 4
+    soc0 = cap / 2 if soc0 is None else soc0
+    served = 0.0; thru = 0.0
+    p = d.p.values; kw = imp0 * 4
+    seas = d.seas.values
+    rte = float(ETA * ETA)
+    sign = bucket_net_sign(d, imp0, gen0)
+    e_val = np.array([(R.energy(s, q) if ok else R.credit(s, q))
+                      for s, q, ok in zip(seas, p, sign)])
+    i_val = e_val + R.NBC
+    ev_spillover_excluded = br.EV_ANALYSIS
+    serve_ok = (kw < 2.5) if ev_spillover_excluded else np.ones(len(d), bool)
+    # same window as "greedy": on-peak unconditionally, every other non-super-
+    # off-peak import subject to the EV-spillover gate
+    disch_win = (p == "on") | ((p != "sop") & serve_ok)
+    charge_ref = VALUE_CHARGE_REF if charge_ref is None else charge_ref
+    if charge_ref not in ("best", "floor"):
+        raise SystemExit(f"run_batt: charge_ref {charge_ref!r} is not 'best' or 'floor'")
+    ref = {}
+    for s in np.unique(seas):
+        vals = i_val[(seas == s) & disch_win]
+        ref[s] = (float(vals.max()) if charge_ref == "best" else float(vals.min())) \
+            if len(vals) else 0.0
+    # The pack: lots of [pack-side kWh, delivered cost per kWh]. The starting
+    # charge is priced at zero: it is not this run's decision, and pricing it
+    # would let it refuse an import it could serve. It is the only lot that can
+    # carry a cost no interval produced.
+    lots = [[soc0, 0.0]] if soc0 > 0 else []
+    soc = soc0
+
+    def _log(i, kind, kwh, cost, value):
+        if trace is not None:
+            trace.append({"i": int(i), "kind": kind, "kwh": float(kwh),
+                          "cost": float(cost), "value": float(value)})
+
+    def _add_lot(kwh, cost):
+        if lots and abs(lots[-1][1] - cost) < 1e-12:
+            lots[-1][0] += kwh
+        else:
+            lots.append([kwh, cost])
+
+    for i in range(len(d)):
+        if exp[i] > 0 and not (disch_win[i] and imp[i] > 0):
+            cost = e_val[i] / rte
+            if cost < ref[seas[i]]:
+                c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
+                if c > 0:
+                    soc += c * ETA; exp[i] -= c; thru += c * ETA
+                    _add_lot(c * ETA, cost)
+                    _log(i, "charge_surplus", c, cost, ref[seas[i]])
+            else:
+                # kwh here is the surplus declined, whether or not the pack
+                # had room for it, so a skip row bounds what greedy might
+                # have stored rather than measuring it
+                _log(i, "skip_surplus", exp[i], cost, ref[seas[i]])
+            continue
+        if p[i] == "sop":
+            cost = i_val[i] / rte
+            take = min(max((cap - soc) / ETA, 0), pwrq_chg) if cost < ref[seas[i]] else 0
+            if take > 0:
+                soc += take * ETA; imp[i] += take; thru += take * ETA
+                _add_lot(take * ETA, cost)
+                _log(i, "charge_grid", take, cost, ref[seas[i]])
+            continue
+        if disch_win[i]:
+            need = min(imp[i], pwrq_dis)
+            # most expensive eligible lot first; lots are appended in time
+            # order, so sort by cost for the pick and keep the list otherwise
+            for lot in sorted(lots, key=lambda l: -l[1]):
+                if need <= 0:
+                    break
+                if lot[1] >= i_val[i]:
+                    continue
+                dd = min(need, lot[0] * ETA)
+                if dd > 0:
+                    lot[0] -= dd / ETA; soc -= dd / ETA; imp[i] -= dd
+                    served += dd; need -= dd
+                    _log(i, "discharge", dd, lot[1], i_val[i])
+            lots[:] = [l for l in lots if l[0] > 1e-12]
+    if abs(soc - (soc0 + thru - served / ETA)) > 1e-6:
+        raise SystemExit("run_batt: energy-conservation identity failed — "
+                          "soc drifted from the charge/discharge throughput")
+    if abs(soc - sum(l[0] for l in lots)) > 1e-6:
+        raise SystemExit("run_batt: the lot ledger does not sum to the pack's SOC")
+    return imp, exp, served, thru
+
 
 def billed(d, imp, exp):
     f = d.copy(); f["I"] = imp; f["E"] = exp
@@ -333,7 +524,7 @@ def _census(counts):
     return out
 
 
-def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw):
+def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw, charge_ref=None):
     """What a stored kWh cost THIS dispatch run, from its own charging intervals.
 
     Issue #189. The report's section 6 quotes a per-kWh cost for stored energy and
@@ -416,7 +607,8 @@ def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw):
     Returns the artifact block; it re-runs run_batt() rather than taking a series in
     so the caller cannot hand it a frame priced on a different dispatch.
     """
-    imp2, exp2, served, thru = run_batt(d, imp0, gen0, cap, policy, charge_kw=charge_kw)
+    imp2, exp2, served, thru = run_batt(d, imp0, gen0, cap, policy, charge_kw=charge_kw,
+                                        charge_ref=charge_ref)
     surplus = gen0 - exp2
     grid = np.maximum(imp2 - imp0, 0.0)
     disch = np.maximum(imp0 - imp2, 0.0)

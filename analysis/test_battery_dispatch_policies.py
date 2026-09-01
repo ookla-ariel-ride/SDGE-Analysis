@@ -27,6 +27,7 @@ reads the committed artifact SKIPS when it is absent.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_battery_dispatch_policies.py
 """
+import glob
 import json
 import pathlib
 import sys
@@ -51,9 +52,12 @@ _hh._cache = None
 
 import behavior_rebuild as br                  # noqa: E402
 import battery_dispatch_policies as B          # noqa: E402
+import rates as R                              # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ARTIFACT = ROOT / "data" / "battery_dispatch_policies.json"
+USAGE_GLOB = str(ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")
+HOUSEHOLD_YAML = ROOT / "private" / "household.yaml"
 
 CASES = []
 
@@ -90,6 +94,11 @@ def _frame():
     d = pd.DataFrame({"dt": dtr})
     d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
     d["p"] = ["sop" if h < 6 else ("on" if 16 <= h < 21 else "off") for h in d.hour]
+    # The "value" policy (issue #240) prices each interval's bucket, so the
+    # frame also names its season and month; the original policies read
+    # neither. Winter, like the date.
+    d["seas"] = "W"
+    d["ym"] = "2026-01"
     return d
 
 
@@ -313,6 +322,299 @@ def case_the_gate_reads_the_intake_flag_not_the_detector():
         f"frame, the exclusion did not fire: {served} kWh served")
     return ("the gate is br.EV_ANALYSIS: the exclusion fires on a frame with no "
             "detectable EV session at all")
+
+
+# ---------------------------------------------------------------------------
+# (c) issue #240: the "value" policy prices both sides of the charge decision
+# ---------------------------------------------------------------------------
+RTE = float(B.ETA * B.ETA)
+
+
+def _summer_frame():
+    """A summer weekday (2026-07-08) with the same stated TOU layout as
+    _frame(), plus a midday super-off-peak window 10:00-14:00, so a day can
+    carry both a morning shoulder surplus and a cheaper midday one.
+
+    The 96 intervals run from 06:00 to 06:00, not midnight to midnight: both
+    policies top the pack up toward full in every super-off-peak gap, and a
+    day that opened with six such hours would hand every case a full pack
+    before the first decision it wants to watch."""
+    dtr = pd.date_range("2026-07-08 06:00", periods=96, freq="15min")
+    d = pd.DataFrame({"dt": dtr})
+    d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
+    d["p"] = ["sop" if (h < 6 or 10 <= h < 14) else ("on" if 16 <= h < 21 else "off")
+              for h in d.hour]
+    d["seas"] = "S"
+    d["ym"] = "2026-07"
+    return d
+
+
+def _fill(arr, h0, h1, kwh_per_interval):
+    """Set the intervals [h0, h1) of a 06:00-based day."""
+    arr[int((h0 - 6) * 4):int((h1 - 6) * 4)] = kwh_per_interval
+
+
+# The shoulder day. 8 kWh of off-peak surplus at 08:00-10:00, then 12 kWh of
+# super-off-peak surplus at 10:00-14:00, a 1 kWh off-peak import at 15:00, a
+# 12 kWh on-peak import at 17:00-20:00 and a 10 kWh off-peak import at
+# 06:00-08:00 (so the day's off-peak bucket is net-import by 3 kWh, the sign
+# every off-peak bucket of the measured year but one has). The pack starts
+# empty and nothing can serve the 06:00 import, so what the pack holds at
+# 14:00 is what the two policies chose.
+SHOULDER_KWH = 8.0
+MIDDAY_KWH = 12.0
+OFFPEAK_IMPORT_KWH = 1.0
+MORNING_IMPORT_KWH = 10.0
+# What a midday kWh costs delivered on this day: its bucket is net-export, so
+# the surplus end of the bracket applies (see the case that stores it).
+MIDDAY_COST = R.credit("S", "sop") / RTE
+
+
+def _shoulder_day(morning_import_kwh=MORNING_IMPORT_KWH):
+    d = _summer_frame()
+    imp0 = np.zeros(96); gen0 = np.zeros(96)
+    _fill(gen0, 8, 10, SHOULDER_KWH / 8)
+    _fill(gen0, 10, 14, MIDDAY_KWH / 16)
+    _fill(imp0, 6, 8, morning_import_kwh / 8)
+    _fill(imp0, 15, 16, OFFPEAK_IMPORT_KWH / 4)
+    _fill(imp0, 17, 20, 12.0 / 12)
+    return d, imp0, gen0
+
+
+def _run(d, imp0, gen0, policy, **kw):
+    was = br.EV_ANALYSIS
+    br.EV_ANALYSIS = False
+    try:
+        return B.run_batt(d, imp0, gen0, 13.5, policy, charge_kw=B.CHARGE_KW,
+                          soc0=0.0, **kw)
+    finally:
+        br.EV_ANALYSIS = was
+
+
+def _stored_by_period(d, gen0, exp):
+    p = d.p.values
+    return {q: float((gen0 - exp)[p == q].sum()) for q in ("off", "sop", "on")}
+
+
+@case
+def case_greedy_stores_shoulder_surplus_that_crowds_out_the_cheaper_midday_surplus():
+    """The defect issue #240 names, on one day. Greedy stores every kWh it has
+    room for, in time order, so the 8 kWh morning shoulder surplus (a forgone
+    off-peak export worth energy(S, off), 54.5c per kWh delivered) goes in
+    first and the 12 kWh of midday surplus that follows (8.4c delivered here,
+    its bucket being net-export on this one day) finds only the room that is
+    left. The pack holds 13.5 / ETA = 14.23 kWh of
+    AC input, so 8 kWh of shoulder and 6.23 kWh of midday are stored and 5.77
+    kWh of midday surplus is exported at 10.4c while 8 kWh of 49c exports were
+    given up in its place."""
+    d, imp0, gen0 = _shoulder_day()
+    imp, exp, served, _ = _run(d, imp0, gen0, "greedy")
+    got = _stored_by_period(d, gen0, exp)
+    room = 13.5 / B.ETA
+    assert abs(got["off"] - SHOULDER_KWH) < 1e-6, (
+        f"greedy stored {got['off']:.3f} kWh of shoulder surplus, expected all "
+        f"{SHOULDER_KWH} kWh; if it now declines shoulder surplus this case is "
+        "no longer the positive control for the value policy")
+    assert abs(got["sop"] - (room - SHOULDER_KWH)) < 1e-6, (
+        f"greedy stored {got['sop']:.3f} kWh of midday surplus, expected the "
+        f"{room - SHOULDER_KWH:.3f} kWh of room the shoulder left")
+    shoulder_cost = R.energy("S", "off") / RTE
+    offpeak_value = R.allin("S", "off")
+    assert shoulder_cost > offpeak_value, (shoulder_cost, offpeak_value)
+    p = d.p.values
+    off_served = float((imp0 - imp)[p == "off"].sum())
+    assert abs(off_served - OFFPEAK_IMPORT_KWH) < 1e-6, off_served
+    return (f"greedy stores all {SHOULDER_KWH:.0f} kWh of shoulder surplus "
+            f"({shoulder_cost*100:.1f}c/kWh delivered) and only "
+            f"{got['sop']:.2f} of the {MIDDAY_KWH:.0f} kWh of midday surplus; "
+            f"it then serves the {OFFPEAK_IMPORT_KWH:.0f} kWh off-peak import "
+            f"({offpeak_value*100:.1f}c) from that one untagged pool")
+
+
+@case
+def case_value_policy_stores_no_shoulder_surplus_and_all_the_midday_surplus():
+    """Same day, the "value" policy. Its charge test prices the shoulder kWh at
+    energy(S, off) / RTE = 54.5c delivered against the cheapest import the
+    policy serves this season, allin(S, off) = 51.1c, and declines it; the
+    whole 12 kWh of midday surplus then fits. The trace names the kWh it
+    declined and the two figures it compared, so the comparison is checked
+    off the run rather than off this docstring."""
+    d, imp0, gen0 = _shoulder_day()
+    tr = []
+    imp, exp, served, _ = _run(d, imp0, gen0, "value", trace=tr)
+    got = _stored_by_period(d, gen0, exp)
+    assert abs(got["off"]) < 1e-9, (
+        f"the value policy stored {got['off']:.3f} kWh of shoulder surplus that "
+        "costs more delivered than the off-peak import it would serve")
+    assert abs(got["sop"] - MIDDAY_KWH) < 1e-6, (
+        f"the value policy stored {got['sop']:.3f} kWh of midday surplus, "
+        f"expected all {MIDDAY_KWH} kWh once the shoulder no longer takes the room")
+    skips = [r for r in tr if r["kind"] == "skip_surplus"]
+    skipped = sum(r["kwh"] for r in skips)
+    assert abs(skipped - SHOULDER_KWH) < 1e-6, skipped
+    for r in skips:
+        assert abs(r["cost"] - R.energy("S", "off") / RTE) < 1e-9, r
+        assert abs(r["value"] - R.allin("S", "off")) < 1e-9, r
+        assert r["cost"] >= r["value"], r
+    # This day's super-off-peak bucket is net-export (12 kWh out, nothing in),
+    # so its stored kWh is priced at the surplus end, credit(S, sop) / RTE =
+    # 8.4c; the measured year's super-off-peak buckets are all net-import and
+    # price at energy(), 11.7c. Same test, other side of zero.
+    stores = [r for r in tr if r["kind"] == "charge_surplus"]
+    for r in stores:
+        assert abs(r["cost"] - MIDDAY_COST) < 1e-9, r
+        assert r["cost"] < r["value"], r
+    # and the day bills better for it, through the same engine that publishes
+    # every battery figure
+    d2 = d.copy()
+    g_imp, g_exp, _, _ = _run(d, imp0, gen0, "greedy")
+    greedy_bill = B.billed(d2, g_imp, g_exp)
+    value_bill = B.billed(d2, imp, exp)
+    assert value_bill < greedy_bill, (value_bill, greedy_bill)
+    return (f"value: 0 of {SHOULDER_KWH:.0f} kWh shoulder surplus stored (each "
+            f"kWh priced {skips[0]['cost']*100:.1f}c delivered against a "
+            f"{skips[0]['value']*100:.1f}c import), all {MIDDAY_KWH:.0f} kWh "
+            f"midday surplus stored; the day bills ${greedy_bill - value_bill:.2f} "
+            "less than greedy")
+
+
+@case
+def case_value_policy_prices_a_bucket_on_the_side_of_zero_its_net_lands_on():
+    """Acceptance criterion: the comparison uses bill_nem_monthly()'s own
+    `net >= 0` bucket test, not a rate card. With the 10 kWh morning import
+    the day's off-peak bucket is net-import (10 + 1 in, 8 out; the 12 kWh
+    on-peak import is another bucket), so the shoulder kWh is priced at
+    energy(); with no morning import the bucket is net-export and the same
+    kWh is priced at credit(). Both figures come off the trace."""
+    costs = {}
+    for morning in (MORNING_IMPORT_KWH, 0.0):
+        d, imp0, gen0 = _shoulder_day(morning_import_kwh=morning)
+        net = float(imp0[d.p.values == "off"].sum() - gen0[d.p.values == "off"].sum())
+        tr = []
+        _run(d, imp0, gen0, "value", trace=tr)
+        skips = {round(r["cost"], 9) for r in tr if r["kind"] == "skip_surplus"}
+        assert len(skips) == 1, skips
+        costs[net >= 0] = skips.pop()
+    assert abs(costs[True] - R.energy("S", "off") / RTE) < 1e-9, costs
+    assert abs(costs[False] - R.credit("S", "off") / RTE) < 1e-9, costs
+    assert costs[True] > costs[False], costs
+    return (f"shoulder kWh priced {costs[True]*100:.2f}c delivered in a net-import "
+            f"off-peak bucket (energy) and {costs[False]*100:.2f}c in a net-export "
+            "one (credit); the PCIA gap between them is the bracket, not a rate card")
+
+
+def _assert_no_import_served_below_its_energy_cost(trace):
+    dis = [r for r in trace if r["kind"] == "discharge"]
+    assert dis, "the run discharged nothing, so the invariant was never exercised"
+    bad = [r for r in dis if r["cost"] >= r["value"]]
+    assert not bad, (
+        f"{len(bad)} of {len(dis)} discharge decisions served an import worth "
+        f"less than the delivered cost of the energy serving it; first: {bad[0]}")
+    return dis
+
+
+@case
+def case_value_policy_never_serves_an_import_below_the_cost_of_the_energy_serving_it():
+    """Acceptance criterion, on the synthetic day, plus its positive control:
+    the same day under greedy DOES serve the 51.1c off-peak import from a
+    pool that holds 54.5c shoulder energy. Greedy carries no lot ledger, so
+    the exception is documented here rather than traced: its pool is untagged,
+    which is the reason the published section 6 prose says which import a
+    shoulder kWh serves is not determined."""
+    d, imp0, gen0 = _shoulder_day()
+    tr = []
+    imp, exp, served, _ = _run(d, imp0, gen0, "value", trace=tr)
+    dis = _assert_no_import_served_below_its_energy_cost(tr)
+    p = d.p.values
+    off_served = float((imp0 - imp)[p == "off"].sum())
+    assert abs(off_served - OFFPEAK_IMPORT_KWH) < 1e-6, off_served
+    # every kWh that served the off-peak import came from a midday lot
+    off_rows = [r for r in dis if p[r["i"]] == "off"]
+    assert off_rows and all(abs(r["cost"] - MIDDAY_COST) < 1e-9
+                            for r in off_rows), off_rows
+    g_imp, g_exp, _, _ = _run(d, imp0, gen0, "greedy")
+    g_stored_off = _stored_by_period(d, gen0, g_exp)["off"]
+    g_off_served = float((imp0 - g_imp)[p == "off"].sum())
+    assert g_stored_off > 0 and g_off_served > 0, (g_stored_off, g_off_served)
+    return (f"value: {len(dis)} discharge decisions, none below cost; the off-peak "
+            f"import is served from {MIDDAY_COST*100:.1f}c midday lots. Greedy on "
+            f"the same day serves it from a pool holding {g_stored_off:.0f} kWh of "
+            f"{R.energy('S', 'off') / RTE * 100:.1f}c energy")
+
+
+@case
+def case_the_three_original_policies_ignore_the_value_arguments():
+    """charge_ref and trace belong to the value policy alone. A trace handed to
+    greedy must come back empty and the result must not depend on charge_ref,
+    or the committed artifact (which cmp proves byte-identical) could move on
+    a caller that passes them."""
+    d, imp0, gen0 = _shoulder_day()
+    for pol in ("evening", "twowin", "greedy"):
+        outs = []
+        for ref in ("floor", "best"):
+            tr = []
+            imp, exp, served, thru = _run(d, imp0, gen0, pol, charge_ref=ref, trace=tr)
+            assert tr == [], (pol, ref, tr[:2])
+            outs.append((imp.tobytes(), exp.tobytes(), served, thru))
+        assert outs[0] == outs[1], pol
+    return "evening, twowin and greedy write no trace and do not read charge_ref"
+
+
+@case
+def case_value_policy_on_the_measured_year():
+    """Acceptance criterion: the saving re-billed end to end through
+    rates.bill_nem() against the published greedy figure, and the no-import-
+    below-cost invariant on every discharge of the real year. Reports both
+    charge references (VALUE_CHARGE_REF's comment says why "floor" is the
+    default), both configurations, and the post-free-fix marginal the report's
+    package figures are built on. These are the figures TECHNICAL.md section
+    3.13 quotes for the value policy. SKIPS without the private archive."""
+    files = sorted(glob.glob(USAGE_GLOB))
+    if not files or not HOUSEHOLD_YAML.is_file():
+        raise SkipCase(f"needs the private archive ({USAGE_GLOB}) and {HOUSEHOLD_YAML}")
+    br.CSV = files[0]
+    d = br.load()
+    imp0 = d.Consumption.values.astype(float); gen0 = d.Generation.values.astype(float)
+    base = B.billed(d, imp0, gen0)
+    imp_sh, _, _ = B.free_fix_shift(d, imp0)
+    b_sh = B.billed(d, imp_sh, gen0)
+    out = {}
+    for name, cap, chg in (("pw3", 13.5, B.CHARGE_KW),
+                           ("pw3x", 27.0, B.CHARGE_KW_WITH_EXPANSION)):
+        i2, e2, _, _ = B.run_batt(d, imp0, gen0, cap, "greedy", charge_kw=chg)
+        out[name, "greedy"] = base - B.billed(d, i2, e2)
+        i2, e2, _, _ = B.run_batt(d, imp_sh, gen0, cap, "greedy", charge_kw=chg)
+        out[name, "greedy", "post"] = b_sh - B.billed(d, i2, e2)
+        for ref in ("floor", "best"):
+            tr = []
+            i3, e3, _, _ = B.run_batt(d, imp0, gen0, cap, "value", charge_kw=chg,
+                                      charge_ref=ref, trace=tr)
+            _assert_no_import_served_below_its_energy_cost(tr)
+            out[name, ref] = base - B.billed(d, i3, e3)
+            i3, e3, _, _ = B.run_batt(d, imp_sh, gen0, cap, "value", charge_kw=chg,
+                                      charge_ref=ref)
+            out[name, ref, "post"] = b_sh - B.billed(d, i3, e3)
+    if ARTIFACT.is_file():
+        art = json.loads(ARTIFACT.read_text())
+        for name, key in (("pw3", "mid"), ("pw3x", "high")):
+            assert abs(out[name, "greedy"] - art[name]["greedy"]["save"]) < 1.0, name
+            assert abs(out[name, "greedy", "post"]
+                       - art["post_behavior"][key]["battery_marginal"]) < 1.0, name
+    for name in ("pw3", "pw3x"):
+        assert out[name, "floor"] >= out[name, "greedy"], (name, out)
+        assert out[name, "floor"] >= out[name, "best"], (name, out)
+    lines = []
+    for name in ("pw3", "pw3x"):
+        lines.append("{}: greedy ${:,.2f} / value-floor ${:,.2f} ({:+.2f}) / value-best "
+                     "${:,.2f} ({:+.2f}); after the free fix, greedy ${:,.2f} / "
+                     "value-floor ${:,.2f} ({:+.2f})".format(
+                         name, out[name, "greedy"], out[name, "floor"],
+                         out[name, "floor"] - out[name, "greedy"], out[name, "best"],
+                         out[name, "best"] - out[name, "greedy"],
+                         out[name, "greedy", "post"], out[name, "floor", "post"],
+                         out[name, "floor", "post"] - out[name, "greedy", "post"]))
+    return ("measured year, rates.bill_nem(), $/yr; no discharge below cost in any "
+            "value run. " + "; ".join(lines))
 
 
 # ---------------------------------------------------------------------------
