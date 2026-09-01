@@ -2651,30 +2651,35 @@ _tok("S7_PLAN_FOOTING", kind="derived", get=_s7_plan_footing,
 
 
 # data/deep_results.json:wildcard's keys are PROSE ("TOU-DR-P + PW3 (15 events
-# dodged)", "EV-TOU-5 no battery"), and the plan name and the CONFIGURATION are
-# both read out of them, here and nowhere else. The convention, stated beside
-# the keys where deep_analyses.py writes them:
+# dodged)", "EV-TOU-5 no battery"), and the plan name, the CONFIGURATION and
+# the note are all read out of them here and nowhere else. The convention,
+# stated beside the keys where deep_analyses.py writes them:
 #
 #     "<plan> + <battery>"     the plan priced with that battery
 #     "<plan> no battery"      the plan priced without one
 #
-# either followed by an optional parenthetical note ("(15 events dodged)",
-# "(events hit)") that says something about the run and NOTHING about the
-# configuration -- "PW3 (15 events dodged)" and "PW3" are the same battery. A
-# key outside that shape, or two keys that collapse to one (plan,
-# configuration), refuses by name in _wildcard_totals rather than being read
-# as something plausible.
+# where <plan> is a plan data/plan_results.csv prices, <battery> is one token
+# with no spaces, and either form may end in one parenthetical note. The note
+# says something about the run ("15 events dodged", "events hit") and NOTHING
+# about the configuration: "PW3 (15 events dodged)" and "PW3" are the same
+# battery. _wildcard_totals refuses, naming the key, on anything outside that
+# shape rather than reading it as something plausible: a plan the CSV does
+# not price, a configuration that is not one token ("CEA + PW3", "PW3 15
+# events"), two keys naming one (plan, configuration), more than one battery
+# across the block, a plan priced without the battery, or two battery entries
+# whose notes disagree ("(13.5 kWh)" beside "(27 kWh)" is two batteries
+# wearing one name).
 #
 # ONE regex, because the plan name used to be split off twice and the two
 # copies drifted: here without the battery's name and in _wildcard_plan as
 # r"\s*\+\s*PW3|\s+no battery", with this household's battery hardcoded
 # into the second. Both agreed on the keys THIS checkout happens to carry and
-# parted company on any other battery: a workup labelled "Powerwall 3" rather
+# parted company on any other battery: a workup labelled "Powerwall-3" rather
 # than "PW3" left the card saying "TOU-DR-P wildcard" while WILDCARD_PLAN
 # resolved to the whole prose key, so section 9's heading read "can TOU-DR-P +
-# Powerwall 3 (15 events dodged) + a battery beat EV-TOU-5?" beside a section 0
+# Powerwall-3 (15 events dodged) + a battery beat EV-TOU-5?" beside a section 0
 # card naming something else. A hardcoded product name is not a parse rule;
-# the qualifier is whatever follows the "+".
+# the battery is whatever one token follows the "+".
 #
 # AND THE CONFIGURATION IS READ FOR A REASON (issue #202). _wildcard_scenario
 # used to rank min() over every total on each side, so a plan priced in
@@ -2682,59 +2687,101 @@ _tok("S7_PLAN_FOOTING", kind="derived", get=_s7_plan_footing,
 # was. The rival's cheapest entry HAPPENED to be its battery entry, which is
 # the only reason the published comparison was like for like; a no-battery
 # total that came in cheaper would have been ranked against this plan with a
-# battery, and nothing would have said so. The pairing needs the
-# configuration, so the parse hands it over.
+# battery, and nothing would have said so. The ranking is on the battery
+# configuration alone now (see _wildcard_scenario), so the parse hands it over.
 _WILDCARD_KEY_RE = re.compile(
-    r"^(?P<plan>.+?)\s*(?:\+\s*(?P<battery>[^()]+?)|(?P<none>no battery))"
-    r"\s*(?:\([^()]*\))?\s*$")
+    r"^(?P<plan>[^+()]+?)\s*(?:\+\s*(?P<battery>[^\s()+]+)|(?P<none>no battery))"
+    r"\s*(?:\((?P<note>[^()]*)\))?\s*$")
 _WILDCARD_NO_BATTERY = "no battery"
+_WILDCARD_SOURCE = "report_tokens: deep_results.json:wildcard"
+
+
+def _known_plans():
+    """The plan names the report ranks: data/plan_results.csv's plan column,
+    which section 3's table and section 0's card already read."""
+    return {r["plan"] for r in _csv_rows("plan_results.csv")}
 
 
 def _wildcard_key(key):
-    """(plan, configuration) one data/deep_results.json:wildcard key names,
-    or None when the key is outside the convention above."""
+    """(plan, configuration, note) one data/deep_results.json:wildcard key
+    names, or None when the key is outside the shape above. The plan is not
+    checked against data/plan_results.csv here -- that is an artifact read,
+    and _wildcard_totals does it with its own message."""
     m = _WILDCARD_KEY_RE.match(key)
-    if not m or not m.group("plan").strip():
+    if not m:
         return None
-    battery = m.group("battery")
-    configuration = battery.strip() if battery else _WILDCARD_NO_BATTERY
-    return m.group("plan").strip(), configuration
-
-
-def _wildcard_key_plan(key):
-    """The plan name one data/deep_results.json:wildcard key is about."""
-    parsed = _wildcard_key(key)
-    return parsed[0] if parsed else key.strip()
+    battery, note = m.group("battery"), m.group("note")
+    return (m.group("plan").strip(),
+            battery if battery else _WILDCARD_NO_BATTERY,
+            note.strip() if note is not None else None)
 
 
 def _wildcard_totals():
     """{plan: {configuration: modeled annual total}} off
     data/deep_results.json:wildcard, through _wildcard_key -- the one parse
-    every reader of that artifact takes, so the card and the section 9 heading
-    cannot disagree about which plan the wildcard is about, and the ranking
-    knows which of a plan's totals answers to which of another's.
+    every reader of that artifact takes (section 0's card, section 9's
+    heading), so the two cannot disagree about which plans the block prices
+    or which of their totals answers to which.
 
-    Refuses, naming the key, on a key outside the convention or on two keys
-    that name one (plan, configuration) twice: a parenthetical that carried
-    configuration information would make two configurations look like one,
-    and the ranking below would pair a total with the wrong counterpart.
+    VALIDATED HERE, ONCE, for both readers: every key parses, names a plan
+    data/plan_results.csv prices and a configuration that plan has not been
+    given before; exactly one battery is named across the whole block; every
+    plan carries an entry for it; and where two of those battery entries
+    carry a note, the notes agree. Any of those failing is a SystemExit that
+    names the key, because the block is not in the shape deep_analyses.py
+    promised and a reading that guesses past that publishes a comparison the
+    artifact does not support.
     """
-    totals = {}
+    known = _known_plans()
+    totals, notes = {}, {}
     for key, value in _json("deep_results.json")["wildcard"].items():
         parsed = _wildcard_key(key)
         if parsed is None:
             raise SystemExit(
-                f"report_tokens: deep_results.json:wildcard key {key!r} is outside the "
-                "naming convention '<plan> + <battery>' / '<plan> no battery' (optional "
+                f"{_WILDCARD_SOURCE} key {key!r} is outside the naming convention "
+                "'<plan> + <battery>' / '<plan> no battery' (one-token battery, optional "
                 "parenthetical note); see deep_analyses.py's wildcard block")
-        plan, configuration = parsed
+        plan, configuration, note = parsed
+        if plan not in known:
+            raise SystemExit(
+                f"{_WILDCARD_SOURCE} key {key!r} names {plan!r}, a plan "
+                f"data/plan_results.csv does not price ({', '.join(sorted(known))})")
         if configuration in totals.setdefault(plan, {}):
             raise SystemExit(
-                f"report_tokens: deep_results.json:wildcard key {key!r} prices "
-                f"{plan} {configuration!r} a second time; a configuration is named "
-                "once per plan, and a parenthetical note does not make a new one")
+                f"{_WILDCARD_SOURCE} key {key!r} prices {plan} {configuration!r} a "
+                "second time; a configuration is named once per plan, and a "
+                "parenthetical note does not make a new one")
         totals[plan][configuration] = value
+        notes[plan, configuration] = note
+    batteries = sorted({c for priced in totals.values() for c in priced
+                        if c != _WILDCARD_NO_BATTERY})
+    if len(batteries) != 1:
+        raise SystemExit(
+            f"{_WILDCARD_SOURCE} names {len(batteries)} batteries ({batteries}); "
+            "section 9's heading asks about one battery, so the block prices exactly one")
+    battery = batteries[0]
+    missing = sorted(plan for plan, priced in totals.items() if battery not in priced)
+    if missing:
+        raise SystemExit(
+            f"{_WILDCARD_SOURCE} prices {', '.join(missing)} without a "
+            f"'+ {battery}' entry; the ranking is on that configuration, so every plan "
+            "in the block carries it")
+    noted = {plan: notes[plan, battery] for plan in totals
+             if notes[plan, battery] is not None}
+    if len(set(noted.values())) > 1:
+        raise SystemExit(
+            f"{_WILDCARD_SOURCE} '+ {battery}' entries carry notes that disagree "
+            f"({noted}); a note that differs between two plans is two configurations "
+            "wearing one name")
     return totals
+
+
+def _wildcard_battery():
+    """The one battery data/deep_results.json:wildcard prices -- the
+    configuration section 9's heading asks about, and the one the ranking is
+    on. _wildcard_totals has already refused a block naming zero or two."""
+    return next(c for priced in _wildcard_totals().values() for c in priced
+                if c != _WILDCARD_NO_BATTERY)
 
 
 def _wildcard_rivals(plan):
@@ -2770,19 +2817,21 @@ def _wildcard_scenario(ctx):
     it does so silently, which is the same shape as the mixed-matrix finding
     one input along.
 
-    EVERY total in the artifact is required, not just the ones a pair lands
-    on: the standing is the worst over every shared configuration of every
-    rival, so any one of them can move the answer, and a rival whose totals
-    are ALL non-finite was dropped out of `rivals` entirely -- the same
-    partial ranking, one step further along, and it also decides whether there
-    is a rival to name at all. One rule instead of three: an artifact that is
-    not made of numbers ranks nothing here.
+    EVERY total in the artifact is required, not just the ones the pair lands
+    on: `theirs` is a minimum over every rival's battery total, so any one of
+    them can move the answer, and a rival whose totals are ALL non-finite was
+    dropped out of `rivals` entirely -- the same partial ranking, one step
+    further along, and it also decides whether there is a rival to name at
+    all. The no-battery totals decide nothing, but a block that is not made
+    of numbers is not one this reader vouches for either. One rule instead of
+    three: an artifact that is not made of numbers ranks nothing here.
 
-    AND THE PAIRS ARE LIKE FOR LIKE (issue #202): this plan's total in a
-    configuration against the rival's total in the SAME configuration, never
-    each side's cheapest entry against the other's. A rival that shares no
-    configuration with this plan is the same None as a workup pricing one
-    plan: there is nothing to rank, so nothing is counted.
+    AND THE PAIR IS LIKE FOR LIKE (issue #202): this plan's battery total
+    against the rivals' battery totals, never each side's cheapest entry
+    against the other's. A block where some plan lacks the battery entry is
+    refused by _wildcard_totals, not dropped here: deep_analyses.py always
+    emits it, so its absence is an artifact-shape violation, which is not the
+    same thing as a workup that ranks nothing.
 
     DROP RATHER THAN REFUSE, which is the opposite of what _bpm_cheapest and
     _plan_ranking do with a non-finite cell, and for a reason that is about
@@ -2804,29 +2853,23 @@ def _wildcard_scenario(ctx):
     totals = _wildcard_totals()
     if not _finite(*(t for priced in totals.values() for t in priced.values())):
         return None
-    ours = totals.get(plan, {})
+    ours = totals.get(plan)
     rivals = _wildcard_rivals(plan)
     if not ours or not rivals:
         return None
-    # LIKE FOR LIKE (issue #202): each of this plan's totals is ranked against
-    # the rival's total for the SAME configuration, and the scenario's standing
-    # is the worst of those pairs -- "win" only when every shared configuration
-    # prices this plan cheaper, "trails" once any prices a rival cheaper. It
-    # used to be min() over everything on each side, which compared whichever
-    # configuration each plan was cheapest in, and those need not be the same
-    # one. A rival with no configuration in common with this plan cannot be
-    # ranked against it at all, and that is the None above, not a ranking over
-    # something else.
-    standings = []
-    for name in rivals:
-        shared = sorted(set(ours) & set(totals[name]))
-        if not shared:
-            return None
-        for configuration in shared:
-            mine, theirs = ours[configuration], totals[name][configuration]
-            standings.append("win" if mine < theirs else "tie" if mine == theirs
-                             else "trails")
-    standing = max(standings, key=_PLAN_STANDINGS.index)
+    # ON THE BATTERY CONFIGURATION ALONE (issue #202). Section 9's heading asks
+    # "can <rival> + a battery beat <plan>?", so that is the question the card
+    # scores: this plan's battery total against the cheapest rival's battery
+    # total, one configuration on both sides. The no-battery totals stay in
+    # the artifact as context and never decide the standing -- a half-won
+    # comparison across configurations would put "beaten" on the card beside
+    # a heading whose question the household wins. It used to be min() over
+    # everything on each side, which compared whichever configuration each
+    # plan was cheapest in, and those need not be the same one.
+    battery = _wildcard_battery()
+    mine = ours[battery]
+    theirs = min(totals[name][battery] for name in rivals)
+    standing = "win" if mine < theirs else "tie" if mine == theirs else "trails"
     # SLASH-JOINED, never _join_plan_names, and this is about the CARD's
     # punctuation rather than about prose. _plan_card_label lists the scenarios
     # it scored in a parenthetical joined with ", ", and _join_plan_names emits
@@ -3806,20 +3849,25 @@ _tok("S4_VERDICT_SHORT", phrase=True, kind="derived", get=_s4_verdict_short,
 
 
 def _wildcard_plan(ctx):
-    """The plan section 9's wildcard heading asks about.
+    """The plan section 9's wildcard heading asks about: the first of
+    _wildcard_rivals, off the same _wildcard_totals section 0's card ranks, so
+    the two read one parse of one artifact and a refusal there reaches both.
 
-    OFF _wildcard_rivals, which is off _wildcard_totals, which is off
-    _wildcard_key_plan -- so this token and section 0's card read that
-    artifact's prose keys through one split instead of two. This function used
-    to carry its own, with this household's battery ("PW3") written into it;
+    AND A DROP REACHES BOTH (issue #202). The card has an absent state -- a
+    wildcard _wildcard_scenario returns None for is one scenario fewer in its
+    list -- but the heading has none: it asks "can <rival> + a battery beat
+    <plan>?" and cannot ask it about a rival the artifact did not rank. So
+    this token refuses exactly when the card drops, instead of naming a rival
+    beside a card that does not count it. This function used to carry its own
+    split of the keys, with this household's battery ("PW3") written into it;
     see _WILDCARD_KEY_RE for what the two disagreed about.
     """
-    best = hh1("household.plan")
-    rivals = _wildcard_rivals(best)
-    if not rivals:
-        raise SystemExit("report_tokens: could not identify a wildcard plan name in "
-                          "deep_results.json:wildcard's keys")
-    return rivals[0]
+    if _wildcard_scenario(ctx) is None:
+        raise SystemExit(f"{_WILDCARD_SOURCE} does not rank this household's plan "
+                         f"({hh1('household.plan')!r}) against another in its battery "
+                         "configuration, so section 9's heading has no wildcard plan to "
+                         "name; section 0's card drops the scenario for the same reason")
+    return _wildcard_rivals(hh1("household.plan"))[0]
 
 
 _tok("WILDCARD_PLAN", kind="derived", get=_wildcard_plan,

@@ -237,12 +237,16 @@ drp_batt=cost_with_batt(UDCP,CEAP,True,charge_pwr=CHARGE_KW_PW3)
 ev5_batt=cost_with_batt(UDC5,CEA5,False,charge_pwr=CHARGE_KW_PW3)
 drp_nobatt_energy=(d.Consumption.values*(rates(UDCP,CEAP)+np.where(d.event,1.16,0))).sum() - (d.Generation.values*np.clip(rates(UDCP,CEAP)-NBC,0,None)).sum()
 # KEY CONVENTION (issue #202), enforced where report_tokens.py reads this
-# block (_wildcard_key): "<plan> + <battery>" or "<plan> no battery", each
-# with an optional trailing parenthetical note. The note describes the run
-# and never the configuration: "PW3 (15 events dodged)" and "PW3" are the same
-# battery, and the reader pairs totals across plans by configuration, so a
-# configuration may appear once per plan. A key outside this shape refuses
-# there by name.
+# block (_wildcard_totals): "<plan> + <battery>" or "<plan> no battery", each
+# with an optional trailing parenthetical note. <plan> is a plan
+# plan_results.csv prices; <battery> is one token with no spaces, the same
+# token on every plan, and every plan in the block carries its "+ <battery>"
+# entry, because section 9's heading asks about that configuration and the
+# section 0 card ranks on it alone (the no-battery entry is context). The note
+# describes the run and never the configuration: "PW3 (15 events dodged)" and
+# "PW3" are the same battery, so a configuration appears once per plan, and
+# where two "+ <battery>" entries both carry a note the notes must agree. A
+# block outside this shape refuses there by name.
 out["wildcard"]={"TOU-DR-P + PW3 (15 events dodged)":round(drp_batt),
                  "EV-TOU-5 + PW3":round(ev5_batt),
                  "TOU-DR-P no battery (events hit)":round(drp_nobatt_energy+365*BSC)}

@@ -423,11 +423,16 @@ land in `deep_results.json`.
    with a PW3 that dodges every event ($6,757), EV-TOU-5 with the same PW3 ($3,202), TOU-DR-P
    with no battery and all events hit ($7,527). Each key names its plan and its configuration
    (`<plan> + <battery>` or `<plan> no battery`, plus an optional parenthetical note that is
-   not part of the configuration), and `report_tokens.py` enforces that shape when it reads
-   the block. Section 0's card ranks the household's plan against each rival configuration
-   by configuration, at the worst of the pairs, so a plan's cheapest entry is never compared
-   with another plan's cheapest entry in a different configuration (issue #202); a rival
-   that shares no configuration with the household's plan drops the wildcard from the card.
+   not part of the configuration; the plan is one `plan_results.csv` prices and the battery is
+   one token), and `report_tokens.py` enforces that shape when it reads the block. Section 0's
+   card ranks the household's plan on the battery configuration alone, its own `+ PW3` total
+   against the cheapest rival's `+ PW3` total, because that is the question section 9's
+   heading asks ("can TOU-DR-P + a battery beat EV-TOU-5?"); the no-battery total is context
+   and never decides the standing, so a plan's cheapest entry is never compared with another
+   plan's cheapest entry in a different configuration (issue #202). A block in which any plan
+   lacks the battery entry, names two batteries, or carries battery notes that disagree is
+   refused by name rather than ranked, and a non-finite total drops the scenario from the card
+   and refuses the section 9 heading, so the two readers never disagree about the rival.
 2. **Phantom/baseload — superseded workpaper (issue #140). Not published anywhere in the
    report; do not cite it.** Take 3–5 am intervals with `Consumption ≤ 0.5` kWh (excludes EV
    charging); baseload kW = 25th percentile × 4 → 1.02 kW → 8,935 kWh/yr. Energy only: this

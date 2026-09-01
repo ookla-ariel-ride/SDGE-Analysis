@@ -386,12 +386,13 @@ def case_deep_analyses_end_to_end_matches_hand_and_oracle_computations():
         "TOU-DR-P no battery (events hit)"}, got["wildcard"]
     # issue #202: every key the generator emits parses under the convention
     # the reader enforces, into the (plan, configuration) pairs the ranking
-    # needs -- the two PW3 entries are ONE configuration, the note is not.
+    # needs -- the two PW3 entries are ONE configuration (the one the ranking
+    # is on), the note is not, and both plans carry that entry.
     parsed = {k: RT._wildcard_key(k) for k in got["wildcard"]}
     assert parsed == {
-        "TOU-DR-P + PW3 (15 events dodged)": ("TOU-DR-P", "PW3"),
-        "EV-TOU-5 + PW3": ("EV-TOU-5", "PW3"),
-        "TOU-DR-P no battery (events hit)": ("TOU-DR-P", "no battery")}, parsed
+        "TOU-DR-P + PW3 (15 events dodged)": ("TOU-DR-P", "PW3", "15 events dodged"),
+        "EV-TOU-5 + PW3": ("EV-TOU-5", "PW3", None),
+        "TOU-DR-P no battery (events hit)": ("TOU-DR-P", "no battery", "events hit")}, parsed
     assert "vacation" in got and got["vacation"]["away_days_detected"] >= 0, got["vacation"]
     assert json.dumps(got), "deep_results.json content is not JSON-serializable"
     return ("deep_analyses.py runs end to end on a synthetic house; phantom "
