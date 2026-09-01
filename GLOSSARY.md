@@ -64,7 +64,7 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 **Capacity factor** — Actual annual energy output divided by what the system would make running at full rated power 24/7. This array's ~18.7% is healthy for rooftop solar (the sun is only up part of the day). [Wikipedia: capacity factor](https://en.wikipedia.org/wiki/Capacity_factor)
 
-**Clipping** — When panels can momentarily produce more DC power than the inverter's AC limit, the inverter "clips" the excess and it's lost. This system's 5-minute data shows no meaningful clipping (§9 of the report); the highest daily peak in the sampled record is 9.20 kW, 97% of the inverter AC ceiling.
+**Clipping** — When panels can momentarily produce more DC power than the inverter's AC limit, the inverter "clips" the excess and it's lost. This system's 5-minute data shows no meaningful clipping (§9 of the report): peak power on the year's best day, 8.52 kW, sits about 10% below the 9.45 kW AC ceiling.
 
 **CT (current transformer) / consumption metering** — Small clamp sensors on the home's wiring that let the solar gateway measure whole-home usage, not just solar production. Having them is what made the load and battery analysis in this report possible.
 

@@ -5790,6 +5790,11 @@ def case_degradation_naive_band_contains_every_estimator_it_is_built_from():
             + " falls inside it")
 
 
+# §9's clipping sentence, the basis of GLOSSARY.md's clipping entry.
+_CLIPPING_SENTENCE_RE = re.compile(
+    r"peak power ([\d.]+) kW vs the ([\d.]+) kW AC ceiling on the year's best day")
+
+
 def case_every_on_peak_bracket_on_the_page_is_the_rates_one():
     """issue #216 follow-up: index.html stated the all-in on-peak bracket as
     "60–87¢" in three prose sites (§3, §5, §8) while the day-band, §6 and
@@ -5804,9 +5809,9 @@ def case_every_on_peak_bracket_on_the_page_is_the_rates_one():
     lo, hi = sorted(round(R.allin(s, "on") * 100) for s in ("S", "W"))
     expected = f"{lo}–{hi}¢"
     sites = HTML.count(expected)
-    assert sites >= 4, (
-        f"index.html carries the on-peak bracket {expected} only {sites} time(s); the "
-        "day-band, §6 and the three prose sites all state it")
+    assert sites == 5, (
+        f"index.html carries the on-peak bracket {expected} {sites} time(s), not the 5 "
+        "it publishes (the day-band, §3, §5, §6 and §8); a site was lost or added")
     # The page also spans off-peak to on-peak ("51–87¢", the imports a battery
     # displaces); those low ends are rates.py's off-peak prices, so they pass.
     allowed = {str(lo)} | {str(round(R.allin(s, "off") * 100)) for s in ("S", "W")}
@@ -5836,11 +5841,19 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
 
     Issue #216 swept the whole file for every figure (a number with a unit
     or a $) and pinned each one an artifact, rates.py or a token derives.
-    Three were wrong at that sweep: the on-peak bracket (60-87 cents against
-    rates.allin's 61-87), the arbitrage stored-energy cost (~8-14 cents, the
+    Two were wrong at that sweep: the on-peak bracket (60-87 cents against
+    rates.allin's 61-87) and the arbitrage stored-energy cost (~8-14 cents, the
     retired pre-#189 solar-surplus basis, against the dispatch artifact's
-    11.7/14.0), and the clipping headroom (~10% below the ceiling, from one
-    sampled spring day, against PEAK_POWER_MULTIYEAR's 97% of the ceiling).
+    11.7/14.0).
+
+    The clipping entry is the one pin with no artifact behind its peak: §9's
+    "peak power 8.52 kW vs the 9.45 kW AC ceiling on the year's best day" is
+    hand prose from a one-day PVOutput 5-minute sample that no data/ file
+    carries (the committed peaks file, cleaning_study_peaks_2024.csv, is a
+    2024 summer window, a different statistic). So the glossary's peak is
+    pinned to §9's own sentence, its ceiling to AC_CEILING_KW (and §9's
+    ceiling to the same token when the archive is present), and its "about
+    N% below" is computed from those two figures rather than typed.
 
     Figures deliberately NOT pinned, because no committed artifact carries
     them; each is cited to a public source in its own entry, or is a
@@ -5910,8 +5923,7 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
                   "SPECIFIC_YIELD", "DEGRADATION_NAIVE_RANGE",
                   "NIGHT_FLOOR_MEDIAN", "NIGHT_FLOOR_ANNUAL_COST",
                   "PEAK_WINDOW", "CHEAP_WINDOW", "STORED_KWH_COST_SOLAR_MIDDAY",
-                  "STORED_KWH_COST_GRID", "SYSTEM_SIZE_KW_DC", "AC_CEILING_KW",
-                  "PEAK_POWER_MULTIYEAR"):
+                  "STORED_KWH_COST_GRID", "SYSTEM_SIZE_KW_DC", "AC_CEILING_KW"):
         try:
             resolved[token] = rt.resolve_token(token)
         except BaseException as e:                # noqa: BLE001 - that is the point
@@ -6062,17 +6074,22 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
                   for t in ("STORED_KWH_COST_SOLAR_MIDDAY", "STORED_KWH_COST_GRID"))
         pins.append(("Arbitrage", f"storing ~{lo}–{hi}¢ energy",
                      "STORED_KWH_COST_SOLAR_MIDDAY and STORED_KWH_COST_GRID"))
-    # PEAK_POWER_MULTIYEAR is a sentence ("9.20 kW on Aug 30, 2024, 97% of the
-    # inverter AC ceiling, across ..."); the glossary's clipping entry quotes
-    # its peak and its share of the ceiling, not its dates.
-    if "PEAK_POWER_MULTIYEAR" in resolved:
-        peak = re.match(r"([\d.]+ kW) on .*?, (\d+% of the inverter AC ceiling)",
-                        resolved["PEAK_POWER_MULTIYEAR"])
-        assert peak, (f"PEAK_POWER_MULTIYEAR renders {resolved['PEAK_POWER_MULTIYEAR']!r}, "
-                      "no longer in the 'N kW on DATE, P% of the inverter AC ceiling' shape "
-                      "the glossary's clipping entry quotes")
-        for figure in peak.groups():
-            pins.append(("Clipping", figure, "PEAK_POWER_MULTIYEAR"))
+    # The clipping entry restates §9's sentence (see the docstring): peak from
+    # the page, ceiling from the token, the headroom computed from the two.
+    clip = _CLIPPING_SENTENCE_RE.search(HTML)
+    assert clip, ("§9 no longer states 'peak power N kW vs the M kW AC ceiling on the "
+                  "year's best day' -- that sentence is the glossary clipping entry's basis")
+    peak_kw, ceiling_kw = float(clip.group(1)), float(clip.group(2))
+    if "AC_CEILING_KW" in resolved:
+        assert f"{ceiling_kw:.2f}" == resolved["AC_CEILING_KW"], (
+            f"§9 states a {clip.group(2)} kW AC ceiling but AC_CEILING_KW renders "
+            f"{resolved['AC_CEILING_KW']} from household.yaml:solar.kw_ac")
+    pins += [
+        ("Clipping", f"{clip.group(1)} kW", "index.html §9's peak-power sentence (no artifact)"),
+        ("Clipping", f"{clip.group(2)} kW AC ceiling", "index.html §9 / AC_CEILING_KW"),
+        ("Clipping", f"about {round((1 - peak_kw / ceiling_kw) * 100)}% below",
+         "1 − peak ÷ ceiling, from the two figures above"),
+    ]
     # NIGHT_FLOOR_ANNUAL_COST renders both pricings in one sentence; the
     # glossary spreads them across its own. Pin the amounts, not the wording.
     if "NIGHT_FLOOR_ANNUAL_COST" in resolved:
