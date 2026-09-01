@@ -3502,6 +3502,104 @@ def case_a_staging_directory_that_already_exists_is_never_adopted():
             "recorded for removal; a fresh one is created and recorded")
 
 
+def _shell_fn(text, name):
+    """The body of a top-level shell function in stage-private-data.sh, so a
+    harness runs the script's own text rather than a retyped copy."""
+    m = re.search(r"^" + re.escape(name) + r"\(\) \{[^\n]*\n(.*?)\n\}$", text, re.M | re.S)
+    assert m, f"stage-private-data.sh no longer defines {name}"
+    return m.group(1)
+
+
+_DISCARD_HARNESS_HEAD = """set -uo pipefail
+DST=$1; DST_REAL=$1; _STAGING_NAME=$2
+_STAGING_CREATED=(); _STAGING_REPORT=(); _SLOTS_CREATED=(); _swapped=()
+_physical() { (cd -- "$1" >/dev/null 2>&1 && pwd -P); }
+_refuse() {
+%(refuse)s
+}
+_discard_staging() {
+%(discard)s
+}
+"""
+
+
+@case
+def case_a_refusal_while_creating_staging_names_what_it_could_not_remove():
+    """issue #214, review round 2. _create_staging_dir refuses through
+    _refuse, which says "nothing was written" -- and when its _discard_staging
+    could not remove a staging directory this run had already created, the
+    refusal has to carry that line too, or the leftover is hidden behind the
+    claim. The reviewer's scenario: the first staging directory is created,
+    its parent is made unwritable, the second mkdir fails, and the removal of
+    the first fails for the same reason. Run with the script's own _refuse,
+    _discard_staging and _create_staging_dir, out of its text."""
+    if os.geteuid() == 0:
+        raise SkipCase("root ignores directory permissions, so the removal cannot be made to fail")
+    text = SCRIPT.read_text()
+    harness = (_DISCARD_HARNESS_HEAD % {"refuse": _shell_fn(text, "_refuse"),
+                                        "discard": _shell_fn(text, "_discard_staging")}
+               + "_create_staging_dir() {\n" + _shell_fn(text, "_create_staging_dir") + "\n}\n"
+               + '_create_staging_dir "$DST_REAL/private/$_STAGING_NAME"\n'
+               + 'chmod 555 "$DST_REAL/private" "$DST_REAL/private/1-raw-data"\n'
+               + '_create_staging_dir "$DST_REAL/private/1-raw-data/$_STAGING_NAME"\n'
+               + 'echo "unexpected: the second staging directory was created"\n')
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td).resolve()
+        (root / "private" / "1-raw-data").mkdir(parents=True)
+        try:
+            r = subprocess.run(["/bin/bash", "-c", harness, "bash", str(root), ".staging-7"],
+                               capture_output=True, text=True)
+            first = root / "private" / ".staging-7"
+            assert r.returncode != 0 and "unexpected" not in r.stdout, r.stdout
+            assert "REFUSED" in r.stderr and "could not be created" in r.stderr, r.stderr
+            assert first.is_dir(), "the fixture did not produce the scenario: the first staging directory is gone"
+            assert "NOT removed: private/.staging-7" in r.stderr, (
+                f"the refusal hides the staging directory it could not remove: {r.stderr}")
+        finally:
+            os.chmod(root / "private", 0o755)
+            os.chmod(root / "private" / "1-raw-data", 0o755)
+    return ("a refusal while creating the staging directories names the earlier "
+            "one it could not remove")
+
+
+@case
+def case_a_refusal_after_creating_a_managed_directory_removes_and_names_it():
+    """issue #214, review round 2. The EXIT trap is installed BEFORE the loop
+    that creates private/, private/1-raw-data and private/verify, so a refusal
+    on the second or third of them removes the empty one this run made a
+    moment earlier and says so -- rather than leaving it behind a "nothing was
+    written". Proven two ways: the trap line precedes the loop in the script's
+    text, and the script's own _on_exit and _discard_staging, run out of its
+    text with one created slot recorded and no staging directory, remove the
+    empty slot and report it under the before-any-copy wording."""
+    text = SCRIPT.read_text()
+    trap_at = text.index("\ntrap _on_exit EXIT\n")
+    loop_at = text.index('\nfor _d in "${_STAGING_SLOTS[@]}"; do\n')
+    assert trap_at < loop_at, (
+        "the EXIT trap is installed after the managed-directory loop, so a "
+        "refusal inside that loop leaves the directory it created")
+    harness = (_DISCARD_HARNESS_HEAD % {"refuse": _shell_fn(text, "_refuse"),
+                                        "discard": _shell_fn(text, "_discard_staging")}
+               + "_on_exit() {\n" + _shell_fn(text, "_on_exit") + "\n}\n"
+               + 'mkdir "$DST_REAL/private/1-raw-data"\n'
+               + '_SLOTS_CREATED=("$DST_REAL/private/1-raw-data")\n'
+               + "trap _on_exit EXIT\n"
+               + "exit 1\n")
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td).resolve()
+        (root / "private").mkdir()
+        r = subprocess.run(["/bin/bash", "-c", harness, "bash", str(root), ".staging-7"],
+                           capture_output=True, text=True)
+        assert r.returncode == 1, (r.returncode, r.stderr)
+        assert not (root / "private" / "1-raw-data").exists(), (
+            f"the empty directory this run created was left behind: {r.stderr}")
+        assert "removed:     private/1-raw-data" in r.stderr, r.stderr
+        assert "before any copy" in r.stderr and "staging copy still in place" not in r.stderr, (
+            f"the trap reports a staging copy that never existed: {r.stderr}")
+    return ("the EXIT trap precedes the managed-directory loop, and a refusal "
+            "there removes the empty directory it created and names it")
+
+
 @case
 def case_has_gas_is_read_with_real_yaml_semantics_not_text_scanning():
     """Codex review, issue #33, pass 3: an earlier version grepped the

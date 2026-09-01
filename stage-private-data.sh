@@ -3187,7 +3187,12 @@ _discard_staging() {   # remove this run's own staging directories; fills _STAGI
   while [ "$i" -gt 0 ]; do
     i=$((i - 1))
     d=${_SLOTS_CREATED[$i]}
-    if [ -d "$d" ] && [ ! -L "$d" ]; then rmdir -- "$d" 2>/dev/null || true; fi
+    if [ ! -d "$d" ] || [ -L "$d" ]; then continue; fi
+    if rmdir -- "$d" 2>/dev/null; then
+      _STAGING_REPORT+=("removed:     ${d#"$DST_REAL/"}  (an empty directory this run created)")
+    else
+      _STAGING_REPORT+=("kept:        ${d#"$DST_REAL/"}  (a directory this run created; not empty, so left alone)")
+    fi
   done
   _SLOTS_CREATED=()
 }
@@ -3281,15 +3286,22 @@ _swap_dir() {   # $1 = a staged directory, $2 = an existing final directory
 # command outside the wrapped copies and renames. Installed only once a
 # staging directory exists, and inert after the swap has cleared the list.
 _on_exit() {
-  local rc=$? p
+  local rc=$? p had_staging=${#_STAGING_CREATED[@]}
   if [ "$rc" -eq 0 ]; then return 0; fi
-  if [ ${#_STAGING_CREATED[@]} -eq 0 ] && [ ${#_SLOTS_CREATED[@]} -eq 0 ]; then return 0; fi
+  if [ "$had_staging" -eq 0 ] && [ ${#_SLOTS_CREATED[@]} -eq 0 ]; then return 0; fi
   _discard_staging
-  echo "stage-private-data.sh: FAILED -- the run stopped (exit $rc) with its staging copy still in place" >&2
-  echo "  in place:    ${#_swapped[@]} path(s) now hold this source's copy (new where the destination had none," >&2
-  echo "               replaced where it had one), relative to the destination root:" >&2
-  for p in ${_swapped[@]+"${_swapped[@]}"}; do echo "    ${p#"$DST_REAL/"}" >&2; done
-  echo "  every other path this script writes still holds what it held before this run." >&2
+  if [ "$had_staging" -gt 0 ]; then
+    echo "stage-private-data.sh: FAILED -- the run stopped (exit $rc) with its staging copy still in place" >&2
+    echo "  in place:    ${#_swapped[@]} path(s) now hold this source's copy (new where the destination had none," >&2
+    echo "               replaced where it had one), relative to the destination root:" >&2
+    for p in ${_swapped[@]+"${_swapped[@]}"}; do echo "    ${p#"$DST_REAL/"}" >&2; done
+    echo "  every other path this script writes still holds what it held before this run." >&2
+  else
+    # Only the managed directories had been created: no copy had started, so
+    # the refusal above is right that nothing was written, and this says what
+    # became of the empty directories it made on the way.
+    echo "stage-private-data.sh: the run stopped (exit $rc) before any copy; directories it had created:" >&2
+  fi
   for p in ${_STAGING_REPORT[@]+"${_STAGING_REPORT[@]}"}; do echo "  $p" >&2; done
 }
 
@@ -3320,7 +3332,8 @@ _create_staging_dir() {   # $1 = absolute path of a staging directory to create
       "expected:    a name this run can create -- only a directory it created" \
       "             may hold its staging copy or be removed afterwards. If the" \
       "             path already exists, it appeared after this run's check for" \
-      "             leftovers: inspect and delete it yourself, then re-run."
+      "             leftovers: inspect and delete it yourself, then re-run." \
+      ${_STAGING_REPORT[@]+"${_STAGING_REPORT[@]}"}
   fi
   _STAGING_CREATED[${#_STAGING_CREATED[@]}]="$1"
   real=$(_physical "$1" || true)
@@ -3331,11 +3344,17 @@ _create_staging_dir() {   # $1 = absolute path of a staging directory to create
       "path:        $1" \
       "resolves to: ${real:-<unresolvable>}" \
       "expected:    a path whose every component is a real directory inside" \
-      "             $DST_REAL"
+      "             $DST_REAL" \
+      ${_STAGING_REPORT[@]+"${_STAGING_REPORT[@]}"}
   fi
 }
 
+# The trap goes on BEFORE the slot loop: a refusal on the second or third
+# slot (a mkdir that fails, a component that resolves elsewhere) exits from
+# inside _ensure_contained_dir, and the empty slot this run created a moment
+# earlier must be removed and named rather than left as a silent leftover.
 _SLOTS_CREATED=()
+trap _on_exit EXIT
 for _d in "${_STAGING_SLOTS[@]}"; do
   if [ ! -e "$_d" ] && [ ! -L "$_d" ]; then
     _ensure_contained_dir "$_d"
@@ -3348,7 +3367,6 @@ done
 _STAGE_HH="$DST_REAL/private/$_STAGING_NAME"
 _STAGE_RAW="$DST_REAL/private/1-raw-data/$_STAGING_NAME"
 _STAGE_VERIFY="$DST_REAL/private/verify/$_STAGING_NAME"
-trap _on_exit EXIT
 for _d in "$_STAGE_HH" "$_STAGE_RAW" "$_STAGE_VERIFY"; do
   _create_staging_dir "$_d"
 done
