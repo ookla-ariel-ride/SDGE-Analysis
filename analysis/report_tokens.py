@@ -2446,6 +2446,10 @@ _S3_ROW_CLASSES = tuple(_S3_ROW_CLASS_BY_STANDING[s] for s in _PLAN_STANDINGS)
 # cells already use ("$2,328/yr · 4,720 kWh"). Not an em dash -- that is
 # running prose's design language here, and prose_rhythm.py counts it.
 _ROW_BADGE_SEPARATOR = "·"
+# The mark section 3's row puts after the household's own plan. It qualifies
+# the PLAN (this is the plan the house is on), so it sits between the name
+# and any badge, and the cell token carries it rather than the template.
+_S3_CURRENT_MARK = "✓ current"
 
 # WHAT EACH ROW STATE SAYS BESIDE THE PLAN NAME (issue #198). Keyed by the
 # class _s3_row_state resolves, so the badge and the paint come off one
@@ -2502,19 +2506,20 @@ def _s3_row_class(ctx):
 
 
 def _s3_row_plan_cell(ctx):
-    """Section 3's plan-name cell: the household's plan and, after it, the
-    badge the row's class implies -- as text (issue #198). The template's own
-    "✓ current" mark follows the token in the same cell.
+    """Section 3's plan-name cell: the household's plan, its current-plan
+    mark and, after them, the badge the row's class implies -- as text
+    (issue #198). The mark comes before the badge because it qualifies the
+    plan, not the badge.
 
-    THE WIN STATE IS THE BARE PLAN NAME, so the published row does not move
+    THE WIN STATE IS THE PLAN NAME AND ITS MARK, so the published row does not move
     (test_report_tokens.case_section_3s_published_chrome_round_trips_into_
     index_html). Every other state appends its badge after
     _ROW_BADGE_SEPARATOR. One cell token rather than a badge token after
     {{BEST_PLAN}}, for the two reasons _s4_row_plan_cell gives: render()
     escapes every value, and an empty win-state value is refused."""
-    plan = _best_plan(ctx, "S3_ROW_PLAN_CELL")
+    cell = f"{_best_plan(ctx, 'S3_ROW_PLAN_CELL')} {_S3_CURRENT_MARK}"
     badge = _S3_ROW_BADGE_TEXT[_s3_row_state(ctx, "S3_ROW_PLAN_CELL")]
-    return plan if badge is None else f"{plan} {_ROW_BADGE_SEPARATOR} {badge}"
+    return cell if badge is None else f"{cell} {_ROW_BADGE_SEPARATOR} {badge}"
 
 
 _tok("S3_ROW_PLAN_CELL", kind="derived", get=_s3_row_plan_cell,

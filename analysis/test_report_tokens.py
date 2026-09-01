@@ -3204,6 +3204,112 @@ def _s4_plan_cell(markup):
     return cell
 
 
+# THE STYLESHEET GUARD (issue #198 review). A literal check for
+# `tr.<state> td:first-child::after` passed five rewrites of the same claim:
+# `tr.trails>td:first-child::after`, `:after` with one colon,
+# `td:first-of-type::after`, `::before`, and the same words under a new
+# selector. The axis the issue names is not one selector string; it is any
+# CSS `content:` rule that puts words on a row-state class. So every rule in
+# the <style> block that sets `content:` is parsed -- selector and value --
+# and held to two rules: its selector names no row-state class in any form,
+# and its value is one of the decorations the template actually draws.
+_STYLE_RULE_RE = re.compile(r"([^{}]+)\{([^{}]*)\}")
+_STYLE_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+_CONTENT_DECL_RE = re.compile(
+    r"""content\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^;}]*)""")
+# Every content: value the shipped template draws, by value: the two
+# open/closed affordances, the .rec/.note eyebrow labels and their
+# data-label override. Words on a row are none of these.
+_DECORATIVE_CONTENT = frozenset({'"▸"', '"▾"', '"Verdict"', '"Caveat"', "attr(data-label)"})
+
+
+def _template_style():
+    """The one <style> block report-template.html carries, comments removed
+    (a comment may mention a class name without painting anything)."""
+    text = rt.TEMPLATE.read_text()
+    assert text.count("<style>") == 1, (
+        f"report-template.html carries {text.count('<style>')} <style> blocks; the "
+        "stylesheet guards read one")
+    return _STYLE_COMMENT_RE.sub("", text[text.index("<style>"):text.index("</style>")])
+
+
+def _style_content_rules(style):
+    """[(selector, content value)] for every rule in `style` that sets
+    content:, whether it sits at the top level or inside an @media block.
+    The selector is the text between the previous brace and this rule's
+    opening brace, whitespace-collapsed."""
+    out = []
+    for m in _STYLE_RULE_RE.finditer(style):
+        selector, decls = " ".join(m.group(1).split()), m.group(2)
+        c = _CONTENT_DECL_RE.search(decls)
+        if c:
+            out.append((selector, c.group(1).strip()))
+    return out
+
+
+def _assert_no_row_badge_in_stylesheet(style, classes, section):
+    """Refuse any content: rule whose selector names one of `classes` (the
+    row-state classes) in any form -- a class selector, a descendant or
+    child combinator, an attribute selector, a single- or double-colon
+    pseudo-element -- and any content: value that is not a known decoration.
+    Both, because a claim can be moved to a selector that names no class."""
+    rules = _style_content_rules(style)
+    assert rules, (
+        "the stylesheet parser found no content: rule at all, so it sees nothing and "
+        "would pass a badge it cannot read")
+    for selector, content in rules:
+        named = [cls for cls in classes
+                 if re.search(rf"(?<![\w-]){re.escape(cls)}(?![\w-])", selector)]
+        assert not named and "[class" not in selector, (
+            f"report-template.html's stylesheet writes {content} onto a {section} row "
+            f"state ({selector!r} names {named or 'a class attribute'}). Generated "
+            "content never enters the DOM, so no guard can read the claim; the badge is "
+            "the row's own cell text and the stylesheet must not carry any")
+        assert content in _DECORATIVE_CONTENT, (
+            f"report-template.html's stylesheet writes {content} through {selector!r}, "
+            f"which is not one of the decorations it draws {sorted(_DECORATIVE_CONTENT)}; "
+            "words a reader is shown belong in the document's text, where the guards "
+            "can read them")
+
+
+# What the reviewer got past the literal check, each a whole rule that a
+# browser would paint as a badge on a row. The guard must refuse every one.
+_BADGE_BYPASS_RULES = (
+    'tr.trails>td:first-child::after{content:"not the cheapest in either column"}',
+    'tr.trails td:first-child:after{content:"not the cheapest in either column"}',
+    'tr.trails td:first-of-type::after{content:"not the cheapest in either column"}',
+    '.trails td:first-child::before{content:"not the cheapest in either column"}',
+    'tr.trails td:first-child::after{content:"cheapest in neither column"}',
+    'tr[class~="s3-trails"] td:first-child::after{content:"not the cheapest here"}',
+    '@media print{tr.tie td:first-child::after{content:"tied"}}',
+    '.plan-badge::after{content:"tied for cheapest in both columns"}',
+)
+
+
+@case
+def case_the_stylesheet_badge_guard_reads_every_selector_form():
+    """The guard above is proven on the bypasses, not assumed: each of
+    _BADGE_BYPASS_RULES appended to the shipped stylesheet must be refused,
+    and the shipped stylesheet on its own must pass -- for both sections'
+    class vocabularies."""
+    style = _template_style()
+    classes = tuple(rt._S3_ROW_CLASSES) + tuple(rt._S4_ROW_CLASSES)
+    _assert_no_row_badge_in_stylesheet(style, classes, "section 3/4")
+    refused = []
+    for rule in _BADGE_BYPASS_RULES:
+        try:
+            _assert_no_row_badge_in_stylesheet(style + "\n  " + rule + "\n", classes,
+                                               "section 3/4")
+        except AssertionError as e:
+            refused.append(f"{rule.split('{')[0]} -> refused ({str(e)[:40]}...)")
+        else:
+            raise AssertionError(
+                f"the stylesheet guard passed a badge written as {rule!r}; a claim in "
+                "that form would reach a reader with nothing here reading it")
+    return (f"the shipped stylesheet passes and all {len(refused)} badge bypasses are "
+            "refused: " + "; ".join(refused))
+
+
 # The two families of row class, written out rather than pattern-matched off
 # the names. Section 4's row states BOTH columns' standings (report_tokens
 # ._S4_ROW_CLASSES), and the question the heading is read against is the
@@ -3673,8 +3779,7 @@ def case_section_4s_row_class_is_a_state_the_stylesheet_can_paint():
     expressed."""
     plans, best, near, far, rest = _matrix_trio()
     provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
-    style = rt.TEMPLATE.read_text()
-    style = style[style.index("<style>"):style.index("</style>")]
+    style = _template_style()
 
     assert set(_S4_ROW_BADGES) == set(rt._S4_ROW_CLASSES), (
         f"this case declares a badge for {sorted(_S4_ROW_BADGES)} while S4_ROW_CLASS can "
@@ -3700,19 +3805,11 @@ def case_section_4s_row_class_is_a_state_the_stylesheet_can_paint():
             f"report-template.html's stylesheet has no rule for tr.{state}, a state "
             f"S4_ROW_CLASS can put on section 4's household row; an unpainted class is "
             f"not a broken render, it is a runner-up's row drawn like every other row")
-        # The badge is DOM text, so the stylesheet may not carry it: a
-        # ::after rule on this state either doubles the text the cell already
-        # says or, with no DOM text beside it, puts the claim back where no
-        # guard reads it (issue #198).
-        assert f"tr.{state} td:first-child::after" not in style, (
-            f"report-template.html badges tr.{state} through CSS content:, which never "
-            "enters the DOM; the badge is the row's own text (S4_ROW_PLAN_CELL) and the "
-            "stylesheet must not carry a second copy")
-        text = _S4_ROW_BADGES[state][0]
-        if text is not None:
-            assert text not in style, (
-                f"the badge {text!r} appears in report-template.html's <style> block; it "
-                "is a claim about the ranking and lives in the document's text, not CSS")
+    # The badge is DOM text, so the stylesheet may not carry one in any form:
+    # a content: rule on a row state either doubles the text the cell already
+    # says or, with no DOM text beside it, puts the claim back where no guard
+    # reads it (issue #198). Parsed, not substring-matched -- see the guard.
+    _assert_no_row_badge_in_stylesheet(style, rt._S4_ROW_CLASSES, "section 4")
 
     seen, markups = {}, {}
     with _stub_plan(best, provider):
@@ -5224,7 +5321,7 @@ _PLAN_STANDING_TOKENS = ("S0_BEST_PLAN_CARD", "S0_VERDICT", "S3_VERDICT",
 _S3_CHROME_SLOTS = {
     "card": '<div class="lbl">{{S0_BEST_PLAN_CARD}}</div>',
     "row": '<tr class="{{S3_ROW_CLASS}}">',
-    "cell": "<td>{{S3_ROW_PLAN_CELL}} ✓ current</td>",
+    "cell": "<td>{{S3_ROW_PLAN_CELL}}</td>",
     "lead": "{{S3_WHY_LEAD}}</b>",
 }
 # The token each slot exists to carry -- what a case comparing that slot's
@@ -6537,8 +6634,7 @@ def case_section_3s_row_class_is_a_state_the_stylesheet_can_paint():
     own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
     rival = min((r for r in priced if r["plan"] != cheapest),
                 key=lambda r: float(r["total"]))["plan"]
-    style = rt.TEMPLATE.read_text()
-    style = style[style.index("<style>"):style.index("</style>")]
+    style = _template_style()
 
     assert set(_S3_ROW_BADGES) == set(rt._S3_ROW_CLASSES), (
         f"this case declares a badge for {sorted(_S3_ROW_BADGES)} while S3_ROW_CLASS can "
@@ -6555,14 +6651,10 @@ def case_section_3s_row_class_is_a_state_the_stylesheet_can_paint():
             f"report-template.html's stylesheet has no rule for tr.{state}, a state "
             f"S3_ROW_CLASS can put on section 3's household row; an unpainted class is not "
             "a broken render, it is a runner-up's row drawn like every other row")
-        assert f"tr.{state} td:first-child::after" not in style, (
-            f"report-template.html badges tr.{state} through CSS content:, which never "
-            "enters the DOM; the badge is the row's own text (S3_ROW_PLAN_CELL) and the "
-            "stylesheet must not carry a second copy")
-        if text is not None:
-            assert text not in style, (
-                f"the badge {text!r} appears in report-template.html's <style> block; it "
-                "is a claim about the ranking and lives in the document's text, not CSS")
+    # No content: rule may name a section 3 row state in any form, and no
+    # content: value may be anything but a known decoration -- parsed, not
+    # substring-matched (issue #198 review; see _assert_no_row_badge_in_stylesheet).
+    _assert_no_row_badge_in_stylesheet(style, rt._S3_ROW_CLASSES, "section 3")
 
     seen = {}
     with _stub_plan(cheapest, provider):
@@ -6576,14 +6668,15 @@ def case_section_3s_row_class_is_a_state_the_stylesheet_can_paint():
                 f"{list(rt._S3_ROW_CLASSES)} and so is a class nothing in "
                 "report-template.html paints")
             badge, cheapest_here, sole = _S3_ROW_BADGES[state]
-            # THE BADGE, READ OUT OF THE RENDERED ROW: the bare plan name in
-            # the win state (the published cell), the plan name and the badge
-            # the class implies otherwise, as one text node followed by the
-            # template's own current-plan mark.
+            # THE BADGE, READ OUT OF THE RENDERED ROW: the plan name and its
+            # current-plan mark in the win state (the published cell), and
+            # after them the badge the class implies otherwise, as one text
+            # node. The mark qualifies the plan, so it precedes the badge.
             cell = _s4_plan_cell(row)
+            marked = f"{plan} {rt._S3_CURRENT_MARK}"
             expected_cell = _htmllib.escape(
-                plan if badge is None else f"{plan} {rt._ROW_BADGE_SEPARATOR} {badge}",
-                quote=True) + " ✓ current"
+                marked if badge is None else f"{marked} {rt._ROW_BADGE_SEPARATOR} {badge}",
+                quote=True)
             assert cell == expected_cell, (
                 f"a row of class {state!r} renders its plan-name cell as {cell!r}; the "
                 f"class implies the badge {badge!r}, so the cell must read "
