@@ -558,8 +558,17 @@ def _s4_battery_plan_rows():
     # Ordered on the cents, not the whole-dollar cell (issue #177): two rivals
     # that round to the same dollar would otherwise take the JSON's key order,
     # which is not a ranking. The cells printed stay the whole-dollar ones.
-    others = sorted((p for p in plans if p != current_plan),
-                     key=lambda p: plans[p]["no_battery_cents"])
+    # Through rt._bpm_column_cents rather than a bare key read, so a matrix
+    # with no _cents fields (one from before #177) or a dollar cell that
+    # disagrees with its cents twin gets the same named refusal here as at
+    # the ranked tokens. A bare KeyError would escape generate_report's data
+    # builders as a traceback, before the manifest is written, and the
+    # "regenerate with battery_plan_matrix.py" remedy would never print.
+    rivals = {p: plans[p] for p in plans if p != current_plan}
+    cents = rt._bpm_column_cents(
+        "S4 battery-plan rows", "no_battery", rivals,
+        "which order section 4's rival rows take in its no_battery column")
+    others = sorted(rivals, key=lambda p: cents[p])
     out = []
     for p in others:
         d = plans[p]

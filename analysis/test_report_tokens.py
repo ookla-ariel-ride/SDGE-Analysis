@@ -2790,32 +2790,63 @@ def case_a_matrix_without_cents_fields_is_refused_naming_the_generator():
     cells and no _cents twins. That is not a bad cell the ranking can report
     as "None"; it is an artifact of the wrong shape, and the refusal has to
     tell whoever reads it what to run. Every ranked token refuses it, and the
-    message names the token, the missing field and battery_plan_matrix.py."""
+    message names the token, the missing field and battery_plan_matrix.py.
+
+    SECTION 4's TABLE TOO, and not with a KeyError (round-2 review). The row
+    builder report_blocks._s4_battery_plan_rows orders the rival rows on the
+    cents, and a bare key read there raised KeyError -- which escapes
+    generate_report's data builders as a traceback, before the manifest is
+    written, so the remedy never printed. It now goes through
+    rt._bpm_column_cents and refuses the same way the tokens do.
+
+    A matrix missing the cents on ONE row only -- the household's own -- is
+    the same refusal, and the message may not call it a pre-#177 artifact:
+    that shape is a hand edit, and the wording covers both."""
+    import report_blocks as rb
     plans, best, rival, rest = _matrix_pair()
     provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
     root = rt._json("battery_plan_matrix.json")
     stripped = {p: {k: v for k, v in row.items() if not k.endswith("_cents")}
                 for p, row in plans.items()}
     assert all("no_battery_cents" not in row for row in stripped.values())
+    own_only = dict(plans)
+    own_only[best] = stripped[best]
     refused = []
-    with _stub_plan(best, provider), _swapped(root, "plans", stripped):
-        for token in ("S4_ROW_CLASS", "S4_VERDICT_SHORT", "PLAN_MARGIN_VS_RUNNER_UP"):
-            try:
-                value = rt.resolve_token(token)
-                raise AssertionError(
-                    f"{token} ranked a matrix with no _cents fields: {value!r}")
-            except SystemExit as e:
-                msg = str(e)
-                for needle in (token, "_cents", "regenerate", "battery_plan_matrix.py"):
-                    assert needle.lower() in msg.lower(), (
-                        f"{token}'s refusal of a pre-#177 matrix does not say {needle!r}: "
-                        f"{msg}")
-                assert "is None" not in msg, (
-                    f"{token} reports a missing field as a None it cannot settle instead "
-                    f"of naming the remedy: {msg}")
-            refused.append(token)
+    readers = (("S4_ROW_CLASS", lambda: rt.resolve_token("S4_ROW_CLASS")),
+               ("S4_VERDICT_SHORT", lambda: rt.resolve_token("S4_VERDICT_SHORT")),
+               ("PLAN_MARGIN_VS_RUNNER_UP",
+                lambda: rt.resolve_token("PLAN_MARGIN_VS_RUNNER_UP")),
+               ("S4 battery-plan rows", rb._s4_battery_plan_rows))
+    for shape, matrix, expected in (("no row has cents", stripped, readers),
+                                    ("only the household's own row lacks them", own_only,
+                                     readers[:3])):
+        with _stub_plan(best, provider), _swapped(root, "plans", matrix):
+            for name, read in expected:
+                try:
+                    value = read()
+                    raise AssertionError(
+                        f"{name} ranked a matrix where {shape}: {value!r}")
+                except KeyError as e:
+                    raise AssertionError(
+                        f"{name} raised a bare KeyError ({e}) on a matrix where {shape} "
+                        "instead of the named refusal; generate_report would die with a "
+                        "traceback and never print the remedy")
+                except SystemExit as e:
+                    msg = str(e)
+                    for needle in (name, "_cents", "regenerate", "battery_plan_matrix.py"):
+                        assert needle.lower() in msg.lower(), (
+                            f"{name}'s refusal of a matrix where {shape} does not say "
+                            f"{needle!r}: {msg}")
+                    assert "is None" not in msg, (
+                        f"{name} reports a missing field as a None it cannot settle "
+                        f"instead of naming the remedy: {msg}")
+                    assert "predates" not in msg, (
+                        f"{name} asserts the whole artifact predates #177, which is false "
+                        f"when {shape}: {msg}")
+                refused.append(f"{name} ({shape})")
     return ("a matrix with no _cents fields is refused naming battery_plan_matrix.py as "
-            "the remedy (" + ", ".join(refused) + ")")
+            "the remedy, by the tokens and by section 4's row builder, with no KeyError ("
+            + ", ".join(refused) + ")")
 
 
 @case

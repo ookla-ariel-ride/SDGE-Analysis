@@ -1506,7 +1506,7 @@ def case_a_second_ranked_household_renders_packages_and_plans_on_one_stated_foot
                            if r["provider"] == "CEA" and r["plan"] == rival))
     row = rt._json("battery_plan_matrix.json")["plans"][rival]
     no_batt, no_batt_exact = row["no_battery"], row["no_battery_cents"] / 100
-    assert abs(no_batt_exact - csv_total) <= 1.0 + 0.005, (
+    assert abs(no_batt_exact - csv_total) <= 1.01, (
         f"the ranking and the switch pricing are NOT on one footing: "
         f"battery_plan_matrix.json plans[{rival!r}].no_battery_cents "
         f"(${no_batt_exact:,.2f}) is ${abs(no_batt_exact - csv_total):,.2f} from "

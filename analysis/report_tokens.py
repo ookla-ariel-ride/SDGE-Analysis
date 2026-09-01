@@ -3043,10 +3043,10 @@ def _bpm_column_cents(token, column, rows, subject):
         raise SystemExit(
             f"report_tokens: {token} cannot rank data/battery_plan_matrix.json's "
             f"{column} column: plans.{missing[0]} has no {key} field (missing for "
-            f"{', '.join(missing)}). The artifact predates issue #177, which added "
-            "the integer-cents fields the ranking reads. Regenerate it with "
-            "battery_plan_matrix.py (the private/verify sandbox pattern in "
-            "CLAUDE.md's Commands section)")
+            f"{', '.join(missing)}): missing its cents field (an artifact from "
+            "before issue #177, which added the integer-cents fields the ranking "
+            "reads, or a hand edit). Regenerate it with battery_plan_matrix.py "
+            "(the private/verify sandbox pattern in CLAUDE.md's Commands section)")
     _require_finite(token, subject,
                     **{f"{p}_{column}": row.get(column) for p, row in rows.items()},
                     **{f"{p}_{key}": row.get(key) for p, row in rows.items()})
