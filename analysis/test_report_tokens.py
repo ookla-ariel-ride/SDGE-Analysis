@@ -5320,7 +5320,7 @@ def case_section_0s_card_counts_every_scenario_it_names():
                   key=lambda p: plans[p]["no_battery"])
     wildcard = rt._json("deep_results.json")["wildcard"]
     ours = [k for k in wildcard
-            if rt._wildcard_key_plan(k) == cheapest]
+            if rt._wildcard_key(k)[0] == cheapest]
     assert len(ours) == 1, (
         f"deep_results.json:wildcard names {ours} for {cheapest}; this case moves exactly "
         "one entry")
@@ -5372,10 +5372,24 @@ def _wildcard_priced(totals):
     out -- the same in-memory contract _swapped and _matrix_priced keep.
 
     Keys are built in the artifact's own prose shape ("<plan> + PW3", "<plan>
-    no battery"), because _wildcard_totals identifies the plan by splitting
-    them there; a case that passed bare plan names would be driving a shape no
-    run of the deep-dive workup produces."""
+    no battery"), because _wildcard_totals identifies the plan and the
+    configuration by parsing them there, and the plans are ones
+    data/plan_results.csv prices (_wildcard_plans), because it refuses any
+    other; a case that passed bare or invented plan names would be driving a
+    shape no run of the deep-dive workup produces."""
     return _swapped(rt._json("deep_results.json"), "wildcard", totals)
+
+
+def _wildcard_plans():
+    """(plan, rivals): the cheapest plan data/plan_results.csv prices for the
+    provider _plan_ranking_inputs ranks, and every other plan it prices,
+    sorted -- the only names _wildcard_totals accepts in a wildcard key."""
+    _provider, plan, priced = _plan_ranking_inputs()
+    rivals = sorted({r["plan"] for r in priced} - {plan})
+    assert len(rivals) >= 2, (
+        f"data/plan_results.csv prices {len(rivals)} plan(s) beside {plan}; the "
+        "wildcard cases need two rivals")
+    return plan, rivals
 
 
 @case
@@ -5408,7 +5422,8 @@ def case_a_non_finite_wildcard_total_drops_the_scenario_instead_of_ranking_the_r
     Every artifact here is synthetic and every household answer is stubbed, so
     this runs with or without the private archive -- the fail-closed reason
     _stub_household's docstring gives."""
-    plan, rival = "TEST-PLAN", "RIVAL-PLAN"
+    plan, rivals = _wildcard_plans()
+    rival = rivals[0]
     # OURS 100, THEIRS 90 -- the rival wins, so a filter that loses the 90 is
     # visible as a flipped standing rather than as a lost tie.
     clean = {f"{plan} + PW3": 100, f"{plan} no battery": 140,
@@ -5443,6 +5458,7 @@ def case_a_non_finite_wildcard_total_drops_the_scenario_instead_of_ranking_the_r
     # AND THE CARD: it must still render, name one scenario fewer, and land on
     # exactly the label a household whose workup prices ONE plan already gets.
     provider, cheapest, priced = _plan_ranking_inputs()
+    assert cheapest == plan, (cheapest, plan)
     own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
     csv_rival = min((r for r in priced if r["plan"] != cheapest),
                     key=lambda r: float(r["total"]))["plan"]
@@ -5683,9 +5699,9 @@ def case_section_0s_card_reads_a_half_won_battery_matrix():
                         for label, _cells, _opening in states))
 
 
-def _wildcard_phrase_for(rivals, plan="TEST-PLAN"):
+def _wildcard_phrase_for(rivals, plan):
     """The scenario phrase rt._wildcard_scenario builds for a workup pricing
-    `plan` against `rivals`.
+    `plan` against `rivals` (real plan names, from _wildcard_plans).
 
     TAKEN FROM THE MODULE, never typed: the phrase is one item of the card's
     ", "-joined parenthetical, so how the rivals are joined is the card's
@@ -5831,8 +5847,9 @@ def case_section_0s_card_is_true_of_every_ranking_it_can_be_handed():
     Driven through rt._plan_card_label rather than the artifacts, because 108
     combinations of three artifacts is not a fixture; the artifact path is
     driven by the cases above, which share that function."""
-    wildcard_phrases = [_wildcard_phrase_for(["TEST-RIVAL"]),
-                        _wildcard_phrase_for(["TOU-DR-1", "TOU-DR-2", "TOU-DR-P"])]
+    plan, rivals = _wildcard_plans()
+    wildcard_phrases = [_wildcard_phrase_for(rivals[:1], plan),
+                        _wildcard_phrase_for(rivals[:3], plan)]
     by_reading, checked = {}, 0
     for wildcard_phrase, csv_standing, nb, wb, wc in itertools.product(
             wildcard_phrases, rt._PLAN_STANDINGS, rt._PLAN_STANDINGS,
@@ -5992,13 +6009,13 @@ def case_the_card_and_section_9s_heading_name_the_same_wildcard_plan():
 
     with this household's battery written into the second. Both agree on the
     keys this checkout carries, which is why it shipped, and they part company
-    on any other battery. A workup labelled "Powerwall 3" left the card saying
+    on any other battery. A workup labelled "Powerwall-3" left the card saying
     "TOU-DR-P wildcard" while WILDCARD_PLAN resolved to the whole key, so
-    section 9 asked "can TOU-DR-P + Powerwall 3 (15 events dodged) + a battery
+    section 9 asked "can TOU-DR-P + Powerwall-3 (15 events dodged) + a battery
     beat EV-TOU-5?" -- a battery named twice, a plan name that is not one, and
     a heading naming something the card above it does not.
 
-    So the split lives in ONE place now (_wildcard_key_plan), and this case
+    So the split lives in ONE place now (_wildcard_key), and this case
     drives batteries that checkout's regex never saw. The heading is rendered
     from report-template.html rather than described, because the disagreement
     was only ever visible in the markup.
@@ -6007,8 +6024,8 @@ def case_the_card_and_section_9s_heading_name_the_same_wildcard_plan():
     so this runs with or without the private archive."""
     provider, plan, _priced = _plan_ranking_inputs()
     rival = "TOU-DR-P" if plan != "TOU-DR-P" else "TOU-DR1"
-    batteries = ["PW3", "Powerwall 3", "PW3 (15 events dodged)",
-                 "Powerwall 3 (15 events dodged)", "IQ Battery 10C", "2 × PW3"]
+    batteries = ["PW3", "Powerwall-3", "PW3 (15 events dodged)",
+                 "Powerwall-3 (15 events dodged)", "IQ-Battery-10C", "2xPW3"]
     seen = {}
     with _stub_plan(plan, provider):
         for battery in batteries:
@@ -6039,11 +6056,13 @@ def case_the_card_and_section_9s_heading_name_the_same_wildcard_plan():
     # AND THE TWO READ THE SAME LIST. Both are derived from _wildcard_rivals,
     # which is the point of the fix: the heading asks about its first entry and
     # the card names all of them, off one parse of one artifact.
+    _plan, others = _wildcard_plans()
+    first, last = others[0], others[-1]
     with _stub_household({"household.plan": plan}):
         with _wildcard_priced({f"{plan} + PW3": 100, f"{plan} no battery": 140,
-                               "ZZ-PLAN + PW3": 90, "AA-PLAN no battery": 95}):
+                               f"{last} + PW3": 90, f"{first} + PW3": 95}):
             rivals = rt._wildcard_rivals(plan)
-            assert rivals == ["AA-PLAN", "ZZ-PLAN"], rivals
+            assert rivals == sorted([first, last]) and first != last, rivals
             assert rt._wildcard_plan(rt.CTX) == rivals[0], (
                 "section 9's heading and section 0's card order the same rivals "
                 "differently")
@@ -6052,7 +6071,7 @@ def case_the_card_and_section_9s_heading_name_the_same_wildcard_plan():
     return ("section 0's card and section 9's heading name the same wildcard plan for "
             f"every battery label tested ({', '.join(map(repr, batteries))}), through one "
             "split of deep_results.json:wildcard's keys; e.g. "
-            f"{seen['Powerwall 3 (15 events dodged)']!r}")
+            f"{seen['Powerwall-3 (15 events dodged)']!r}")
 
 
 @case
@@ -6072,11 +6091,11 @@ def case_the_wildcard_phrase_stays_one_item_of_the_cards_list():
 
     Driven up to four rivals, and the parenthetical is split the way a reader
     reads it rather than the way it was built."""
-    plan = "TEST-PLAN"
+    plan, priced = _wildcard_plans()
     rows = []
-    for count in (1, 2, 3, 4):
-        rivals = [f"RIVAL-{i}" for i in range(1, count + 1)]
-        phrase = _wildcard_phrase_for(rivals, plan=plan)
+    for count in range(1, min(4, len(priced)) + 1):
+        rivals = priced[:count]
+        phrase = _wildcard_phrase_for(rivals, plan)
         assert ", " not in phrase, (
             f"the wildcard phrase for {count} rival(s) carries the card's own list "
             f"separator: {phrase!r}")
@@ -6088,10 +6107,189 @@ def case_the_wildcard_phrase_stays_one_item_of_the_cards_list():
             f"the card's parenthetical reads as {len(named)} items over {count} "
             f"rival(s): {card}")
         rows.append(f"{count} rival(s) -> {phrase!r}")
-    assert _wildcard_phrase_for(["SOLO"]) == "SOLO wildcard", (
+    assert _wildcard_phrase_for(priced[:1], plan) == f"{priced[0]} wildcard", (
         "the single-rival phrase, which is the one this household publishes, changed")
     return ("the wildcard scenario stays one item of section 0's card's list at every "
             "rival count (" + "; ".join(rows) + ")")
+
+
+def _wildcard_refusal(totals, plan):
+    """The SystemExit message _wildcard_scenario fails closed with over a
+    wildcard artifact whose keys break the naming convention, with a render
+    treated as the failure -- _refuses' contract, narrowed to this one
+    artifact."""
+    with _stub_household({"household.plan": plan}), _wildcard_priced(totals):
+        try:
+            got = rt._wildcard_scenario(rt.CTX)
+        except SystemExit as e:
+            return str(e)
+    raise AssertionError(
+        f"_wildcard_scenario RANKED {got!r} off a wildcard artifact whose keys do not "
+        f"follow the naming convention, instead of failing closed: {totals}")
+
+
+@case
+def case_the_wildcard_ranks_the_battery_configuration_only():
+    """issue #202: _wildcard_scenario used to rank min() over EVERY total on
+    each side of data/deep_results.json:wildcard, so a plan priced in several
+    configurations was represented by its cheapest one, whichever that was.
+    This household's artifact prices the rival with and without a battery and
+    its own plan only with one, and the rival's minimum HAPPENED to be the
+    battery entry, which is the only reason the published card compared like
+    with like. A rival whose no-battery total came in cheapest would have been
+    ranked, without a battery, against this plan with one, and the card would
+    have counted that as a scenario it scored.
+
+    THE QUESTION IS THE HEADING'S. Section 9 asks "can <rival> + a battery
+    beat <plan>?", so the standing is that one pair: this plan's battery
+    total against the cheapest rival's battery total. The no-battery totals
+    stay in the block as context and never decide it (a standing taken at the
+    worst of every shared configuration put "beaten" on the card beside a
+    heading whose question the household wins). The configuration is part of
+    the key's contract, stated beside the keys in deep_analyses.py and parsed
+    by ONE regex here: "<plan> + <battery>" or "<plan> no battery", a plan
+    data/plan_results.csv prices, a one-token battery, an optional trailing
+    parenthetical note. The note is parsed so that it stays out of the
+    configuration and is never compared: runs differ per plan by design. A
+    block outside that shape refuses by name -- every probe below is one the
+    regex's first draft read as something plausible -- and a block that some
+    plan does not carry the battery entry in refuses too, rather than being
+    dropped: deep_analyses.py always emits it.
+
+    AND THE HEADING AND THE CARD READ ONE STRUCTURE: a refusal reaches both,
+    and a drop (a non-finite total) is the card's absent state and the
+    heading's refusal, since the heading has no absent state to land in.
+
+    Every household answer is stubbed and every artifact substituted in
+    memory, so this runs with or without the private archive."""
+    plan, rivals = _wildcard_plans()
+    rival, other = rivals[0], rivals[1]
+    drives = [
+        ("the rival's cheapest entry is a configuration this plan is not priced in",
+         {f"{plan} + PW3": 100, f"{rival} + PW3": 120, f"{rival} no battery": 90},
+         "win"),
+        ("each side's cheapest entry is a different configuration",
+         {f"{plan} + PW3": 100, f"{plan} no battery": 140,
+          f"{rival} + PW3": 130, f"{rival} no battery": 120},
+         "win"),
+        ("the no-battery pair goes the other way and decides nothing",
+         {f"{plan} + PW3": 100, f"{plan} no battery": 200,
+          f"{rival} + PW3": 120, f"{rival} no battery": 50},
+         "win"),
+        ("this household's own key shape: a note on one side only",
+         {f"{plan} + PW3": 100, f"{rival} + PW3 (15 events dodged)": 120,
+          f"{rival} no battery (events hit)": 90},
+         "win"),
+        ("notes that differ between the sides pair as one configuration",
+         {f"{plan} + PW3 (no events)": 100, f"{rival} + PW3 (15 events dodged)": 120},
+         "win"),
+        ("the rival priced cheaper with the battery",
+         {f"{plan} + PW3": 100, f"{rival} + PW3": 90, f"{rival} no battery": 300},
+         "trails"),
+        ("level with the battery, ahead without it",
+         {f"{plan} + PW3": 100, f"{plan} no battery": 140,
+          f"{rival} + PW3": 100, f"{rival} no battery": 150},
+         "tie"),
+        ("two rivals, the dearer one level",
+         {f"{plan} + PW3": 100, f"{rival} + PW3": 100, f"{other} + PW3": 120},
+         "tie"),
+        ("two rivals, the second one cheaper with the battery",
+         {f"{plan} + PW3": 100, f"{rival} + PW3": 120, f"{other} + PW3": 90},
+         "trails"),
+    ]
+    seen = []
+    with _stub_household({"household.plan": plan}):
+        for label, totals, expected in drives:
+            with _wildcard_priced(totals):
+                got = rt._wildcard_scenario(rt.CTX)
+            assert got is not None and got[1] == expected, (
+                f"{label}: expected {expected!r}, got {got!r} off {totals}")
+            seen.append(f"{label} -> {got[1]}")
+
+    # THE CONVENTION IS ENFORCED, NOT ASSUMED. (probe, artifact, what the
+    # refusal must name) -- the first three are the reviewer's regex probes.
+    probes = [
+        ("a plan name containing ' + '",
+         {f"{plan} + PW3": 100, f"{rival} + CEA + PW3": 90}, [f"{rival} + CEA + PW3"]),
+        ("an empty configuration",
+         {f"{plan} + PW3": 100, f"{rival} + ": 90}, [f"{rival} + "]),
+        ("a note outside parentheses",
+         {f"{plan} + PW3": 100, f"{rival} + PW3 15 events dodged": 90},
+         [f"{rival} + PW3 15 events dodged"]),
+        ("a plan data/plan_results.csv does not price",
+         {f"{plan} + PW3": 100, "TEST-PLAN + PW3": 90},
+         ["TEST-PLAN + PW3", "plan_results.csv"]),
+        ("a key outside the convention",
+         {f"{plan} + PW3": 100, f"{rival} PW3": 90}, [f"{rival} PW3"]),
+        ("one configuration priced twice",
+         {f"{plan} + PW3": 100, f"{rival} + PW3 (5 events)": 90,
+          f"{rival} + PW3 (15 events)": 120}, [f"{rival} + PW3 (15 events)"]),
+        ("two batteries across the block",
+         {f"{plan} + PW3": 100, f"{rival} + PW2": 90}, ["PW2", "PW3"]),
+        ("the rival priced without the battery",
+         {f"{plan} + PW3": 100, f"{rival} no battery": 90}, [rival, "+ PW3"]),
+        ("this plan priced without the battery",
+         {f"{plan} no battery": 100, f"{rival} + PW3": 90}, [plan, "+ PW3"]),
+        ("a second rival priced without the battery",
+         {f"{plan} + PW3": 100, f"{rival} + PW3": 120, f"{other} no battery": 50},
+         [other, "+ PW3"]),
+    ]
+    for label, totals, names in probes:
+        msg = _wildcard_refusal(totals, plan)
+        assert "deep_results.json:wildcard" in msg and all(n in msg for n in names), (
+            f"{label}: the refusal does not name {names}: {msg}")
+
+    # AND THE CARD AND THE HEADING. The unlike artifact must not put "beaten"
+    # on the card off the rival's no-battery entry; a refused block refuses
+    # both readers by name; a non-finite block is the card's absent state and
+    # the heading's refusal.
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    assert cheapest == plan, (cheapest, plan)
+    named = f"{rival} wildcard"
+    unlike = {f"{plan} + PW3": 100, f"{rival} + PW3": 120, f"{rival} no battery": 90}
+    dropped = {**unlike, f"{rival} + PW3": float("nan")}
+    refused = {f"{plan} + PW3": 100, f"{rival} no battery": 90}
+    absent = {f"{plan} + PW3": 100}
+    cards, refusals = {}, {}
+    with _stub_plan(plan, provider):
+        published = rt.resolve_token("S0_BEST_PLAN_CARD")
+        for label, totals in (("unlike", unlike), ("dropped", dropped),
+                              ("absent", absent)):
+            with _wildcard_priced(totals):
+                cards[label] = rt.resolve_token("S0_BEST_PLAN_CARD")
+        with _wildcard_priced(unlike):
+            heading_plan = rt.resolve_token("WILDCARD_PLAN")
+        for token in ("S0_BEST_PLAN_CARD", "WILDCARD_PLAN"):
+            with _wildcard_priced(refused):
+                try:
+                    rt.resolve_token(token)
+                except SystemExit as e:
+                    refusals[token] = str(e)
+        with _wildcard_priced(dropped):
+            try:
+                rt.resolve_token("WILDCARD_PLAN")
+            except SystemExit as e:
+                refusals["WILDCARD_PLAN dropped"] = str(e)
+        assert rt.resolve_token("S0_BEST_PLAN_CARD") == published, (
+            "a substituted artifact leaked out of this case")
+    assert named in cards["unlike"] and "beaten" not in cards["unlike"], (
+        "the card counts the wildcard as lost off a rival priced cheaper only in a "
+        f"configuration this plan was never priced in: {cards['unlike']}")
+    assert heading_plan == rival, (heading_plan, rival)
+    assert named not in cards["dropped"] and cards["dropped"] == cards["absent"], (
+        f"a dropped wildcard does not land where an absent one does: "
+        f"{cards['dropped']!r} vs {cards['absent']!r}")
+    for token in ("S0_BEST_PLAN_CARD", "WILDCARD_PLAN"):
+        assert "deep_results.json:wildcard" in refusals.get(token, ""), (
+            f"{token} rendered off a block the other reader refuses: {refusals}")
+    assert "WILDCARD_PLAN dropped" in refusals and rival not in refusals[
+        "WILDCARD_PLAN dropped"].split("section 0")[0].split("(")[0], (
+        "section 9's heading names a rival the card does not count: "
+        f"{refusals.get('WILDCARD_PLAN dropped')!r} beside {cards['dropped']!r}")
+    return ("the wildcard is ranked on the battery configuration alone, the one "
+            f"section 9's heading asks about ({'; '.join(seen)}); {len(probes)} "
+            "artifacts outside the key convention refuse by name for both readers; a "
+            "non-finite block is the card's absent state and the heading's refusal")
 
 
 # What section 3's row is allowed to stamp on the plan-name cell, per state:
