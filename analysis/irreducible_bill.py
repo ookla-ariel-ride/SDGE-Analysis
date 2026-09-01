@@ -906,7 +906,24 @@ def _check_ev_applicability(gross, pkg_doc, path):
     package_results.py for THIS household first.
 
     behavior_rebuild and battery_dispatch_policies are imported lazily, per
-    the top-of-file note."""
+    the top-of-file note.
+
+    NO INTAKE, NO CHECK. The check compares the intake's household.has_ev flag
+    against the artifact, and a checkout with no private/household.yaml (CI, a
+    fresh clone running a corpus-free test) has nothing to compare.
+    That case prints one stderr NOTICE and continues, trusting the artifact as
+    every run did before issue #247. behavior_rebuild is imported ONLY after
+    the intake is known to exist: it reads the intake at import and fails
+    closed without it, which is what turned CI red once (#147's shape).
+    """
+    import household as _hh                   # noqa: E402  -- a library; safe without an intake
+    if not _hh.PATH.is_file():
+        print(f"NOTICE: irreducible_bill.py: no intake at {_hh.PATH}, so the "
+              f"EV-applicability check of {path} is skipped: the check compares the "
+              "intake's household.has_ev flag against the artifact, and with no intake "
+              "there is nothing to compare. The artifact is trusted as it was before "
+              "issue #247.", file=sys.stderr)
+        return
     import behavior_rebuild as br             # noqa: E402  -- lazy (see top-of-file note)
     import battery_dispatch_policies as bdp   # noqa: E402  -- lazy (see top-of-file note)
     ev_applies = br.EV_ANALYSIS               # read at call time; tests rebind it

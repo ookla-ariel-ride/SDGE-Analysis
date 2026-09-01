@@ -7,8 +7,10 @@ three of them are mistakes that were actually made while writing it.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_tou_spread.py
 """
+import contextlib
 import datetime as dt
 import hashlib
+import io
 import json
 import pathlib
 import sys
@@ -623,6 +625,42 @@ def case_a_refused_seed_writes_nothing():
     assert after == before, "a refused run changed data/tou_spread.json"
     assert set(out.parent.glob("*.tmp")) == tmps_before, "a refused run left a temp file"
     return "a refused run leaves data/tou_spread.json unchanged (sha256 equal) and no temp file"
+
+
+@case
+def case_no_intake_skips_the_applicability_check_and_says_so():
+    """A checkout with no private/household.yaml (CI, a fresh clone running
+    dry_run.py on committed inputs) has no flag to compare, so the check
+    must skip with one NOTICE and the run must complete, as before #247.
+
+    behavior_rebuild and battery_dispatch_policies are evicted from
+    sys.modules for the call, so if the lazy import is ever moved back ahead
+    of the intake-existence check it re-executes behavior_rebuild's module
+    top level, which reads the intake and fails closed: this case then dies
+    with SystemExit instead of passing on a cached module."""
+    committed = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
+    want = committed["post_behavior"]["mid"]["battery_marginal"]
+    real_path, real_cache = _hh.PATH, _hh._cache
+    evicted = {k: sys.modules.pop(k) for k in ("behavior_rebuild", "battery_dispatch_policies")
+               if k in sys.modules}
+    _hh.PATH = pathlib.Path(_HH_DIR.name) / "absent" / "household.yaml"
+    _hh._cache = None
+    assert not _hh.PATH.is_file()
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            seed, _published = ts._battery_seed()
+    finally:
+        _hh.PATH, _hh._cache = real_path, real_cache
+        for k in ("behavior_rebuild", "battery_dispatch_policies"):
+            sys.modules.pop(k, None)
+        sys.modules.update(evicted)
+    msg = err.getvalue()
+    assert seed == want, (seed, want)
+    assert "NOTICE" in msg and "no intake" in msg and "skipped" in msg, msg
+    assert "battery_dispatch_policies.json" in msg and "before issue #247" in msg, msg
+    assert "behavior_rebuild" not in sys.modules or sys.modules["behavior_rebuild"] is evicted.get("behavior_rebuild")
+    return "with no intake the seed is read as before #247 and one NOTICE names the skipped check"
 
 
 def main():
