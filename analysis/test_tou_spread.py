@@ -496,7 +496,8 @@ def case_artifact_regenerates_byte_identically():
 
 
 # ---------------------------------------------------------------------------
-# Whose household is the dispatch artifact? (issue #247)
+# Which EV applicability was the dispatch artifact built under? (issue #247)
+# A flag match: a different household with the same flag passes it.
 #
 # _battery_seed() reads data/battery_dispatch_policies.json and seeds every
 # payback in the battery block from it. The artifact states its applicability

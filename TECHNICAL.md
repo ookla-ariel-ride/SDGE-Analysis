@@ -2268,7 +2268,12 @@ on-peak never battery-served, and, like `run_batt`'s, applied only on a househol
 intake says it has an EV: `ev_spillover_mask()` reads `behavior_rebuild.EV_ANALYSIS` and is
 all-False otherwise, issue #246; the greedy comparison it quotes from
 `battery_dispatch_policies.json` is refused, in both directions, when that artifact's
-`post_behavior.free_fix_scenario` disagrees with the same flag, issue #247). This script
+`post_behavior.free_fix_scenario` disagrees with the same flag, a flag match that a
+different household with the same flag passes, and dropped from the comparison, announced
+by name, when its `baseline_bill_current_rates` differs from this frame's own `billed()`
+baseline by more than the artifact's whole-dollar rounding, so a foreign frame's greedy
+saving is never quoted while the synthetic CI run keeps its optional cross-check, issue
+#247). This script
 computes the true annual-bill-minimizing
 dispatch directly, as a linear program. That is a different thing from a heuristic or from
 naive price arbitrage: `rates.bill_nem_monthly` nets import against export per (month,
@@ -3090,7 +3095,8 @@ positive nor a zero-floored range. (`tou_spread.py` seeds that battery block fro
 `battery_dispatch_policies.json`'s `post_behavior.mid.battery_marginal`, and refuses the
 artifact, in both directions, when its `post_behavior.free_fix_scenario` disagrees with the
 intake flag `behavior_rebuild.EV_ANALYSIS`, so a household with no EV cannot publish the
-committed EV household's seed as its own; issue #247.)
+committed EV household's seed as its own; a flag match that a different household with the
+same flag passes, since this script has no frame to check identity against; issue #247.)
 
 Per-TOU-cell absolute-level trends (on-peak delivery rates rising, individually, with 95%
 CIs excluding zero: summer +7.66%/yr, winter +11.3%/yr) do not prove the 0% floor correct:
@@ -6014,10 +6020,11 @@ the baseline, and `build_package_floor_fractions()` recomputes a *lower* NBC dol
 for both as a direct result. Only the fixed charge is invariant under every purchase, by
 construction, and that invariance is what a floor requires. The denominators of those
 fractions come from `data/package_results.json`, so before dividing, the script checks that
-the artifact belongs to this household: its `packages.LOW.free_fix_scenario` and the
-numerator's own `free_fix_scenario` must both agree with the intake flag
-`behavior_rebuild.EV_ANALYSIS`, in both directions, or the run refuses and writes nothing
-(issue #247).
+the artifact carries the same EV applicability as this run: its
+`packages.LOW.free_fix_scenario` and the numerator's own `free_fix_scenario` must both agree
+with the intake flag `behavior_rebuild.EV_ANALYSIS`, in both directions, or the run refuses
+and writes nothing (issue #247). That is a flag match, not an identity check: a different
+household with the same flag passes it.
 
 **The four-bucket classification.** Every one of the 26 electric periods in
 `data/bill_periods_electric.csv` is split into exactly four buckets that sum to

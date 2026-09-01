@@ -993,8 +993,12 @@ def _with_flag(has_ev, fn):
 
 @case
 def case_no_ev_household_battery_serves_a_high_power_offpeak_import():
-    """With household.has_ev false the 4 kW off-peak import is house load and
-    the steady-state dispatch this module prices the floor against serves it."""
+    """Regression guard, not a #246 defect: this module dispatches through
+    battery_dispatch_policies.run_batt, whose gate #147 already keyed off the
+    intake flag, so this case passes on the pre-fix tree. It pins that gate
+    as seen through _steady_state_battery: with household.has_ev false the
+    4 kW off-peak import is house load and the steady-state dispatch this
+    module prices the floor against serves it."""
     d, imp0, gen0 = _spike_toy()
     imp_no_ev, _ = _with_flag(False, lambda: QNF._steady_state_battery(d, imp0, gen0))
     imp_ev, _ = _with_flag(True, lambda: QNF._steady_state_battery(d, imp0, gen0))

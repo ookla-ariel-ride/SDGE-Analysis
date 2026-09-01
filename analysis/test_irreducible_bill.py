@@ -1649,7 +1649,8 @@ def case_artifact_has_no_pii():
 
 
 # ---------------------------------------------------------------------------
-# Whose household is the package artifact? (issue #247)
+# Which EV applicability was the package artifact built under? (issue #247)
+# A flag match: a different household with the same flag passes it.
 #
 # build_package_floor_fractions() divides a numerator this run built
 # (compute_package_gross_imports(), which follows the intake flag through

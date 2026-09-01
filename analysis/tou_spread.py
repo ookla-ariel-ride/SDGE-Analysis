@@ -563,7 +563,9 @@ def _check_ev_applicability(doc, path):
     was as post_behavior.free_fix_scenario -- "a", the EV charge reschedule
     only a household WITH an EV can run, or "c", the house-load shift a
     household with NO EV gets instead -- and that is the artifact's own
-    statement of whose household it is. The intake flag (behavior_rebuild.
+    statement of the EV applicability it was built under. This is a FLAG
+    match, not an identity check: a different household with the same flag
+    passes, and only the free-fix scenario is compared. The intake flag (behavior_rebuild.
     EV_ANALYSIS, household.has_ev, read at call time) is the authority; the
     ladder reproduction below checks the artifact against itself and passes a
     foreign artifact that is merely self-consistent, which is why this check
@@ -591,8 +593,8 @@ def _check_ev_applicability(doc, path):
         artifact_has_ev = False
     else:
         raise SystemExit(
-            f"tou_spread.py: {path} does not state which household it belongs "
-            f"to: post_behavior.free_fix_scenario is {scen!r}, expected "
+            f"tou_spread.py: {path} does not state which EV applicability it was "
+            f"built under: post_behavior.free_fix_scenario is {scen!r}, expected "
             f"{bdp.FREE_FIX_SCENARIO_EV!r} (EV household) or "
             f"{bdp.FREE_FIX_SCENARIO_NO_EV!r} (no EV). Regenerate it with "
             "battery_dispatch_policies.py before seeding a payback from it.")
@@ -633,7 +635,8 @@ def _battery_seed():
     committed dispatch artifact rather than restated here -- restating it is how
     the retired extra_results.json came to publish a different payback than the
     live engine for the same house. Checked against this run's intake first
-    (_check_ev_applicability): the artifact has to be this household's."""
+    (_check_ev_applicability): the artifact has to carry the same EV
+    applicability as this run declares."""
     path = DISPATCH
     if not path.exists():
         raise SystemExit(f"tou_spread.py: missing {path}")

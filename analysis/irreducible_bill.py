@@ -893,7 +893,9 @@ def _check_ev_applicability(gross, pkg_doc, path):
         against the flag rather than trusted, so a numerator built under one
         flag can never be divided by anything under another;
       * packages.LOW.free_fix_scenario in the artifact -- package_results.
-        py's own statement of whose household its projected bills are.
+        py's own statement of the EV applicability its projected bills were
+        built under. This is a FLAG match, not an identity check: a
+        different household with the same flag passes.
 
     Both directions refuse: a no-EV intake dividing by an EV household's
     projected bill publishes another household's denominator under this
@@ -927,8 +929,8 @@ def _check_ev_applicability(gross, pkg_doc, path):
     scen = low.get("free_fix_scenario") if isinstance(low, dict) else None
     if scen not in (bdp.FREE_FIX_SCENARIO_EV, bdp.FREE_FIX_SCENARIO_NO_EV):
         raise SystemExit(
-            f"irreducible_bill.py: {path} does not state which household it "
-            f"belongs to: packages.LOW.free_fix_scenario is {scen!r}, expected "
+            f"irreducible_bill.py: {path} does not state which EV applicability it "
+            f"was built under: packages.LOW.free_fix_scenario is {scen!r}, expected "
             f"{bdp.FREE_FIX_SCENARIO_EV!r} (EV household) or "
             f"{bdp.FREE_FIX_SCENARIO_NO_EV!r} (no EV). Regenerate it with "
             "package_results.py before dividing by its projected bills.")
@@ -960,7 +962,9 @@ def _load_packages_doc(gross):
     """data/package_results.json, read and checked against this run's intake
     (_check_ev_applicability) before any figure is built from it. Both readers
     of the artifact go through here, so whichever field is divided by, the
-    artifact has been established as this household's first."""
+    artifact has been established as carrying this run's EV applicability
+    first (a flag match; the frame's own baseline bill is not in hand here,
+    so no identity check against model_baseline_current_rates is made)."""
     pkg_doc = json.loads(PACKAGE_JSON.read_text())
     _check_ev_applicability(gross, pkg_doc, PACKAGE_JSON)
     return pkg_doc

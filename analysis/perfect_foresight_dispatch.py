@@ -159,6 +159,7 @@ committed artifact.
 """
 import json
 import os
+import sys
 
 import numpy as np
 import scipy.sparse as sp
@@ -228,17 +229,34 @@ _METHOD_EV = ("linear program minimizing the exact rates.bill_nem_monthly "
               "policy, with a cyclic (steady-state) SOC boundary")
 
 
-def load_canon(path):
+BASELINE_TOL_USD = 1.0   # the artifact rounds its baseline to whole dollars
+
+
+def load_canon(path, base_bill):
     """The committed dispatch artifact the greedy comparison quotes
     (pw3.greedy.save, the shipping policy's own saving), or None when there is
     none to quote. An artifact that exists is first checked against this run's
-    intake (issue #247): it states whose household it is as post_behavior.
-    free_fix_scenario ("a", the EV charge reschedule only an EV household
+    intake (issue #247): it states the EV applicability it was built under as
+    post_behavior.free_fix_scenario ("a", the EV charge reschedule only an EV household
     runs; "c", the house-load shift a no-EV household gets), and that must
     agree with br.EV_ANALYSIS (household.has_ev), the authority, in both
     directions. Otherwise greedy_save_usd and every optimality-gap figure
     built on it would be another household's. An artifact that states
-    neither predates the shape and is refused as well."""
+    neither predates the shape and is refused as well. That is a FLAG match,
+    not an identity check: a different household with the same flag passes
+    it. The one zero-cost identity check available is then applied: the
+    artifact's baseline_bill_current_rates is round(billed(d, imp0, gen0))
+    from the same billed() engine this script computes base_bill with, so
+    on the same frame the two agree to the artifact's whole-dollar rounding
+    (BASELINE_TOL_USD). A larger gap means the artifact was built on a
+    different frame; its greedy saving is then NOT quoted (the comparison is
+    dropped exactly as if no artifact existed, greedy_save_usd null) and the
+    mismatch is announced by name on stderr. Dropping rather than refusing
+    keeps this generator's documented CI contract (test_scripts_runnable.py
+    runs it on a synthetic frame beside the committed data/, where the
+    cross-check is optional and never a hard tie-out); a flag mismatch is
+    still a refusal, since the intake and the artifact then disagree about
+    the household's own inputs, not just about which frame was billed."""
     if not os.path.exists(path):
         return None
     canon = json.load(open(path))
@@ -250,12 +268,26 @@ def load_canon(path):
         artifact_has_ev = False
     else:
         raise SystemExit(
-            f"perfect_foresight_dispatch: {path} does not state which household "
-            f"it belongs to: post_behavior.free_fix_scenario is {scen!r}, "
+            f"perfect_foresight_dispatch: {path} does not state which EV applicability "
+            f"it was built under: post_behavior.free_fix_scenario is {scen!r}, "
             "expected 'a' (EV household) or 'c' (no EV). Regenerate it with "
             "battery_dispatch_policies.py before quoting its greedy saving.")
     ev_applies = br.EV_ANALYSIS    # read at call time; tests rebind it
     if artifact_has_ev == ev_applies:
+        artifact_base = canon.get("baseline_bill_current_rates")
+        if not isinstance(artifact_base, (int, float)) or \
+                abs(float(artifact_base) - float(base_bill)) > BASELINE_TOL_USD:
+            print(
+                f"NOTICE: perfect_foresight_dispatch: {path} was built on a "
+                f"different frame: its baseline_bill_current_rates is "
+                f"{artifact_base!r}, but this frame bills ${base_bill:,.2f} "
+                "through the same battery_dispatch_policies.billed() engine "
+                f"(tolerance ${BASELINE_TOL_USD:.2f}, the artifact's whole-dollar "
+                "rounding). Its pw3.greedy.save is another frame's saving and is "
+                "NOT quoted: greedy_comparison is omitted and greedy_save_usd is "
+                "null. Run battery_dispatch_policies.py on THIS frame first to "
+                "get the comparison.", file=sys.stderr)
+            return None
         return canon
     if ev_applies:
         flag_says = ("household.has_ev is NOT false (the intake applicability "
@@ -947,7 +979,8 @@ def main():
     n_days = f.dt.dt.date.nunique()
     lp_bill_with_bsc = info["lp_objective_usd"] + n_days * R.BSC
 
-    canon = load_canon(os.path.join(repo_root(), "data", "battery_dispatch_policies.json"))
+    canon = load_canon(os.path.join(repo_root(), "data", "battery_dispatch_policies.json"),
+                       base_bill)
 
     out = {
         "method": method_note(),
