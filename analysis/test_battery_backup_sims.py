@@ -83,8 +83,8 @@ def _generator_constants():
         return src.rfind("\n", 0, src.index(marker)) + 1
     # rate constants: exactly the 3 lines between their declaration and the
     # next line, which references the script's own dataframe `d` and would
-    # NameError if executed here. The slices start at a line boundary and are
-    # dedented, because the run body sits under an `if __name__` guard.
+    # NameError if executed here. The slices start at a line boundary; the run
+    # body sits at module level, so dedent is a no-op kept for a future guard.
     r_start = line_start("WFNBC=0.00591")
     r_end = line_start('d["rate"]=')
     # the config list: from its own charge-rating constants (issue #40) up to
