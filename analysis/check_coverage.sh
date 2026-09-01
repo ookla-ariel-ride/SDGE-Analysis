@@ -24,10 +24,12 @@
 # deletes analysis/ by accident. The kernel drops the lock the instant every
 # process holding it exits, crash or kill included, so a dead run never blocks
 # anyone and nothing needs clearing by hand. The lock is held on fd 9, which
-# every child of this script inherits: a child that outlives the script (a
-# daemonized generator, a stuck `coverage run`) keeps the next run refused
-# until it exits, which is the correct answer, since that child may still be
-# writing the data file.
+# each direct child of this script (every `coverage run`) inherits: a child
+# that outlives the script, such as a stuck `coverage run`, keeps the next run
+# refused until it exits, which is the correct answer, since that child is the
+# one writing the data file. Grandchildren do not hold it: Python's subprocess
+# closes inherited descriptors above 2, so a process a suite spawns cannot keep
+# the lock after `coverage run` itself is gone.
 #
 # "Is one already running?" Do not trust `ps aux | grep check_coverage`: most
 # of the wall time is spent inside child `coverage run` processes, and the
