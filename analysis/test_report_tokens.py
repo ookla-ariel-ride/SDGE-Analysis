@@ -8302,7 +8302,17 @@ _UNSIGNED_CURRENCY_FMTS = {"usd0", "usd0_tilde", "usd2", "usd3"}
 #   non-negative by construction. It is a LEVEL that happens to be called a
 #   value, not a difference. (Contrast SOLAR_ANNUAL_VALUE, which really is
 #   nosolar_bill_usd minus the modeled baseline, and is signed.)
-_UNSIGNED_BY_CONSTRUCTION = {"FIRST_YEAR_VALUE"}
+#
+#   MARGINAL_KW_VALUE_YR -- analysis/marginal_capacity_value.py publishes
+#   per_added_kw.bill_delta_usd_yr as the year's bill before the added
+#   production minus after it, both through rates.bill_nem_monthly(). That
+#   engine is monotone in the netted kWh (every energy() and credit() cell
+#   is positive and NBC is charged on gross imports), so more production
+#   can only lower the bill and the difference is at or above zero by
+#   construction; the generator's bill_delta() refuses a negative as a
+#   broken input, and the token's _amounts() refuses it again
+#   (case_marginal_kw_value_refuses_a_negative_or_nonfinite_delta).
+_UNSIGNED_BY_CONSTRUCTION = {"FIRST_YEAR_VALUE", "MARGINAL_KW_VALUE_YR"}
 
 
 @case
@@ -17145,6 +17155,136 @@ def case_the_soiling_bracket_matches_the_published_report():
         f"the artifact's {min(lo, hi)}%/month")
     return (f"SOILING_RATE_RANGE = {rendered}, matching soiling_results.json's scenario "
             f"rates ({lo} / {hi}) and index.html's published bracket")
+
+
+# ---------------------------------------------------------------------------
+# WHAT ONE MORE kW OF PANELS WOULD EARN (issue #190). Two tokens over
+# data/marginal_capacity_value.json:per_added_kw, the interval-level
+# counterfactual analysis/marginal_capacity_value.py re-bills through
+# rates.bill_nem_monthly(). Neither may be read off a rate times a quantity,
+# and neither may be rescaled from an artifact that priced a different
+# increment: the value is a bill delta with monthly netting inside it.
+# ---------------------------------------------------------------------------
+def _marginal_refusal(token):
+    try:
+        value = rt.resolve_token(token)
+    except SystemExit as e:
+        return str(e)
+    raise AssertionError(f"{token} RENDERED {value!r} instead of failing closed")
+
+
+@case
+def case_marginal_kw_tokens_render_the_artifacts_own_figures():
+    per = rt._json("marginal_capacity_value.json")["per_added_kw"]
+    value = rt.resolve_token("MARGINAL_KW_VALUE_YR")
+    share = rt.resolve_token("MARGINAL_KW_IMPORT_OFFSET_PCT")
+    assert value == rt.FORMATTERS["usd0"](per["bill_delta_usd_yr"]), (value, per)
+    assert share == rt.FORMATTERS["pct0"](per["import_offset_pct"]), (share, per)
+    # The figure is the ENGINE's delta, and the artifact's own decomposition
+    # reproduces it: a token over a bill delta whose pieces did not add up
+    # would be publishing a number nothing explains.
+    dec = per["settlement_decomposition"]
+    assert abs(dec["total_usd"] - per["bill_delta_usd_yr"]) < 0.011, dec
+    assert abs(per["import_offset_pct"] + per["exported_pct"] - 100.0) < 0.15, per
+    assert per["added_kw_dc"] == 1.0
+    return (f"MARGINAL_KW_VALUE_YR = {value}, MARGINAL_KW_IMPORT_OFFSET_PCT = {share}, "
+            f"from per_added_kw (delta ${per['bill_delta_usd_yr']}, decomposition "
+            f"${dec['total_usd']})")
+
+
+@case
+def case_marginal_kw_tokens_refuse_an_artifact_that_priced_a_different_increment():
+    """The sentence names ONE more kW. An artifact regenerated at another
+    increment is refused by both tokens rather than divided down: a bill
+    delta under monthly netting is not linear in the increment (a bucket
+    flips sign somewhere along the way), so no rescaling is honest."""
+    per = rt._json("marginal_capacity_value.json")["per_added_kw"]
+    for bad in (2.0, 0.5, None):
+        with _swapped(per, "added_kw_dc", bad):
+            for token in ("MARGINAL_KW_VALUE_YR", "MARGINAL_KW_IMPORT_OFFSET_PCT"):
+                msg = _marginal_refusal(token)
+                assert token in msg and "added_kw_dc" in msg and repr(bad) in msg, msg
+    assert rt.resolve_token("MARGINAL_KW_VALUE_YR")   # restored
+    return "added_kw_dc of 2.0, 0.5 and None each refuse both tokens by name"
+
+
+@case
+def case_marginal_kw_value_refuses_a_negative_or_nonfinite_delta():
+    """"Would earn $X" presupposes an amount at or above zero, and a nan or an
+    infinity is not a figure. Each is refused naming the quantity."""
+    per = rt._json("marginal_capacity_value.json")["per_added_kw"]
+    for bad in (-12.0, float("nan"), float("inf")):
+        with _swapped(per, "bill_delta_usd_yr", bad):
+            msg = _marginal_refusal("MARGINAL_KW_VALUE_YR")
+            assert "bill_delta_usd_yr" in msg, msg
+    with _swapped(per, "bill_delta_usd_yr", 0.0):
+        assert rt.resolve_token("MARGINAL_KW_VALUE_YR") == "$0"
+    return "a negative, nan or infinite bill delta is refused; zero renders as $0"
+
+
+@case
+def case_marginal_kw_offset_share_refuses_a_share_outside_zero_to_one_hundred():
+    per = rt._json("marginal_capacity_value.json")["per_added_kw"]
+    for bad in (-1.0, 100.5, float("nan")):
+        with _swapped(per, "import_offset_pct", bad):
+            msg = _marginal_refusal("MARGINAL_KW_IMPORT_OFFSET_PCT")
+            assert "import_offset_pct" in msg, msg
+    with _swapped(per, "import_offset_pct", 100.0):
+        assert rt.resolve_token("MARGINAL_KW_IMPORT_OFFSET_PCT") == "100%"
+    return "a negative, above-100 or nan share is refused; 100 renders as 100%"
+
+
+@case
+def case_marginal_kw_added_kwh_and_grandfathering_multiple_render_the_artifacts_own_figures():
+    """The two figures §8 publishes beside the value: the added kWh
+    (per_added_kw.added_production_kwh, num0) and how many times that value
+    the grandfathering bracket is worth. The multiple is recomputed from
+    data/nem3_grandfathering.json and the bill delta rather than read off the
+    artifact, and the artifact's own verdict_check copy must agree, so a
+    regenerated bracket with a stale marginal artifact (or the reverse) is
+    refused by name instead of published."""
+    doc = rt._json("marginal_capacity_value.json")
+    per = doc["per_added_kw"]
+    kwh = rt.resolve_token("MARGINAL_KW_ADDED_KWH")
+    assert kwh == rt.FORMATTERS["num0"](per["added_production_kwh"]), (kwh, per)
+    nem = rt._json("nem3_grandfathering.json")["grandfathering_value_range_usd_per_yr"]
+    lo = round(nem["low"] / per["bill_delta_usd_yr"], 1)
+    hi = round(nem["high"] / per["bill_delta_usd_yr"], 1)
+    mult = rt.resolve_token("MARGINAL_KW_GRANDFATHERING_MULTIPLE")
+    assert mult == f"{lo:.1f}–{hi:.1f}×", (mult, lo, hi)
+    vc = doc["verdict_check"]["grandfathering_over_added_kw_value"]
+    assert (vc["low"], vc["high"]) == (lo, hi), vc
+    # A drifted verdict_check copy is refused naming both artifacts.
+    with _swapped(vc, "low", lo + 0.5):
+        msg = _marginal_refusal("MARGINAL_KW_GRANDFATHERING_MULTIPLE")
+        assert "nem3_grandfathering.json" in msg and "stale" in msg, msg
+    # So is a bracket the added kW cannot be measured against.
+    with _swapped(per, "bill_delta_usd_yr", 0.0):
+        msg = _marginal_refusal("MARGINAL_KW_GRANDFATHERING_MULTIPLE")
+        assert "has no reading" in msg, msg
+    with _swapped(per, "added_production_kwh", -1.0):
+        msg = _marginal_refusal("MARGINAL_KW_ADDED_KWH")
+        assert "added_production_kwh" in msg, msg
+    return (f"MARGINAL_KW_ADDED_KWH = {kwh}, MARGINAL_KW_GRANDFATHERING_MULTIPLE = {mult} "
+            f"(${nem['low']}-{nem['high']} over ${per['bill_delta_usd_yr']}); a drifted "
+            "verdict_check, a zero value and a negative kWh are each refused")
+
+
+@case
+def case_the_expansion_payback_gap_names_the_derived_yield_and_the_missing_cost():
+    """EXPANSION_PAYBACK_YEARS stays a gap: the yield half is committed now
+    and the reason has to say where, so nobody re-derives it from the export
+    bounds; the cost half (retrofit $/W) is still uncollected and the reason
+    has to say that is what blocks the token."""
+    spec = rt.TOKENS["EXPANSION_PAYBACK_YEARS"]
+    assert spec["kind"] == "gap", spec
+    reason = rt.KNOWN_GAPS["EXPANSION_PAYBACK_YEARS"]
+    for needle in ("marginal_capacity_value.json", "MARGINAL_KW_VALUE_YR",
+                   "dollars per watt", "assumption"):
+        assert needle in reason, f"the gap's reason no longer names {needle!r}: {reason}"
+    assert "not run by anything committed" not in reason, (
+        "the gap's reason still says the counterfactual is not run; it is")
+    return "EXPANSION_PAYBACK_YEARS is still a gap, blocked on the cost half only"
 
 
 def main():

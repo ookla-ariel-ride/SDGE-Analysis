@@ -181,6 +181,7 @@ MANIFEST = {
     "reprice_by_vintage.py": "generator",
     "quiet_night_floor.py": "generator",
     "threeway_production_validation.py": "generator",
+    "marginal_capacity_value.py": "generator",
     "heat_pump_conversion.py": "generator",
     "extra_results.py": "generator",
     "all_electric_endgame.py": "generator",
@@ -241,6 +242,9 @@ OWNS = {
     # writes directly into ROOT/data via its own repo_root() walk-up, same
     # convention as quiet_night_floor.py/rates_history.py
     "threeway_production_validation.py": [("data", "threeway_production_validation.csv")],
+    # writes directly into ROOT/data via its own repo_root() walk-up, same
+    # convention as threeway_production_validation.py/quiet_night_floor.py
+    "marginal_capacity_value.py":   [("data", "marginal_capacity_value.json")],
     # writes directly into ROOT/data via its own repo_root() walk-up, same
     # convention as threeway_production_validation.py/quiet_night_floor.py
     "heat_pump_conversion.py":      [("data", "heat_pump_conversion.json")],
@@ -528,6 +532,13 @@ NEEDS_PRIVATE_ARCHIVE = {
                              "dependency as service_headroom.py and gross_import_"
                              "decomposition.py) and the raw Green Button export, "
                              "none of which has a stand-in carrying a real solar year"),
+    "marginal_capacity_value.py": ("both SAM 8760 exports (samA.csv/samB.csv) and the raw "
+                                   "Green Button export, from which it derives the hourly "
+                                   "production it scales -- the same dependency as "
+                                   "threeway_production_validation.py, whose committed "
+                                   "meter_derived column it also ties out against day by "
+                                   "day, so a synthetic year must diverge from that "
+                                   "real-year artifact and trip it"),
 }
 
 # Generators listed above that nonetheless run END TO END IN CI -- just not
@@ -547,15 +558,15 @@ NEEDS_PRIVATE_ARCHIVE = {
 # and fails if any of them skips, specifically so this dict cannot silently
 # regress to asserting something false again.
 #
-# Only 7 of the 16 NEEDS_PRIVATE_ARCHIVE generators are covered this way today
+# Only 7 of the 17 NEEDS_PRIVATE_ARCHIVE generators are covered this way today
 # (battery_plan_matrix.py added after its "genuinely cannot" claim was
 # disproved by a working demonstration -- an independently computed
 # reference, not the generator's own committed real-year artifact, can
-# satisfy its fail-closed tie-outs for real). The other 9 (parse_bills.py,
+# satisfy its fail-closed tie-outs for real). The other 10 (parse_bills.py,
 # bill_decomposition.py, irreducible_bill.py, carbon_dispatch_tradeoff.py,
 # cca_rate_extraction.py, cca_bundled_counterfactual.py,
 # uncertainty_propagation.py, gross_import_decomposition.py,
-# reprice_by_vintage.py) are NOT verified end to end anywhere in CI as of this
+# reprice_by_vintage.py, marginal_capacity_value.py) are NOT verified end to end anywhere in CI as of this
 # commit -- see TECHNICAL.md 6.7 for the honest per-generator accounting of
 # why each one is or is not yet covered, and which are believed tractable vs.
 # disproportionate.

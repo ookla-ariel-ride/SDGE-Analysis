@@ -195,3 +195,7 @@ jobs:
       # function, real-archive cases gated behind SkipCase.
       - name: all-electric endgame guard tests
         run: python analysis/test_all_electric_endgame.py
+      # issue #190: same pattern -- synthetic frames for the placement, the
+      # decomposition and the clipping branch; real-archive cases gated behind SkipCase.
+      - name: marginal capacity value guard tests
+        run: python analysis/test_marginal_capacity_value.py

@@ -3789,10 +3789,16 @@ def case_s8_export_value_is_published_as_a_bounded_range():
          to a point estimate, at either end;
       5. §8 states that the settlement falls between the two;
       6. §8 states the day-type assumption both bounds carry;
-      7. no sentence in §8 attaches a price to added capacity, and §8 publishes
-         none of the expansion payback arithmetic that rested on doing so;
-      8. §8 says out loud that the marginal-panel value is not derived here, so
-         a reader cannot take either bound as the answer by default.
+      7. exactly ONE sentence in §8 attaches a price to added capacity: the one
+         that quotes data/marginal_capacity_value.json's bill delta (issue
+         #190, the interval-level counterfactual re-billed through the NEM
+         engine), with the modeled pill in the same sentence, the added kWh
+         and the import-offset share beside it and the cap clause after it.
+         Every other such sentence is refused, and §8 publishes none of the
+         expansion payback arithmetic that rested on pricing added capacity at
+         the export credit;
+      8. §8 no longer says the marginal-kW value is not derived here: a
+         committed script derives it, and the report may not say otherwise.
 
     §8's own verdict is checked separately by
     case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering, which
@@ -3889,20 +3895,60 @@ def case_s8_export_value_is_published_as_a_bounded_range():
         "weekday/off-peak-day split is a modeled assumption rather than a "
         "reconstruction")
 
-    # 7. No sentence prices ADDED CAPACITY. Sentence-split on the repo's own
-    #    rule, because the defect this catches lives in one sentence: the
+    # 7. Exactly ONE sentence prices ADDED CAPACITY, and it is the artifact's.
+    #    Sentence-split on the repo's own rule, on the raw HTML so the pill is
+    #    visible, because the defect this catches lives in one sentence: the
     #    paragraph legitimately contains both prices and the words "one more kW
-    #    of panels", and only their appearing TOGETHER is the claim.
-    for sentence in re.split(r"\.(?=\s|$)", text):
+    #    of panels", and only their appearing TOGETHER is the claim. The one
+    #    permitted pairing quotes per_added_kw.bill_delta_usd_yr, the bill
+    #    delta of the year re-billed with the increment placed interval by
+    #    interval (analysis/marginal_capacity_value.py), and says it is modeled.
+    mcv = json.loads((ROOT / "data" / "marginal_capacity_value.json").read_text())
+    per = mcv["per_added_kw"]
+    assert per["added_kw_dc"] == 1.0, per["added_kw_dc"]
+    value_fig = f"${per['bill_delta_usd_yr']:,.0f}"
+    valued = []
+    for raw_sentence in re.split(r"\.(?=\s|<|$)", section):
+        sentence = htmlmod.unescape(re.sub(r"<[^>]+>", " ", raw_sentence))
         capacity = _ADDED_CAPACITY_EARNS_RE.search(sentence)
         priced = _ANY_PRICE_RE.search(sentence)
-        assert not (capacity and priced), (
-            f"§8 prices added capacity: the sentence {sentence.strip()!r} carries both "
-            f"{capacity.group(0)!r} and the price {priced.group(0)!r}. What one more kW "
-            "would earn is not derived in this repo -- exports are the residual left "
-            "after household load, not the shape of added production (issue #190) -- "
-            f"and {lo_fig}-{hi_fig} brackets what an EXPORTED kWh is worth, not what an "
-            "added one would be")
+        if not (capacity and priced):
+            continue
+        assert value_fig in sentence, (
+            f"§8 prices added capacity at a figure that is not the artifact's: "
+            f"{sentence.strip()!r} carries {capacity.group(0)!r} and "
+            f"{priced.group(0)!r}, but data/marginal_capacity_value.json's bill delta "
+            f"is {value_fig}/yr. Exports are the residual left after household load, "
+            f"not the shape of added production, and {lo_fig}-{hi_fig} brackets what an "
+            "EXPORTED kWh is worth, not what an added one would be (issue #190)")
+        assert 'class="pill y">modeled<' in raw_sentence, (
+            f"§8's added-capacity sentence {sentence.strip()!r} quotes {value_fig}/yr "
+            "without the modeled pill in the same sentence; the figure is a bill delta "
+            "at constant current rates, not a measurement")
+        valued.append(sentence.strip())
+    assert len(valued) == 1, (
+        f"§8 prices added capacity in {len(valued)} sentences {valued!r}; exactly one "
+        "may, the one that quotes data/marginal_capacity_value.json")
+    # The figures beside it, and the cap clause after it, are the artifact's too.
+    kwh_fig = f"{per['added_production_kwh']:,.0f} kWh/yr"
+    share_fig = f"{per['import_offset_pct']:.0f}% of that"
+    for needle, what in ((kwh_fig, "the added production"),
+                         (share_fig, "the import-offset share")):
+        assert needle in text, (
+            f"§8 does not state {what} as {needle!r}, data/marginal_capacity_value.json's "
+            "own figure beside the value it explains")
+    n3 = json.loads((ROOT / "data" / "nem3_grandfathering.json").read_text())
+    bracket = n3["grandfathering_value_range_usd_per_yr"]
+    vc = mcv["verdict_check"]["grandfathering_over_added_kw_value"]
+    assert (vc["low"], vc["high"]) == (round(bracket["low"] / per["bill_delta_usd_yr"], 1),
+                                       round(bracket["high"] / per["bill_delta_usd_yr"], 1)), (
+        f"data/marginal_capacity_value.json's verdict_check ratio {vc} does not follow "
+        "from data/nem3_grandfathering.json's bracket and its own bill delta")
+    multiple = f"{vc['low']:.1f}–{vc['high']:.1f}×"
+    assert re.search(r"grandfathering at risk is " + re.escape(multiple) + r" that", text), (
+        f"§8's added-capacity sentence is not followed by the cap clause naming the "
+        f"grandfathering at risk as {multiple} the added kW's value; the value must "
+        "not be published without what it is measured against (issue #190)")
 
     # And none of the arithmetic that rested on it survives anywhere in §8.
     for pattern, what in _EXPANSION_PAYBACK_FORMS:
@@ -3913,21 +3959,25 @@ def case_s8_export_value_is_published_as_a_bounded_range():
             "$/W price it does not collect, which is why EXPANSION_PAYBACK_YEARS is a "
             "KNOWN_GAPS token")
 
-    # 8. The gap is stated, not left to inference.
-    assert re.search(r"one more kW of panels[^<]{0,80}?"
-                     r"(does not answer|not derived|no answer here)", text), (
-        "§8 never says that what one more kW of panels would earn is undetermined. "
-        "Without it a reader takes the export bounds beside it as the answer, which is "
-        "the conflation this case exists to prevent")
+    # 8. The report may not say the value is not derived once a committed
+    #    script derives it (CLAUDE.md section 0: the report states what the
+    #    data shows now).
+    stale = re.search(r"one more kW of panels[^<]{0,80}?"
+                      r"(does not answer|not derived|no answer here)", text)
+    assert not stale, (
+        f"§8 still says what one more kW of panels would earn is undetermined "
+        f"({stale.group(0)!r}), but analysis/marginal_capacity_value.py derives it and "
+        f"publishes {value_fig}/yr")
 
     return (f"§8 publishes what an exported kWh is worth as the range {lo_fig}-{hi_fig} "
             f"-- the two NEM 2.0 settlement treatments of data/report_data.json's own "
             f"hour-of-day profiles, neither on any cell of its own price map, neither "
             f"standing alone in any valuation sentence -- says the settlement falls "
             f"between them, states the season-wide-mean day-type assumption both carry, "
-            f"prices no added capacity in any of its "
-            f"{len(_EXPANSION_PAYBACK_FORMS)} forbidden payback forms, and says the "
-            "marginal-kW value is not derived here")
+            f"prices added capacity in exactly one sentence, at the artifact's "
+            f"{value_fig}/yr with the modeled pill, {kwh_fig} and {share_fig} beside it "
+            f"and the {multiple} cap clause after it, and in none of its "
+            f"{len(_EXPANSION_PAYBACK_FORMS)} forbidden payback forms")
 
 
 # The three TOU periods this window's exports leave in, each with a locator
@@ -4123,9 +4173,12 @@ def case_the_template_prices_no_added_capacity_and_needs_no_gap_token_in_s8():
 
       1. no KNOWN_GAPS token is referenced, so regenerating §8 asks nobody to
          invent a figure;
-      2. no sentence pairs an added-capacity phrase with a price OR a token --
-         a {{TOKEN}} is a figure that has not been substituted yet, and the
-         retired sentence carried its valuation in one."""
+      2. exactly one sentence pairs an added-capacity phrase with a price OR a
+         token -- a {{TOKEN}} is a figure that has not been substituted yet,
+         and the retired sentence carried its valuation in one -- and that
+         sentence is the artifact's: it carries {{MARGINAL_KW_VALUE_YR}} and the
+         modeled pill (issue #190), with {{MARGINAL_KW_GRANDFATHERING_MULTIPLE}}
+         somewhere after it as the cap clause."""
     rt = _report_tokens_module()
     template = (ROOT / "report-template.html").read_text()
     live = re.sub(r"<!--.*?-->", " ", template, flags=re.S)
@@ -4146,19 +4199,34 @@ def case_the_template_prices_no_added_capacity_and_needs_no_gap_token_in_s8():
         "this section starts by asking someone to supply a figure this repo has "
         "declared it cannot derive")
 
-    text = htmlmod.unescape(re.sub(r"<[^>]+>", " ", section))
-    for sentence in re.split(r"\.(?=\s|$)", text):
+    valued = []
+    for raw_sentence in re.split(r"\.(?=\s|<|$)", section):
+        sentence = htmlmod.unescape(re.sub(r"<[^>]+>", " ", raw_sentence))
         capacity = _ADDED_CAPACITY_EARNS_RE.search(sentence)
         priced = _ANY_PRICE_RE.search(sentence) or re.search(r"\{\{[A-Z0-9_]+\}\}",
                                                              sentence)
-        assert not (capacity and priced), (
+        if not (capacity and priced):
+            continue
+        assert "{{MARGINAL_KW_VALUE_YR}}" in sentence and 'class="pill y">modeled<' in raw_sentence, (
             f"report-template.html's live §8 markup prices added capacity: "
             f"{sentence.strip()!r} carries {capacity.group(0)!r} and "
-            f"{priced.group(0)!r}. What one more kW would earn is not derived in this "
-            "repo (issue #190), and the template is the route by which the sentence "
-            "comes back")
-    return ("report-template.html's live §8 markup references no KNOWN_GAPS token and "
-            "attaches no price or unresolved token to added capacity")
+            f"{priced.group(0)!r}, and is not the sentence that quotes "
+            "{{MARGINAL_KW_VALUE_YR}} with the modeled pill. What one more kW would earn "
+            "is data/marginal_capacity_value.json's bill delta (issue #190), published "
+            "through that token and no other way; the template is the route by which "
+            "a hand-typed valuation comes back")
+        valued.append(sentence.strip())
+    assert len(valued) == 1, (
+        f"report-template.html's live §8 markup prices added capacity in {len(valued)} "
+        f"sentences {valued!r}; exactly one may, through {{{{MARGINAL_KW_VALUE_YR}}}}")
+    tail = section[section.index("{{MARGINAL_KW_VALUE_YR}}"):]
+    assert "{{MARGINAL_KW_GRANDFATHERING_MULTIPLE}}" in tail, (
+        "report-template.html's live §8 markup publishes {{MARGINAL_KW_VALUE_YR}} with no "
+        "{{MARGINAL_KW_GRANDFATHERING_MULTIPLE}} cap clause after it; the value must not "
+        "be published without what it is measured against")
+    return ("report-template.html's live §8 markup references no KNOWN_GAPS token, prices "
+            "added capacity in exactly one sentence, through {{MARGINAL_KW_VALUE_YR}} with "
+            "the modeled pill, and follows it with the grandfathering-multiple cap clause")
 
 
 def case_s0_expansion_cap_matches_the_s8_one():
@@ -6212,10 +6280,13 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
         "index counts the behaviors (Four); the count has no token"),
     ("s6", "Price-aware (all non-super-off-peak imports)"): ("c0c52fc7d519",
         "index's expansion cell adds cycles/day; no token for pw3x cycles exists"),
-    ("s8", "<b>More panels:"): ("854cec05cb9e",
-        "deliberate divergence (#182): the template refuses to price added capacity "
-        "(pinned by its own case); index still publishes the priced timing paragraph; re-pinned after #183 hung "
-        "the timing sentence on the midday clause"),
+    ("s8", "<b>More panels:"): ("9a8f60d24ea0",
+        "deliberate divergence (#182): index still publishes the priced timing paragraph "
+        "under its own 'More panels' lead; re-pinned after #183 hung the timing sentence "
+        "on the midday clause, and again after #190 put the marginal-kW value sentences "
+        "on this template line (index carries the same three sentences, rendered, in "
+        "the paragraph that follows the export-valuation range; both are pinned to "
+        "data/marginal_capacity_value.json by the §8 cases)"),
     ("s9", "degradation trend</h3>"): ("8da8f6ba573b",
         "index's heading carries the measured span (6-year); no token owns it"),
     ("s9", "Inverter clipping"): ("f861755778ff",

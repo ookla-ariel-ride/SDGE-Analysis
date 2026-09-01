@@ -276,12 +276,13 @@ CLASSIFICATION = {
     "s15#6": "prose",  # paired "When" cell
 
     # --- s8 Array upgrades -------------------------------------------
-    "s8#1": "human",   # asks for EXPANSION_PAYBACK_YEARS (gap -- neither the
-                        # marginal-panel yield nor the retrofit $/W is committed
-                        # here). Named in the block's own TODO text as a figure
-                        # that must NOT be supplied, which is where its scope
-                        # picks the token up now that no live markup prices
-                        # added capacity.
+    "s8#1": "human",   # asks for EXPANSION_PAYBACK_YEARS (gap -- the
+                        # marginal-kW yield is derived now, issue #190, and the
+                        # live markup publishes it through the MARGINAL_KW_*
+                        # tokens; the retrofit $/W is still not collected).
+                        # Named in the block's own TODO text as a figure that
+                        # must NOT be supplied, which is where its scope picks
+                        # the token up.
 
     # --- s9 Deeper analyses ------------------------------------------
     "s9#1": "data",    # teaser -- already rendered by {{SEC9_TEASER}}
@@ -388,11 +389,11 @@ HUMAN_REASONS = {
             "capacity and savings, never a bid -- and a quote is a fact about a local "
             "market on a date, which this pipeline has no way to measure",
     "s8#1": "blocked on {{EXPANSION_PAYBACK_YEARS}}, a report_tokens.KNOWN_GAPS token. "
-            "Both halves of that payback are missing: what one more kW would earn needs "
-            "a counterfactual re-billing of the year at a larger array (issue #190), "
-            "because exports are the residual left after household load rather than the "
-            "shape of added production; and retrofit dollars per watt is a fact about a "
-            "local installer market on a date, which nothing committed here measures. "
+            "One half of that payback is derived: what one more kW would earn is "
+            "data/marginal_capacity_value.json's interval-level counterfactual re-billed "
+            "through the NEM engine (issue #190), published by {{MARGINAL_KW_VALUE_YR}}. "
+            "The other half is not: retrofit dollars per watt is a fact about a local "
+            "installer market on a date, which nothing committed here measures. "
             "(The block's other two asks ARE artifact-backed now: what the year's "
             "exports are worth is bounded by {{EXPORT_VALUE_SURPLUS_BOUND}} and "
             "{{EXPORT_VALUE_NETTING_BOUND}}, the two NEM 2.0 settlement treatments "

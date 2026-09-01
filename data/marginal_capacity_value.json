@@ -1,0 +1,202 @@
+{
+ "issue": 190,
+ "window": {
+  "start": "2025-07-24",
+  "end": "2026-07-23",
+  "days": 365,
+  "days_with_increment": 363,
+  "excluded_dst_days": [
+   "2025-11-02",
+   "2026-03-08"
+  ],
+  "excluded_dst_days_reason": "the flat 24-hour SAM grid and the wall-clock meter do not describe the same hours on a DST transition Sunday, so no hourly production can be derived for them and they carry no increment; the production_profile block bounds the understatement"
+ },
+ "array": {
+  "kw_dc": 10.05,
+  "kw_ac": 9.45,
+  "dc_ac_ratio": 1.0635,
+  "module_count": 30,
+  "inverter_model": "Enphase IQ7X (IQ7X-96-2-US)",
+  "inverter_count": 30,
+  "nem_version": "NEM 2.0",
+  "source": "private/household.yaml:solar.kw_dc, solar.kw_ac, solar.module_count, solar.inverter_model, solar.inverter_count, household.nem_version (all public-ok intake fields)"
+ },
+ "production_profile": {
+  "source": "derived hourly: max(SAM 8760 gross load - meter import + meter export, 0), the identity threeway_production_validation.py's meter_derived and service_headroom.py's derive_pv() use; SAM grid from private/1-raw-data/enphase_sam8760_*.csv, meter from the raw Green Button 15-minute export",
+  "hours": 8712,
+  "max_hour_kwh": 8.878,
+  "hours_above_ac_nameplate": 0,
+  "dark_hour_noise_clipped_kwh": 140.0,
+  "tie_out_threeway_meter_derived": {
+   "days_compared": 363,
+   "max_abs_daily_diff_kwh": 0.0,
+   "tolerance_kwh": 0.05
+  },
+  "reconciliation_enphase_meter_record": {
+   "derived_kwh_non_dst_days": 16459.2,
+   "meter_record_kwh_all_days": 16501.9,
+   "meter_record_kwh_non_dst_days": 16406.3,
+   "derived_over_meter_non_dst_ratio": 1.0032,
+   "excluded_dst_days_meter_kwh": 95.63,
+   "excluded_dst_days_share_of_annual_pct": 0.58
+  }
+ },
+ "per_added_kw": {
+  "added_production_kwh": 1637.7,
+  "import_offset_kwh": 258.1,
+  "import_offset_pct": 15.8,
+  "exported_kwh": 1379.6,
+  "exported_pct": 84.2,
+  "bill_before_usd": 4904.13,
+  "bill_after_usd": 4421.58,
+  "bill_delta_usd_yr": 482.54,
+  "value_per_added_kwh_cents": 29.46,
+  "monthly_delta_usd": {
+   "2025-07": 16.62,
+   "2025-08": 56.95,
+   "2025-09": 46.08,
+   "2025-10": 39.22,
+   "2025-11": 19.98,
+   "2025-12": 17.63,
+   "2026-01": 20.71,
+   "2026-02": 26.03,
+   "2026-03": 43.17,
+   "2026-04": 45.83,
+   "2026-05": 47.44,
+   "2026-06": 58.62,
+   "2026-07": 44.27
+  },
+  "settlement_decomposition": {
+   "netted_kwh": 1555.5,
+   "netted_value_usd": 438.62,
+   "surplus_kwh": 82.2,
+   "surplus_value_usd": 38.5,
+   "nbc_saved_on_offset_imports_usd": 5.42,
+   "buckets_pushed_net_negative": [
+    "2026-02:W:off",
+    "2026-04:W:off",
+    "2026-05:W:off"
+   ],
+   "total_usd": 482.54,
+   "by_period": {
+    "S:off": {
+     "offset_kwh": 33.9,
+     "export_kwh": 215.5,
+     "value_usd": 122.55
+    },
+    "S:on": {
+     "offset_kwh": 53.5,
+     "export_kwh": 55.5,
+     "value_usd": 93.46
+    },
+    "S:sop": {
+     "offset_kwh": 57.5,
+     "export_kwh": 371.0,
+     "value_usd": 45.75
+    },
+    "W:off": {
+     "offset_kwh": 34.4,
+     "export_kwh": 216.4,
+     "value_usd": 123.69
+    },
+    "W:on": {
+     "offset_kwh": 28.7,
+     "export_kwh": 37.7,
+     "value_usd": 39.38
+    },
+    "W:sop": {
+     "offset_kwh": 50.1,
+     "export_kwh": 483.5,
+     "value_usd": 57.72
+    }
+   },
+   "reconciles_to_engine_delta_within_usd": 0.0
+  },
+  "added_kw_dc": 1.0,
+  "clipping_case": "scaled_ceiling"
+ },
+ "clipping": {
+  "primary_case": "scaled_ceiling",
+  "per_module_inverters": true,
+  "rule": "one inverter per module (solar.inverter_count == solar.module_count, both above one) means an added module brings its own inverter and the AC ceiling scales with the array; any other count keeps today's AC ceiling (solar.kw_ac) and clips the added output there",
+  "rule_inputs": {
+   "solar.inverter_count": 30,
+   "solar.module_count": 30
+  },
+  "resolution_caveat": "both cases clip hourly energy, so a sub-hourly peak above the hourly mean is not visible and each case is a lower bound on its own clipping loss",
+  "scaled_max_hour_kwh": 9.761,
+  "scaled_ceiling": {
+   "assumption": "the AC ceiling scales with the added capacity (each added module brings its own microinverter, so the array's DC/AC ratio is unchanged)",
+   "ceiling_kw_ac": 10.39,
+   "hours_clipped": 0,
+   "clipped_kwh": 0.0,
+   "added_production_kwh": 1637.7,
+   "bill_delta_usd_yr": 482.54,
+   "import_offset_pct": 15.8
+  },
+  "fixed_ceiling": {
+   "assumption": "the AC ceiling stays at today's nameplate, solar.kw_ac (a string inverter, or modules added under existing inverters); scaled hourly energy above it is clipped",
+   "ceiling_kw_ac": 9.45,
+   "hours_clipped": 12,
+   "clipped_kwh": 1.3,
+   "added_production_kwh": 1636.4,
+   "bill_delta_usd_yr": 482.4,
+   "import_offset_pct": 15.8
+  }
+ },
+ "payback_sensitivity": {
+  "assumption": "retrofit dollars per DC watt is ASSUMED at each rung, not a quote and not collected by this repo; read the years off the rung nearest a real quote",
+  "annual_value_usd": 482.54,
+  "ladder": [
+   {
+    "assumed_usd_per_w": 2.0,
+    "cost_usd": 2000,
+    "simple_payback_years": 4.1
+   },
+   {
+    "assumed_usd_per_w": 2.5,
+    "cost_usd": 2500,
+    "simple_payback_years": 5.2
+   },
+   {
+    "assumed_usd_per_w": 3.0,
+    "cost_usd": 3000,
+    "simple_payback_years": 6.2
+   },
+   {
+    "assumed_usd_per_w": 3.5,
+    "cost_usd": 3500,
+    "simple_payback_years": 7.3
+   },
+   {
+    "assumed_usd_per_w": 4.0,
+    "cost_usd": 4000,
+    "simple_payback_years": 8.3
+   }
+  ]
+ },
+ "verdict_check": {
+  "nem2_growth_cap_kw": 1.005,
+  "cap_rule": "greater of 10% of the array's DC nameplate or 1 kW (Schedule NEM, Special Condition 7(b))",
+  "added_kw_within_cap": true,
+  "grandfathering_at_risk_usd_yr": {
+   "low": 2103.58,
+   "high": 2455.64,
+   "source": "data/nem3_grandfathering.json"
+  },
+  "grandfathering_over_added_kw_value": {
+   "low": 4.4,
+   "high": 5.1
+  }
+ },
+ "notes": {
+  "engine": "rates.bill_nem_monthly (monthly per-period NEM 2.0 netting, NBC on gross imports, BSC per day), the engine behind every other published battery and behaviour figure",
+  "rates": "constant current rates (rates.py, bill-derived); the historical bills were partly on older tariffs, so this is a modeled delta, not a bill forecast",
+  "confidence": "modeled",
+  "method": "interval-level counterfactual: the increment is placed into each real 15-minute interval (import offset first, export after) and the whole year is re-billed; the value is the bill delta, never a rate times a quantity",
+  "intra_hour_shape": "the SAM grid is hourly; each hour's increment is spread evenly over its quarter-hours",
+  "degradation": "the added kW produces at the measured array's own specific yield in the measured year; no first-year uplift and no degradation adjustment is applied, because nothing committed measures either",
+  "export_crediting": "an added kWh that leaves the meter is credited the way the bills credit it: it cancels a same-period import inside the month at rates.energy() while the bucket stays net-positive, and settles at rates.credit() only once the bucket runs to surplus; the decomposition reports which happened",
+  "grandfathering": "the value applies to an expansion inside the NEM 2.0 growth cap; exceeding the cap forfeits the grandfathering bracket in verdict_check, which this value is compared against and does not approach"
+ }
+}
