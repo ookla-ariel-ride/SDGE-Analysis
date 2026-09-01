@@ -67,6 +67,23 @@ ORDERING CONTRACT (this script runs AFTER the dispatch generator):
   battery economics happen to land within $100 of each other pass it while
   composing one artifact out of both.
 
+TWO FIELDS PER BILL (issue #177): every modeled total is written twice.
+The bare field (no_battery, with_battery, battery_value, package_bill,
+package_save) is the whole-dollar value the report's tables display. Its
+_cents twin is the same total in integer cents, and that is the field a
+consumer ranks or differences. The whole-dollar cells used to be the only
+copy, and the report ranked plans on them: two bills a few cents apart round
+to the same dollar and read as a tie, and two bills that round a dollar
+apart were reported as a settled order when the battery had flipped them by
+cents. A cent is the resolution a bill is settled in, so two totals that
+agree to the cent are one bill and two that differ by one are not; no
+smaller unit exists to rank on, and no wider band was derived from evidence.
+The differenced cells (battery_value_cents, package_save_cents) are exact
+integer differences of the two cents fields they come from, so a consumer
+subtracting them itself lands on the same number. Their whole-dollar
+neighbours are rounded independently, off the unrounded difference, and can
+sit a dollar from the cents' own rounding: display values, not ranking ones.
+
 Output: data/battery_plan_matrix.json (repo-root resolved, so the
 private/verify sandbox pattern needs no path edits).
 """
@@ -343,6 +360,14 @@ def bill_plan(plan, seas, per, imp, exp):
     return float((imp * rate).sum() - (exp * np.maximum(rate - NBC, 0)).sum()) + BSC * 365
 
 
+def cents(usd):
+    """A modeled dollar total as integer cents: the unit the artifact's
+    ranking fields carry (see TWO FIELDS PER BILL in the module docstring).
+    An int, so the field is reproduced byte for byte on any platform and two
+    equal bills compare equal without a float tolerance."""
+    return int(round(usd * 100))
+
+
 if __name__ == "__main__":
     root = repo_root()
     d = br.load()
@@ -374,7 +399,10 @@ if __name__ == "__main__":
             f"{plan}: no-battery ${no_b:,.2f} fails tie-out to plan_results.csv ${ref[plan]:,.2f}"
         no_b_by_plan[plan] = no_b
         plans[plan] = {"no_battery": round(no_b), "with_battery": round(with_b),
-                       "battery_value": round(no_b - with_b)}
+                       "battery_value": round(no_b - with_b),
+                       "no_battery_cents": cents(no_b),
+                       "with_battery_cents": cents(with_b),
+                       "battery_value_cents": cents(no_b) - cents(with_b)}
         print(f"{plan:9s} no-batt ${no_b:8,.0f}  with PW3 ${with_b:8,.0f}  "
               f"battery value ${no_b - with_b:6,.0f}/yr")
 
@@ -405,7 +433,9 @@ if __name__ == "__main__":
     for plan in PLANS:
         pkg_bill = bill_plan(plan, seas, per, imp_p, exp_p)
         pkg[plan] = {"package_bill": round(pkg_bill),
-                     "package_save": round(no_b_by_plan[plan] - pkg_bill)}
+                     "package_save": round(no_b_by_plan[plan] - pkg_bill),
+                     "package_bill_cents": cents(pkg_bill),
+                     "package_save_cents": cents(no_b_by_plan[plan]) - cents(pkg_bill)}
         print(f"{plan:9s} mid package ${pkg_bill:8,.0f}  "
               f"saves ${no_b_by_plan[plan] - pkg_bill:6,.0f}/yr")
 
@@ -440,6 +470,12 @@ if __name__ == "__main__":
                         "(ranking-only; ties out to data/plan_results.csv, asserted). "
                         "Canonical TOU assignment via rates.period_at, holidays included."),
         "plans_selection": "EV-TOU-5 + the two nearest competitors in data/plan_results.csv",
+        "cells_note": ("each modeled total is stored twice: the bare field is the "
+                       "whole-dollar value for display, its _cents twin the same "
+                       "total in integer cents. Rank and difference the cents; a "
+                       "tie is two totals equal to the cent. battery_value_cents "
+                       "and package_save_cents are exact differences of the cents "
+                       "fields they come from"),
         "dispatch_note": ("all three plans share the same 2026 three-period TOU windows, so "
                           "one dispatch trace is billed under each plan; kWh served "
                           f"{round(served)}, cycles/day {round(thru / 13.5 / 365, 2)}"),

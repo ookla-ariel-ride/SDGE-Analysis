@@ -267,11 +267,35 @@ def case_battery_plan_matrix_end_to_end_on_a_synthetic_house():
         got5, exp_battery_value)
     cx = out["canonical_crosscheck_ev_tou_5"]
     assert cx["battery_value"] == exp_battery_value, cx
+    # issue #177: the totals the report RANKS are carried unrounded, as
+    # integer cents beside each whole-dollar display cell, and each cents
+    # field is the independent reference to the cent. The differenced cells
+    # (battery_value, package_save) are the exact integer differences of the
+    # cents they are taken from, so a consumer cannot be a cent out from
+    # subtracting them itself.
+    pkg = out["mid_package_on_plans"]["plans"]
+    for plan in _PLANS:
+        got = out["plans"][plan]
+        assert abs(got["no_battery_cents"] - ref[plan] * 100) <= 1.0, (
+            plan, got, ref[plan])
+        for column in ("no_battery", "with_battery", "battery_value"):
+            assert isinstance(got[f"{column}_cents"], int), (plan, column, got)
+            assert abs(got[f"{column}_cents"] / 100 - got[column]) <= 0.5 + 1e-9, (
+                plan, column, got)
+        assert got["battery_value_cents"] == got["no_battery_cents"] - got["with_battery_cents"], (
+            plan, got)
+        exp_pkg = pkg_ref["plans"][plan]["package_bill"]
+        assert abs(pkg[plan]["package_bill_cents"] - exp_pkg * 100) <= 1.0, (
+            plan, pkg[plan], exp_pkg)
+        assert pkg[plan]["package_save_cents"] == got["no_battery_cents"] - pkg[plan]["package_bill_cents"], (
+            plan, pkg[plan], got)
+    assert abs(got5["with_battery_cents"] - with_b5 * 100) <= 1.0, (got5, with_b5)
     assert json.dumps(out), "battery_plan_matrix.json is not JSON-serializable"
     return ("battery_plan_matrix.py runs end to end on a synthetic house with "
             "both fail-closed tie-outs satisfied by an independently computed "
             "reference (not neutered), its no-battery/with-battery/"
-            "battery-value figures for all 3 plans match that reference, and "
+            "battery-value figures for all 3 plans match that reference (whole "
+            "dollars for display and integer cents for ranking, issue #177), and "
             "it falls back to the committed dispatch artifact (with a "
             "NOTICE) when no current-run copy exists")
 

@@ -1309,13 +1309,16 @@ def case_plan_and_battery_margins_match_their_artifacts():
     # not one derived from the other, and not two scenarios. Evidence:
     # analysis/battery_plan_matrix.py re-bills the year itself (bill_plan(),
     # its own published-rate-table engine) and then asserts its own result
-    # against plan_results.csv at `abs(no_b - ref[plan]) < 1.0` (line ~215),
-    # reading ref from the provider == "CEA" rows; it stores round(no_b).
-    # So each column may sit up to $1.00 (the generator's own tie-out
-    # tolerance) plus $0.50 (its rounding) from the CSV, and a DIFFERENCE of
-    # two such cells up to $3.00. Anything past that is the two generators
-    # actually disagreeing, not float noise, so it fails here rather than
-    # being averaged over.
+    # against plan_results.csv at `abs(no_b - ref[plan]) < 1.0`, reading ref
+    # from the provider == "CEA" rows; it stores round(no_b) for display AND
+    # round(no_b * 100) as no_battery_cents (issue #177). This pin reads the
+    # CENTS, so no whole-dollar rounding enters it: each cell may sit up to
+    # $1.00 (the generator's own tie-out tolerance) plus half a cent (the
+    # cents rounding) from the CSV, and a DIFFERENCE of two such cells up to
+    # $2.00 plus one cent. It was $3.00 while the only stored copy was the
+    # whole-dollar cell. Anything past that is the two generators actually
+    # disagreeing, not float noise, so it fails here rather than being
+    # averaged over.
     base_plan = None
     for plan, cells in _s3_plan_table_rows():
         assert plan in cea, f"§3 prices {plan!r}, which is not in plan_results.csv"
@@ -1332,11 +1335,13 @@ def case_plan_and_battery_margins_match_their_artifacts():
         if plan == base_plan:
             continue
         csv_margin = cea[plan] - cea[base_plan]
-        bpm_margin = bpm[plan]["no_battery"] - bpm[base_plan]["no_battery"]
-        assert abs(csv_margin - bpm_margin) <= 3.0, (
+        bpm_margin = (bpm[plan]["no_battery_cents"]
+                      - bpm[base_plan]["no_battery_cents"]) / 100
+        assert abs(csv_margin - bpm_margin) <= 2.0 + 0.01, (
             f"plan_results.csv and battery_plan_matrix.json disagree about {plan}'s "
-            f"no-battery margin over {base_plan}: ${csv_margin:,.2f} vs ${bpm_margin:,} "
-            "-- past the $3.00 the generator's own $1.00 tie-out and two roundings allow")
+            f"no-battery margin over {base_plan}: ${csv_margin:,.2f} vs "
+            f"${bpm_margin:,.2f} -- past the $2.01 two of the generator's own $1.00 "
+            "tie-outs and two cents roundings allow")
 
     # §3's "vs. current" column, every row. Tolerance $1.00 and not exact
     # equality because the column may legitimately be written either as
@@ -1414,8 +1419,11 @@ def case_plan_and_battery_margins_match_their_artifacts():
         agreed.append(f"{plan} ${printed4:,.0f}")
 
     # §0's runner-up line, the same no-battery margin one section earlier.
+    # Picked on the cents (issue #177): two rivals rounding to the same dollar
+    # would otherwise be settled by key order. The margin quoted is still the
+    # difference of the whole-dollar cells, which is what section 0 prints.
     runner_up = min((p for p in bpm if p != base_plan),
-                    key=lambda p: bpm[p]["no_battery"])
+                    key=lambda p: bpm[p]["no_battery_cents"])
     s0 = HTML[HTML.index('<h2 id="s0">'):HTML.index('<h2 id="s1">')]
     margin0 = _fmt_usd(bpm[runner_up]["no_battery"] - bpm[base_plan]["no_battery"])
     assert margin0 in s0, (
