@@ -1617,14 +1617,18 @@ def _write_artifacts(dest_dir):
                 w.writerows(rows)
             # The close above is the flush: a filesystem that ran out of room
             # reports it here, while both destinations are still untouched.
+        _publish.promote_set(staged, str(dest_dir))
     except BaseException:
+        # Inside the try on purpose: a promotion that promote_set refuses (a
+        # held lock, a leftover .bak) or rolls back leaves complete temporaries
+        # behind otherwise. The temporaries are never recovery copies (those
+        # are the .bak files, which promote_set owns), so removing them is safe.
         for tmp in staged.values():
             try:
                 os.remove(tmp)
             except OSError:
                 pass                     # nothing to clean up is not a failure
         raise
-    _publish.promote_set(staged, str(dest_dir))
     return [t[0] for t in targets]
 
 

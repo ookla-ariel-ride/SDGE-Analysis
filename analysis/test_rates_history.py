@@ -1328,16 +1328,19 @@ def case_writer_is_deterministic_and_atomic():
 
 
 class _SpyOS:
-    """`os`, with replace() recording which temp files were on disk when it ran."""
+    """`os`, with replace() recording who called it and which temp files were
+    on disk when it ran. `who` names the namespace the spy was installed in, so
+    a rename the writer performs itself is told apart from one publish.py
+    performs on its behalf."""
 
-    def __init__(self, inner, log, watch):
-        self._inner, self._log, self._watch = inner, log, watch
+    def __init__(self, inner, log, watch, who):
+        self._inner, self._log, self._watch, self._who = inner, log, watch, who
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
 
     def replace(self, src, dst):
-        self._log.append((pathlib.Path(src).name,
+        self._log.append((self._who, pathlib.Path(src).name,
                           sorted(p.name for p in self._watch.iterdir()
                                  if ".tmp" in p.name)))
         return self._inner.replace(src, dst)
@@ -1347,26 +1350,33 @@ def case_no_destination_is_replaced_until_both_temps_exist():
     """The promotion order itself, observed rather than inferred (issue #227).
 
     Both temporary files must be complete before the first rename of the run,
-    whoever performs it. The observation is made at the os.replace level rather
-    than at the publish.promote_set call, so it stays a statement about what
-    reaches the filesystem: a writer that promoted each file as it finished
-    would arrive at its first rename holding one staged temp, which is the state
-    that publishes a fresh rate_vintages.csv beside a stale residuals table.
+    and every rename must be publish.promote_set's, not the writer's own. The
+    observation is made at the os.replace level rather than at the
+    promote_set call, so it stays a statement about what reaches the
+    filesystem: a writer that promoted each file as it finished would arrive
+    at its first rename holding one staged temp, which is the state that
+    publishes a fresh rate_vintages.csv beside a stale residuals table; and a
+    writer that staged both and then ran its own rename loop would rename from
+    its own namespace, which is the hand-rolled protocol issue #227 retires.
     """
     with tempfile.TemporaryDirectory() as td:
         dest = pathlib.Path(td)
         seen = []
         real_os, real_pub_os = H.os, H._publish.os
-        H.os = _SpyOS(real_os, seen, dest)
-        H._publish.os = _SpyOS(real_pub_os, seen, dest)
+        H.os = _SpyOS(real_os, seen, dest, "writer")
+        H._publish.os = _SpyOS(real_pub_os, seen, dest, "publish")
         try:
             H._write_artifacts(dest)
         finally:
             H.os, H._publish.os = real_os, real_pub_os
         assert seen, "nothing was renamed, so nothing was published"
-        assert len(seen[0][1]) == 2, (
-            f"the first rename of the run ran with {seen[0][1]} staged -- both "
+        assert len(seen[0][2]) == 2, (
+            f"the first rename of the run ran with {seen[0][2]} staged -- both "
             "temporary files must exist before any destination is touched")
+        own = [s for s in seen if s[0] != "publish"]
+        assert not own, (
+            f"the writer renamed on its own instead of through "
+            f"publish.promote_set: {own}")
         assert sorted(p.name for p in dest.iterdir()
                       if not p.name.startswith(".")) == [
             "rate_rebilling_residuals.csv", "rate_vintages.csv"], sorted(dest.iterdir())
@@ -1453,6 +1463,34 @@ def case_failure_while_serialising_the_second_file_touches_neither_artifact():
                       if not p.name.startswith(".")) == [
             "rate_rebilling_residuals.csv", "rate_vintages.csv"], sorted(dest.iterdir())
     return "a failure while serialising the second file leaves both artifacts untouched"
+
+
+def case_a_leftover_recovery_copy_makes_the_writer_refuse_and_leave_no_temps():
+    """publish.promote_set refuses to start over a leftover .bak (the only good
+    copy after a failed rollback; test_publish.py). Two things are pinned: the
+    refusal reaches this writer at all, which only a writer that promotes
+    through promote_set can show, and a refused run leaves no complete
+    temporaries beside the untouched pair, because the promotion sits inside
+    the writer's cleanup try (issue #227)."""
+    with tempfile.TemporaryDirectory() as td:
+        dest = pathlib.Path(td)
+        prior = {"rate_vintages.csv": "section,season\nprior,vintages\n",
+                 "rate_rebilling_residuals.csv": "statement_date,period\nprior,residuals\n"}
+        for name, text in prior.items():
+            (dest / name).write_text(text)
+        bak = dest / "rate_vintages.csv.bak99999"
+        bak.write_text("the only good copy\n")
+        try:
+            H._write_artifacts(dest)
+            raise AssertionError("the writer published over a leftover recovery copy")
+        except SystemExit as e:
+            assert "Recover it by hand" in str(e), e
+        for name, text in prior.items():
+            assert (dest / name).read_text() == text, f"{name} was touched by a refused run"
+        assert bak.read_text() == "the only good copy\n", "the recovery copy was consumed"
+        strays = sorted(p.name for p in dest.iterdir() if ".tmp" in p.name)
+        assert not strays, f"a refused run left complete temporaries behind: {strays}"
+    return "a leftover recovery copy makes the writer refuse, touching nothing and leaving no temps"
 
 
 def case_worst_statement_is_named_in_the_committed_artifact():
@@ -1565,6 +1603,7 @@ CASES = [
     case_writer_is_deterministic_and_atomic,
     case_no_destination_is_replaced_until_both_temps_exist,
     case_failure_while_serialising_the_second_file_touches_neither_artifact,
+    case_a_leftover_recovery_copy_makes_the_writer_refuse_and_leave_no_temps,
     case_worst_statement_is_named_in_the_committed_artifact,
     case_bill_nem_prices_bundled_dates_and_refuses_cca_ones,
 ]
