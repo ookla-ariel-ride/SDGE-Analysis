@@ -286,6 +286,7 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import rates as _rates
+import publish as _publish
 
 
 def _repo_root():
@@ -1538,8 +1539,31 @@ def _residual_rows():
 
 
 def _write_artifacts(dest_dir):
-    """Both artifacts, deterministically, via tempfile + os.replace (atomic on the
-    same filesystem). Returns the two paths."""
+    """Stage both artifacts in full, then publish them as one set (issue #227).
+
+    Returns the two destination paths, vintages first. The row sets are built
+    before either file is opened (both are evaluated inside the `targets`
+    literal below), so what this function orders is the serialization and the
+    promotion, not the computation.
+
+    What is guaranteed here. Both temporary files are written and closed before
+    anything is promoted, so a failure that belongs to building a file (a
+    serialization error, a full filesystem, a quota, a permission change) lands
+    while both destinations still hold their previous contents. A failed run
+    publishes nothing and removes its partial temporaries on the way out.
+    Promotion is delegated to publish.promote_set rather than re-implemented
+    here, so this pair gets the same protocol analyze.py and tou_audit.py
+    publish under: an exclusive lock, whole-file targets, and restoration of
+    the pre-call set on a Python-level failure, with .bak recovery copies that
+    make the next run refuse to start if an abrupt kill interrupted a promotion.
+
+    What is not guaranteed, and publish.py says so at more length: reader
+    isolation. Promoting two files is two renames, so a reader overlapping that
+    window can still observe a mixed pair; what it cannot observe is a truncated
+    file. Nothing here is fsynced, so durability across a machine crash is not
+    claimed either. The repair for every residue is the same: re-run this
+    script and let the regeneration gate diff both artifacts.
+    """
     dest_dir = pathlib.Path(dest_dir)
     targets = [
         # rate_per_kwh holds CHARGED tariffs only. A printed CCA-generation
@@ -1581,18 +1605,26 @@ def _write_artifacts(dest_dir):
           "cca_generation_gap_usd", "cca_generation_gap_pct",
           "worst_residual"], _residual_rows()),
     ]
-    for path, header, rows in targets:
-        fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=path.name + ".", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", newline="") as fh:
-                w = csv.writer(fh, lineterminator="\n")
+    staged = {}
+    try:
+        for path, header, rows in targets:
+            fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=path.name + ".",
+                                       suffix=".tmp")
+            staged[path.name] = tmp      # recorded before the write, so a file
+            with os.fdopen(fd, "w", newline="") as fh:   # that fails mid-write
+                w = csv.writer(fh, lineterminator="\n")  # is still removed below
                 w.writerow(header)
                 w.writerows(rows)
-            os.replace(tmp, path)
-        except BaseException:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
-            raise
+            # The close above is the flush: a filesystem that ran out of room
+            # reports it here, while both destinations are still untouched.
+    except BaseException:
+        for tmp in staged.values():
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass                     # nothing to clean up is not a failure
+        raise
+    _publish.promote_set(staged, str(dest_dir))
     return [t[0] for t in targets]
 
 

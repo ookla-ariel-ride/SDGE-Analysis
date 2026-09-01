@@ -9,14 +9,17 @@ below build a small, hand-computable synthetic house and run the real script
 against it with subprocess, so an arithmetic error anywhere in sim() or
 endurance() fails here, in CI, rather than only locally.
 
-Design: the script is a monolithic top-level script (no `if __name__`, no
-importable functions) that writes BOTH battery_sim.json and
+Design: the script is a top-level script whose whole run sits under an
+`if __name__ == "__main__"` guard, and it writes both battery_sim.json and
 backup_endurance.json from ONE usage.csv + samA.csv + samB.csv every run. The
 two halves need INCOMPATIBLE synthetic shapes to stay hand-computable (the
 arbitrage half wants ample power at the TOU boundaries; the endurance half
 wants a flat, gapless load/production floor across the whole day), so each
 case builds its OWN throwaway usage.csv/samA.csv/samB.csv and runs a fresh
-subprocess, checking only the one artifact its fixture was designed for.
+subprocess, checking only the one artifact its fixture was designed for. The
+one importable piece is write_artifacts(), the pair publisher (issue #228);
+the two publication cases below import it in-process and inject failures into
+it directly, the same way test_tou_audit.py guards its pair.
 
 Every fixture is a whole repo-SHAPED root, not a bare directory: since issue
 #147 the generator imports behavior_rebuild.py for the intake flag
@@ -39,6 +42,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 
 ANALYSIS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ANALYSIS))
@@ -69,19 +73,23 @@ def _generator_constants():
     exists to make impossible). Executing the generator's OWN lines means
     this test always sees whatever the generator actually computes with."""
     src = (ANALYSIS / "battery_backup_sims.py").read_text()
+
+    def line_start(marker):
+        return src.rfind("\n", 0, src.index(marker)) + 1
     # rate constants: exactly the 3 lines between their declaration and the
     # next line, which references the script's own dataframe `d` and would
-    # NameError if executed here
-    r_start = src.index("WFNBC=0.00591")
-    r_end = src.index('\nd["rate"]=')
+    # NameError if executed here. The slices start at a line boundary and are
+    # dedented, because the run body sits under an `if __name__` guard.
+    r_start = line_start("WFNBC=0.00591")
+    r_end = line_start('d["rate"]=')
     # the config list: from its own charge-rating constants (issue #40) up to
-    # (not including) the json.dump() call that actually runs sim() -- pure
+    # (not including) the comprehension that actually runs sim() -- pure
     # literals, no dataframe/pandas dependency
-    c_start = src.index("CHARGE_KW_PW3=5.0")
-    c_end = src.index("\njson.dump(")
+    c_start = line_start("CHARGE_KW_PW3=5.0")
+    c_end = line_start("sim_rows=[sim(")
     ns = {}
-    exec(src[r_start:r_end], ns)
-    exec(src[c_start:c_end], ns)
+    exec(textwrap.dedent(src[r_start:r_end]), ns)
+    exec(textwrap.dedent(src[c_start:c_end]), ns)
     return ns["WFNBC"], ns["PCIA"], ns["NBC"], ns["UDC"], ns["CEA"], ns["configs"]
 
 
@@ -168,9 +176,17 @@ def _stage(tmp, has_ev=True):
     (tmp / "private").mkdir()
     (tmp / "private" / "household.yaml").write_text(_household_yaml(has_ev))
     for mod in ("battery_backup_sims.py", "rates.py", "household.py",
-                "behavior_rebuild.py"):
+                "behavior_rebuild.py", "publish.py"):
         shutil.copy(ANALYSIS / mod, tmp / mod)
     return tmp
+
+
+def _writer():
+    """The generator as a module: imports it (the run body is guarded) and
+    returns it. Imported inside the cases rather than at the top of this file
+    so an import failure is one case's FAIL line, not the end of the run."""
+    import battery_backup_sims as B
+    return B
 
 
 def _run(tmp):
@@ -561,11 +577,139 @@ def case_endurance_strips_an_ev_only_where_the_intake_declares_one():
             + "; the essentials tier is identical either way")
 
 
+# ---------------------------------------------------------------------------
+# Cases 5 and 6: write_artifacts() -- the pair publisher (issue #228)
+#
+# Before #228 the script opened each destination directly for a truncating
+# json.dump, with the whole 8760-hour endurance simulation between the two, so
+# a failure anywhere in that window left battery_sim.json freshly rewritten
+# beside a stale backup_endurance.json, and a failure inside a dump left the
+# destination itself truncated: json.load on it raised instead of returning
+# last run's answer. These two cases pin the guarantee the writer now states.
+# ---------------------------------------------------------------------------
+SIM_ROWS = [{"config": "new", "usable_kwh": 1.0, "net_annual_savings": 2}]
+ENDURANCE = {"new|t1": {"median_h": 3, "p10_h": 4}}
+
+
+class _SpyOS:
+    """`os`, with replace() recording which temp files were on disk when it ran."""
+
+    def __init__(self, inner, log, watch):
+        self._inner, self._log, self._watch = inner, log, watch
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def replace(self, src, dst):
+        self._log.append((pathlib.Path(src).name,
+                          sorted(p.name for p in self._watch.iterdir()
+                                 if ".tmp" in p.name)))
+        return self._inner.replace(src, dst)
+
+
+def case_no_destination_is_replaced_until_both_temps_exist():
+    """The promotion order itself, observed at the os.replace level (issue
+    #228): both temporary files must be complete before the first rename of the
+    run, whoever performs it. A writer that dumped straight into each
+    destination would never rename at all, and one that promoted each file as
+    it finished would arrive at its first rename holding one staged temp."""
+    B = _writer()
+    with tempfile.TemporaryDirectory() as td:
+        dest = pathlib.Path(td)
+        seen = []
+        real_os, real_pub_os = B.os, B._publish.os
+        B.os = _SpyOS(real_os, seen, dest)
+        B._publish.os = _SpyOS(real_pub_os, seen, dest)
+        try:
+            B.write_artifacts(SIM_ROWS, ENDURANCE, dest=dest)
+        finally:
+            B.os, B._publish.os = real_os, real_pub_os
+        assert seen, "nothing was renamed, so nothing was published"
+        assert len(seen[0][1]) == 2, (
+            f"the first rename of the run ran with {seen[0][1]} staged -- both "
+            "temporary files must exist before any destination is touched")
+        assert sorted(p.name for p in dest.iterdir()
+                      if not p.name.startswith(".")) == [
+            "backup_endurance.json", "battery_sim.json"], sorted(dest.iterdir())
+        assert json.loads((dest / "battery_sim.json").read_text()) == SIM_ROWS
+        assert json.loads((dest / "backup_endurance.json").read_text()) == ENDURANCE
+    return "no destination is renamed until both temporary files are written"
+
+
+class _BoomOnSecondDump:
+    """`json`, whose second dump() of the run fails after writing part of its
+    output, the way a full filesystem, a quota or an unserializable value does.
+    The first dump (battery_sim.json) is the real one, so its temp is complete."""
+
+    def __init__(self, inner):
+        self._inner, self.calls = inner, 0
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def dump(self, obj, fh, **kw):
+        self.calls += 1
+        if self.calls < 2:
+            return self._inner.dump(obj, fh, **kw)
+        fh.write("{")                     # a partial document lands ...
+        raise RuntimeError("injected: the second dump failed part-way")
+
+
+def case_failure_during_the_second_dump_touches_neither_artifact():
+    """A failure while backup_endurance.json is being serialized leaves both
+    committed artifacts unchanged and still parseable (issue #228). Under the
+    direct truncating writes this fires with battery_sim.json already
+    rewritten and backup_endurance.json truncated to a partial document."""
+    B = _writer()
+    with tempfile.TemporaryDirectory() as td:
+        dest = pathlib.Path(td)
+        prior = {"battery_sim.json": '[\n {\n  "config": "prior"\n }\n]',
+                 "backup_endurance.json": '{\n "prior|t1": {\n  "median_h": 1\n }\n}'}
+        for name, text in prior.items():
+            (dest / name).write_text(text)
+
+        real_json = B.json
+        boom = _BoomOnSecondDump(real_json)
+        B.json = boom
+        try:
+            B.write_artifacts(SIM_ROWS, ENDURANCE, dest=dest)
+        except RuntimeError as e:
+            assert "injected" in str(e), e
+        except SystemExit as e:                       # pragma: no cover - guard
+            raise AssertionError(f"the writer converted the failure: {e}")
+        else:
+            raise AssertionError("the writer swallowed the injected failure")
+        finally:
+            B.json = real_json
+        assert boom.calls == 2, f"the injection never reached the second dump ({boom.calls})"
+
+        for name, text in prior.items():
+            got = (dest / name).read_text()
+            assert got == text, (
+                f"{name} was changed by a run that failed before the pair was "
+                f"complete: {got[:80]!r}")
+            json.loads(got)               # and it still parses
+        strays = sorted(p.name for p in dest.iterdir()
+                        if ".tmp" in p.name or ".bak" in p.name)
+        assert not strays, f"a failed run left files behind: {strays}"
+
+        # POSITIVE CONTROL: the same writer, the same destination, no injection.
+        B.write_artifacts(SIM_ROWS, ENDURANCE, dest=dest)
+        assert json.loads((dest / "battery_sim.json").read_text()) == SIM_ROWS
+        assert json.loads((dest / "backup_endurance.json").read_text()) == ENDURANCE
+        assert sorted(p.name for p in dest.iterdir()
+                      if not p.name.startswith(".")) == [
+            "backup_endurance.json", "battery_sim.json"], sorted(dest.iterdir())
+    return "a failure during the second dump leaves both artifacts unchanged and parseable"
+
+
 CASES = [
     case_arbitrage_sim_matches_hand_computation,
     case_backup_endurance_matches_hand_computation,
     case_endurance_solar_recharge_respects_the_charge_cap,
     case_endurance_strips_an_ev_only_where_the_intake_declares_one,
+    case_no_destination_is_replaced_until_both_temps_exist,
+    case_failure_during_the_second_dump_touches_neither_artifact,
 ]
 
 
