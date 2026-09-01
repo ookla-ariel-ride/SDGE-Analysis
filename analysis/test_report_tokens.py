@@ -4053,6 +4053,99 @@ def case_s2_verdict_refuses_to_time_exports_it_cannot_rebuild():
             f"rebuilding the year's exports (live midday share {live:.1%})")
 
 
+# THE TWO §8 VERDICT TOKENS ARE PINNED BY VALUE, NOT BY VOCABULARY (issue
+# #183). Both quote the ALL-HOURS export share, exports over production, the
+# figure EXPORTED_SHARE publishes. That ratio is the same number whether the
+# exports leave at noon or at dusk, so a clause that put it "at the wrong time
+# of day" or "at low value" was describing the midday slice and pointing at
+# the whole; the heading carried the second wording and the expansion token
+# the first. A blocklist of time and value words was the first pin written
+# here and it was the wrong shape: "for pennies", "into a glut", "when the
+# grid least needs it" and "60 percent" all walked past it (the same hole
+# issue #180 names in the page-wide guard). So each token is asserted EQUAL
+# to the sentence built from its own helper values -- the all-hours share, the
+# grandfathering bracket, the midday share and the tariff window -- and any
+# wording change, in either direction, fails by value. The retired-wording
+# case below feeds the pin the two retired strings and shows it refusing them,
+# so the pin stays a test of the defect rather than of a spelling.
+def _s8_scaffolds():
+    """{token: the sentence it must render}, from the helpers the tokens read."""
+    exp_pct = rt._all_hours_export_pct(rt.CTX)
+    midday_pct = round(rt._midday_export_share(rt.CTX) * 100)
+    window = rt._cheap_window()
+    return {
+        "S8_VERDICT_SHORT": (
+            f"No, no, and not yet — the array already exports {exp_pct}% of production, "
+            f"and expansion risks the {rt._grandfathering_bracket('S8_VERDICT_SHORT')} "
+            "NEM 2.0 grandfathering"),
+        "EXPANSION_VERDICT_SHORT": (
+            f"No — expansion risks the "
+            f"{rt._grandfathering_bracket('EXPANSION_VERDICT_SHORT')} NEM 2.0 "
+            f"grandfathering, and {midday_pct}% of the year's exports already leave in "
+            f"the {window} window"),
+    }
+
+
+def _assert_s8_tokens_match_their_scaffolds():
+    for token, expected in sorted(_s8_scaffolds().items()):
+        value = rt.resolve_token(token)
+        assert value == expected, (
+            f"{token} renders {value!r}, not the sentence its own helper values build "
+            f"({expected!r}) -- the wording moved, and the only wordings this pin has "
+            "ever refused attached a time of day or a value to the all-hours export "
+            "share, which says nothing about either")
+
+
+@case
+def case_s8_verdict_tokens_render_exactly_their_helper_values():
+    """The heading and the expansion verdict each render the one sentence
+    their helpers build: the all-hours share (a plain fraction), the
+    grandfathering bracket (the reason for the "no"), and, on the expansion
+    token, the midday slice timed by its own share. Both stay inside the
+    basic-tier density cap."""
+    _assert_s8_tokens_match_their_scaffolds()
+    for token in ("S8_VERDICT_SHORT", "EXPANSION_VERDICT_SHORT"):
+        _assert_within_density_cap(token, rt.resolve_token(token), "the §8 verdict")
+    exp_pct = rt._all_hours_export_pct(rt.CTX)
+    midday_pct = round(rt._midday_export_share(rt.CTX) * 100)
+    return (f"S8_VERDICT_SHORT and EXPANSION_VERDICT_SHORT render exactly their helper "
+            f"values (all-hours {exp_pct}%, midday {midday_pct}%, "
+            f"{rt._grandfathering_bracket('S8_VERDICT_SHORT')} at risk), inside the "
+            "density cap")
+
+
+@case
+def case_s8_value_pin_refuses_both_retired_wordings():
+    """Self-test of the pin above: each retired wording, rendered with the live
+    figures, is put behind the token's own `get` and the pin has to refuse it.
+    Without this the pin is a spelling check that happens to pass today."""
+    exp_pct = rt._all_hours_export_pct(rt.CTX)
+    bracket = rt._grandfathering_bracket("S8_VERDICT_SHORT")
+    retired = (
+        ("S8_VERDICT_SHORT",
+         f"No, no, and not yet — the array already exports {exp_pct}% of production at "
+         f"low value, and expansion risks the {bracket} NEM 2.0 grandfathering"),
+        ("EXPANSION_VERDICT_SHORT",
+         f"No — already exports {exp_pct}% of production at the wrong time of day"),
+        # The same conflation past the old blocklist: no listed word, same claim.
+        ("EXPANSION_VERDICT_SHORT",
+         f"No — already exports {exp_pct}% of production for pennies"),
+    )
+    for token, wording in retired:
+        with _swapped(rt.TOKENS[token], "get", lambda ctx, w=wording: w):
+            try:
+                _assert_s8_tokens_match_their_scaffolds()
+            except AssertionError as e:
+                assert token in str(e) and wording in str(e), e
+            else:
+                raise AssertionError(
+                    f"the §8 value pin accepts the retired wording {wording!r} for {token}")
+    # Nothing leaked: the live tokens pass again.
+    _assert_s8_tokens_match_their_scaffolds()
+    return (f"the §8 value pin refuses all {len(retired)} retired wordings, including one "
+            "no vocabulary list would have caught")
+
+
 # The two published ends of what an exported kWh is worth, and the rates.py
 # function each one prices the profile through. Written here as a table so the
 # pins below sweep both ends with one body: an end added or renamed on the
@@ -4410,6 +4503,8 @@ def case_the_rebuild_refusal_describes_no_callers_own_operation():
     # that token needs the private household, and the refusal under test is
     # raised before any household value is read.
     callers = (("S2_VERDICT", lambda: rt._midday_export_share(rt.CTX)),
+               ("EXPANSION_VERDICT_SHORT",
+                lambda: rt.TOKENS["EXPANSION_VERDICT_SHORT"]["get"](rt.CTX)),
                ("EXPORT_VALUE_SURPLUS_BOUND",
                 lambda: rt.TOKENS["EXPORT_VALUE_SURPLUS_BOUND"]["get"](rt.CTX)),
                ("EXPORT_VALUE_NETTING_BOUND",

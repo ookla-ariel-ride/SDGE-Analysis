@@ -3927,12 +3927,28 @@ _tok("NEM_GRANDFATHER_VALUE_RANGE", kind="derived", dim="$",
      sources=["data/nem3_grandfathering.json:grandfathering_value_range_usd_per_yr"])
 
 
-def _s8_verdict_short(ctx):
+def _grandfathering_bracket(token):
+    """What NEM 2.0 grandfathering is worth, as the "$low–high/yr" bracket the
+    two section 8 verdicts print. One helper for both so the heading and the
+    expansion verdict cannot state the cap's stake from different reads of
+    data/nem3_grandfathering.json (issue #183 review)."""
     nem = _json("nem3_grandfathering.json")["grandfathering_value_range_usd_per_yr"]
-    low, high = _amounts("S8_VERDICT_SHORT", "what NEM 2.0 grandfathering is worth",
+    low, high = _amounts(token, "what NEM 2.0 grandfathering is worth",
                          grandfathering_low=nem["low"], grandfathering_high=nem["high"])
-    exp_pct = round(_json("report_data.json")["totals"]["exp"] /
-                     _annual_production_kwh(ctx) * 100)
+    return f"${low:,.0f}–{high:,.0f}/yr"
+
+
+def _all_hours_export_pct(ctx):
+    """Exports over production at every hour of the year, in whole percent:
+    the same figure EXPORTED_SHARE publishes, and a number that says nothing
+    about WHEN the exports leave."""
+    return round(_json("report_data.json")["totals"]["exp"] /
+                 _annual_production_kwh(ctx) * 100)
+
+
+def _s8_verdict_short(ctx):
+    bracket = _grandfathering_bracket("S8_VERDICT_SHORT")
+    exp_pct = _all_hours_export_pct(ctx)
     # NOT "at low value". That clause priced the ALL-HOURS export share at the
     # midday cell of the price map, and the section's most-read sentence was
     # where it read hardest. The exports are worth somewhere between
@@ -3943,18 +3959,42 @@ def _s8_verdict_short(ctx):
     # NEM 2.0 growth cap and the grandfathering it puts at risk -- and that one
     # is artifact-backed.
     return (f"No, no, and not yet — the array already exports {exp_pct}% of "
-            f"production, and expansion risks the "
-            f"${low:,.0f}–{high:,.0f}/yr NEM 2.0 grandfathering")
+            f"production, and expansion risks the {bracket} NEM 2.0 grandfathering")
 
 
 _tok("S8_VERDICT_SHORT", phrase=True, kind="derived", get=_s8_verdict_short,
      sources=["data/report_data.json:totals", "data/enphase_daily_production.csv",
               "data/nem3_grandfathering.json"])
+
+
+def _expansion_verdict_short(ctx):
+    # NOT "already exports {exp_pct}% of production at the wrong time of day".
+    # That share is exports over production at every hour of the year, the
+    # same number whether the exports leave at noon or at dusk, so the timing
+    # clause was describing the midday slice and pointing at the whole; the
+    # same conflation the heading above carried as "at low value" (issue
+    # #183). The reason the answer is "no" is the one the heading gives and
+    # the section's body rests on: the NEM 2.0 growth cap and the
+    # grandfathering it puts at risk, read through the same helper as the
+    # heading. The timing fact follows as a second clause, scoped to the slice
+    # the hour-of-day profiles can actually time (the share of the year's
+    # exports leaving in the tariff's daytime super-off-peak run, through the
+    # same rebuild gate section 2's verdict uses). The all-hours share follows
+    # in the template's own next sentence as EXPORTED_SHARE, with no judgement
+    # attached.
+    bracket = _grandfathering_bracket("EXPANSION_VERDICT_SHORT")
+    share = _midday_export_share(ctx, "EXPANSION_VERDICT_SHORT")
+    return (f"No — expansion risks the {bracket} NEM 2.0 grandfathering, and "
+            f"{round(share * 100)}% of the year's exports already leave in the "
+            f"{_cheap_window()} window")
+
+
 _tok("EXPANSION_VERDICT_SHORT", phrase=True, kind="derived",
-     get=lambda ctx: (lambda exp_pct: f"No — already exports {exp_pct}% of "
-                       "production at the wrong time of day")(
-         round(_json("report_data.json")["totals"]["exp"] / _annual_production_kwh(ctx) * 100)),
-     sources=["data/report_data.json:totals", "data/enphase_daily_production.csv"])
+     get=_expansion_verdict_short,
+     sources=["data/nem3_grandfathering.json:grandfathering_value_range_usd_per_yr",
+              "data/report_data.json:hourly_S.exp / hourly_W.exp",
+              "data/report_data.json:totals.exp (rebuild check)",
+              "analysis/rates.py:period() (the daytime super-off-peak window)"])
 
 _tok("RECOMMENDED_PACKAGE_SUMMARY", kind="derived",
      get=lambda ctx: f"MID — behavior fix plus {TOKENS['BATTERY_MODEL']['value']}",
@@ -5321,7 +5361,7 @@ def _analysis_window_dates():
 _EXPORT_REBUILD_TOLERANCE = 0.01
 
 
-def _midday_export_share(ctx):
+def _midday_export_share(ctx, token="S2_VERDICT"):
     """Share of the year's exported kWh that leaves inside the tariff's own
     daytime super-off-peak run -- "midday", defined by rates.period()'s
     weekday schedule (_cheap_run()) rather than by a window picked here.
@@ -5336,7 +5376,12 @@ def _midday_export_share(ctx):
     The reconstruction is checked against report_data.json's own export total
     before any share is taken. If the weighted profiles no longer rebuild the
     artifact's own annual exports, they are not describing this window and
-    nothing derived from them may be published (CLAUDE.md section 0)."""
+    nothing derived from them may be published (CLAUDE.md section 0).
+
+    `token` names the caller in every refusal: section 2's verdict and the
+    expansion verdict (issue #183) both read this share, and a refusal that
+    named the wrong token would send the reader to a sentence that was not
+    the one that failed."""
     days = _season_day_counts()
     profiles = _hourly_export_profiles()
     lo, hi, _lab = _cheap_run()
@@ -5346,7 +5391,7 @@ def _midday_export_share(ctx):
     # result as this tariff's midday share. Fail closed instead.
     if lo != int(lo) or hi != int(hi):
         raise SystemExit(
-            f"report_tokens: S2_VERDICT cannot time exports against a {lo}-{hi}h daytime "
+            f"report_tokens: {token} cannot time exports against a {lo}-{hi}h daytime "
             "super-off-peak run -- data/report_data.json's export profiles are hourly "
             "buckets and cannot resolve a window boundary inside an hour")
     total = midday = 0.0
@@ -5354,14 +5399,15 @@ def _midday_export_share(ctx):
         exp = profiles[seas]
         total += sum(exp) * n
         midday += sum(exp[int(lo):int(hi)]) * n
-    _assert_profiles_rebuild_the_year("S2_VERDICT", "when exports happen", total)
+    _assert_profiles_rebuild_the_year(token, "when exports happen", total)
     return midday / total
 
 
 # ---------------------------------------------------------------------------
 # THE ONE READER BEHIND EVERY CLAIM THIS MODULE MAKES ABOUT EXPORT HOURS.
-# Three tokens ask report_data.json's hour-of-day export profiles a question --
-# S2_VERDICT asks WHEN the exports leave, EXPORT_VALUE_SURPLUS_BOUND and
+# Four tokens ask report_data.json's hour-of-day export profiles a question --
+# S2_VERDICT and EXPANSION_VERDICT_SHORT ask WHEN the exports leave (through
+# _midday_export_share), EXPORT_VALUE_SURPLUS_BOUND and
 # EXPORT_VALUE_NETTING_BOUND ask WHAT THEY ARE WORTH under each of the two NEM
 # 2.0 settlement treatments -- and every answer is only this window's if the
 # profiles still rebuild the artifact's own annual export total. Split out
