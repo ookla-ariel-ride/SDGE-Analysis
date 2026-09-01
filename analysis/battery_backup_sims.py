@@ -8,11 +8,76 @@ Beside usage.csv/samA.csv/samB.csv this needs ROOT/private/household.yaml, for t
 one intake flag household.has_ev: the endurance half strips presumed EV charging
 out of the whole-house load, and whether there is any to strip is the intake's
 answer, never the load profile's (see the `ev` line below).
+
+Write guarantee (issue #228): the two artifacts are two views of one run, so
+they are staged in full and promoted as a set through publish.promote_set;
+see write_artifacts() for exactly what that does and does not promise. Only
+that publication call sits under the `if __name__` guard: the inputs are still
+read and both simulations still run at import time (script-style), which
+test_charge_discharge_distinct_naming.py relies on to call sim() directly.
 """
 import pandas as pd, numpy as np, json, datetime as dt
-import sys, pathlib as _pl
+import os, sys, pathlib as _pl
 sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 import rates as R   # canonical TOU assignment (holiday rule included)
+import publish as _publish   # crash-consistent promotion of the artifact pair
+
+
+def write_artifacts(sim_rows, endurance, dest="."):
+    """Stage both artifacts in full, then publish them as one set (issue #228).
+
+    Before this function existed each destination was opened directly for a
+    truncating json.dump, with the whole 8760-hour endurance simulation between
+    the two writes. A failure anywhere in that window left a fresh
+    battery_sim.json beside a stale backup_endurance.json, and a failure inside
+    a dump left the destination itself truncated, so json.load on the committed
+    artifact raised instead of returning last run's answer.
+
+    What is guaranteed here. Both temporary files are written and closed before
+    anything is promoted, so a failure that belongs to building a file (a
+    serialization error, a full filesystem, a quota, a permission change) lands
+    while both destinations still hold their previous, parseable contents. A
+    failed run publishes nothing and removes its partial temporaries on the way
+    out. Promotion is delegated to publish.promote_set, so this pair gets the
+    same protocol analyze.py, tou_audit.py and rates_history.py publish under:
+    an exclusive lock, whole-file targets, and restoration of the pre-call set
+    on a Python-level failure, with .bak recovery copies that make the next run
+    refuse to start if an abrupt kill interrupted a promotion.
+
+    What is not guaranteed, and publish.py says so at more length: reader
+    isolation (two renames, so a reader overlapping that window can observe a
+    mixed pair, never a truncated file) and durability across a machine crash
+    (nothing is fsynced). The repair for either residue is to re-run this
+    script and diff both artifacts against the committed copies.
+
+    The bytes are those the previous direct json.dump(..., indent=1) produced,
+    with no trailing newline, so the committed artifacts regenerate unchanged.
+    """
+    dest = _pl.Path(dest)
+    staged = {}
+    try:
+        for name, obj in (("battery_sim.json", sim_rows),
+                          ("backup_endurance.json", endurance)):
+            tmp = dest / f"{name}.tmp{os.getpid()}"
+            staged[name] = str(tmp)      # recorded before the write, so a file
+            with open(tmp, "w") as fh:   # that fails mid-write is removed below
+                json.dump(obj, fh, indent=1)
+            # The close above is the flush: a filesystem that ran out of room
+            # reports it here, while both destinations are still untouched.
+        _publish.promote_set(staged, str(dest))
+    except BaseException:
+        # Inside the try on purpose: a promotion that promote_set refuses (a
+        # held lock, a leftover .bak) or rolls back leaves complete temporaries
+        # behind otherwise. The temporaries are never recovery copies (those
+        # are the .bak files, which promote_set owns), so removing them is safe.
+        for tmp in staged.values():
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass                     # nothing to clean up is not a failure
+        raise
+
+
 import behavior_rebuild as br   # THIS run's intake flag (household.has_ev)
 
 # ---- load SDGE 15-min ----
@@ -67,8 +132,7 @@ configs=[(5.0,3.84,"1x Enphase IQ 5P",None),(10.0,7.08,"1x Enphase IQ 10C",None)
          (13.5,11.5,"1x Tesla Powerwall 3",CHARGE_KW_PW3),
          (15.0,7.68,"3x Enphase IQ 5P",None),(20.0,7.08,"2x Enphase IQ 10C",None),
          (27.0,11.5,"PW3 + 1 Expansion",CHARGE_KW_PW3_WITH_EXPANSION)]
-json.dump([sim(cap,pwr,name,charge_pwr=cpwr) for cap,pwr,name,cpwr in configs],
-          open("battery_sim.json","w"),indent=1)
+sim_rows=[sim(cap,pwr,name,charge_pwr=cpwr) for cap,pwr,name,cpwr in configs]
 
 # ---- backup endurance: stitched hourly load (SAM 8760) + derived hourly production ----
 b=pd.read_csv("samB.csv").iloc[:,0].values; a=pd.read_csv("samA.csv").iloc[:,0].values
@@ -118,5 +182,6 @@ for cfg,cap,pwr,cpwr in [("IQ 5P",5,3.84,None),("IQ 10C",10,7.08,None),
                          ("PW3+Exp",27,11.5,CHARGE_KW_PW3_WITH_EXPANSION)]:
     for tier in["t1","t2"]:
         med,p10=endurance(cap,pwr,tier,charge_pwr=cpwr); out[f"{cfg}|{tier}"]={"median_h":med,"p10_h":p10}
-json.dump(out,open("backup_endurance.json","w"),indent=1)
-print("done")
+if __name__ == "__main__":
+    write_artifacts(sim_rows, out)  # both halves, staged then promoted as a pair
+    print("done")

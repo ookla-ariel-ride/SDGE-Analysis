@@ -340,6 +340,10 @@ simulated outage starts (e.g. `"PW3|t1"` → median 336 h = the 14-day cap, 10th
 `"PW3|t2"` → median 7 h). Configs here: IQ 5P, IQ 10C, PW3, PW3+Exp.
 
 **Run:** `python3 battery_backup_sims.py` from a directory containing the three input files.
+Both outputs are staged in full and then promoted as one set through `analysis/publish.py`'s
+`promote_set()` (`write_artifacts()`, issue #228), so a failure during either serialization
+leaves the previous pair in place and parseable; reader isolation across the two renames is
+not claimed, as `publish.py` states.
 
 ### 3.4 `analysis/package_sims.py` — RETIRED, kept as historical record
 
