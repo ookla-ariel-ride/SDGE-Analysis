@@ -3349,8 +3349,12 @@ def _time_of_day_words_in(clause):
 # all pass with the wide cutter. The two conflations this cutter could not
 # reach were both in text report_tokens.py owns rather than text written into
 # index.html, and both are now closed at the generator: §8's heading no longer
-# characterises the all-hours share's worth at all (S8_VERDICT_SHORT), and what
-# the year's exports are worth is the EXPORT_VALUE_SURPLUS_BOUND /
+# characterises the all-hours share's worth at all (S8_VERDICT_SHORT);
+# EXPANSION_VERDICT_SHORT, the §8 body's own verdict slot, times the midday
+# slice by its own share instead of putting the all-hours share "at the wrong
+# time of day" (issue #183; both tokens are pinned by
+# test_report_tokens.case_s8_verdict_tokens_attach_timing_only_to_the_midday_share);
+# and what the year's exports are worth is the EXPORT_VALUE_SURPLUS_BOUND /
 # EXPORT_VALUE_NETTING_BOUND range, the whole export profile priced through both
 # NEM 2.0 settlement treatments instead of read off the midday cell. The
 # paragraph that publishes it is pinned by
@@ -6070,6 +6074,24 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
     ):
         if token in resolved:
             pins.append((term, figure_of(resolved[token]), token))
+    # The self-consumption entry's timing claim sits on the MIDDAY slice, not on
+    # the all-hours share pinned above (issue #183): the share of the year's
+    # exports leaving in the tariff's daytime super-off-peak run, read through
+    # the same helper S2_VERDICT and EXPANSION_VERDICT_SHORT read, with its
+    # rebuild gate. Neither input needs the private archive, so a failure here
+    # is the helper or the artifact, never a missing household.yaml.
+    try:
+        midday_share, cheap_window = rt._midday_export_share(rt.CTX), rt._cheap_window()
+    except BaseException as e:                    # noqa: BLE001 - same reason as above
+        assert _missing_archive_exit(e, archive, loader), (
+            f"report_tokens could not derive the midday export share the glossary's "
+            f"self-consumption entry states: {type(e).__name__}: {e}")
+    else:
+        pins.append(("Self-consumption vs export",
+                     f"{round(midday_share * 100)}% of those exports leave in the "
+                     f"{cheap_window} window",
+                     "report_tokens._midday_export_share "
+                     "(data/report_data.json:hourly_S.exp / hourly_W.exp)"))
     # The arbitrage entry's stored-energy cost spans the two stored-kWh costs
     # §6 publishes (midday solar surplus at the low end, a grid top-up at the
     # high end), in whole cents.

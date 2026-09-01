@@ -86,7 +86,7 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 **SAM 8760** — An Enphase report of hourly whole-home consumption for a calendar year: 8,760 values, one per hour (24 × 365). Named for NREL's System Advisor Model, which uses this format. [NREL SAM](https://sam.nrel.gov)
 
-**Self-consumption vs export** — Solar energy used inside the house the moment it's made (full retail value) versus surplus sent to the grid (credited at lower export rates). This home exports 60% of its production, the central timing mismatch the report addresses.
+**Self-consumption vs export** — Solar energy used inside the house the moment it's made (full retail value) versus surplus sent to the grid (credited at lower export rates). This home exports 60% of its production; 63% of those exports leave in the 10am–2pm window, the timing mismatch the report addresses.
 
 **Soiling** — Dirt, dust, and grime on panels that blocks sunlight and cuts output until rain or a cleaning washes it off. This report measures soiling here at roughly 0.45–2.4% lost per dry month. [Wikipedia: soiling (solar energy)](https://en.wikipedia.org/wiki/Soiling_(solar_energy))
 
