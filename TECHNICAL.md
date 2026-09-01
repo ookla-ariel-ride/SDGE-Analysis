@@ -447,18 +447,35 @@ land in `deep_results.json`.
    `rates.credit` (no NBC), rather than avoiding imports at `rates.allin`, which is the split
    `quiet_night_floor.py` models and a single blended rate cannot.
 3. **EV charging sessions.** Interval kW = `Consumption × 4`; intervals with kW > 6.5 are
-   charger-on; contiguous runs form sessions; session kWh = Σ imports − 0.4 kW house base ×
-   duration; sessions < 3 kWh discarded. Results: 580 sessions, 14,226 kWh, $3,109/yr at actual
-   timing vs $1,795 if every session's energy had charged in super-off-peak → $1,315/yr lost to
-   mistimed charging; 958 kWh of session energy fell on-peak, 1,716 kWh off-peak. The
-   super-off-peak counterfactual prices each session's kWh at its own season's sop rate,
-   read from the same `UDC5`/`CEA5` table the actual-timing cost uses, so one rate vintage
-   sits on both sides of the subtraction. It replaced a
-   hardcoded `0.1257` $/kWh, the second flat literal issue #172 found in this script. All
-   three figures are workpaper values, not published ones: the report's EV-mistiming numbers
-   come from `behavior_rebuild.py`'s canonical NEM re-bill ($1,221/yr at 100% compliance) and
-   `extended_findings.py`'s `home_ev_cost_if_all_sop` ($1,742/yr), both priced through
-   `rates.py`.
+   charger-on; contiguous runs form sessions. EV-only energy is taken per interval: each
+   15-minute import less an assumed `EV_SESSION_HOUSE_BASE_KW` = 0.4 kW house base × 0.25 h,
+   summed over the session; sessions < 3 kWh discarded. Results: 580 sessions, 14,226 kWh
+   of EV-only energy; `cost_total` $3,009/yr is that energy priced at each interval's actual
+   rate, `cost_if_all_sop` $1,795 is the same energy if every session had charged in
+   super-off-peak, and `wasted_vs_perfect` $1,214/yr is their difference: what the timing of
+   the sessions cost, with the house base on neither side. `onpeak_kwh_in_sessions` (958
+   kWh) and `offpeak_kwh_in_sessions` (1,716 kWh) are gross session imports by period,
+   house base included; they say where the sessions sat, not how much EV-only energy fell
+   there. Both operands price one quantity (issue #229): the house base comes off each
+   interval before anything is priced, so the actual-timing side cannot carry the base at
+   whatever period it fell under. The super-off-peak counterfactual prices each session's
+   kWh at its own season's sop rate, read from the same `UDC5`/`CEA5` table the
+   actual-timing cost uses, so one rate vintage sits on both sides of the subtraction. It
+   replaced a hardcoded `0.1257` $/kWh, the second flat literal issue #172 found in this
+   script. The 0.4 kW base is an assumption, not a measurement: a whole-house meter
+   cannot separate the house from the charger while both run. The repo's two measured
+   floors (this script's own 3–5 am rule, 1.02 kW; `quiet_night_floor.py`, 1.03 kW) are read
+   on EV-free nights, and whether the house draws the same while the charger runs is not
+   determined. The base enters `wasted_vs_perfect` only through session intervals outside
+   super-off-peak (its share is −base × 0.25 h × Σ(interval rate − sop rate) over those
+   intervals), so a larger base lowers the figure; it also scales `kwh_total`,
+   `cost_if_all_sop` and the 3 kWh cutoff directly, which is why swapping in a measured
+   floor is a change to the session accounting itself and is left open in issue #229. All
+   three dollar figures are workpaper values, not published ones: the report's EV-mistiming
+   numbers come from `behavior_rebuild.py`'s canonical NEM re-bill ($1,221/yr at 100%
+   compliance, a different session detector and a full monthly re-bill; the $1,214 here
+   lands within $7 of it) and `extended_findings.py`'s `home_ev_cost_if_all_sop`
+   ($1,742/yr), both priced through `rates.py`.
 4. **Vacation detection.** Daily sums of the SAM hourly load excluding hours > 7 kWh (crude
    non-EV load); away threshold = max(10th percentile, 20 kWh/day) = 26.3; 37 away-days detected
    against a 37.7 kWh/day non-EV median.

@@ -12,13 +12,13 @@
  "ev_sessions": {
   "count": 580,
   "kwh_total": 14226,
-  "cost_total": 3109,
+  "cost_total": 3009,
   "avg_kwh": 24.5,
   "sessions_touching_onpeak": 50,
   "onpeak_kwh_in_sessions": 958,
   "offpeak_kwh_in_sessions": 1716,
   "cost_if_all_sop": 1795,
-  "wasted_vs_perfect": 1315
+  "wasted_vs_perfect": 1214
  },
  "vacation": {
   "non_ev_daily_median": 37.7,
