@@ -912,6 +912,196 @@ def case_artifact_regenerates_byte_identically():
 
 
 # ---------------------------------------------------------------------------
+# (e) the EV-spillover exclusion is gated on the intake flag (issue #246)
+#
+# The >= 2.5 kW outside-on-peak mask exists to keep the battery off EV
+# charging the free schedule fix is about to move. On a household whose
+# intake says household.has_ev is false there is no such load, so the same
+# mask would withhold ordinary house load (an oven, a heat pump) from a
+# battery that should serve it. br.EV_ANALYSIS is that flag; the mask builder
+# reads it at call time, so each case sets it, runs, and puts it back.
+# ---------------------------------------------------------------------------
+SPIKE_KW = 4.0                 # above the 2.5 kW threshold
+SPIKE_KWH = SPIKE_KW * 0.25    # one 15-minute interval
+SPIKE_HOUR = 7.0               # winter weekday 07:00 is off-peak (rates.period_at)
+
+
+def _spike_frame(n_days=1):
+    """n_days of an otherwise import-free winter weekday frame with one
+    SPIKE_KW import at SPIKE_HOUR on each day. Off-peak, outside on-peak: the
+    exact interval the exclusion decides about."""
+    d = _synthetic_frame(n_days=n_days, kwh_per_interval=0.0)
+    imp0 = np.zeros(len(d))
+    idx = [int(SPIKE_HOUR * 4) + 96 * k for k in range(n_days)]
+    for i in idx:
+        assert d.p.values[i] == "off", (i, d.p.values[i])
+        imp0[i] = SPIKE_KWH
+    return d, imp0, np.zeros(len(d)), idx
+
+
+def _with_flag(has_ev, fn):
+    was = br.EV_ANALYSIS
+    br.EV_ANALYSIS = has_ev
+    try:
+        return fn()
+    finally:
+        br.EV_ANALYSIS = was
+
+
+@case
+def case_no_ev_household_lp_serves_a_high_power_offpeak_import():
+    """The case issue #246 exists for: with household.has_ev false the annual
+    LP must be free to discharge into a 4 kW off-peak import."""
+    d, imp0, gen0, (idx,) = _spike_frame()
+    _, _, _, _, discharge, _, _ = _with_flag(False, lambda: pfd.solve(d, imp0, gen0))
+    assert abs(discharge[idx] - SPIKE_KWH) < 1e-6, (
+        f"a no-EV household's {SPIKE_KW} kW off-peak import was not served by "
+        f"the LP: discharged {discharge[idx]} kWh, expected {SPIKE_KWH} kWh")
+    return (f"household.has_ev false: the LP discharges {discharge[idx]:.3f} kWh "
+            f"into a {SPIKE_KW} kW off-peak import")
+
+
+@case
+def case_ev_household_lp_still_excludes_that_import():
+    """Positive control: on an EV household the same interval stays off-limits,
+    so the case above cannot pass against a build that deleted the rule."""
+    d, imp0, gen0, (idx,) = _spike_frame()
+    _, _, _, _, discharge, _, _ = _with_flag(True, lambda: pfd.solve(d, imp0, gen0))
+    assert discharge[idx] < 1e-9, (
+        f"an EV household's {SPIKE_KW} kW off-peak import was served by the "
+        f"LP: discharged {discharge[idx]} kWh, expected 0")
+    return f"household.has_ev true: the LP discharges 0 kWh into the same interval"
+
+
+@case
+def case_no_ev_household_day_ahead_serves_a_high_power_offpeak_import():
+    """The rolling controller has its own copy of the mask (the execution-time
+    re-clip), so it is checked separately, and both ways."""
+    d, imp0, gen0, idx = _spike_frame(n_days=2)
+
+    def run():
+        _, _, _, discharge, _, _, _ = pfd.rolling_day_ahead(
+            d, imp0, gen0, soc_start=pfd.CAP_KWH, perfect=True)
+        return discharge
+
+    no_ev = _with_flag(False, run)
+    ev = _with_flag(True, run)
+    served_no_ev = float(sum(no_ev[i] for i in idx))
+    served_ev = float(sum(ev[i] for i in idx))
+    assert served_no_ev > SPIKE_KWH - 1e-6, (
+        f"a no-EV household's {SPIKE_KW} kW off-peak imports were not served by "
+        f"the day-ahead controller: {served_no_ev} kWh over {len(idx)} days")
+    assert served_ev < 1e-9, (
+        f"an EV household's {SPIKE_KW} kW off-peak imports were served by the "
+        f"day-ahead controller: {served_ev} kWh, expected 0")
+    return (f"day-ahead serves {served_no_ev:.3f} kWh of {SPIKE_KW} kW off-peak "
+            f"import with has_ev false and {served_ev:.0f} kWh with it true")
+
+
+@case
+def case_exclusion_mask_is_keyed_off_the_intake_flag_not_the_detector():
+    """The gate is br.EV_ANALYSIS, the declared flag. A detector that found no
+    sessions is not the same fact, so the mask must not consult it."""
+    import inspect
+    src = inspect.getsource(pfd.ev_spillover_mask)
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+    assert "br.EV_ANALYSIS" in code, "ev_spillover_mask no longer reads br.EV_ANALYSIS"
+    assert "detect_sessions" not in code, "ev_spillover_mask reads the EV detector"
+    d, imp0, _, (idx,) = _spike_frame()
+    mask = _with_flag(True, lambda: pfd.ev_spillover_mask(imp0, d.p.values))
+    assert mask[idx] and mask.sum() == 1, mask.sum()
+    mask = _with_flag(False, lambda: pfd.ev_spillover_mask(imp0, d.p.values))
+    assert not mask.any(), mask.sum()
+    return "the mask reads br.EV_ANALYSIS only: one flagged interval with an EV, none without"
+
+
+# ---------------------------------------------------------------------------
+# (f) whose household is the dispatch artifact the greedy comparison quotes?
+# (issue #247). load_canon() reads post_behavior.free_fix_scenario ("a": EV
+# household, "c": no EV) and refuses, both ways, when it disagrees with the
+# intake flag br.EV_ANALYSIS; a household with no EV must not publish the
+# committed EV household's pw3.greedy.save as greedy_save_usd.
+# ---------------------------------------------------------------------------
+def _canon_copy(scenario, drop=False):
+    doc = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
+    if drop:
+        del doc["post_behavior"]["free_fix_scenario"]
+    else:
+        doc["post_behavior"]["free_fix_scenario"] = scenario
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    with open(fd, "w") as fh:
+        json.dump(doc, fh)
+    return tmp, doc["pw3"]["greedy"]["save"]
+
+
+def _load_canon_under(has_ev, path):
+    try:
+        return "ok", _with_flag(has_ev, lambda: pfd.load_canon(path))
+    except SystemExit as exc:
+        return "refused", str(exc)
+    finally:
+        pathlib.Path(path).unlink(missing_ok=True)
+
+
+@case
+def case_greedy_comparison_refuses_an_ev_artifact_on_a_no_ev_household():
+    path, _ = _canon_copy("a")
+    outcome, msg = _load_canon_under(False, path)
+    assert outcome == "refused", f"an EV household's artifact was accepted on a no-EV intake"
+    assert "EV APPLICABILITY MISMATCH" in msg and path in msg, msg
+    assert "household.has_ev" in msg and "battery_dispatch_policies.py" in msg, msg
+    assert "NO EV" in msg, msg
+    return "no-EV intake + EV artifact is refused, naming artifact, flag and remedy"
+
+
+@case
+def case_greedy_comparison_refuses_a_no_ev_artifact_on_an_ev_household():
+    """The mirror. A one-directional guard passes this; it must not."""
+    path, _ = _canon_copy("c")
+    outcome, msg = _load_canon_under(True, path)
+    assert outcome == "refused", f"a no-EV household's artifact was accepted on an EV intake"
+    assert "EV APPLICABILITY MISMATCH" in msg and path in msg, msg
+    assert "household.has_ev" in msg and "battery_dispatch_policies.py" in msg, msg
+    assert "HAS an EV" in msg, msg
+    return "EV intake + no-EV artifact is refused, naming artifact, flag and remedy"
+
+
+@case
+def case_greedy_comparison_accepts_a_matching_household_both_ways():
+    """Positive control: matching households return the artifact, so a build
+    that refuses everything cannot pass the two cases above. A missing
+    artifact stays the documented None (the comparison is optional)."""
+    for has_ev, scen in ((True, "a"), (False, "c")):
+        path, want = _canon_copy(scen)
+        outcome, canon = _load_canon_under(has_ev, path)
+        assert outcome == "ok" and canon["pw3"]["greedy"]["save"] == want, (has_ev, outcome)
+    assert pfd.load_canon(str(ROOT / "data" / "_no_such_dispatch_artifact.json")) is None
+    return "EV+EV and no-EV+no-EV both return the artifact; an absent one returns None"
+
+
+@case
+def case_greedy_comparison_refuses_an_artifact_that_does_not_state_its_household():
+    path, _ = _canon_copy(None, drop=True)
+    outcome, msg = _load_canon_under(True, path)
+    assert outcome == "refused", "an artifact with no applicability was accepted"
+    assert "free_fix_scenario" in msg and "battery_dispatch_policies.py" in msg, msg
+    return "an artifact without post_behavior.free_fix_scenario is refused, naming the remedy"
+
+
+@case
+def case_artifact_method_states_which_exclusion_ran():
+    """The artifact's method string describes the exclusion. On a no-EV
+    household it must say none ran; on an EV household it must keep the
+    string the committed artifact carries."""
+    ev = _with_flag(True, pfd.method_note)
+    no_ev = _with_flag(False, pfd.method_note)
+    committed = json.loads(ARTIFACT.read_text())["method"] if ARTIFACT.exists() else ev
+    assert ev == committed, f"the EV household's method string changed: {ev!r}"
+    assert no_ev != ev and "household.has_ev is false" in no_ev, no_ev
+    return "method names the exclusion that ran: unchanged with an EV, explicit none without"
+
+
+# ---------------------------------------------------------------------------
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), \

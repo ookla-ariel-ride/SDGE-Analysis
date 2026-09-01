@@ -800,9 +800,18 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, pr
             prev = first_event_hour.get(ev_date)
             if prev is None or ev_hour < prev:
                 first_event_hour[ev_date] = ev_hour
+    # The >= 2.5 kW EV-spillover exclusion runs only on a household whose
+    # intake says it has an EV (issue #246), keyed off br.EV_ANALYSIS exactly
+    # as battery_dispatch_policies.run_batt gates its own copy of the rule --
+    # which is what keeps the empty-event_set byte-identity guarantee to
+    # run_batt true on both kinds of household. With household.has_ev false
+    # there is no spillover, and the test would withhold ordinary house load
+    # from the battery. The flag, never the detector.
+    ev_spillover_excluded = br.EV_ANALYSIS
     for i in range(n):
         soc_start[i] = soc
-        disch_win = (16 <= h[i] < 21) or (p[i] != "sop" and kw[i] < 2.5)
+        serve_ok = (kw[i] < 2.5) if ev_spillover_excluded else True
+        disch_win = (16 <= h[i] < 21) or (p[i] != "sop" and serve_ok)
         disch_used = 0.0
         # Pre-staging (issue #53): suppress ONLY the ordinary disch_win branch's
         # own ACTIVATION on an event date, strictly before that date's first event

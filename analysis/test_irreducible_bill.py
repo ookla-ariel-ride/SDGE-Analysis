@@ -32,6 +32,27 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import suite_runner  # noqa: E402
 import bill_decomposition as bd    # noqa: E402
 import irreducible_bill as irr     # noqa: E402
+
+# build_package_floor_fractions() imports behavior_rebuild lazily to read the
+# household's EV applicability flag (issue #247), and behavior_rebuild reads
+# private/household.yaml at its own import and fails closed without it. The
+# corpus-free cases below call that function, so a checkout with no private/
+# (CI) needs an intake file to read. Unlike the sibling suites this one does
+# NOT point the loader at a synthetic household unconditionally: the corpus
+# cases regenerate the committed artifact in-process, and that artifact was
+# built from the real intake (charger.kw caps the EV shift). The synthetic
+# household is used only when the real one is absent.
+import household as _hh            # noqa: E402
+if not _hh.PATH.is_file():
+    _HH_DIR = tempfile.TemporaryDirectory()
+    _hh.PATH = pathlib.Path(_HH_DIR.name) / "household.yaml"
+    _hh.PATH.write_text(
+        "household:\n  pto_date: 2019-12-01\nlocation:\n  lat: 33.0\n"
+        "solar:\n  install_invoice_usd: 30000\n  install_paid_date: 2019-12-01\n"
+        "charger:\n  kw: 11.5\ncleaning_history: []\n"
+        "gas:\n  therm_allin_usd: 2.0\n"
+        "misc:\n  miles_per_year: 12000\n  supercharge_kwh_yr: 500\n")
+    _hh._cache = None
 # behavior_rebuild is NOT imported here at module top level: it reads
 # private/household.yaml at import time and fails closed (SystemExit) if
 # absent, same reason irreducible_bill.py itself no longer imports it (or
@@ -63,6 +84,19 @@ class SkipCase(Exception):
 def _require_corpus():
     if not bd.ELEC_DIR.exists():
         raise SkipCase(f"needs the private archive at {bd.ELEC_DIR}")
+
+
+def _with_ev_flag(has_ev, fn):
+    """Run fn() with behavior_rebuild.EV_ANALYSIS (household.has_ev) forced,
+    then restore it. behavior_rebuild is imported lazily here for the reason
+    the module note above gives; the intake preamble guarantees a file."""
+    import behavior_rebuild as br             # lazy, per the module note above
+    was = br.EV_ANALYSIS
+    br.EV_ANALYSIS = has_ev
+    try:
+        return fn()
+    finally:
+        br.EV_ANALYSIS = was
 
 
 def _close(a, b, eps=EPS):
@@ -747,14 +781,18 @@ def case_build_package_floor_fractions_direction_matches_a_synthetic_case():
     # fixed-charge term now comes from gross["annual_days"] x rates.BSC, not
     # from this floor dict (Finding 1, second adversarial review).
     floor = {"historical_gross_kwh_window": 20000.0}
+    # Both sides state the same household (issue #247): the numerator's
+    # free_fix_scenario and the artifact's packages.LOW.free_fix_scenario are
+    # scenario a, and the intake flag is forced to agree for the call.
     packages_json = {"packages": {
-        "LOW": {"projected_bill_current_rates_yr": 3000.0},
+        "LOW": {"projected_bill_current_rates_yr": 3000.0, "free_fix_scenario": "a"},
         "MID": {"projected_bill_current_rates_yr": 1400.0},
         "HIGH": {"projected_bill_current_rates_yr": 1200.0},
     }}
     gross = {
         "baseline_gross_kwh": 20000.0,
         "annual_days": 365,
+        "free_fix_scenario": "a",
         "LOW": {"gross_kwh": 20000.0},
         "MID": {"gross_kwh": 19000.0, "kwh_served": 100.0},   # DOWN vs baseline
         "HIGH": {"gross_kwh": 21000.0, "kwh_served": 100.0},  # UP vs baseline
@@ -767,7 +805,7 @@ def case_build_package_floor_fractions_direction_matches_a_synthetic_case():
     real_package_json = irr.PACKAGE_JSON
     irr.PACKAGE_JSON = _FakePackageJson()
     try:
-        pf = irr.build_package_floor_fractions(floor, gross)
+        pf = _with_ev_flag(True, lambda: irr.build_package_floor_fractions(floor, gross))
     finally:
         irr.PACKAGE_JSON = real_package_json
     assert pf["LOW"]["non_bypassable_usd"] == round(20000.0 * irr.R.NBC, 2), pf
@@ -1608,6 +1646,139 @@ def case_artifact_has_no_pii():
     # literally in this committed test file.
     assert not re.search(r"\b\d{4}\s\d{4}\b", text), "found an account-number-shaped token"
     return "no account/meter/RIN-shaped digit run in the committed artifact"
+
+
+# ---------------------------------------------------------------------------
+# Whose household is the package artifact? (issue #247)
+#
+# build_package_floor_fractions() divides a numerator this run built
+# (compute_package_gross_imports(), which follows the intake flag through
+# battery_dispatch_policies.free_fix_shift() and records the scenario it ran
+# as free_fix_scenario) by a denominator read from data/package_results.json
+# (packages[*].projected_bill_current_rates_yr, an artifact that states its
+# own household as packages.LOW.free_fix_scenario). The intake flag is the
+# authority; both sides must agree with it, in both directions, or the run
+# refuses before any figure is assembled.
+# ---------------------------------------------------------------------------
+def _floor_fractions_under(has_ev, numerator, artifact, drop_key=False):
+    floor = {"historical_gross_kwh_window": 20000.0}
+    low = {"projected_bill_current_rates_yr": 3000.0, "free_fix_scenario": artifact}
+    if drop_key:
+        del low["free_fix_scenario"]
+    packages_json = {"packages": {
+        "LOW": low,
+        "MID": {"projected_bill_current_rates_yr": 1400.0},
+        "HIGH": {"projected_bill_current_rates_yr": 1200.0},
+    }}
+    gross = {
+        "baseline_gross_kwh": 20000.0, "annual_days": 365,
+        "free_fix_scenario": numerator,
+        "LOW": {"gross_kwh": 20000.0},
+        "MID": {"gross_kwh": 19000.0, "kwh_served": 100.0},
+        "HIGH": {"gross_kwh": 21000.0, "kwh_served": 100.0},
+    }
+
+    class _FakePackageJson:
+        """Stands in for the pathlib.Path PACKAGE_JSON: read_text() serves the
+        fixture and str() names it, the way the refusal message names a path."""
+        def read_text(self):
+            return json.dumps(packages_json)
+
+        def __str__(self):
+            return "data/package_results.json"
+
+    real = irr.PACKAGE_JSON
+    irr.PACKAGE_JSON = _FakePackageJson()
+    try:
+        return "ok", _with_ev_flag(
+            has_ev, lambda: irr.build_package_floor_fractions(floor, gross))
+    except SystemExit as exc:
+        return "refused", str(exc)
+    finally:
+        irr.PACKAGE_JSON = real
+
+
+def _assert_package_refusal(msg):
+    assert "EV APPLICABILITY MISMATCH" in msg, msg
+    assert "package_results.json" in msg, f"the refusal does not name the artifact: {msg}"
+    assert "household.has_ev" in msg, f"the refusal does not name the flag: {msg}"
+    assert "package_results.py" in msg, f"the refusal does not name the remedy: {msg}"
+
+
+@case
+def case_package_floor_refuses_an_ev_artifact_on_a_no_ev_household():
+    """household.has_ev false, numerator built as scenario c, artifact from an
+    EV household (scenario a): the denominator is another household's bill."""
+    outcome, msg = _floor_fractions_under(False, numerator="c", artifact="a")
+    assert outcome == "refused", f"another household's denominator was accepted: {msg}"
+    _assert_package_refusal(msg)
+    assert "NO EV" in msg, msg
+    return "no-EV intake + EV package artifact is refused, naming artifact, flag and remedy"
+
+
+@case
+def case_package_floor_refuses_a_no_ev_artifact_on_an_ev_household():
+    """The mirror. A one-directional guard passes this; it must not."""
+    outcome, msg = _floor_fractions_under(True, numerator="a", artifact="c")
+    assert outcome == "refused", f"a no-EV household's denominator was accepted: {msg}"
+    _assert_package_refusal(msg)
+    assert "HAS an EV" in msg, msg
+    return "EV intake + no-EV package artifact is refused, naming artifact, flag and remedy"
+
+
+@case
+def case_package_floor_accepts_a_matching_household_both_ways():
+    """Positive control: a build that refuses everything passes the two cases
+    above. Matching households must compute the fractions, both ways."""
+    for has_ev, scen in ((True, "a"), (False, "c")):
+        outcome, pf = _floor_fractions_under(has_ev, numerator=scen, artifact=scen)
+        assert outcome == "ok", (has_ev, scen, pf)
+        assert pf["LOW"]["non_bypassable_usd"] == round(20000.0 * irr.R.NBC, 2), pf
+    return "EV+EV and no-EV+no-EV both compute the package fractions"
+
+
+@case
+def case_package_floor_refuses_a_numerator_built_under_the_other_flag():
+    """The numerator is this run's own product, but it is checked against the
+    flag too: a numerator that ran the other household's free fix must not be
+    divided by anything."""
+    outcome, msg = _floor_fractions_under(True, numerator="c", artifact="a")
+    assert outcome == "refused", f"a numerator from the other free fix was accepted: {msg}"
+    assert "free_fix_scenario" in msg and "household.has_ev" in msg, msg
+    return "a scenario-c numerator on an EV intake is refused before any division"
+
+
+@case
+def case_package_floor_refuses_an_artifact_that_does_not_state_its_household():
+    """A package artifact with no packages.LOW.free_fix_scenario predates the
+    shape that states its household. Silence is not agreement."""
+    outcome, msg = _floor_fractions_under(True, numerator="a", artifact=None, drop_key=True)
+    assert outcome == "refused", f"an artifact with no applicability was accepted: {msg}"
+    assert "free_fix_scenario" in msg and "package_results.json" in msg, msg
+    assert "package_results.py" in msg, msg
+    return "an artifact without packages.LOW.free_fix_scenario is refused, naming the remedy"
+
+
+@case
+def case_a_refused_package_floor_writes_nothing():
+    """On the real corpus: force household.has_ev false so this run's numerator
+    is scenario c while the committed package artifact is scenario a. main()
+    must refuse and leave data/irreducible_bill.json byte-for-byte as it was."""
+    _require_corpus()
+    import hashlib
+    out = irr.OUT
+    before = hashlib.sha256(out.read_bytes()).hexdigest()
+    tmps_before = set(out.parent.glob("*.tmp"))
+    try:
+        _with_ev_flag(False, irr.main)
+    except SystemExit as exc:
+        _assert_package_refusal(str(exc))
+    else:
+        raise AssertionError("main() ran to completion on a mismatched household")
+    after = hashlib.sha256(out.read_bytes()).hexdigest()
+    assert after == before, "a refused run changed data/irreducible_bill.json"
+    assert set(out.parent.glob("*.tmp")) == tmps_before, "a refused run left a temp file"
+    return "a refused run leaves data/irreducible_bill.json unchanged (sha256 equal), no temp file"
 
 
 def main():

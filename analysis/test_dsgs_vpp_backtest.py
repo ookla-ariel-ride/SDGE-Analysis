@@ -1343,6 +1343,73 @@ def case_run_batt_vpp_threads_a_distinct_charge_kw():
 
 
 # ---------------------------------------------------------------------------
+# The EV-spillover exclusion is gated on the intake flag (issue #246).
+# run_batt_vpp carries its own copy of run_batt's >= 2.5 kW outside-on-peak
+# rule; on a household whose intake says household.has_ev is false there is
+# no spillover, and the rule would withhold ordinary house load from the
+# battery. br.EV_ANALYSIS is that flag, read at call time, so each case sets
+# it, runs, and restores it.
+# ---------------------------------------------------------------------------
+SPIKE_KW = 4.0
+SPIKE_KWH = SPIKE_KW * 0.25
+SPIKE_IDX = 28   # 07:00 on a winter weekday: off-peak, outside 16-21
+
+
+def _spike_day():
+    d, imp0, gen0 = _synthetic_day(consumption_kw=0.0)
+    assert d.p.values[SPIKE_IDX] == "off", d.p.values[SPIKE_IDX]
+    imp0[SPIKE_IDX] = SPIKE_KWH
+    return d, imp0, gen0
+
+
+def _vpp_served(has_ev):
+    d, imp0, gen0 = _spike_day()
+    was = br.EV_ANALYSIS
+    br.EV_ANALYSIS = has_ev
+    try:
+        imp_v, _, _, event_kwh, _ = vb.run_batt_vpp(d, imp0.copy(), gen0.copy(), vb.CAP, set(), 0.20)
+        imp_a, _, _, _ = bp.run_batt(d, imp0.copy(), gen0.copy(), vb.CAP, "greedy")
+    finally:
+        br.EV_ANALYSIS = was
+    assert event_kwh.sum() == 0.0
+    return float(imp0[SPIKE_IDX] - imp_v[SPIKE_IDX]), np.array_equal(imp_v, imp_a)
+
+
+@case
+def case_no_ev_household_vpp_dispatch_serves_a_high_power_offpeak_import():
+    """The case issue #246 exists for: with household.has_ev false the 4 kW
+    off-peak import is ordinary house load and the BAU dispatch serves it."""
+    served, same_as_run_batt = _vpp_served(has_ev=False)
+    assert abs(served - SPIKE_KWH) < 1e-9, (
+        f"a no-EV household's {SPIKE_KW} kW off-peak import was not served: "
+        f"{served} kWh delivered, expected {SPIKE_KWH}")
+    assert same_as_run_batt, "run_batt_vpp diverged from run_batt with no events (has_ev false)"
+    return (f"household.has_ev false: run_batt_vpp serves {served:.3f} kWh of a "
+            f"{SPIKE_KW} kW off-peak import, still byte-identical to run_batt")
+
+
+@case
+def case_ev_household_vpp_dispatch_still_excludes_that_import():
+    """Positive control: with an EV the same interval stays unserved, so the
+    case above cannot pass against a build that deleted the rule."""
+    served, same_as_run_batt = _vpp_served(has_ev=True)
+    assert served < 1e-9, (
+        f"an EV household's {SPIKE_KW} kW off-peak import was served: {served} kWh")
+    assert same_as_run_batt, "run_batt_vpp diverged from run_batt with no events (has_ev true)"
+    return "household.has_ev true: run_batt_vpp serves 0 kWh of the same interval"
+
+
+@case
+def case_vpp_dispatch_gates_on_the_intake_flag_not_the_detector():
+    import inspect
+    src = inspect.getsource(vb.run_batt_vpp)
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+    assert "br.EV_ANALYSIS" in code, "run_batt_vpp no longer gates on br.EV_ANALYSIS"
+    assert "detect_sessions" not in code, "run_batt_vpp reads the EV detector"
+    return "run_batt_vpp reads br.EV_ANALYSIS and never the detector"
+
+
+# ---------------------------------------------------------------------------
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), \
