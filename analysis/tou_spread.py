@@ -581,7 +581,24 @@ def _check_ev_applicability(doc, path):
 
     behavior_rebuild is imported here, lazily, and not at module top: it reads
     private/household.yaml at import and fails closed without it, and this
-    module's other work needs no intake at all."""
+    module's other work needs no intake at all.
+
+    NO INTAKE, NO CHECK. The check compares the intake's household.has_ev flag
+    against the artifact, and a checkout with no private/household.yaml (CI, a
+    fresh clone running dry_run.py on committed inputs) has nothing to compare.
+    That case prints one stderr NOTICE and continues, trusting the artifact as
+    every run did before issue #247. behavior_rebuild is imported ONLY after
+    the intake is known to exist: it reads the intake at import and fails
+    closed without it, which is what turned CI red once (#147's shape).
+    """
+    import household as _hh                   # noqa: E402  -- a library; safe without an intake
+    if not _hh.PATH.is_file():
+        print(f"NOTICE: tou_spread.py: no intake at {_hh.PATH}, so the EV-applicability "
+              f"check of {path} is skipped: the check compares the intake's "
+              "household.has_ev flag against the artifact, and with no intake there is "
+              "nothing to compare. The artifact is trusted as it was before issue #247.",
+              file=sys.stderr)
+        return
     import battery_dispatch_policies as bdp   # noqa: E402  -- lazy, see above
     import behavior_rebuild as br             # noqa: E402  -- lazy, see above
     ev_applies = br.EV_ANALYSIS               # read at call time; tests rebind it
