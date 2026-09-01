@@ -2441,6 +2441,46 @@ _tok("BEST_PLAN_ANNUAL_BUNDLED", kind="derived",
 _S3_ROW_CLASS_BY_STANDING = {"win": "win", "tie": "s3-tie", "trails": "s3-trails"}
 _S3_ROW_CLASSES = tuple(_S3_ROW_CLASS_BY_STANDING[s] for s in _PLAN_STANDINGS)
 
+# What separates a plan name from its badge in a row's plan-name cell, in
+# section 3 and section 4 alike: the middle dot the report's other multi-part
+# cells already use ("$2,328/yr · 4,720 kWh"). Not an em dash -- that is
+# running prose's design language here, and prose_rhythm.py counts it.
+_ROW_BADGE_SEPARATOR = "·"
+
+# WHAT EACH ROW STATE SAYS BESIDE THE PLAN NAME (issue #198). Keyed by the
+# class _s3_row_state resolves, so the badge and the paint come off one
+# decision. Each badge names the one column this table ranks -- the
+# generation rates this house pays -- and claims nothing about the bundled
+# column beside it. "win" carries None: a sole cheapest plan has nothing to
+# qualify, and the published cell is the bare plan name.
+#
+# TEXT IN THE DOCUMENT, NOT CSS: these were `tr.s3-tie td:first-child::after
+# {content:"..."}` rules in report-template.html's <style> block, and
+# generated ::after content never enters the DOM -- see _S4_ROW_BADGE_TEXT
+# for the whole of that reasoning. No apostrophe in either badge: render()
+# escapes with quote=True, and "house's" would publish as "house&#x27;s".
+_S3_ROW_BADGE_TEXT = {
+    "win":       None,
+    "s3-tie":    "tied for cheapest at the generation rates this house pays",
+    "s3-trails": "not the cheapest at the generation rates this house pays",
+}
+if set(_S3_ROW_BADGE_TEXT) != set(_S3_ROW_CLASSES):
+    raise SystemExit(
+        "report_tokens: _S3_ROW_BADGE_TEXT names the states "
+        f"{sorted(_S3_ROW_BADGE_TEXT)} while S3_ROW_CLASS can reach "
+        f"{list(_S3_ROW_CLASSES)}; a state with no badge is a row whose class "
+        "the page paints and whose standing it does not say")
+
+
+def _s3_row_state(ctx, token):
+    """The row's state as its class name, off _plan_standing.
+
+    ONE FUNCTION FOR THE CLASS AND THE BADGE: S3_ROW_CLASS paints the row and
+    S3_ROW_PLAN_CELL writes the badge beside the plan name, and both read the
+    state here, so the two cannot disagree. `token` names the caller in the
+    refusals underneath."""
+    return _S3_ROW_CLASS_BY_STANDING[_plan_standing(ctx, token)[0]]
+
 
 def _s3_row_class(ctx):
     """The CSS class on section 3's household row: one of _S3_ROW_CLASSES.
@@ -2458,7 +2498,29 @@ def _s3_row_class(ctx):
     a runner-up into the winners' set and paints it as the winner (issue #141;
     see the rounding derivation further down).
     """
-    return _S3_ROW_CLASS_BY_STANDING[_plan_standing(ctx, "S3_ROW_CLASS")[0]]
+    return _s3_row_state(ctx, "S3_ROW_CLASS")
+
+
+def _s3_row_plan_cell(ctx):
+    """Section 3's plan-name cell: the household's plan and, after it, the
+    badge the row's class implies -- as text (issue #198). The template's own
+    "✓ current" mark follows the token in the same cell.
+
+    THE WIN STATE IS THE BARE PLAN NAME, so the published row does not move
+    (test_report_tokens.case_section_3s_published_chrome_round_trips_into_
+    index_html). Every other state appends its badge after
+    _ROW_BADGE_SEPARATOR. One cell token rather than a badge token after
+    {{BEST_PLAN}}, for the two reasons _s4_row_plan_cell gives: render()
+    escapes every value, and an empty win-state value is refused."""
+    plan = _best_plan(ctx, "S3_ROW_PLAN_CELL")
+    badge = _S3_ROW_BADGE_TEXT[_s3_row_state(ctx, "S3_ROW_PLAN_CELL")]
+    return plan if badge is None else f"{plan} {_ROW_BADGE_SEPARATOR} {badge}"
+
+
+_tok("S3_ROW_PLAN_CELL", kind="derived", get=_s3_row_plan_cell,
+     sources=["private/household.yaml:household.plan",
+              "private/household.yaml:household.cca (which provider column ranks)",
+              "data/plan_results.csv (the household provider's total column)"])
 
 
 # fmt="raw", attribute_only=True: this value is markup, not language -- the
@@ -3494,9 +3556,9 @@ def _bpm_standing_pair(token):
 # to change. The row spans both columns, so a class carrying only the weaker
 # standing states something FALSE about the stronger one, and the stylesheet
 # prints that falsehood: a household alone cheapest without a battery and
-# beaten with one resolved "trails", and `tr.trails td:first-child::after`
-# stamps the plan-name cell "not the cheapest" -- beside a no-battery cell
-# that IS the cheapest in its column. That is issue #178's own defect (markup
+# beaten with one resolved "trails", and the "trails" badge stamped the
+# plan-name cell "not the cheapest" -- beside a no-battery cell that IS the
+# cheapest in its column. That is issue #178's own defect (markup
 # asserting a standing this household's cells do not carry) one state along.
 # The mirror is the same thing pointing the other way: a plan alone cheapest
 # in one column and tied in the other took "tie", badging the whole row "ties
@@ -3515,7 +3577,8 @@ def _bpm_standing_pair(token):
 # none can leave it while a pair still does. The 9-way product of the two
 # columns is driven against it in
 # case_section_4s_row_class_is_a_state_the_stylesheet_can_paint, which also
-# holds every member to a badge in report-template.html's own <style> block.
+# holds every member to a paint rule in report-template.html's own <style>
+# block and to the badge text S4_ROW_PLAN_CELL renders beside the plan name.
 _S4_ROW_CLASSES = tuple(
     worst if worst == strongest else f"{worst}-{strongest}"
     for i, worst in enumerate(_S4_COLUMN_STANDINGS)
@@ -3540,8 +3603,9 @@ def _s4_row_class(ctx):
     that is the cheapest in its column, or "ties for cheapest" beside one the
     plan wins outright. So the two columns' standings (_S4_COLUMN_STANDINGS:
     trails / tie / win) are both carried, sorted worst first and joined, and
-    the badge report-template.html prints for each state says only what BOTH
-    columns support. The nine combinations, and the class each resolves to:
+    the badge S4_ROW_PLAN_CELL prints for each state (_S4_ROW_BADGE_TEXT,
+    keyed by this class) says only what BOTH columns support. The nine
+    combinations, and the class each resolves to:
 
         no battery   with battery   class         what its badge asserts
         ----------   ------------   -----------   -----------------------------
@@ -3587,7 +3651,18 @@ def _s4_row_class(ctx):
     # counts are one ranking seen twice, and a second ranking here would
     # eventually answer a tie differently from the card a screen above it.
     # That helper also owns the "exactly two columns" refusal, for both.
-    worst, strongest = _bpm_standing_pair("S4_ROW_CLASS")
+    return _s4_row_state("S4_ROW_CLASS")
+
+
+def _s4_row_state(token):
+    """The row's state as its class name, off _bpm_standing_pair.
+
+    ONE FUNCTION FOR THE CLASS AND THE BADGE. S4_ROW_CLASS paints the row and
+    S4_ROW_PLAN_CELL writes the badge beside the plan name, and the badge is
+    what the class stands for; both read the state here, so the two cannot
+    disagree about which of the six states this household is in. `token`
+    names the caller in the refusals underneath."""
+    worst, strongest = _bpm_standing_pair(token)
     return worst if worst == strongest else f"{worst}-{strongest}"
 
 
@@ -3615,6 +3690,83 @@ _tok("S4_ROW_CLASS", kind="derived", get=_s4_row_class, fmt="raw",
      attribute_only=True,
      sources=["data/battery_plan_matrix.json:plans (both columns)",
               "private/household.yaml:household.plan"])
+
+
+# WHAT EACH ROW STATE SAYS BESIDE THE PLAN NAME (issue #198). Keyed by the
+# class _s4_row_state resolves, so the badge and the paint come off one
+# decision. Every badge states how many of the matrix's two columns price
+# this plan cheapest and in how many of those it is the only one -- which is
+# exactly what the pair of standings records, so each is true of both members
+# of every pair that reaches it (the table in _s4_row_class's docstring).
+# "win" carries None: a sole cheapest plan in both columns has nothing to
+# qualify, and the published row is the bare plan name.
+#
+# TEXT IN THE DOCUMENT, NOT CSS. These used to be `tr.<state>
+# td:first-child::after{content:"..."}` rules in report-template.html's
+# <style> block. Generated ::after content never enters the DOM: it is not
+# selectable, not copied, dropped by text extraction and reader modes, and --
+# the reason it moved -- outside every guard in this repo that reads markup
+# text (the verdict and heading cases, the density cap, the figure sweeps,
+# the humanizer pass). A substantive claim about this household's rate plan
+# was being made where nothing could check it. It is a token now, rendered
+# as text in the row's own cell, and
+# test_report_tokens.case_section_4s_row_class_is_a_state_the_stylesheet_
+# can_paint reads it back out of the rendered row against the nine-way
+# matrix standings.
+_S4_ROW_BADGE_TEXT = {
+    "win":        None,
+    "tie-win":    "cheapest in both columns, tied in one",
+    "tie":        "tied for cheapest in both columns",
+    "trails-win": "cheapest in one column only",
+    "trails-tie": "tied for cheapest in one column only",
+    "trails":     "not the cheapest in either column",
+}
+# `if ... raise`, not `assert`, for the reason the standings check above
+# gives: -O would compile an assert out, and a state with no badge entry
+# would then reach a reader as a KeyError inside resolve_token instead of a
+# named refusal at import.
+if set(_S4_ROW_BADGE_TEXT) != set(_S4_ROW_CLASSES):
+    raise SystemExit(
+        "report_tokens: _S4_ROW_BADGE_TEXT names the states "
+        f"{sorted(_S4_ROW_BADGE_TEXT)} while S4_ROW_CLASS can reach "
+        f"{list(_S4_ROW_CLASSES)}; a state with no badge is a row whose class "
+        "the page paints and whose standing it does not say")
+
+
+def _s4_row_plan_cell(ctx):
+    """Section 4's plan-name cell: the household's plan, and after it the
+    badge the row's class implies -- as text (issue #198).
+
+    THE WIN STATE IS THE BARE PLAN NAME. A sole cheapest plan in both columns
+    has nothing to qualify, so the cell is exactly what {{BEST_PLAN}} used to
+    render there and the published row does not move
+    (test_report_tokens.case_section_4s_published_row_round_trips_into_
+    index_html). Every other state appends its badge after
+    _ROW_BADGE_SEPARATOR.
+
+    ONE CELL TOKEN RATHER THAN A SEPARATE BADGE TOKEN AFTER {{BEST_PLAN}},
+    for two reasons that are both guards. generate_report.render() escapes
+    every token value, so no token can emit the <span> a badge element would
+    need; and a badge token would resolve to "" in the win state, which
+    test_report_tokens.case_every_non_gap_token_resolves_to_a_non_empty_
+    string_on_the_real_archive refuses -- rightly, since an empty value that
+    publishes silently is the shape issue #196 removed from section 3's tool
+    verdict. The plan name is the non-empty part, so the cell is one value.
+
+    Reads the state through _s4_row_state, the function S4_ROW_CLASS reads
+    it through, so the badge is the claim the class stands for and cannot
+    say otherwise.
+    """
+    plan = _best_plan(ctx, "S4_ROW_PLAN_CELL")
+    badge = _S4_ROW_BADGE_TEXT[_s4_row_state("S4_ROW_PLAN_CELL")]
+    return plan if badge is None else f"{plan} {_ROW_BADGE_SEPARATOR} {badge}"
+
+
+_tok("S4_ROW_PLAN_CELL", kind="derived", get=_s4_row_plan_cell,
+     sources=["private/household.yaml:household.plan",
+              "private/household.yaml:household.cca (which provider column ranks)",
+              "data/plan_results.csv (the ranking that establishes the plan is priced)",
+              "data/battery_plan_matrix.json:plans (both columns, for the badge)"])
 
 
 def _s4_verdict_short(ctx):

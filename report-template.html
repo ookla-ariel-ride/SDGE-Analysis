@@ -104,18 +104,14 @@
   tr.win td,tr.tie-win td,tr.tie td,tr.s3-tie td{background:color-mix(in srgb,var(--sop) 9%,transparent);font-weight:600}
   tr.trails-win td,tr.trails-tie td{background:color-mix(in srgb,var(--offpeak) 9%,transparent);font-weight:600}
   tr.trails td,tr.s3-trails td{background:color-mix(in srgb,var(--onpeak) 7%,transparent);font-weight:600}
-  tr.tie-win td:first-child::after,tr.tie td:first-child::after,tr.trails-win td:first-child::after,tr.trails-tie td:first-child::after,tr.trails td:first-child::after,tr.s3-tie td:first-child::after,tr.s3-trails td:first-child::after{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);margin-left:8px;white-space:nowrap}
-  tr.tie-win td:first-child::after{content:"cheapest in both columns, tied in one"}
-  tr.tie td:first-child::after{content:"tied for cheapest in both columns"}
-  tr.trails-win td:first-child::after{content:"cheapest in one column only"}
-  tr.trails-tie td:first-child::after{content:"tied for cheapest in one column only"}
-  tr.trails td:first-child::after{content:"not the cheapest in either column"}
-  /* Section 3 ranks ONE column -- the household's own generation provider --
-     so its row cannot borrow the two badges above, which count columns the
-     battery matrix has and this table does not. Section 3's sole-cheapest
-     state IS tr.win: same paint, and "win" carries no badge to be wrong. */
-  tr.s3-tie td:first-child::after{content:"tied for cheapest at this house's generation rates"}
-  tr.s3-trails td:first-child::after{content:"not the cheapest at this house's generation rates"}
+  /* Sections 3 and 4 state their row's standing as TEXT in the plan-name
+     cell (the S3_ROW_PLAN_CELL / S4_ROW_PLAN_CELL tokens: the plan name, then
+     the badge the row's class implies), never as CSS content: -- generated
+     text never enters the DOM, so no guard in analysis/ could read a claim
+     made that way (issue #198). The classes above only paint. Section 3 ranks
+     ONE column (the household's own generation provider), so its badges are
+     its own and do not count the battery matrix's two; the sole-cheapest
+     state in both sections IS tr.win, which carries no badge to be wrong. */
   .pill{display:inline-block;font-family:var(--mono);font-size:.64rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;padding:2px 8px;border-radius:3px;border:1.5px solid;vertical-align:middle}
   .pill.g{color:var(--sop);border-color:var(--sop)} .pill.y{color:var(--offpeak);border-color:var(--offpeak)} .pill.r{color:var(--onpeak);border-color:var(--onpeak)}
   .chartbox{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin:16px 0}
@@ -339,7 +335,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <table>
 <thead><tr><th>Plan</th><th>Annual ({{GENERATION_PROVIDER_SHORT}} gen)</th><th>Annual ({{UTILITY_NAME}} bundled)</th><th>vs. current</th><th>{{UTILITY_NAME}}'s own tool says</th></tr></thead>
 <tbody>
-<tr class="{{S3_ROW_CLASS}}"><td>{{BEST_PLAN}} ✓ current</td><td>{{BEST_PLAN_ANNUAL_CCA}}</td><td>{{BEST_PLAN_ANNUAL_BUNDLED}}</td><td>—</td><td>{{UTILITY_TOOL_BEST_PLAN_FIGURE}} — "Your Best Plan" {{UTILITY_TOOL_BEST_PLAN_VERDICT}}</td></tr>
+<tr class="{{S3_ROW_CLASS}}"><td>{{S3_ROW_PLAN_CELL}} ✓ current</td><td>{{BEST_PLAN_ANNUAL_CCA}}</td><td>{{BEST_PLAN_ANNUAL_BUNDLED}}</td><td>—</td><td>{{UTILITY_TOOL_BEST_PLAN_FIGURE}} — "Your Best Plan" {{UTILITY_TOOL_BEST_PLAN_VERDICT}}</td></tr>
 <!-- TODO: one <tr> per remaining eligible plan, sorted by annual cost; mark footnoted plans (e.g. event-surcharge plans) with an asterisk. -->
 </tbody>
 </table>
@@ -352,7 +348,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <table>
 <thead><tr><th>Plan</th><th>No battery (modeled)</th><th>With 1 × {{BATTERY_MODEL}} (modeled)</th><th>Battery's value on this plan</th></tr></thead>
 <tbody>
-<tr class="{{S4_ROW_CLASS}}"><td>{{BEST_PLAN}}</td><td>{{BEST_PLAN_NOBATT_MODELED}}</td><td>{{BEST_PLAN_BATT_MODELED}}</td><td>{{BATTERY_VALUE_BEST_PLAN}}/yr</td></tr>
+<tr class="{{S4_ROW_CLASS}}"><td>{{S4_ROW_PLAN_CELL}}</td><td>{{BEST_PLAN_NOBATT_MODELED}}</td><td>{{BEST_PLAN_BATT_MODELED}}</td><td>{{BATTERY_VALUE_BEST_PLAN}}/yr</td></tr>
 <!-- TODO: one <tr> per alternative plan tested. -->
 </tbody>
 </table>

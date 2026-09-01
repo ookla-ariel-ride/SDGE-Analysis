@@ -3185,6 +3185,25 @@ def _s4_row_markup(plans, cells):
         return rendered, rt.resolve_token("S4_ROW_CLASS")
 
 
+def _s4_plan_cell(markup):
+    """The text of a household row's first cell -- the plan name and, in
+    every state but a sole win, the badge after it -- exactly as the rendered
+    markup carries it (still HTML-escaped, so a caller compares it against an
+    escaped expectation). Section 3's case reads its row through this too.
+
+    Read out of the row rather than off the token, because the claim the
+    issue #198 guard exists for is what the DOCUMENT says: a badge only a
+    stylesheet paints is not here, and a cell carrying a tag (a span, a
+    comment) is not text either. So the cell must be a single text node."""
+    m = re.match(r'<tr class="[^"]*"><td>(.*?)</td>', markup)
+    assert m, f"section 4's household row does not open with a plan-name cell: {markup}"
+    cell = m.group(1)
+    assert "<" not in cell, (
+        f"section 4's plan-name cell carries markup, so its badge is not plain text a "
+        f"reader mode or a text guard reads as one string: {cell!r}")
+    return cell
+
+
 # The two families of row class, written out rather than pattern-matched off
 # the names. Section 4's row states BOTH columns' standings (report_tokens
 # ._S4_ROW_CLASSES), and the question the heading is read against is the
@@ -3572,15 +3591,17 @@ _S4_PAIR_CLASSES = {
 # "win" carries no badge: the row is painted as the winner and there is
 # nothing to qualify.
 #
-# Written here as well as in report-template.html deliberately. The stylesheet
-# is where the WORDS are; this table is where their MEANING is, and the case
-# below checks both halves -- the text against the <style> block that ships,
-# and the two counts against the cheapest sets the artifact actually produces,
-# over all nine combinations above. So a badge cannot be reworded without
-# re-deriving what it claims, and cannot claim something the columns do not
-# support in any combination that reaches it. That is the whole of what went
-# wrong: "not the cheapest" was printed for a row cheapest in one column, and
-# "ties for cheapest" for a row that won one outright.
+# Written here as well as in report_tokens deliberately. The token
+# (S4_ROW_PLAN_CELL) is where the WORDS are; this table is where their
+# MEANING is, and the case below checks both halves -- the text against the
+# plan-name cell the row actually renders, read out of the markup and not out
+# of any stylesheet (issue #198), and the two counts against the cheapest sets
+# the artifact actually produces, over all nine combinations above. So a badge
+# cannot be reworded without re-deriving what it claims, and cannot claim
+# something the columns do not support in any combination that reaches it.
+# That is the whole of what went wrong: "not the cheapest" was printed for a
+# row cheapest in one column, and "ties for cheapest" for a row that won one
+# outright.
 _S4_ROW_BADGES = {
     "win":        (None,                                   2, 2),
     "tie-win":    ("cheapest in both columns, tied in one", 2, 1),
@@ -3621,8 +3642,15 @@ def case_section_4s_row_class_is_a_state_the_stylesheet_can_paint():
          module's own naming rule.
       3. EVERY MEMBER IS PAINTED, by a rule in report-template.html's own
          <style> block, and every state that is not a sole win in both
-         columns SAYS SO in the row -- a ::after badge, because a colour
-         alone does not tell a reader where they stand.
+         columns SAYS SO in the row -- as TEXT in the plan-name cell, because
+         a colour alone does not tell a reader where they stand. Text in the
+         document and not CSS `content:` (issue #198): generated ::after
+         content never enters the DOM, so it is outside every guard in this
+         repo that reads markup text, and is dropped by text extraction and
+         reader modes. The badge is read here out of the RENDERED ROW, and
+         the stylesheet is held to carry no ::after badge for any of these
+         states -- a claim in both places would be one no guard checks half
+         of.
       4. EVERY BADGE IS TRUE OF EVERY COMBINATION THAT REACHES IT. Each badge
          asserts how many of the two columns price this plan cheapest and how
          many of those it is alone in (_S4_ROW_BADGES); both counts are taken
@@ -3672,17 +3700,19 @@ def case_section_4s_row_class_is_a_state_the_stylesheet_can_paint():
             f"report-template.html's stylesheet has no rule for tr.{state}, a state "
             f"S4_ROW_CLASS can put on section 4's household row; an unpainted class is "
             f"not a broken render, it is a runner-up's row drawn like every other row")
+        # The badge is DOM text, so the stylesheet may not carry it: a
+        # ::after rule on this state either doubles the text the cell already
+        # says or, with no DOM text beside it, puts the claim back where no
+        # guard reads it (issue #198).
+        assert f"tr.{state} td:first-child::after" not in style, (
+            f"report-template.html badges tr.{state} through CSS content:, which never "
+            "enters the DOM; the badge is the row's own text (S4_ROW_PLAN_CELL) and the "
+            "stylesheet must not carry a second copy")
         text = _S4_ROW_BADGES[state][0]
-        if text is None:
-            assert f"tr.{state} td:first-child::after" not in style, (
-                f"tr.{state} badges the row while this case records it as the state with "
-                "nothing to qualify -- a sole cheapest plan in both columns")
-            continue
-        assert f'tr.{state} td:first-child::after{{content:"{text}"}}' in style, (
-            f"report-template.html does not badge tr.{state} with {text!r}. A missing "
-            "badge states in colour alone that this household is not the sole cheapest "
-            "plan; a DIFFERENT badge is a claim whose truth was checked against the "
-            "wording this case carries, and has to be re-derived against the new one")
+        if text is not None:
+            assert text not in style, (
+                f"the badge {text!r} appears in report-template.html's <style> block; it "
+                "is a claim about the ranking and lives in the document's text, not CSS")
 
     seen, markups = {}, {}
     with _stub_plan(best, provider):
@@ -3695,6 +3725,23 @@ def case_section_4s_row_class_is_a_state_the_stylesheet_can_paint():
                     f"S4_ROW_CLASS resolved {row_class!r}, which is not one of "
                     f"{list(rt._S4_ROW_CLASSES)} and so is a class nothing in "
                     f"report-template.html paints: {markup}")
+                # THE BADGE, READ OUT OF THE RENDERED ROW. The plan-name cell
+                # is the first <td>; what it says is what a reader, a text
+                # extractor and every markup-reading guard in this repo see.
+                # It must be the plan name alone in the win state (this
+                # household's row, byte-identical to the published one) and
+                # the plan name followed by the badge the class implies in
+                # every other state -- as text, with no tag inside the cell.
+                cell = _s4_plan_cell(markup)
+                text, cheapest_in, sole_in = _S4_ROW_BADGES[row_class]
+                expected_cell = _htmllib.escape(
+                    best if text is None else f"{best} {rt._ROW_BADGE_SEPARATOR} {text}",
+                    quote=True)
+                assert cell == expected_cell, (
+                    f"a row of class {row_class!r} renders its plan-name cell as {cell!r}; "
+                    f"the class implies the badge {text!r}, so the cell must read "
+                    f"{expected_cell!r} -- the badge is the claim the class stands for, "
+                    f"and the two cannot disagree: {markup}")
                 # THE FALSE SENTENCE FIRST, and tested as one: what the badge
                 # this row would print CLAIMS, against the cheapest sets the
                 # artifact produces -- not against the labels this case named
@@ -3707,7 +3754,6 @@ def case_section_4s_row_class_is_a_state_the_stylesheet_can_paint():
                 with _matrix_priced(plans, cells):
                     cheapest = [rt._bpm_cheapest("S4_ROW_CLASS", column)
                                 for column, _phrase in rt._BPM_COLUMNS]
-                text, cheapest_in, sole_in = _S4_ROW_BADGES[row_class]
                 claimed = (cheapest_in, sole_in)
                 actual = (sum(best in s for s in cheapest),
                           sum(s == {best} for s in cheapest))
@@ -3739,6 +3785,50 @@ def case_section_4s_row_class_is_a_state_the_stylesheet_can_paint():
             "combinations of the two columns' standings, and every badge it prints is true "
             f"of every combination that reaches it -- {len(markups)} distinguishable rows ("
             + ", ".join(f"{a}/{b} -> {c}" for (a, b), c in sorted(seen.items())) + ")")
+
+
+@case
+def case_section_4s_published_row_round_trips_into_index_html():
+    """The household row, resolved at the standing the PUBLISHED household
+    has, renders exactly the row index.html carries -- character for
+    character, the same anti-drift equality section 3's chrome keeps.
+
+    This is what makes issue #198 inert on the winning path: the plan-name
+    cell is a token now (S4_ROW_PLAN_CELL), and in the win state it must
+    resolve to the bare plan name -- no badge, no span, no separator -- or
+    regenerating the report moves a published row whose ranking did not
+    change. The plan is read off index.html's own row rather than assumed,
+    so this runs with or without the private archive; every other cell in
+    the row comes from the committed matrix artifact."""
+    index_html = (rt.ROOT / "index.html").read_text()
+    start = index_html.index('<h2 id="s4">')
+    m = re.search(r'<tr class="([a-z0-9-]+)"><td>([^<]*)</td><td>[^<]*</td><td>[^<]*</td>'
+                  r'<td>[^<]*/yr</td></tr>', index_html[start:])
+    assert m, "index.html has no section 4 household row for this case to read"
+    published_row, published_class, published_cell = m.group(0), m.group(1), m.group(2)
+    assert published_class == "win" and published_cell == _htmllib.escape(
+        published_cell, quote=True) and rt._ROW_BADGE_SEPARATOR not in published_cell, (
+        "this checkout publishes a section 4 row that is not a bare sole win, so the "
+        f"byte-identity this case asserts is not the state it starts from: {published_row}")
+    provider, _cheapest, _priced = _plan_ranking_inputs()
+    line = _s4_row_line()
+    with _stub_plan(published_cell, provider):
+        rendered = re.sub(
+            r"\{\{([A-Z0-9_]+)\}\}",
+            lambda m: _htmllib.escape(rt.resolve_token(m.group(1)), quote=True), line)
+        assert rt.resolve_token("S4_ROW_PLAN_CELL") == published_cell, (
+            f"S4_ROW_PLAN_CELL resolves {rt.resolve_token('S4_ROW_PLAN_CELL')!r} for the "
+            f"plan index.html publishes ({published_cell}), whose row carries the bare "
+            "plan name: the win state emits no badge at all")
+    assert rendered == published_row, (
+        "section 4's household row renders markup index.html does not carry; "
+        f"regenerating the report would change the published page:\n  rendered:  "
+        f"{rendered!r}\n  published: {published_row!r}")
+    assert index_html.count(published_row) == 1, (
+        f"index.html carries section 4's household row {index_html.count(published_row)} "
+        "time(s), not once")
+    return ("section 4's household row renders into index.html verbatim at the published "
+            f"household's standing ({published_class!r}, cell {published_cell!r})")
 
 
 @case
@@ -5127,19 +5217,20 @@ _PLAN_WIN_ASSERTIONS = ("stay on", "clear of the runner-up", "widens its lead",
 # or already-live-in-section) and so in front of the model that reads the
 # prompt.
 _PLAN_STANDING_TOKENS = ("S0_BEST_PLAN_CARD", "S0_VERDICT", "S3_VERDICT",
-                         "S3_WHY_LEAD", "S3_ROW_CLASS")
+                         "S3_WHY_LEAD", "S3_ROW_CLASS", "S3_ROW_PLAN_CELL")
 # What replaced them, keyed by the slot each one fills: the section 0 card's
 # label, the class on section 3's household row, and the bold lead-in over the
 # paragraph that explains the ranking.
 _S3_CHROME_SLOTS = {
     "card": '<div class="lbl">{{S0_BEST_PLAN_CARD}}</div>',
     "row": '<tr class="{{S3_ROW_CLASS}}">',
+    "cell": "<td>{{S3_ROW_PLAN_CELL}} ✓ current</td>",
     "lead": "{{S3_WHY_LEAD}}</b>",
 }
 # The token each slot exists to carry -- what a case comparing that slot's
 # markup has to find inside it.
 _S3_SLOT_TOKENS = {"card": "S0_BEST_PLAN_CARD", "row": "S3_ROW_CLASS",
-                   "lead": "S3_WHY_LEAD"}
+                   "cell": "S3_ROW_PLAN_CELL", "lead": "S3_WHY_LEAD"}
 # The two families are rendered from different artifacts, and NEITHER is gated
 # any more: section 4's row carries {{S4_ROW_CLASS}} (issue #178) and section
 # 3's three slots carry the tokens above (issue #196). Both state the standing
@@ -6399,14 +6490,16 @@ def case_the_wildcard_ranks_the_battery_configuration_only():
 # battery columns, and section 3 has none to count, so borrowing them would
 # stamp a false claim on the row.
 #
-# Written here as well as in report-template.html on purpose: the stylesheet
-# is where the WORDS are, this table is where their MEANING is, and the case
-# below checks the text against the <style> block that ships and the meaning
-# against the rankings the CSV actually produces.
+# Written here as well as in report_tokens on purpose: the token
+# (S3_ROW_PLAN_CELL) is where the WORDS are, this table is where their MEANING
+# is, and the case below checks the text against the plan-name cell the row
+# actually renders -- read out of the markup, not out of any stylesheet
+# (issue #198) -- and the meaning against the rankings the CSV actually
+# produces.
 _S3_ROW_BADGES = {
     "win": (None, True, True),
-    "s3-tie": ("tied for cheapest at this house's generation rates", True, False),
-    "s3-trails": ("not the cheapest at this house's generation rates", False, False),
+    "s3-tie": ("tied for cheapest at the generation rates this house pays", True, False),
+    "s3-trails": ("not the cheapest at the generation rates this house pays", False, False),
 }
 
 
@@ -6427,8 +6520,11 @@ def case_section_3s_row_class_is_a_state_the_stylesheet_can_paint():
          standings a rival's total can produce.
       2. EVERY MEMBER IS PAINTED by a rule in report-template.html's own
          <style> block, and every state that is not a sole win SAYS SO in the
-         row -- a ::after badge, because colour alone does not tell a reader
-         where they stand.
+         row -- as TEXT in the plan-name cell, read here out of the rendered
+         row, because colour alone does not tell a reader where they stand
+         and CSS content: never enters the DOM where a guard could read it
+         (issue #198). The stylesheet is held to carry no ::after badge for
+         any of these states.
       3. EVERY BADGE IS TRUE OF THE STATE THAT REACHES IT, checked against the
          cheapest set the repriced CSV actually produces rather than against
          the module's own naming rule.
@@ -6459,28 +6555,40 @@ def case_section_3s_row_class_is_a_state_the_stylesheet_can_paint():
             f"report-template.html's stylesheet has no rule for tr.{state}, a state "
             f"S3_ROW_CLASS can put on section 3's household row; an unpainted class is not "
             "a broken render, it is a runner-up's row drawn like every other row")
-        if text is None:
-            assert f"tr.{state} td:first-child::after" not in style, (
-                f"tr.{state} badges the row while this case records it as the state with "
-                "nothing to qualify -- this house's plan, alone cheapest")
-            continue
-        assert f'tr.{state} td:first-child::after{{content:"{text}"}}' in style, (
-            f"report-template.html does not badge tr.{state} with {text!r}. A missing badge "
-            "states in colour alone that this household is not the sole cheapest plan; a "
-            "DIFFERENT badge is a claim whose truth was checked against the wording this "
-            "case carries, and has to be re-derived against the new one")
+        assert f"tr.{state} td:first-child::after" not in style, (
+            f"report-template.html badges tr.{state} through CSS content:, which never "
+            "enters the DOM; the badge is the row's own text (S3_ROW_PLAN_CELL) and the "
+            "stylesheet must not carry a second copy")
+        if text is not None:
+            assert text not in style, (
+                f"the badge {text!r} appears in report-template.html's <style> block; it "
+                "is a claim about the ranking and lives in the document's text, not CSS")
 
     seen = {}
     with _stub_plan(cheapest, provider):
         for rival_total in (own + 1, own, own - 1):
             with _plan_repriced(provider, {cheapest: own, rival: rival_total}):
                 state = rt.resolve_token("S3_ROW_CLASS")
+                row = _s3_chrome_markup()["row"]
                 _standing, plan, _t, _c, winners = rt._plan_standing(rt.CTX, "PROBE")
             assert state in rt._S3_ROW_CLASSES, (
                 f"S3_ROW_CLASS resolved {state!r}, which is not one of "
                 f"{list(rt._S3_ROW_CLASSES)} and so is a class nothing in "
                 "report-template.html paints")
-            _badge, cheapest_here, sole = _S3_ROW_BADGES[state]
+            badge, cheapest_here, sole = _S3_ROW_BADGES[state]
+            # THE BADGE, READ OUT OF THE RENDERED ROW: the bare plan name in
+            # the win state (the published cell), the plan name and the badge
+            # the class implies otherwise, as one text node followed by the
+            # template's own current-plan mark.
+            cell = _s4_plan_cell(row)
+            expected_cell = _htmllib.escape(
+                plan if badge is None else f"{plan} {rt._ROW_BADGE_SEPARATOR} {badge}",
+                quote=True) + " ✓ current"
+            assert cell == expected_cell, (
+                f"a row of class {state!r} renders its plan-name cell as {cell!r}; the "
+                f"class implies the badge {badge!r}, so the cell must read "
+                f"{expected_cell!r} -- the badge is the claim the class stands for, and "
+                f"the two cannot disagree: {row}")
             assert (plan in winners) == cheapest_here, (
                 f"tr.{state}'s badge says this plan {'is' if cheapest_here else 'is not'} "
                 f"a cheapest plan, but the CSV's cheapest set is {winners}")
@@ -6491,10 +6599,10 @@ def case_section_3s_row_class_is_a_state_the_stylesheet_can_paint():
             seen[f"rival at {rival_total - own:+.0f}"] = state
         assert rt.resolve_token("S3_ROW_CLASS") == "win", (
             "the substituted plan total leaked out of this case")
-    return (f"every state S3_ROW_CLASS reaches ({seen}) is painted and badged by "
-            "report-template.html's own <style> block, each badge is true of the CSV "
-            "ranking that produced it, and none of section 4's two-column badges is "
-            "borrowed")
+    return (f"every state S3_ROW_CLASS reaches ({seen}) is painted by "
+            "report-template.html's own <style> block and badged as text in the rendered "
+            "row, each badge is true of the CSV ranking that produced it, and none of "
+            "section 4's two-column badges is borrowed")
 
 
 @case
@@ -12385,7 +12493,7 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     A short repeated number is not flagged, and neither is a figure repeated
 #     in a DIFFERENT CONTAINER. The live example of the latter is the lifetime
 #     table, which prints the first year's value in both the annual and the
-#     cumulative cell (report-template.html:557) -- and be precise about WHICH
+#     cumulative cell (report-template.html:553) -- and be precise about WHICH
 #     rule spares it, because there are two and only one of them is load-
 #     bearing. Today's FIRST_YEAR_VALUE happens to be 7 characters, one under
 #     _SEAM_MIN_ECHO, so the length floor would exclude it anyway; that is an
@@ -12712,7 +12820,7 @@ _SEAM_INLINE_TAGS = frozenset((
 # or list items are not one run of text however few characters of markup the
 # author put between them, so the echo rule does not compare ACROSS one at all
 # -- not "at a distance", not at all. That is what spares the lifetime table's
-# cumulative column (report-template.html:557, which prints FIRST_YEAR_VALUE in
+# cumulative column (report-template.html:553, which prints FIRST_YEAR_VALUE in
 # both the annual and the cumulative cell) no matter how long that value grows,
 # and it does so without a second threshold to tune.
 #
@@ -12882,7 +12990,7 @@ _SEAM_CLASSES = ("doubled-sigil", "missing-unit", "echoed-phrase")
 #
 # ONE STATED LIMIT: a marker cannot separate two occurrences of the SAME token
 # on the SAME line. Several template lines print a token twice -- the lifetime
-# table's row (report-template.html:557, FIRST_YEAR_VALUE in both the annual
+# table's row (report-template.html:553, FIRST_YEAR_VALUE in both the annual
 # and the cumulative cell) is the one this file has reason to name elsewhere --
 # and none of them is allowlisted, so an entry for one would excuse both.
 # Line numbers are the next granularity down and they do not help here either.
@@ -15489,14 +15597,14 @@ def case_the_lifetime_tables_cumulative_cell_is_not_an_echo():
     clear the floor, and a case that passed only because of the floor fails.
 
     The line number is pinned too. Two comments in this file name
-    report-template.html:557 as this row; the last pair of comments to name a
+    report-template.html:553 as this row; the last pair of comments to name a
     line number here named five of them and every one was stale."""
     text = rt.TEMPLATE.read_text()
     row = _seam_template_line("FIRST_YEAR_VALUE", text)
     lineno = text.splitlines().index(row) + 1
-    assert lineno == 557, (
+    assert lineno == 553, (
         f"the lifetime table's repeated-value row is report-template.html:{lineno}, "
-        "not 557. Update the two comments in this file that name that line -- the "
+        "not 553. Update the two comments in this file that name that line -- the "
         "class 3 paragraph in the block comment and the _SEAM_INLINE_TAGS policy "
         "comment -- in the same edit, which is what this assertion exists to force")
     assert row.count("{{FIRST_YEAR_VALUE}}") == 2, (
