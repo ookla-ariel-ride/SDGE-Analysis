@@ -2020,14 +2020,19 @@ _COVERAGE_STUB = r"""#!/bin/bash
 # and, while $STUB_HOLD names an existing file, parks there so the invoking
 # check_coverage.sh stays "in flight" for as long as the test wants. `report`
 # prints a table in coverage's own shape; STUB_FAIL_UNDER=1 makes the
-# --fail-under probe fail, so the 90% gate's FAIL branch is reachable too.
+# --fail-under probe fail, so the 90% gate's FAIL branch is reachable too;
+# STUB_NO_DATA_TO_COMBINE / STUB_NO_DATA_TO_REPORT reproduce what the real
+# CLI does with an empty measurement (exit 1, on stdout).
 case "${1:-}" in
   run)
     echo "run $*" >> "$COVERAGE_FILE"
     while [ -n "${STUB_HOLD:-}" ] && [ -e "$STUB_HOLD" ]; do sleep 0.05; done
     ;;
-  combine) : ;;
+  combine)
+    if [ -n "${STUB_NO_DATA_TO_COMBINE:-}" ]; then echo "No data to combine"; exit 1; fi
+    ;;
   report)
+    if [ -n "${STUB_NO_DATA_TO_REPORT:-}" ]; then echo "No data to report."; exit 1; fi
     for a in "$@"; do
       if [ "$a" = "--fail-under=90" ] && [ -n "${STUB_FAIL_UNDER:-}" ]; then exit 2; fi
     done
@@ -2087,18 +2092,21 @@ def case_check_coverage_refuses_to_overlap_a_live_run():
     """Issue #233 AC2/AC5: while one run is in flight, a second invocation
     must refuse with an explicit message and a non-zero exit, and must leave
     the first run's data file alone -- never share the file and print a
-    percentage computed from whatever survived. Then AC "stale lock": the
-    lock is a kernel flock, released the instant the holder dies, so a lock
-    file left behind by a killed run must NOT block the next one. Reverting
-    the protection makes the second run complete with exit 0, which fails the
-    first assertion below."""
+    percentage computed from whatever survived. The lock is on the analysis/
+    directory, so deleting the informational holder file mid-run (the old
+    `rm -f .coverage*` reset idiom, `git clean -fdX`) must NOT let a third
+    invocation in: a file lock binds to an inode, and a fresh file would be a
+    fresh lock. Then the "stale lock" shape: a kernel flock is released the
+    instant every holder dies, so a holder file left behind by a killed run
+    must NOT block the next one. Reverting the protection makes the second
+    run complete with exit 0, which fails the first assertion below."""
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         script = _coverage_stub_root(tmp)
         hold = tmp / "hold"
         hold.write_text("")
         data_file = tmp / ".coverage"
-        lock_file = tmp / ".coverage.lock"
+        holder = tmp / ".check_coverage.holder"
         first = _run_coverage_script(script, {"STUB_HOLD": str(hold)}, wait=False)
         try:
             _wait_for(data_file.exists, "the first run to start writing its data file")
@@ -2116,7 +2124,22 @@ def case_check_coverage_refuses_to_overlap_a_live_run():
             assert data_file.exists(), (
                 "the refused second run deleted the first run's data file")
             assert first.poll() is None, "the first run died while the second was refused"
-            assert lock_file.exists(), f"{lock_file.name} was not left for the operator"
+            assert holder.exists(), f"{holder.name} was not left for the operator"
+            # The unlink bypass: with the holder file gone, the lock must still
+            # hold, and the refusal must still say so.
+            holder.unlink()
+            third = _run_coverage_script(script)
+            assert third.returncode != 0, (
+                "deleting the holder file let a third run start while the first "
+                f"was in flight (exit {third.returncode}):\n{third.stdout[-400:]}")
+            out = third.stdout + third.stderr
+            assert "another check_coverage.sh run" in out and "holder file" in out, (
+                f"refused after the unlink, but without saying so: {out[-400:]}")
+            assert data_file.exists(), (
+                "the refused third run deleted the first run's data file")
+            assert first.poll() is None, "the first run died while the third was refused"
+            # Put the holder file back the way a crashed run would leave it.
+            holder.write_text(f"pid={first.pid} started=? data={data_file}\n")
             # A crashed run: kill the whole process group (the script and the
             # stub it is waiting on) so nothing holds the lock, then prove the
             # lock FILE it left behind, still naming the dead pid, blocks nobody.
@@ -2126,16 +2149,19 @@ def case_check_coverage_refuses_to_overlap_a_live_run():
             if first.poll() is None:
                 os.killpg(first.pid, 9)
                 first.wait(timeout=30)
-        assert f"pid={first.pid}" in lock_file.read_text(), (
-            f"the dead run's lock file does not carry its pid: {lock_file.read_text()!r}")
+        assert f"pid={first.pid}" in holder.read_text(), (
+            f"the dead run's holder file does not carry its pid: {holder.read_text()!r}")
         hold.unlink()
-        third = _run_coverage_script(script)
-        assert third.returncode == 0, (
-            f"a stale lock file from a dead run blocked the next run "
-            f"(exit {third.returncode}):\n{third.stdout[-400:]}{third.stderr[-400:]}")
-        assert "COVERAGE GATE: PASS" in third.stdout, third.stdout[-400:]
-    return ("check_coverage.sh refuses to overlap a live run, names its pid, and a "
-            "dead run's lock file blocks nobody")
+        fourth = _run_coverage_script(script)
+        assert fourth.returncode == 0, (
+            f"a stale holder file from a dead run blocked the next run "
+            f"(exit {fourth.returncode}):\n{fourth.stdout[-400:]}{fourth.stderr[-400:]}")
+        assert "COVERAGE GATE: PASS" in fourth.stdout, fourth.stdout[-400:]
+        assert f"pid={first.pid}" not in holder.read_text() and "pid=" in holder.read_text(), (
+            f"the new run did not rewrite the holder file: {holder.read_text()!r}")
+    return ("check_coverage.sh refuses to overlap a live run, names its pid, still "
+            "refuses after the holder file is deleted, and a dead run's holder file "
+            "blocks nobody")
 
 
 def case_check_coverage_names_its_data_file_and_still_gates_at_90():
@@ -2160,6 +2186,27 @@ def case_check_coverage_names_its_data_file_and_still_gates_at_90():
             "gates at 90%")
 
 
+def case_check_coverage_reports_an_empty_measurement_as_its_own_failure():
+    """Issue #233 review: with nothing measured, `coverage combine` and
+    `coverage report` both exit 1 (the gate's own FAIL code) with their reason
+    on stdout, which the script used to hide. Either must exit 2 with a
+    script-authored "nothing was measured" line and coverage's own text, so an
+    empty run cannot masquerade as a coverage verdict."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        script = _coverage_stub_root(tmp)
+        for var, text in (("STUB_NO_DATA_TO_REPORT", "No data to report."),
+                          ("STUB_NO_DATA_TO_COMBINE", "No data to combine")):
+            r = _run_coverage_script(script, {var: "1"})
+            assert r.returncode == 2, (
+                f"{var}: exited {r.returncode}, not 2:\n{r.stdout[-400:]}{r.stderr[-400:]}")
+            assert "nothing was measured" in r.stdout and text in r.stdout, (
+                f"{var}: exit 2 without the cause: {r.stdout[-400:]}")
+            assert "COVERAGE GATE" not in r.stdout, r.stdout[-400:]
+    return ("check_coverage.sh reports an empty measurement as exit 2 with coverage's "
+            "own reason, never as a gate verdict")
+
+
 CASES = [
     case_manifest_is_complete_and_exact,
     case_no_two_generators_own_the_same_artifact,
@@ -2179,6 +2226,7 @@ CASES = [
     case_every_check_coverage_suite_is_wired_into_ci,
     case_check_coverage_refuses_to_overlap_a_live_run,
     case_check_coverage_names_its_data_file_and_still_gates_at_90,
+    case_check_coverage_reports_an_empty_measurement_as_its_own_failure,
     case_generators_run_on_the_real_archive,
     case_the_real_archive_copy_excludes_unread_raw_data_subdirs,
     case_the_real_archive_sandbox_is_removed_even_when_a_generator_run_raises,

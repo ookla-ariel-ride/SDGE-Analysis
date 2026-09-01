@@ -103,6 +103,9 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 # suite plus every generator on the real inputs must keep the analysis package
 # at >= 90% statement coverage (currently ~93%):
 ./analysis/check_coverage.sh                          # fails under 90%
+# One run at a time: a second run refuses while the first holds its lock. `ps` will
+# not show it reliably; ask `cat .check_coverage.holder` (pid, start, data file) or
+# `lsof analysis` (a `9r` row is a live run or a child of one).
 
 # Report prose gates (issue #251/#255/#256; no private archive needed, run from the repo
 # root). Any hand edit to index.html must be followed by a restamp or the stamp gate fails:

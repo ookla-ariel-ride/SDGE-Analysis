@@ -16,52 +16,68 @@
 # run started while the first is still going (the suite takes ~10 minutes)
 # destroys the first run's measurement and both then print a percentage from
 # whatever survived. The run therefore takes an exclusive kernel lock (flock)
-# on $ROOT/.coverage.lock before it touches the data file, and a second run
-# refuses to start while the lock is held. The kernel drops the lock the
-# instant the holder exits, crash or kill included, so a lock file left behind
-# by a dead run never blocks anyone and never needs clearing by hand.
+# before it touches the data file, and a second run refuses to start while the
+# lock is held. The lock is on the analysis/ DIRECTORY, not on a file: a flock
+# binds to an inode, so a lock file that anyone can `rm` mid-run (the old
+# `rm -f .coverage*` reset idiom, `git clean -fdX`) would let a second run
+# start against a fresh inode, which is the original defect again. Nobody
+# deletes analysis/ by accident. The kernel drops the lock the instant every
+# process holding it exits, crash or kill included, so a dead run never blocks
+# anyone and nothing needs clearing by hand. The lock is held on fd 9, which
+# every child of this script inherits: a child that outlives the script (a
+# daemonized generator, a stuck `coverage run`) keeps the next run refused
+# until it exits, which is the correct answer, since that child may still be
+# writing the data file.
 #
 # "Is one already running?" Do not trust `ps aux | grep check_coverage`: most
 # of the wall time is spent inside child `coverage run` processes, and the
-# script's own name is easy to miss in that list. Ask the lock instead:
-#     cat .coverage.lock            # pid, start time and data file of the LAST holder
-#     lsof .coverage.lock           # non-empty while a run (or its children) holds it
-# The end of a run prints the data file it measured and the statement count it
-# saw, so a truncated measurement is visible in the output itself.
+# script's own name is easy to miss in that list. Ask instead:
+#     cat .check_coverage.holder    # pid, start time and data file of the LAST run to start
+#     lsof analysis                 # a `9r` row while a run (or a child of it) holds the lock
+# The holder file is informational only; deleting it neither releases nor
+# breaks the lock. The end of a run prints the data file it measured and the
+# statement count it saw, so a truncated measurement is visible in the output
+# itself.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 COV="$ROOT/.venv/bin/coverage"
 PY="$ROOT/.venv/bin/python"
 export COVERAGE_FILE="$ROOT/.coverage"
-LOCK="$COVERAGE_FILE.lock"
+LOCK_DIR="$ROOT/analysis"
+HOLDER="$ROOT/.check_coverage.holder"
 
 [ -x "$COV" ] || { echo "coverage not installed: ./.venv/bin/pip install coverage"; exit 2; }
 [ -x "$PY" ] || { echo "$PY missing -- create the venv first (CLAUDE.md)"; exit 2; }
 [ -f private/verify/usage.csv ] || { echo "private/verify/usage.csv missing -- stage the sandbox first (CLAUDE.md)"; exit 2; }
 
 # Take the lock on fd 9, which stays open (and so held) for the rest of this
-# script and is inherited by every child it starts. Opened for APPEND so that
-# opening never truncates a live holder's pid line; the python child locks the
-# inherited descriptor, and a flock lives on the open file, not on the process,
-# so it outlives the child that took it.
-exec 9>>"$LOCK"
-if ! "$PY" -c 'import fcntl, sys
+# script and is inherited by every child it starts. The python child locks the
+# inherited descriptor; a flock lives on the open file description, not on the
+# process, so it outlives the child that took it. Only EAGAIN/EWOULDBLOCK means
+# "held by another run"; any other error (a filesystem without flock, a broken
+# venv) is reported as what it is instead of being blamed on a phantom run.
+exec 9<"$LOCK_DIR"
+lock_rc=0
+"$PY" -c 'import errno, fcntl, sys
 try:
     fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except OSError:
-    sys.exit(1)'; then
-  echo "check_coverage: another check_coverage.sh run holds $LOCK ($(tr '\n' ' ' < "$LOCK"))" >&2
-  echo "check_coverage: refusing to start -- two runs share one data file and would destroy each other's measurement; wait for it (lsof $LOCK) and re-run" >&2
+except OSError as e:
+    if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+        sys.exit(1)
+    sys.stderr.write(f"check_coverage: could not take the lock on {sys.argv[1]}: {e}\n")
+    sys.exit(2)' "$LOCK_DIR" || lock_rc=$?
+if [ "$lock_rc" -ne 0 ]; then
+  if [ "$lock_rc" -eq 1 ]; then
+    holder="$( [ -f "$HOLDER" ] && tr '\n' ' ' < "$HOLDER" || echo "holder file $HOLDER missing" )"
+    echo "check_coverage: another check_coverage.sh run holds the lock on $LOCK_DIR ($holder)" >&2
+    echo "check_coverage: refusing to start -- two runs share one data file and would destroy each other's measurement; wait for it (lsof $LOCK_DIR) and re-run" >&2
+  fi
   exit 2
 fi
-: > "$LOCK"
-printf 'pid=%s started=%s data=%s\n' "$$" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$COVERAGE_FILE" >&9
+printf 'pid=%s started=%s data=%s\n' "$$" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$COVERAGE_FILE" > "$HOLDER"
 
-# Erase the previous run's data (but never the lock file this run is holding).
-for f in "$COVERAGE_FILE" "$COVERAGE_FILE".*; do
-  [ "$f" = "$LOCK" ] || rm -f "$f"
-done
+rm -f "$COVERAGE_FILE" "$COVERAGE_FILE".*
 
 # 1) the test suites, in-process
 for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
@@ -102,8 +118,20 @@ for g in behavior_rebuild battery_dispatch_policies battery_plan_matrix \
 done
 cd "$ROOT"
 
-"$COV" combine >/dev/null
-report=$("$COV" report --rcfile=.coveragerc)
+# 3) combine and report. Both coverage commands exit 1 when there is no data
+# ("No data to combine" / "No data to report."), the same code as a gate
+# FAIL, so each failure is caught here and reported as what it is (exit 2,
+# nothing measured) with coverage's own text, never as a coverage verdict.
+if ! combined=$("$COV" combine 2>&1); then
+  echo "check_coverage: coverage combine failed -- nothing was measured"
+  printf '%s\n' "$combined"
+  exit 2
+fi
+if ! report=$("$COV" report --rcfile=.coveragerc 2>&1); then
+  echo "check_coverage: coverage report failed -- nothing was measured"
+  printf '%s\n' "$report"
+  exit 2
+fi
 printf '%s\n' "$report"
 # The TOTAL row's Stmts column: how much the run actually measured. A number
 # far below the usual (~14,500 in 2026-09) means a truncated measurement, not

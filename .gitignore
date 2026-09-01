@@ -74,3 +74,4 @@ data/*_relief*
 # coverage measurement (local gate: analysis/check_coverage.sh)
 .coverage
 .coverage.*
+.check_coverage.holder
