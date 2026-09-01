@@ -941,18 +941,19 @@ KNOWN_GAPS = {
         "naming the plan it named instead. Answer nothing and the run refuses, which "
         "is the point: this repo cannot state either verdict on the human's behalf"),
     "EXPANSION_PAYBACK_YEARS": (
-        "a payback needs a YIELD PRICED THE RIGHT WAY and a COST, and neither "
-        "half is committed here. On the yield side, what one more kW of panels "
-        "would earn is not the EXPORT_VALUE_SURPLUS_BOUND / "
-        "EXPORT_VALUE_NETTING_BOUND range below: exports are the residual "
-        "left after household load, not the shape of added production, so part "
-        "of an added panel's output would displace an import and the rest is "
-        "settled by each month's per-period NEM 2.0 netting. Pricing it needs a "
-        "counterfactual re-billing of the year at a larger array, filed as issue "
-        "#190 and not run by anything committed here. On the cost side, retrofit "
-        "dollars per watt is a fact about a local installer market on a date, "
-        "which this repo does not collect. A token would state the years as "
-        "though both halves were measured"),
+        "a payback needs a YIELD PRICED THE RIGHT WAY and a COST, and only the "
+        "yield half is committed here. What one more kW of panels would earn is "
+        "NOT the EXPORT_VALUE_SURPLUS_BOUND / EXPORT_VALUE_NETTING_BOUND range: "
+        "exports are the residual left after household load, not the shape of "
+        "added production. It IS data/marginal_capacity_value.json (issue #190, "
+        "analysis/marginal_capacity_value.py): the derived hourly production "
+        "scaled by one more kW, placed into each real 15-minute interval, and "
+        "the year re-billed through rates.bill_nem_monthly(), published by "
+        "MARGINAL_KW_VALUE_YR. On the cost side, retrofit dollars per watt is a "
+        "fact about a local installer market on a date, which this repo does not "
+        "collect; that artifact's payback_sensitivity block carries a $/W ladder "
+        "labelled as an assumption, and a token would state one rung's years as "
+        "though the price were measured"),
     "ELECTRIFICATION_VERDICT_SHORT": (
         "data/heat_pump_conversion.json now prices the space-heating side "
         "(install cost, three COP scenarios, real per-interval-billed "
@@ -4152,6 +4153,108 @@ _tok("EXPANSION_VERDICT_SHORT", phrase=True, kind="derived",
               "data/report_data.json:hourly_S.exp / hourly_W.exp",
               "data/report_data.json:totals.exp (rebuild check)",
               "analysis/rates.py:period() (the daytime super-off-peak window)"])
+
+def _marginal_kw_block(token):
+    """data/marginal_capacity_value.json:per_added_kw, the one-more-kW
+    counterfactual (issue #190): the derived hourly production scaled by one
+    added kW, placed interval by interval, and the year re-billed through
+    rates.bill_nem_monthly(). The sentence names ONE more kW, so an artifact
+    that priced a different increment is refused rather than rescaled -- the
+    value is a bill delta with monthly netting inside it, and it does not
+    scale linearly with the increment."""
+    per = _json("marginal_capacity_value.json")["per_added_kw"]
+    added = per.get("added_kw_dc")
+    if added != 1.0:
+        raise SystemExit(
+            f"report_tokens: {token} cannot state what one more kW of panels would earn "
+            f"-- data/marginal_capacity_value.json:per_added_kw.added_kw_dc is {added!r}, "
+            "not 1.0, so the artifact prices a different increment than the sentence "
+            "names, and a bill delta under monthly netting cannot be rescaled to one kW")
+    return per
+
+
+def _marginal_kw_value_yr(ctx):
+    per = _marginal_kw_block("MARGINAL_KW_VALUE_YR")
+    (value,) = _amounts("MARGINAL_KW_VALUE_YR",
+                        "what one more kW of panels would earn per year",
+                        bill_delta_usd_yr=per["bill_delta_usd_yr"])
+    return value
+
+
+_tok("MARGINAL_KW_VALUE_YR", kind="derived", get=_marginal_kw_value_yr, fmt="usd0",
+     sources=["data/marginal_capacity_value.json:per_added_kw.bill_delta_usd_yr (the "
+              "bill delta of the re-billed year, constant current rates, modeled)"])
+
+
+def _marginal_kw_import_offset_pct(ctx):
+    per = _marginal_kw_block("MARGINAL_KW_IMPORT_OFFSET_PCT")
+    (pct,) = _quantities("MARGINAL_KW_IMPORT_OFFSET_PCT",
+                         "what share of an added kW's output displaces an import",
+                         import_offset_pct=per["import_offset_pct"])
+    if pct > 100.0:
+        raise SystemExit(
+            "report_tokens: MARGINAL_KW_IMPORT_OFFSET_PCT cannot state what share of an "
+            "added kW's output displaces an import -- "
+            f"data/marginal_capacity_value.json:per_added_kw.import_offset_pct is {pct!r}, "
+            "above 100, which no split of one quantity can be")
+    return pct
+
+
+_tok("MARGINAL_KW_IMPORT_OFFSET_PCT", kind="derived", get=_marginal_kw_import_offset_pct,
+     fmt="pct0",
+     sources=["data/marginal_capacity_value.json:per_added_kw.import_offset_pct (the "
+              "share of the added kWh that reduced an import in its own interval; the "
+              "rest left the meter)"])
+
+
+def _marginal_kw_added_kwh(ctx):
+    per = _marginal_kw_block("MARGINAL_KW_ADDED_KWH")
+    (kwh,) = _quantities("MARGINAL_KW_ADDED_KWH",
+                         "how much one more kW of panels would add in a year",
+                         added_production_kwh=per["added_production_kwh"])
+    return kwh
+
+
+_tok("MARGINAL_KW_ADDED_KWH", kind="derived", get=_marginal_kw_added_kwh, fmt="num0",
+     sources=["data/marginal_capacity_value.json:per_added_kw.added_production_kwh (the "
+              "derived hourly production scaled by one added kW, over the non-DST days)"])
+
+
+def _marginal_kw_grandfathering_multiple(ctx):
+    """How many times the added kW's value the grandfathering bracket is worth,
+    recomputed here from data/nem3_grandfathering.json and the bill delta and
+    checked against the artifact's own verdict_check copy, so the two cannot
+    drift apart and the ratio cannot be typed by hand."""
+    token = "MARGINAL_KW_GRANDFATHERING_MULTIPLE"
+    doc = _json("marginal_capacity_value.json")
+    per = _marginal_kw_block(token)
+    (delta,) = _amounts(token, "what one more kW of panels would earn per year",
+                        bill_delta_usd_yr=per["bill_delta_usd_yr"])
+    if delta <= 0.0:
+        raise SystemExit(f"report_tokens: {token} cannot divide the grandfathering bracket "
+                         f"by a ${delta:,.2f}/yr added-kW value; the ratio has no reading")
+    nem = _json("nem3_grandfathering.json")["grandfathering_value_range_usd_per_yr"]
+    low, high = _amounts(token, "the NEM 2.0 grandfathering at risk",
+                         low=nem["low"], high=nem["high"])
+    if low > high:
+        raise SystemExit(f"report_tokens: {token}: data/nem3_grandfathering.json's bracket "
+                         f"runs {low} to {high}, high end first")
+    lo, hi = round(low / delta, 1), round(high / delta, 1)
+    own = doc.get("verdict_check", {}).get("grandfathering_over_added_kw_value", {})
+    if (own.get("low"), own.get("high")) != (lo, hi):
+        raise SystemExit(f"report_tokens: {token}: data/marginal_capacity_value.json's own "
+                         f"verdict_check says the bracket is {own.get('low')}-"
+                         f"{own.get('high')}x the added kW's value, but "
+                         f"data/nem3_grandfathering.json and the bill delta give {lo}-{hi}x; "
+                         "one artifact is stale")
+    return f"{lo:.1f}–{hi:.1f}×"
+
+
+_tok("MARGINAL_KW_GRANDFATHERING_MULTIPLE", kind="derived",
+     get=_marginal_kw_grandfathering_multiple,
+     sources=["data/nem3_grandfathering.json:grandfathering_value_range_usd_per_yr",
+              "data/marginal_capacity_value.json:per_added_kw.bill_delta_usd_yr",
+              "data/marginal_capacity_value.json:verdict_check (cross-check only)"])
 
 _tok("RECOMMENDED_PACKAGE_SUMMARY", kind="derived",
      get=lambda ctx: f"MID — behavior fix plus {TOKENS['BATTERY_MODEL']['value']}",

@@ -4659,6 +4659,122 @@ rootless sandbox are each a failure rather than "no changes"; a generator writin
 `data/` hash guard; disposal refuses any path that is not its own sandbox; and `--check` exits
 0 when a generator reproduces its artifact.
 
+### 3.31 `analysis/marginal_capacity_value.py` — what one more kW of panels is worth (`data/marginal_capacity_value.json`)
+
+**Purpose (issue #190).** §8 prices what the year's exports fetched (a bounded range,
+issue #182). That range is not what an added panel would earn: exports are the residual
+left after household load, not the shape of added production, so part of an added panel's
+output displaces an import in the interval it is made and the rest leaves the meter as an
+extra export. Under NEM 2.0 those two settle differently, month by month and TOU period by
+TOU period. This script answers the question the only way CLAUDE.md §1b allows: it places
+the added production into the real 15-minute intervals, re-bills the whole year through
+`rates.bill_nem_monthly()`, and takes the difference. No figure in the artifact is a rate
+times a quantity.
+
+**The marginal generation profile, and where it comes from.** No hourly production feed is
+committed (`data/enphase_daily_production.csv` is daily), so the hourly series is derived
+from two independent meters with the identity `pv_hour = max(sam_hour - import_hour +
+export_hour, 0)`: `sam_hour` is the Enphase SAM 8760 whole-home CT's gross load
+(`samA.csv`/`samB.csv`, read through `threeway_production_validation.load_sam_hourly()`),
+import and export are the revenue meter's own 15-minute columns summed to the hour. It is
+the same identity `threeway_production_validation.csv`'s `meter_derived` column (§3.7)
+uses, and the run refuses to price
+anything until the derived daily totals agree with that committed column on every shared
+non-DST day (tolerance 0.05 kWh; the artifact reports 363 days at 0.000 kWh) and the annual
+total has been reconciled against the production CT's own daily record (an independent
+instrument, so this one is published, not asserted: ratio 1.0032 over the 363 non-DST
+days). The two DST transition Sundays cannot be aligned between the flat SAM grid and the
+wall-clock meter, so they carry no increment; the artifact publishes their share of the
+year's metered production (0.58%), which bounds the understatement.
+
+**The increment.** One added kW DC on a `kw_dc` array scales each hour's derived
+production by `(kw_dc + 1) / kw_dc`, so the increment is `pv_hour / kw_dc`. It is spread
+evenly over the hour's quarter-hours (the SAM grid is hourly; the intra-hour shape is a
+stated assumption) and placed into each interval: it first reduces that interval's import,
+and whatever is left once the import reaches zero becomes export. Energy conservation is
+asserted. The split is published (`per_added_kw.import_offset_pct` / `exported_pct`: on
+this household 15.8% of the added output displaces an import and 84.2% leaves the meter),
+because the two are worth very different amounts and which dominates is exactly what an
+estimate cannot know.
+
+**The value, and why it is what it is.** Both years go through `rates.bill_nem_monthly()`
+(monthly per-period NEM 2.0 netting, NBC on gross imports, BSC per day) at constant current
+rates, and `per_added_kw.bill_delta_usd_yr` is the difference: $482.54/yr for 1,637.7
+added kWh, 29.46¢ per added kWh, labelled modeled. A settlement decomposition is computed
+independently from the tariff's own pieces and must reproduce the engine's delta to the
+cent, so the artifact can say why: in a (month, season, period) bucket the increment lowers
+the net by its whole amount, offset and export alike; while the bucket stays net-positive
+that kWh is worth `rates.energy()` (it cancels an import at the retail rate), the part that
+pushes a bucket below zero settles at `rates.credit()`, and NBC is saved only on the kWh
+that displaced a gross import. On this household 1,555.5 kWh net inside still-net-positive
+buckets, 82.2 kWh run three winter off-peak buckets to surplus, and $5.42 is NBC. That is
+also the export-crediting note the figure carries: an added kWh that leaves the meter is
+credited the way the bills credit it, not at an unconditional `credit()` call.
+
+**Assumptions, every one in the artifact.** DC/AC ratio: the added kW carries the array's
+own ratio (`solar.kw_dc` / `solar.kw_ac` from the intake). Clipping: two cases are priced
+and the intake decides which one `per_added_kw` publishes. With one inverter per module
+(`solar.inverter_count == solar.module_count`, both above one) the AC ceiling scales with
+the array, because an added module brings its own inverter; with any other architecture
+the ceiling stays at today's `solar.kw_ac` and the scaled hourly energy is clipped there.
+The artifact carries the rule, its two inputs, the case it chose (`clipping.primary_case`,
+repeated as `per_added_kw.clipping_case`) and both cases' figures, the way
+`battery_dispatch_policies.json` carries `free_fix_scenario`, so a reader can see the
+branch rather than infer it. On this household (30 microinverters on 30 modules) the
+scaled case is primary; the fixed-ceiling case clips 1.3 kWh in 12 hours and lands $0.14/yr
+lower. Both cases clip hourly energy, so each is a lower bound on its own clipping loss.
+Degradation: the added kW produces at the measured array's own specific yield in the
+measured year, with no first-year uplift and no degradation adjustment, because nothing
+committed measures either. Rates: constant current rates, the same vintage as every other
+modeled figure; the bills the engine is validated against were partly on older tariffs.
+NEM 2.0: the value applies to an expansion inside the growth cap, which keeps that status.
+
+**The payback is not a figure this repo publishes.** Retrofit dollars per watt is a fact
+about a local installer market on a date, which nothing here collects. The artifact carries
+a $/W ladder (`payback_sensitivity`, $2.00 to $4.00/W, 4.1 to 8.3 years on this value)
+labelled as an assumption at every rung, and `EXPANSION_PAYBACK_YEARS` stays a
+`report_tokens.KNOWN_GAPS` entry whose reason now names the artifact as the yield half and
+the uncollected $/W as what still blocks it.
+
+**The §8 verdict, re-checked.** `verdict_check` restates the growth cap (the greater of
+10% of DC nameplate or 1 kW, Schedule NEM Special Condition 7(b): 1.005 kW here, so the
+priced kW sits inside it) and compares the derived value with the grandfathering bracket
+in `data/nem3_grandfathering.json`: $2,103.58 to $2,455.64/yr is 4.4 to 5.1 times what
+the permitted kW earns. The "no" does not move.
+
+**Fail-closed behaviour.** The run stops, writing nothing, on a missing `household.yaml`
+(through `household.py`), a missing or non-positive nameplate, a fractional or zero
+inverter or module count, a missing SAM hour inside the window, a derived hour above the
+AC nameplate, a daily tie-out miss against `threeway_production_validation.csv`, a day
+absent from the production CT's record, a decomposition that does not reproduce the
+engine's delta, and a bill that rises with added production (the engine is monotone in the
+netted kWh, so a negative delta is a broken input, not a finding). The artifact is written
+atomically. Two runs are byte-identical (sha256), which
+`test_marginal_capacity_value.py` proves against the real archive.
+
+**Tokens.** `MARGINAL_KW_VALUE_YR`, `MARGINAL_KW_IMPORT_OFFSET_PCT` and
+`MARGINAL_KW_ADDED_KWH` read `per_added_kw`; the first two refuse an artifact whose
+`added_kw_dc` is not 1.0 rather than rescale it, because a bill delta under monthly netting
+is not linear in the increment. `MARGINAL_KW_GRANDFATHERING_MULTIPLE` recomputes the
+`verdict_check` ratio from `data/nem3_grandfathering.json` and the bill delta and refuses
+the artifact if its own copy has drifted. §8 publishes the four in one place, in the
+sentence that follows the export-valuation range, with a `modeled` pill and the cap
+clause; `test_report_consistency.py`'s §8 pins hold that sentence to the artifact and
+refuse any other sentence that attaches a price to added capacity.
+
+**Tests.** `analysis/test_marginal_capacity_value.py` (13 cases): synthetic frames prove the
+value is the bill delta and that no cell of the price map times the added kWh reproduces it
+where a bucket changes sign; the decomposition is reconciled against the engine on frames
+where a bucket stays positive, starts negative, and flips; placement is import-first with
+energy conserved; each hour's increment lands on its own quarter-hours and DST days carry
+none; the fixed ceiling clips only hours whose scaled energy exceeds it; the clipping case
+follows the intake's counts and refuses malformed ones; a rising bill is refused; the
+payback ladder is labelled an assumption and refuses to divide by nothing; the committed
+artifact is internally consistent; the generator fails closed without `private/`; and, with
+the archive, two runs reproduce the committed bytes. Not verified end to end in CI (§6.7's
+second tier): it needs both SAM exports and the raw Green Button file, and its tie-out
+against the committed real-year `meter_derived` column would reject any synthetic year.
+
 ---
 
 ## 4. Battery simulation methodology
@@ -5058,7 +5174,7 @@ from the code:
   this: 96-slot/DST-adjusted days, an EV session signature, a solar shape). **CI verifies
   their main computational path directly**, with no skip path at all
   (`case_the_ci_tier_cannot_skip`).
-- **`NEEDS_PRIVATE_ARCHIVE` (16 generators)** need an input that shared fixture cannot
+- **`NEEDS_PRIVATE_ARCHIVE` (17 generators)** need an input that shared fixture cannot
   supply (a bill-PDF corpus, a SAM-8760 pair, a monitoring production history, or a
   fail-closed tie-out against a real-year-derived committed artifact that a synthetic run
   must legitimately fail). Before issue #44, CI's only exercise of these was
@@ -5074,7 +5190,7 @@ from the code:
   fresh archive-free root (the real `analysis/` + the real committed `data/`, no
   `private/` anywhere) and runs every claimed case there, failing if any of them skips.
   The count as of this commit:
-  - **8 of 16 are verified end to end in CI**, each by its own dedicated test file whose
+  - **8 of 17 are verified end to end in CI**, each by its own dedicated test file whose
     claimed case that mechanical check confirmed runs to a pass with no private archive
     present:
     - `service_headroom.py` (`test_service_headroom.py`, pre-existing).
@@ -5095,8 +5211,16 @@ from the code:
       (aggregate CAISO grid data with nothing household-specific in it, so no synthesis
       needed), with a promoted `battery_dispatch_policies.json` tie-out and an independent
       hand-computed baseline-CO2 check. Fault-injection tested.
-  - **8 of 16 are not verified end to end anywhere in CI today.** Per generator, what was
+  - **9 of 17 are not verified end to end anywhere in CI today.** Per generator, what was
     checked before concluding this:
+    - `marginal_capacity_value.py` (issue #190) — **assessed, not attempted.** It needs
+      both SAM 8760 exports and the raw Green Button file to derive the hourly production
+      it scales, and it refuses to price anything until that derived series reproduces
+      the committed real-year `threeway_production_validation.csv` `meter_derived`
+      column day by day, so a synthetic year fails the tie-out by design; a promoted
+      synthetic copy of that CSV would be the same shape of demonstration as
+      `battery_plan_matrix.py`'s and is plausible, but is not done. Its 13-case suite
+      covers every pure function on synthetic frames and runs in CI (§3.31).
     - `uncertainty_propagation.py` — **assessed, harder than it first looked.** Its own
       code comments describe "the same tie-out shape as `battery_plan_matrix.py`", but
       `build()` cross-checks four committed artifacts at once
