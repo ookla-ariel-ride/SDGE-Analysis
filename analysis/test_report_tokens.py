@@ -16637,7 +16637,10 @@ def case_the_soiling_bracket_matches_the_published_report():
         f"SOILING_RATE_RANGE rendered {rendered!r} against the artifact's own "
         f"{expected!r} (scenario A {lo}, scenario B {hi})")
     published = (rt.ROOT / "index.html").read_text()
-    para = re.search(r"<p>An independent soiling study.*?</p>", published, re.S)
+    # The paragraph opens on the bracket sentence the template emits from this
+    # token (issue #217); the study it rests on follows inside the paragraph.
+    para = re.search(r"<p>The defensible soiling rate here is the full bracket.*?</p>",
+                     published, re.S)
     assert para, "§12's soiling-range paragraph not found in index.html"
     para = para.group(0)
     assert f"~{expected}" in para, (

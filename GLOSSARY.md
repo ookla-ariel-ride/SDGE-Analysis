@@ -38,7 +38,7 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 **Non-bypassable charges (NBC)** — A few cents per kWh that fund public programs (low-income assistance, efficiency, nuclear decommissioning, the state wildfire fund) and must be paid on all grid imports; solar export credits cannot offset them. The wildfire fund charge is one of these line items. [CPUC: NEM and Net Billing](https://www.cpuc.ca.gov/industries-and-topics/electrical-energy/demand-side-management/customer-generation/net-energy-metering-and-net-billing)
 
-**On-peak / off-peak / super-off-peak** — The three price windows on SDG&E's time-of-use plans. On-peak (4–9pm daily) is the most expensive (60–87¢/kWh all-in on this home's plan); super-off-peak (overnight, plus weekday 10am–2pm on the EV plans) is the cheapest (~12.5¢); off-peak is everything in between (~51¢ here). [SDG&E pricing plans](https://www.sdge.com/residential/pricing-plans)
+**On-peak / off-peak / super-off-peak** — The three price windows on SDG&E's time-of-use plans. On-peak (4–9pm daily) is the most expensive (61–87¢/kWh all-in on this home's plan); super-off-peak (overnight, plus weekday 10am–2pm on the EV plans) is the cheapest (~12.5¢); off-peak is everything in between (~51¢ here). [SDG&E pricing plans](https://www.sdge.com/residential/pricing-plans)
 
 **Franchise fee (equivalent surcharge)** — A small line item (1.10% of a base charge) that both bundled and CCA customers pay, funding the fee cities collect for utility use of public rights-of-way. On this home's bills the base changes with the provider: on bundled service it's 1.10% of the small Wildfire Fund Charge alone ($8.07 → $0.09 on the 2024-06-27 statement); on CCA service, renamed "Franchise Fee Equivalent Surcharge," it's 1.10% of a much larger figure ($189.93 → $2.09 on the 2026-07-02 statement). California CCAs generally collect a franchise-fee-equivalent surcharge on generation revenue because that revenue no longer flows through the utility once a customer enrolls. What the $189.93 base reconciles to on this statement is not determined (it doesn't match any single printed subtotal), so that mechanism is offered as context. The dollar difference on these two statements is small and comes from the provider switch.
 
@@ -64,7 +64,7 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 **Capacity factor** — Actual annual energy output divided by what the system would make running at full rated power 24/7. This array's ~18.7% is healthy for rooftop solar (the sun is only up part of the day). [Wikipedia: capacity factor](https://en.wikipedia.org/wiki/Capacity_factor)
 
-**Clipping** — When panels can momentarily produce more DC power than the inverter's AC limit, the inverter "clips" the excess and it's lost. This system's 5-minute data shows no meaningful clipping; peak output stays ~10% below the inverter ceiling.
+**Clipping** — When panels can momentarily produce more DC power than the inverter's AC limit, the inverter "clips" the excess and it's lost. This system's 5-minute data shows no meaningful clipping (§9 of the report); the highest daily peak in the sampled record is 9.20 kW, 97% of the inverter AC ceiling.
 
 **CT (current transformer) / consumption metering** — Small clamp sensors on the home's wiring that let the solar gateway measure whole-home usage, not just solar production. Having them is what made the load and battery analysis in this report possible.
 
@@ -98,7 +98,7 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 ## Batteries & storage
 
-**Arbitrage** — Buying (or storing) energy when it's cheap and using it when it's expensive. A home battery earns most of its keep by storing ~8–14¢ energy and displacing 51–87¢ grid imports.
+**Arbitrage** — Buying (or storing) energy when it's cheap and using it when it's expensive. A home battery earns most of its keep by storing ~12–14¢ energy and displacing 51–87¢ grid imports.
 
 **Cycle** — One full charge-and-discharge of the battery's capacity. Warranties typically assume about one cycle per day; the recommended dispatch here runs ~1.0 cycle/day.
 

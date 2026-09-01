@@ -158,6 +158,22 @@ RETIRED_FIGURES = [
 # value asserted present in the passage that claims to quote it -- which is
 # what the presence half of case_headline_figures_present_and_stale_ones_absent
 # does for index.html, and is a separate piece of work.
+#
+# WHAT THAT SCOPE DOES AND DOES NOT COVER (issue #216, settled). The
+# measurement above is about ABSENCE checks only: asserting a retired string
+# is gone from a document that may legitimately quote it. It says nothing
+# against POSITIVE pins on a linked document, which assert that a figure the
+# document states equals the artifact or token that derives it. A positive pin
+# has no false-positive surface of that kind: a figure the document still
+# states is either the artifact's value or it is not, and lineage prose can
+# quote a retired figure beside the current one without tripping it. So
+# GLOSSARY.md IS covered, by case_glossary_figures_match_the_artifacts_that_
+# derive_them below: every figure it states with an artifact or token behind
+# it is pinned there, and the figures with no artifact (external constants)
+# are listed in that case's docstring with the reason. A figure added to
+# GLOSSARY.md gets a pin in that case or a line in that list. TECHNICAL.md
+# stays out of both mechanisms for the reasons above; positive pins there
+# remain separate work.
 
 # The retired holiday-convention explanation; checked absent in
 # case_no_retired_holiday_discrepancy_note. Both pipelines now share the
@@ -2395,7 +2411,7 @@ def case_soiling_annual_economics_matches_the_artifact():
     lo = sr["annual_economics"]["scenario_A_this_years_evidence"]["annual_lost_usd_at_0.315"]
     hi = sr["annual_economics"]["scenario_B_2024_cleaning_evidence"]["annual_lost_usd_at_0.315"]
 
-    m = re.search(r"<p>An independent soiling study.*?</p>", HTML, re.S)
+    m = _SOILING_PARAGRAPH_RE.search(HTML)
     assert m, "§12 soiling-range paragraph not found in index.html"
     para = m.group(0)
     assert f"${round(lo)}–{round(hi)}/yr" in para, (
@@ -2403,10 +2419,15 @@ def case_soiling_annual_economics_matches_the_artifact():
     return "the §12 soiling-range paragraph's $/yr loss bracket matches soiling_results.json"
 
 
-# The rate bracket the same paragraph closes on -- the figure SOILING_RATE_RANGE
+# The §12 re-soiling paragraph. It OPENS on the bracket sentence, because that
+# sentence is the template's fixed prose around {{SOILING_RATE_RANGE}} (issue
+# #217): the evidence the bracket rests on is the TODO block that follows it.
+_SOILING_PARAGRAPH_RE = re.compile(
+    r"<p>The defensible soiling rate here is the full bracket.*?</p>", re.S)
+# The rate bracket that sentence states -- the figure SOILING_RATE_RANGE
 # renders. Captured WITHOUT the leading "~", which is prose, not token output.
 _SOILING_BRACKET_RE = re.compile(
-    r"defensible range is the full bracket: <b>~([\d.]+–[\d.]+%/month)</b>")
+    r"the full bracket the evidence allows, <b>~([\d.]+–[\d.]+%/month)</b>")
 
 
 def case_soiling_rate_bracket_matches_the_token_that_renders_it():
@@ -2422,14 +2443,14 @@ def case_soiling_rate_bracket_matches_the_token_that_renders_it():
     does changing the token's precision or its scenario inputs without
     rewriting the page."""
     rt = _report_tokens()
-    m = re.search(r"<p>An independent soiling study.*?</p>", HTML, re.S)
+    m = _SOILING_PARAGRAPH_RE.search(HTML)
     assert m, "§12 soiling-range paragraph not found in index.html"
     para = m.group(0)
     b = _SOILING_BRACKET_RE.search(para)
-    assert b, ("§12's 'defensible range is the full bracket: <b>~...%/month</b>' figure was "
-               "not found in the soiling paragraph -- that bracket is what this case pins "
-               "SOILING_RATE_RANGE to, so it cannot be checked at all if the page stops "
-               "publishing it")
+    assert b, ("§12's 'the full bracket the evidence allows, <b>~...%/month</b>' figure "
+               "was not found in the soiling paragraph -- that bracket is what this case "
+               "pins SOILING_RATE_RANGE to, so it cannot be checked at all if the page "
+               "stops publishing it")
     published = b.group(1)
     rendered = rt.resolve_token("SOILING_RATE_RANGE")
     assert rendered == published, (
@@ -2631,6 +2652,53 @@ def _resolution_failures(rt):
         except BaseException as e:                # noqa: BLE001 - that is the assertion
             out[name] = f"{type(e).__name__}: {e}"
     return out
+
+
+def case_cleaning_heading_is_the_templates_h3_line_rendered():
+    """issue #217: §12's h3 in index.html read "+11.8% production gain" while
+    the template's h3 line rendered "+11.8% production gain, difference-in-
+    differences vs the control years" (CLEANING_EFFECT_CLAIM, issue #168) and
+    "August 12, 2024" where the page wrote "8/12/2024". The regex pin above
+    accepted both, so a regeneration produced a different heading with nothing
+    failing.
+
+    The heading names the method because the token was designed to (the
+    paragraph under the windows table is where the arithmetic lives, the
+    heading is where the claim is), so the page follows the template: this
+    renders the template's own h3 line, token by token, and requires that line
+    verbatim in index.html. Either side moving alone fails here. The only
+    survivable failure is a checkout without the private archive, exactly as
+    in the heading-verdict agreement case."""
+    lines = [ln for ln in TEMPLATE_HTML.splitlines() if "{{CLEANING_EFFECT_CLAIM}}" in ln]
+    assert len(lines) == 1, (
+        f"report-template.html carries {{{{CLEANING_EFFECT_CLAIM}}}} on {len(lines)} lines; "
+        "this case renders the one §12 h3 line")
+    line, = lines
+    assert line.startswith("<h3>") and line.endswith("</h3>"), (
+        f"the CLEANING_EFFECT_CLAIM line is no longer a one-line h3: {line!r}")
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    rt = _report_tokens()
+    names = sorted(set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", line)))
+    try:
+        rendered = re.sub(r"\{\{([A-Z0-9_]+)\}\}",
+                          lambda m: rt.resolve_token(m.group(1)), line)
+    except BaseException as e:                    # noqa: BLE001 - archive-gated
+        assert _missing_archive_exit(e, archive, loader), (
+            f"the §12 h3 line could not be rendered, and NOT because this checkout lacks "
+            f"the private archive (present: {archive}): {type(e).__name__}: {e}")
+        return (f"§12's h3 line ({len(names)} tokens) not rendered: this checkout has no "
+                f"private archive ({e})")
+    assert rendered in HTML, (
+        f"index.html's §12 cleaning h3 is not the template's h3 line rendered:\n"
+        f"  template renders: {rendered}\n"
+        f"  page carries:     {(_CLEANING_HEADING_RE.search(HTML) or [''])[0]!r}\n"
+        "the heading names the cleaning, its price, the gain, the method and the "
+        "evidence pill from tokens; the page has to carry exactly what they render")
+    return (f"index.html's §12 cleaning h3 is the template's h3 line rendered verbatim "
+            f"({len(names)} tokens: {', '.join(names)})")
 
 
 def case_cleaning_heading_and_gain_describe_the_same_event():
@@ -3332,7 +3400,7 @@ def _clause_tail(rest):
 # "Every sentence carrying a time-of-day phrase must also carry the midday
 # window or the midday share" rejects §8's own "Since the 2026 TOU change those
 # midday exports credit at only ~10.4¢/kWh." and its "it monetizes those midday
-# kWh at 60-87¢ instead of 10¢" -- two correct sentences about the midday
+# kWh at 61-87¢ instead of 10¢" -- two correct sentences about the midday
 # slice, neither of which restates the window or the share. The digit rule
 # accepts both (each carries its own figures) and still rejects all four
 # rewordings. case_the_referent_guard_reads_across_a_sentence_boundary pins
@@ -3442,7 +3510,7 @@ def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
     # A PERCENTAGE IS READ AS A REFERENT HERE, and the guard has no notion of
     # what any given one measures: it finds every "60%" in the paragraph and
     # judges the clause around it as if it were the export share. §8 already
-    # carries "60-87¢" in a sentence about battery arbitrage, one keystroke
+    # carries "61-87¢" in a sentence about battery arbitrage, one keystroke
     # from a second "60%" that this guard would reject as a referent error
     # while naming the wrong figure in the message. So require each of the two
     # to occur exactly once and say so plainly -- an ambiguous paragraph fails
@@ -4648,7 +4716,7 @@ def case_the_referent_guard_reads_a_percentage_only_when_it_is_unambiguous():
     """issue #143 review round 3: the guard matches every occurrence of a
     figure and has no idea what any of them measures.
 
-    §8 already carries "60-87¢" in a sentence about battery arbitrage, one
+    §8 already carries "61-87¢" in a sentence about battery arbitrage, one
     keystroke from a second "60%" that this guard would have read as the export
     share and rejected as a referent error, with a message pointing the writer
     at the arbitrage sentence. Unrelated figures that collide are not the
@@ -5722,6 +5790,35 @@ def case_degradation_naive_band_contains_every_estimator_it_is_built_from():
             + " falls inside it")
 
 
+def case_every_on_peak_bracket_on_the_page_is_the_rates_one():
+    """issue #216 follow-up: index.html stated the all-in on-peak bracket as
+    "60–87¢" in three prose sites (§3, §5, §8) while the day-band, §6 and
+    GLOSSARY.md said 61–87¢ -- rates.allin('W', 'on') is 60.53¢, rounded down
+    by hand in prose and rounded to nearest by DAYBAND_ONPEAK_PRICE. One
+    bracket, one rounding: every "N–M¢" on the page whose high end is the
+    summer on-peak price must carry the winter one at the low end, both
+    rounded to the nearest cent from rates.py."""
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import rates as R
+    lo, hi = sorted(round(R.allin(s, "on") * 100) for s in ("S", "W"))
+    expected = f"{lo}–{hi}¢"
+    sites = HTML.count(expected)
+    assert sites >= 4, (
+        f"index.html carries the on-peak bracket {expected} only {sites} time(s); the "
+        "day-band, §6 and the three prose sites all state it")
+    # The page also spans off-peak to on-peak ("51–87¢", the imports a battery
+    # displaces); those low ends are rates.py's off-peak prices, so they pass.
+    allowed = {str(lo)} | {str(round(R.allin(s, "off") * 100)) for s in ("S", "W")}
+    strays = sorted(set(m.group(0) for m in re.finditer(rf"\b(\d{{2}})–{hi}¢", HTML)
+                        if m.group(1) not in allowed))
+    assert not strays, (
+        f"index.html states a bracket ending at the on-peak {hi}¢ with a low end that is "
+        f"no rates.py price ({sorted(allowed)}): {strays} -- one bracket, rounded once, "
+        "everywhere")
+    return f"index.html states the on-peak bracket as {expected} at {sites} sites, from rates.allin"
+
+
 def case_glossary_figures_match_the_artifacts_that_derive_them():
     """issues #176 AC5/AC6 and #216: GLOSSARY.md is a public, linked document
     that no artifact-agreement case covered, so it is where stale figures
@@ -5737,34 +5834,63 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
     both electrification-dividend figures ($3,230/$4,440 against $3,191/
     $4,429), and the gas total (~342 against ~343 therms).
 
-    Figures deliberately NOT pinned here, because no committed artifact
-    carries them: the SAIDI/SAIFI outage-hours band, the $1.16/kWh Reduce-
-    Your-Use surcharge, the $2/kWh ELRP rate, and the external constants
-    (Climate Credit, ITC, SGIP, EV pack sizes, HPWH efficiency). Those are
-    cited to public sources in the entries themselves and would need a
-    generator before a test could mean anything.
+    Issue #216 swept the whole file for every figure (a number with a unit
+    or a $) and pinned each one an artifact, rates.py or a token derives.
+    Three were wrong at that sweep: the on-peak bracket (60-87 cents against
+    rates.allin's 61-87), the arbitrage stored-energy cost (~8-14 cents, the
+    retired pre-#189 solar-surplus basis, against the dispatch artifact's
+    11.7/14.0), and the clipping headroom (~10% below the ceiling, from one
+    sampled spring day, against PEAK_POWER_MULTIYEAR's 97% of the ceiling).
 
-    Seven of the pins are token-derived, and some of those tokens need
-    private/household.yaml, which CI does not have. They are resolved up
-    front rather than inline in the pins list, for three reasons: an
-    unresolvable token drops its pin WHOLE (several interpolate the rendered
-    string into the figure, so a None would be asserted as the literal
-    "None" -- a wrong figure rather than an absent one); every pin that does
-    NOT need the archive still runs; and the dropped token names go into the
-    summary line, so a reader can see coverage shrank and by what."""
+    Figures deliberately NOT pinned, because no committed artifact carries
+    them; each is cited to a public source in its own entry, or is a
+    definition, and would need a generator before a test could mean anything:
+      * external program constants: the Climate Credit ($40-80), the Reduce-
+        Your-Use surcharge (~$1.16/kWh), the ELRP rate (~$2/kWh), the ITC
+        (30%), SGIP (~$200/kWh), the SAIDI/SAIFI outage-hours band;
+      * vendor and code constants: EV pack sizes (60-100 kWh), Charge Stats'
+        8-12% charging loss, rated-miles 80-90%, NEC's 120% and 125% rules;
+      * definitions: 1 kW for one hour is 1 kWh, a therm is ~29 kWh of heat;
+      * bill facts with no artifact field: the BSC's October 2025 start.
+
+    The token-derived pins, some of whose tokens need private/household.yaml
+    (which CI does not have), are resolved up front rather than inline in the
+    pins list, for three reasons: an unresolvable token drops its pin WHOLE
+    (several interpolate the rendered string into the figure, so a None would
+    be asserted as the literal "None" -- a wrong figure rather than an absent
+    one); every pin that does NOT need the archive still runs; and the dropped
+    token names go into the summary line, so a reader can see coverage shrank
+    and by what."""
     rt = _report_tokens()
     if str(ROOT / "analysis") not in sys.path:
         sys.path.insert(0, str(ROOT / "analysis"))
     import household
+    import rates as R
     archive, loader = household.PATH.is_file(), household.__file__
     nem3 = json.loads((ROOT / "data" / "nem3_grandfathering.json").read_text())
     pfd = json.loads((ROOT / "data" / "perfect_foresight_dispatch.json").read_text())
     dsgs = json.loads((ROOT / "data" / "dsgs_vpp_backtest.json").read_text())
     curve = json.loads((ROOT / "data" / "battery_sizing_curve.json").read_text())
     ext = json.loads((ROOT / "data" / "extended_results.json").read_text())
+    cca = json.loads((ROOT / "data" / "cca_bundled_counterfactual.json").read_text())
+    soil = json.loads((ROOT / "data" / "soiling_results.json").read_text())
+    carbon = json.loads((ROOT / "data" / "carbon_fullyear_results.json").read_text())
     disp = DISPATCH
     gap = pfd["greedy_comparison"]
     div = ext["electrification_dividend"]
+    nbt_cents = sorted(int(k.rstrip("c")) for k in
+                       ext["nbt_2039"]["battery_marginal_under_nbt"])
+    pto = re.search(r"PTO (\d{4})-\d\d-\d\d \+ (\d+) yr", ext["nbt_2039"]["nem2_expiry"])
+    assert pto, ("extended_results.json:nbt_2039.nem2_expiry no longer states the PTO "
+                 "date and the grandfathering term in the form 'PTO YYYY-MM-DD + N yr'")
+    cents = lambda usd_per_kwh: usd_per_kwh * 100          # noqa: E731
+    sop_energy = sorted(cents(R.energy(s, "sop")) for s in ("S", "W"))
+    on_allin = sorted(cents(R.allin(s, "on")) for s in ("S", "W"))
+    pw3 = disp["stored_kwh_cost"]["config"]
+    agg = dsgs["per_aggregation_sensitivity"]
+    fee = cca["pcia_and_franchise_fee"]
+    year_days = re.search(r"\((\d+) days\)", carbon["coverage"]["analysis_year"])
+    assert year_days, "carbon_fullyear_results.json:coverage.analysis_year states no day count"
     therms = sum(float(row["therms"]) for row in
                  csv.DictReader((ROOT / "data" / "gas_monthly_therms.csv")
                                 .read_text().splitlines()))
@@ -5782,7 +5908,10 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
     resolved, skipped = {}, set()
     for token in ("CAPACITY_FACTOR", "EXPORTED_SHARE", "SOILING_RATE_RANGE",
                   "SPECIFIC_YIELD", "DEGRADATION_NAIVE_RANGE",
-                  "NIGHT_FLOOR_MEDIAN", "NIGHT_FLOOR_ANNUAL_COST"):
+                  "NIGHT_FLOOR_MEDIAN", "NIGHT_FLOOR_ANNUAL_COST",
+                  "PEAK_WINDOW", "CHEAP_WINDOW", "STORED_KWH_COST_SOLAR_MIDDAY",
+                  "STORED_KWH_COST_GRID", "SYSTEM_SIZE_KW_DC", "AC_CEILING_KW",
+                  "PEAK_POWER_MULTIYEAR"):
         try:
             resolved[token] = rt.resolve_token(token)
         except BaseException as e:                # noqa: BLE001 - that is the point
@@ -5819,6 +5948,85 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
          "extended_results.json:electrification_dividend.dividend_yr"),
         ("Electrification dividend", f"~${div['dividend_yr_post_fix']:,}/yr",
          "extended_results.json:electrification_dividend.dividend_yr_post_fix"),
+        # Issue #216's sweep, artifact- and rates.py-derived.
+        ("AB 205 fixed charge", f"${R.BSC * 365.25 / 12:.2f}/month",
+         "rates.py:BSC × 365.25/12 (TECHNICAL.md: $24.15/mo = $0.79343/day)"),
+        ("Base Services Charge", f"about ${R.BSC:.2f} per day", "rates.py:BSC"),
+        ("Avoided Cost Calculator", f"{nbt_cents[0]}–{nbt_cents[-1]}¢/kWh",
+         "extended_results.json:nbt_2039.battery_marginal_under_nbt, its credit keys"),
+        ("NBT", f"{nbt_cents[0]}–{nbt_cents[-1]}¢/kWh",
+         "extended_results.json:nbt_2039.battery_marginal_under_nbt, its credit keys"),
+        ("NEM 1.0 / NEM 2.0", f"~{cents(R.NBC):.1f}¢/kWh", "rates.py:NBC"),
+        ("Netted export rate", f"{sop_energy[0]:.1f}–{sop_energy[1]:.1f}¢",
+         "rates.py:energy(season, 'sop'), both seasons"),
+        ("Netted export rate",
+         f"{cents(R.credit('S', 'sop')):.1f}¢ summer, {cents(R.credit('W', 'sop')):.1f}¢ winter",
+         "rates.py:credit(season, 'sop')"),
+        ("On-peak / off-peak / super-off-peak",
+         f"{round(on_allin[0])}–{round(on_allin[1])}¢/kWh all-in",
+         "rates.py:allin(season, 'on'), both seasons (DAYBAND_ONPEAK_PRICE)"),
+        ("On-peak / off-peak / super-off-peak", f"(~{cents(R.allin('S', 'sop')):.1f}¢)",
+         "rates.py:allin('S', 'sop') (DAYBAND_SOP_PRICE)"),
+        ("On-peak / off-peak / super-off-peak", f"(~{round(cents(R.allin('S', 'off')))}¢ here)",
+         "rates.py:allin('S', 'off') (DAYBAND_OFFPEAK_PRICE)"),
+        ("Arbitrage",
+         f"displacing {round(cents(R.allin('S', 'off')))}–{round(cents(R.allin('S', 'on')))}¢ "
+         "grid imports", "rates.py:allin('S', 'off') and allin('S', 'on')"),
+        ("Dispatch policy",
+         f"(${disp['pw3']['greedy']['save']:,} against ${disp['pw3']['evening']['save']:,},",
+         "battery_dispatch_policies.json:pw3.greedy.save and pw3.evening.save"),
+        ("DSGS", f"~{agg['n_aggregations']} anonymized VPP aggregations",
+         "dsgs_vpp_backtest.json:per_aggregation_sensitivity.n_aggregations"),
+        ("DSGS", f"the {agg['n_aggregations']} individual aggregation schedules",
+         "dsgs_vpp_backtest.json:per_aggregation_sensitivity.n_aggregations"),
+        ("DSGS",
+         f"{dsgs['measured_window']['start']}–{dsgs['events_in_window']['dates'][-1]} "
+         "partial season",
+         "dsgs_vpp_backtest.json:measured_window.start and events_in_window.dates[-1]"),
+        ("DSGS", f"{dsgs['prestaged_sensitivity']['reserve_frac'] * 100:.0f}% reserve assumption",
+         "dsgs_vpp_backtest.json:prestaged_sensitivity.reserve_frac"),
+        ("Knee (sizing curve)",
+         f"from {curve['energy_grid_kwh'][0]:g} to {curve['energy_grid_kwh'][-1]:g} kWh",
+         "battery_sizing_curve.json:energy_grid_kwh, first and last"),
+        ("Knee (sizing curve)",
+         f"({curve['cost_model']['anchors'][0]['kwh']:g} kWh undershoots it, "
+         f"{curve['cost_model']['anchors'][1]['kwh']:g} kWh overshoots it)",
+         "battery_sizing_curve.json:cost_model.anchors[].kwh"),
+        ("Knee (sizing curve)",
+         f"{curve['current_behavior']['knee']['threshold_years']}-year warranty term",
+         "battery_sizing_curve.json:current_behavior.knee.threshold_years"),
+        ("Optimality gap",
+         f"captures {gap['greedy_save_usd'] / gap['perfect_foresight_save_usd'] * 100:.1f}% "
+         "of the theoretical maximum",
+         "perfect_foresight_dispatch.json:greedy_comparison, greedy ÷ perfect-foresight"),
+        ("Powerwall 3", f"({pw3['capacity_kwh']:g} kWh storage, {pw3['power_kw']:g} kW output",
+         "battery_dispatch_policies.json:stored_kwh_cost.config"),
+        ("Round-trip efficiency", f"modeled here at {pw3['round_trip'] * 100:.0f}%",
+         "battery_dispatch_policies.json:stored_kwh_cost.config.round_trip"),
+        ("Grid carbon intensity",
+         f"across {carbon['coverage']['days_covered']} of the analysis year's "
+         f"{year_days.group(1)} days",
+         "carbon_fullyear_results.json:coverage.days_covered and analysis_year"),
+        ("Degradation",
+         f"swung production {soil['sanity_check_2024_cleaning']['known_cleaning_gain_pct']}%",
+         "soiling_results.json:sanity_check_2024_cleaning.known_cleaning_gain_pct"),
+        ("Franchise fee", f"({fee['franchise_fee']['bundled']['pct']:.2f}% of a base charge)",
+         "cca_bundled_counterfactual.json:pcia_and_franchise_fee.franchise_fee.bundled.pct"),
+        ("Franchise fee",
+         f"(${fee['franchise_fee']['bundled']['base_usd']:,.2f} → "
+         f"${fee['franchise_fee']['bundled']['result_usd']:.2f} on the "
+         f"{fee['franchise_fee']['bundled']['statement']} statement)",
+         "cca_bundled_counterfactual.json:pcia_and_franchise_fee.franchise_fee.bundled"),
+        ("Franchise fee",
+         f"(${fee['franchise_fee']['cca']['base_usd']:,.2f} → "
+         f"${fee['franchise_fee']['cca']['result_usd']:.2f} on the "
+         f"{fee['franchise_fee']['cca']['statement']} statement)",
+         "cca_bundled_counterfactual.json:pcia_and_franchise_fee.franchise_fee.cca"),
+        ("PCIA", f"${fee['pcia']['bundled_pcia_usd_this_statement']:.2f} of your Electricity "
+         "Generation Charge",
+         "cca_bundled_counterfactual.json:pcia_and_franchise_fee.pcia"),
+        ("Grandfathering", f"about {pto.group(2)} years from its {pto.group(1)} turn-on date",
+         "extended_results.json:nbt_2039.nem2_expiry"),
     ]
     # The token-derived pins, each appended only when its token resolved, and
     # each built from the RESOLVED string -- so a pin whose figure interpolates
@@ -5835,9 +6043,36 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
         ("Specific yield", lambda v: f"{v} kWh/kW/yr", "SPECIFIC_YIELD"),
         ("Degradation", lambda v: v, "DEGRADATION_NAIVE_RANGE"),
         ("Phantom load", lambda v: f"median {v}", "NIGHT_FLOOR_MEDIAN"),
+        # Issue #216's sweep, token-derived.
+        ("On-peak / off-peak / super-off-peak", lambda v: f"On-peak ({v} daily)",
+         "PEAK_WINDOW"),
+        ("Dispatch policy", lambda v: f"just the {v} peak", "PEAK_WINDOW"),
+        ("On-peak / off-peak / super-off-peak", lambda v: f"weekday {v}", "CHEAP_WINDOW"),
+        # The DC nameplate and the AC ceiling, in the watts the glossary uses.
+        ("DC vs AC rating", lambda v: f"(here {float(v) * 1000:,.0f} W)", "SYSTEM_SIZE_KW_DC"),
+        ("DC vs AC rating", lambda v: f"(here ~{float(v) * 1000:,.0f} W)", "AC_CEILING_KW"),
     ):
         if token in resolved:
             pins.append((term, figure_of(resolved[token]), token))
+    # The arbitrage entry's stored-energy cost spans the two stored-kWh costs
+    # §6 publishes (midday solar surplus at the low end, a grid top-up at the
+    # high end), in whole cents.
+    if {"STORED_KWH_COST_SOLAR_MIDDAY", "STORED_KWH_COST_GRID"} <= set(resolved):
+        lo, hi = (round(float(resolved[t].rstrip("¢")))
+                  for t in ("STORED_KWH_COST_SOLAR_MIDDAY", "STORED_KWH_COST_GRID"))
+        pins.append(("Arbitrage", f"storing ~{lo}–{hi}¢ energy",
+                     "STORED_KWH_COST_SOLAR_MIDDAY and STORED_KWH_COST_GRID"))
+    # PEAK_POWER_MULTIYEAR is a sentence ("9.20 kW on Aug 30, 2024, 97% of the
+    # inverter AC ceiling, across ..."); the glossary's clipping entry quotes
+    # its peak and its share of the ceiling, not its dates.
+    if "PEAK_POWER_MULTIYEAR" in resolved:
+        peak = re.match(r"([\d.]+ kW) on .*?, (\d+% of the inverter AC ceiling)",
+                        resolved["PEAK_POWER_MULTIYEAR"])
+        assert peak, (f"PEAK_POWER_MULTIYEAR renders {resolved['PEAK_POWER_MULTIYEAR']!r}, "
+                      "no longer in the 'N kW on DATE, P% of the inverter AC ceiling' shape "
+                      "the glossary's clipping entry quotes")
+        for figure in peak.groups():
+            pins.append(("Clipping", figure, "PEAK_POWER_MULTIYEAR"))
     # NIGHT_FLOOR_ANNUAL_COST renders both pricings in one sentence; the
     # glossary spreads them across its own. Pin the amounts, not the wording.
     if "NIGHT_FLOOR_ANNUAL_COST" in resolved:
@@ -5953,14 +6188,6 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
     ("s11", "The install invoice shows"): ("1e3efa71c591",
         "index appends the blended-$/kWh derivation (rate-history scaling, CA State "
         "Auditor figures) with no tokens"),
-    ("s12", "identical calendar windows in control years"): ("fefee6083c46",
-        "template is deliberately AHEAD here (#212's raw-ratio wording); index also "
-        "counts the control years (four) -- heals when index.html is regenerated"),
-    ("s12", "Post ÷ pre (raw)</th>"): ("bd7fac4233e5",
-        "same #212 template-side change ('(raw)' column header) awaiting an "
-        "index.html regeneration"),
-    ("s12", "How fast do the panels re-soil?"): ("31876a0af4f9",
-        "index's heading adds a verdict clause (The evidence splits)"),
     ("s13", "Short workups pricing the context"): ("29756b16f69d",
         "index counts the workups (Six) and dates NEM expiry (2039); no tokens"),
     ("s13", "Annual rate escalation</th>"): ("be0c211b8e51",
@@ -7029,6 +7256,7 @@ CASES = [
     case_soiling_annual_economics_matches_the_artifact,
     case_soiling_rate_bracket_matches_the_token_that_renders_it,
     case_cleaning_effect_heading_matches_the_sections_own_conclusion,
+    case_cleaning_heading_is_the_templates_h3_line_rendered,
     case_cleaning_heading_and_gain_describe_the_same_event,
     case_cleaning_gain_is_not_determined_when_no_entry_matches,
     case_cleaning_gain_follows_the_artifacts_own_not_determined_status,
@@ -7055,6 +7283,7 @@ CASES = [
     case_midday_vs_overnight_carbon_ratio_is_one_comparison_in_both_documents,
     case_whole_home_load_names_both_derivations_and_states_their_gap,
     case_degradation_naive_band_contains_every_estimator_it_is_built_from,
+    case_every_on_peak_bracket_on_the_page_is_the_rates_one,
     case_glossary_figures_match_the_artifacts_that_derive_them,
     case_template_fixed_prose_lines_all_appear_in_the_published_page,
     case_live_template_markup_never_names_a_free_fix_the_household_lacks,
