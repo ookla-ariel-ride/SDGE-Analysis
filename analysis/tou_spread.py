@@ -183,6 +183,7 @@ sys.path.insert(0, str(ROOT / "analysis"))
 import rates as RATES              # noqa: E402  -- canonical SUMMER_MONTHS, read-only
 
 DETAIL = ROOT / "data" / "bill_tou_detail.csv"
+DISPATCH = ROOT / "data" / "battery_dispatch_policies.json"
 OUT = ROOT / "data" / "tou_spread.json"
 
 
@@ -553,15 +554,94 @@ def _payback(save1, esc, cost=BATT_COST, fade=BATT_FADE, disc=BATT_DISC):
             "npv10": round(npv)}
 
 
+def _check_ev_applicability(doc, path):
+    """Fail closed when the dispatch artifact belongs to a household with a
+    DIFFERENT EV applicability than this run's intake declares (issue #247).
+
+    The seed is post_behavior.mid.battery_marginal: the battery's saving on top
+    of the household's free behavior fix. The artifact states which fix that
+    was as post_behavior.free_fix_scenario -- "a", the EV charge reschedule
+    only a household WITH an EV can run, or "c", the house-load shift a
+    household with NO EV gets instead -- and that is the artifact's own
+    statement of the EV applicability it was built under. This is a FLAG
+    match, not an identity check: a different household with the same flag
+    passes, and only the free-fix scenario is compared. The intake flag (behavior_rebuild.
+    EV_ANALYSIS, household.has_ev, read at call time) is the authority; the
+    ladder reproduction below checks the artifact against itself and passes a
+    foreign artifact that is merely self-consistent, which is why this check
+    runs first.
+
+    Both directions refuse: a no-EV intake seeding from an EV artifact would
+    publish another household's saving as this one's (and every payback, NPV
+    and per-period delta built on it); an EV intake seeding from a no-EV
+    artifact would price the battery on a fix this household did not get. An
+    artifact that states neither scenario predates the shape and is refused
+    too: silence is not agreement. The remedy is the same throughout: run
+    battery_dispatch_policies.py for THIS household first.
+
+    behavior_rebuild is imported here, lazily, and not at module top: it reads
+    private/household.yaml at import and fails closed without it, and this
+    module's other work needs no intake at all."""
+    import battery_dispatch_policies as bdp   # noqa: E402  -- lazy, see above
+    import behavior_rebuild as br             # noqa: E402  -- lazy, see above
+    ev_applies = br.EV_ANALYSIS               # read at call time; tests rebind it
+    pb = doc.get("post_behavior")
+    scen = pb.get("free_fix_scenario") if isinstance(pb, dict) else None
+    if scen == bdp.FREE_FIX_SCENARIO_EV:
+        artifact_has_ev = True
+    elif scen == bdp.FREE_FIX_SCENARIO_NO_EV:
+        artifact_has_ev = False
+    else:
+        raise SystemExit(
+            f"tou_spread.py: {path} does not state which EV applicability it was "
+            f"built under: post_behavior.free_fix_scenario is {scen!r}, expected "
+            f"{bdp.FREE_FIX_SCENARIO_EV!r} (EV household) or "
+            f"{bdp.FREE_FIX_SCENARIO_NO_EV!r} (no EV). Regenerate it with "
+            "battery_dispatch_policies.py before seeding a payback from it.")
+    if artifact_has_ev == ev_applies:
+        return
+    if ev_applies:
+        flag_says = ("household.has_ev is NOT false (the intake applicability "
+                     "flag in private/household.yaml says this household HAS "
+                     "an EV)")
+        artifact_says = (f"records post_behavior.free_fix_scenario "
+                         f"{bdp.FREE_FIX_SCENARIO_NO_EV!r}, the house-load "
+                         "shift a household with NO EV gets")
+        harm = ("Seeding the payback ladder from it would price this "
+                "household's battery on top of a free fix it does not get, "
+                "deleting the real EV-shift saving from every payback")
+    else:
+        flag_says = ("household.has_ev is false (the intake applicability flag "
+                     "in private/household.yaml says this household has NO EV)")
+        artifact_says = (f"records post_behavior.free_fix_scenario "
+                         f"{bdp.FREE_FIX_SCENARIO_EV!r}, the EV charge "
+                         "reschedule only a household WITH an EV can run")
+        harm = ("Seeding the payback ladder from it would publish ANOTHER "
+                "household's battery saving as battery.seed_year1_saving_usd, "
+                "and with it every uniform_ladder, per_period and vs_uniform "
+                "figure in data/tou_spread.json")
+    raise SystemExit(
+        f"EV APPLICABILITY MISMATCH between this run and its dispatch "
+        f"artifact: this run's intake says {flag_says}, but {path} "
+        f"{artifact_says}. {harm} (CLAUDE.md section 0: every figure must be "
+        "this household's). Run battery_dispatch_policies.py for THIS "
+        "household first, so the artifact the seed is read from is its own; "
+        "this script will not seed one household's payback from another "
+        "household's dispatch.")
+
+
 def _battery_seed():
     """The year-one battery saving the uniform ladder is built on, read from the
     committed dispatch artifact rather than restated here -- restating it is how
     the retired extra_results.json came to publish a different payback than the
-    live engine for the same house."""
-    path = ROOT / "data" / "battery_dispatch_policies.json"
+    live engine for the same house. Checked against this run's intake first
+    (_check_ev_applicability): the artifact has to carry the same EV
+    applicability as this run declares."""
+    path = DISPATCH
     if not path.exists():
         raise SystemExit(f"tou_spread.py: missing {path}")
     d = json.loads(path.read_text())
+    _check_ev_applicability(d, path)
     try:
         seed = d["post_behavior"]["mid"]["battery_marginal"]
         published = d["escalation_greedy_pw3_post_behavior"]

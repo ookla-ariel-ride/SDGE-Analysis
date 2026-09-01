@@ -8,12 +8,34 @@ three of them are mistakes that were actually made while writing it.
 Run from the repo root:  ./.venv/bin/python analysis/test_tou_spread.py
 """
 import datetime as dt
+import hashlib
 import json
 import pathlib
 import sys
+import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import suite_runner  # noqa: E402
+
+# tou_spread._battery_seed() imports behavior_rebuild lazily to read the
+# household's EV applicability flag (issue #247), and behavior_rebuild reads
+# private/household.yaml at its own import and fails closed without it. Same
+# fix as test_perfect_foresight_dispatch.py: point the intake loader at a
+# synthetic, invented household before anything imports it, so this whole file
+# runs on a checkout with no private/ at all. Nothing below depends on these
+# values; the flag they imply (no household.has_ev key, so an EV household)
+# matches the committed dispatch artifact.
+import household as _hh
+_HH_DIR = tempfile.TemporaryDirectory()
+_hh.PATH = pathlib.Path(_HH_DIR.name) / "household.yaml"
+_hh.PATH.write_text(
+    "household:\n  pto_date: 2019-12-01\nlocation:\n  lat: 33.0\n"
+    "solar:\n  install_invoice_usd: 30000\n  install_paid_date: 2019-12-01\n"
+    "charger:\n  kw: 11.5\ncleaning_history: []\n"
+    "gas:\n  therm_allin_usd: 2.0\n"
+    "misc:\n  miles_per_year: 12000\n  supercharge_kwh_yr: 500\n")
+_hh._cache = None
+import behavior_rebuild as br  # noqa: E402
 import tou_spread as ts  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -471,6 +493,136 @@ def case_artifact_regenerates_byte_identically():
     ts.main()
     assert path.read_bytes() == before, "tou_spread.json is not reproducible"
     return "data/tou_spread.json regenerates byte-identically"
+
+
+# ---------------------------------------------------------------------------
+# Which EV applicability was the dispatch artifact built under? (issue #247)
+# A flag match: a different household with the same flag passes it.
+#
+# _battery_seed() reads data/battery_dispatch_policies.json and seeds every
+# payback in the battery block from it. The artifact states its applicability
+# through post_behavior.free_fix_scenario ("a": the EV charge reschedule, only
+# an EV household runs it; "c": the house-load shift a no-EV household gets).
+# The intake flag br.EV_ANALYSIS (household.has_ev) is the authority; the seed
+# must be refused, in both directions, when the artifact disagrees with it.
+# ---------------------------------------------------------------------------
+def _dispatch_copy(scenario, drop=False):
+    """A copy of the committed dispatch artifact with only its household
+    identity changed: free_fix_scenario set to `scenario`, or removed when
+    `drop`. The ladder is left intact, so the copy passes the reproduction
+    check and the only thing that can refuse it is the applicability check."""
+    doc = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
+    if drop:
+        del doc["post_behavior"]["free_fix_scenario"]
+    else:
+        doc["post_behavior"]["free_fix_scenario"] = scenario
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    with open(fd, "w") as fh:
+        json.dump(doc, fh)
+    return pathlib.Path(tmp), doc["post_behavior"]["mid"]["battery_marginal"]
+
+
+def _seed_under(has_ev, path=None):
+    """Run _battery_seed() with the intake flag forced and the artifact path
+    optionally redirected; restore both. Returns ('seed', value) or
+    ('refused', message)."""
+    was_flag, was_path = br.EV_ANALYSIS, ts.DISPATCH
+    br.EV_ANALYSIS = has_ev
+    if path is not None:
+        ts.DISPATCH = path
+    try:
+        seed, _published = ts._battery_seed()
+        return "seed", seed
+    except SystemExit as exc:
+        return "refused", str(exc)
+    finally:
+        br.EV_ANALYSIS = was_flag
+        ts.DISPATCH = was_path
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+
+def _assert_refusal(msg, artifact_name):
+    assert "EV APPLICABILITY MISMATCH" in msg, msg
+    assert artifact_name in msg, f"the refusal does not name the artifact: {msg}"
+    assert "household.has_ev" in msg, f"the refusal does not name the flag: {msg}"
+    assert "battery_dispatch_policies.py" in msg, f"the refusal does not name the remedy: {msg}"
+
+
+@case
+def case_battery_seed_refuses_an_ev_artifact_on_a_no_ev_household():
+    """household.has_ev false, committed artifact from an EV household: the
+    seed would be another household's money, so it is refused."""
+    outcome, msg = _seed_under(has_ev=False)
+    assert outcome == "refused", f"an EV household's seed was accepted on a no-EV intake: {msg}"
+    _assert_refusal(msg, "battery_dispatch_policies.json")
+    assert "NO EV" in msg, msg
+    return "no-EV intake + EV artifact is refused, naming artifact, flag and remedy"
+
+
+@case
+def case_battery_seed_refuses_a_no_ev_artifact_on_an_ev_household():
+    """The mirror: household.has_ev true, artifact from a no-EV household. A
+    one-directional guard passes this; it must not."""
+    path, _ = _dispatch_copy("c")
+    outcome, msg = _seed_under(has_ev=True, path=path)
+    assert outcome == "refused", f"a no-EV household's seed was accepted on an EV intake: {msg}"
+    _assert_refusal(msg, path.name)
+    assert "HAS an EV" in msg, msg
+    return "EV intake + no-EV artifact is refused, naming artifact, flag and remedy"
+
+
+@case
+def case_battery_seed_accepts_a_matching_household_both_ways():
+    """Positive control: a build that refuses everything passes the two cases
+    above. Matching households must yield the artifact's own seed, in both
+    directions."""
+    committed = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
+    want = committed["post_behavior"]["mid"]["battery_marginal"]
+    assert committed["post_behavior"]["free_fix_scenario"] == "a", (
+        "this repo's committed artifact is an EV household's",
+        committed["post_behavior"]["free_fix_scenario"])
+    outcome, got = _seed_under(has_ev=True)
+    assert outcome == "seed" and got == want, (outcome, got, want)
+    path, want_c = _dispatch_copy("c")
+    outcome, got_c = _seed_under(has_ev=False, path=path)
+    assert outcome == "seed" and got_c == want_c, (outcome, got_c, want_c)
+    return f"EV+EV and no-EV+no-EV both seed ${want} from the artifact"
+
+
+@case
+def case_battery_seed_refuses_an_artifact_that_does_not_state_its_household():
+    """An artifact with no free_fix_scenario predates the shape that states
+    its household. Silence is not agreement; regenerate it."""
+    path, _ = _dispatch_copy(None, drop=True)
+    outcome, msg = _seed_under(has_ev=True, path=path)
+    assert outcome == "refused", f"an artifact with no applicability was accepted: {msg}"
+    assert "free_fix_scenario" in msg and path.name in msg, msg
+    assert "battery_dispatch_policies.py" in msg, msg
+    return "an artifact without post_behavior.free_fix_scenario is refused, naming the remedy"
+
+
+@case
+def case_a_refused_seed_writes_nothing():
+    """A refusal must leave data/tou_spread.json byte-for-byte as it was, and
+    no temp file behind."""
+    out = ROOT / "data" / "tou_spread.json"
+    before = hashlib.sha256(out.read_bytes()).hexdigest()
+    tmps_before = set(out.parent.glob("*.tmp"))
+    was = br.EV_ANALYSIS
+    br.EV_ANALYSIS = False
+    try:
+        ts.main()
+    except SystemExit as exc:
+        _assert_refusal(str(exc), "battery_dispatch_policies.json")
+    else:
+        raise AssertionError("main() ran to completion on a mismatched household")
+    finally:
+        br.EV_ANALYSIS = was
+    after = hashlib.sha256(out.read_bytes()).hexdigest()
+    assert after == before, "a refused run changed data/tou_spread.json"
+    assert set(out.parent.glob("*.tmp")) == tmps_before, "a refused run left a temp file"
+    return "a refused run leaves data/tou_spread.json unchanged (sha256 equal) and no temp file"
 
 
 def main():

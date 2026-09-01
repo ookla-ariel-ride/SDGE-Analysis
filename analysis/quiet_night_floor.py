@@ -1210,19 +1210,41 @@ def battery_interaction(d, consumption, generation, new_consumption, new_generat
         "delta_usd": round(delta, 2),
         "delta_pct": delta_pct,
         "direction": direction,
-        "caveat": ("small confound (PR #77 review nitpick): run_batt's greedy "
-                  "EV-spillover gate (kw = imp*4 >= 2.5 kW is treated as "
-                  "non-battery-servable house/EV load) is evaluated on EACH "
-                  "series' OWN import values, so some intervals become "
-                  "servable ONLY in the floor-removed counterfactual purely "
-                  "because subtracting the floor pushed their import under "
-                  "2.5 kW -- not because of any real behavioral change. "
-                  "Freezing the gate on the baseline series instead moves "
-                  "this delta by roughly $26/yr in the conservative "
-                  "direction (a smaller magnitude reduction in the battery's "
-                  "marginal saving); not corrected here since the gate is "
-                  "run_batt's own shared, unmodified logic."),
+        "caveat": battery_caveat(),
     }
+
+
+# The caveat battery_interaction() publishes is a claim about run_batt's
+# EV-spillover gate, and that gate only runs on a household whose intake says
+# it has an EV (br.EV_ANALYSIS, issue #246 / #147). Two strings, because on a
+# no-EV household the confound it describes cannot arise and a caveat that
+# still described it would be about a filter the dispatch never applied.
+_BATTERY_CAVEAT_EV = (
+    "small confound (PR #77 review nitpick): run_batt's greedy "
+    "EV-spillover gate (kw = imp*4 >= 2.5 kW is treated as "
+    "non-battery-servable house/EV load) is evaluated on EACH "
+    "series' OWN import values, so some intervals become "
+    "servable ONLY in the floor-removed counterfactual purely "
+    "because subtracting the floor pushed their import under "
+    "2.5 kW -- not because of any real behavioral change. "
+    "Freezing the gate on the baseline series instead moves "
+    "this delta by roughly $26/yr in the conservative "
+    "direction (a smaller magnitude reduction in the battery's "
+    "marginal saving); not corrected here since the gate is "
+    "run_batt's own shared, unmodified logic.")
+_BATTERY_CAVEAT_NO_EV = (
+    "no EV-spillover-gate confound: household.has_ev is false, so run_batt "
+    "applied no >= 2.5 kW exclusion on either series (" +
+    bdp.EV_EXCLUSION_NOTE_NO_EV + "). Every interval is servable on both the "
+    "baseline and the floor-removed counterfactual, so no interval can change "
+    "servability purely because the floor subtraction moved its import across "
+    "a gate; the delta is the floor's own effect on the battery.")
+
+
+def battery_caveat():
+    """The battery_interaction.caveat string this household's dispatch earned,
+    read off the same intake predicate run_batt gates the exclusion on."""
+    return _BATTERY_CAVEAT_EV if br.EV_ANALYSIS else _BATTERY_CAVEAT_NO_EV
 
 
 def confidence_labels():

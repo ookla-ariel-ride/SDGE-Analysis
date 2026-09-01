@@ -319,9 +319,17 @@ def run_batt_carbon(d, imp0, gen0, cap, inten, threshold, charge_kw=None):
     thru = 0.0
     kw = imp0 * 4
     pwrq_chg = PWRQ if charge_kw is None else charge_kw / 4
+    # The >= 2.5 kW EV-spillover exclusion runs only on a household whose
+    # intake says it has an EV (issue #246), keyed off br.EV_ANALYSIS exactly
+    # as battery_dispatch_policies.run_batt gates its own copy of the rule:
+    # with household.has_ev false there is no spillover, and the test would
+    # withhold ordinary house load from the battery. The flag, never the
+    # detector: a detector that found nothing is not a household with no EV.
+    ev_spillover_excluded = br.EV_ANALYSIS
     for i in range(len(d)):
         chargeable = inten[i] <= threshold
-        disch_win = (inten[i] > disch_threshold) and kw[i] < 2.5
+        serve_ok = (kw[i] < 2.5) if ev_spillover_excluded else True
+        disch_win = (inten[i] > disch_threshold) and serve_ok
         if exp[i] > 0 and chargeable:
             c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
             if c > 0:
@@ -379,10 +387,15 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold, charge_kw=None):
     h = d.hour.values
     kw = imp0 * 4
     pwrq_chg = PWRQ if charge_kw is None else charge_kw / 4
+    # Same intake-flag gate on the EV-spillover exclusion as run_batt_carbon
+    # above and battery_dispatch_policies.run_batt (issue #246); both of this
+    # policy's discharge conditions carry the rule, so both read the gate.
+    ev_spillover_excluded = br.EV_ANALYSIS
     for i in range(len(d)):
         chargeable = inten[i] <= threshold
-        cond_a = (16 <= h[i] < 21) or (p[i] != "sop" and kw[i] < 2.5)
-        cond_b = (inten[i] > disch_threshold) and (kw[i] < 2.5)
+        serve_ok = (kw[i] < 2.5) if ev_spillover_excluded else True
+        cond_a = (16 <= h[i] < 21) or (p[i] != "sop" and serve_ok)
+        cond_b = (inten[i] > disch_threshold) and serve_ok
         disch_win = cond_a or cond_b
         cheap_clean = (p[i] == "sop") and chargeable
         if exp[i] > 0 and chargeable and not (disch_win and imp[i] > 0):

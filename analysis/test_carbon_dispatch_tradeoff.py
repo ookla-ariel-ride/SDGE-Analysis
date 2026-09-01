@@ -625,6 +625,83 @@ def case_run_batt_carbon_and_union_thread_a_distinct_charge_kw():
     return "run_batt_carbon and run_batt_union thread a distinct, independently-effective charge_kw"
 
 
+# ---------------------------------------------------------------------------
+# The EV-spillover exclusion is gated on the intake flag (issue #246). Runs B
+# and C carry their own copy of run_batt's >= 2.5 kW rule; on a household
+# whose intake says household.has_ev is false there is no spillover, and the
+# rule would withhold ordinary house load from the battery. br.EV_ANALYSIS is
+# that flag, read at call time, so each case sets it, runs, and restores it.
+# ---------------------------------------------------------------------------
+def _one_dirty_offpeak_spike():
+    """One off-peak, dirty-hour interval importing 12 kW (3.0 kWh) and nothing
+    else. cap huge so SOC never binds: the only cap on service is PWRQ, so the
+    served energy is exactly PWRQ (2.875 kWh) when the rule lets it through."""
+    d = pd.DataFrame({"p": ["off"], "hour": [7.0]})
+    return d, np.array([3.0]), np.zeros(1), np.array([300.0]), 100.0, 100.0
+
+
+def _served_by(fn, has_ev):
+    d, imp0, gen0, inten, threshold, cap = _one_dirty_offpeak_spike()
+    was = br.EV_ANALYSIS
+    br.EV_ANALYSIS = has_ev
+    try:
+        imp, _exp, served, _thru = fn(d, imp0, gen0, cap, inten, threshold)
+    finally:
+        br.EV_ANALYSIS = was
+    return served, float(imp0[0] - imp[0])
+
+
+@case
+def case_no_ev_household_run_b_serves_a_high_power_offpeak_import():
+    served, delta = _served_by(CDT.run_batt_carbon, has_ev=False)
+    assert abs(served - CDT.PWRQ) < EPS and abs(delta - CDT.PWRQ) < EPS, (
+        f"Run B on a no-EV household did not serve the 12 kW dirty off-peak "
+        f"import: served {served} kWh, expected {CDT.PWRQ}")
+    return f"household.has_ev false: Run B serves {served:.3f} kWh of a 12 kW off-peak import"
+
+
+@case
+def case_ev_household_run_b_still_excludes_that_import():
+    """Positive control for Run B: the same interval stays unserved with an EV,
+    so the case above cannot pass against a build that deleted the rule."""
+    served, delta = _served_by(CDT.run_batt_carbon, has_ev=True)
+    assert served < EPS and delta < EPS, (
+        f"Run B on an EV household served the 12 kW off-peak import: {served} kWh")
+    return "household.has_ev true: Run B serves 0 kWh of the same interval"
+
+
+@case
+def case_no_ev_household_run_c_serves_a_high_power_offpeak_import():
+    served, delta = _served_by(CDT.run_batt_union, has_ev=False)
+    assert abs(served - CDT.PWRQ) < EPS and abs(delta - CDT.PWRQ) < EPS, (
+        f"Run C on a no-EV household did not serve the 12 kW dirty off-peak "
+        f"import: served {served} kWh, expected {CDT.PWRQ}")
+    return f"household.has_ev false: Run C serves {served:.3f} kWh of a 12 kW off-peak import"
+
+
+@case
+def case_ev_household_run_c_still_excludes_that_import():
+    """Positive control for Run C, both of whose discharge conditions carry
+    the rule."""
+    served, delta = _served_by(CDT.run_batt_union, has_ev=True)
+    assert served < EPS and delta < EPS, (
+        f"Run C on an EV household served the 12 kW off-peak import: {served} kWh")
+    return "household.has_ev true: Run C serves 0 kWh of the same interval"
+
+
+@case
+def case_runs_b_and_c_gate_on_the_intake_flag_not_the_detector():
+    """The gate is br.EV_ANALYSIS, the declared flag, in both policies. A
+    detector that found no sessions is not the same fact."""
+    import inspect
+    for fn in (CDT.run_batt_carbon, CDT.run_batt_union):
+        src = inspect.getsource(fn)
+        code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+        assert "br.EV_ANALYSIS" in code, f"{fn.__name__} no longer gates on br.EV_ANALYSIS"
+        assert "detect_sessions" not in code, f"{fn.__name__} reads the EV detector"
+    return "run_batt_carbon and run_batt_union both read br.EV_ANALYSIS and never the detector"
+
+
 def main():
     listed = [c.__name__ for c in CASES]
     assert len(listed) == len(set(listed)), \

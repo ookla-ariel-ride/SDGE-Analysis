@@ -962,6 +962,81 @@ def case_artifact_has_all_required_sections():
 
 
 # ---------------------------------------------------------------------------
+# The EV-spillover exclusion is gated on the intake flag (issue #246). The
+# battery section dispatches through battery_dispatch_policies.run_batt, whose
+# >= 2.5 kW outside-on-peak rule only runs on a household with an EV, and its
+# published caveat is a claim about that rule. br.EV_ANALYSIS is the flag,
+# read at call time, so each case sets it, runs, and restores it.
+# ---------------------------------------------------------------------------
+SPIKE_KW = 4.0
+SPIKE_KWH = SPIKE_KW * 0.25
+SPIKE_IDX = 28   # 07:00 on the toy frame's first day (a summer Monday): off-peak
+
+
+def _spike_toy():
+    d = _toy_frame(ndays=3, night_kw=0.5, day_kw=0.3)
+    assert d.p.values[SPIKE_IDX] == "off", d.p.values[SPIKE_IDX]
+    imp0 = d.Consumption.values.astype(float).copy()
+    imp0[SPIKE_IDX] = SPIKE_KWH
+    d["Consumption"] = imp0
+    return d, imp0, d.Generation.values.astype(float)
+
+
+def _with_flag(has_ev, fn):
+    was = br.EV_ANALYSIS
+    br.EV_ANALYSIS = has_ev
+    try:
+        return fn()
+    finally:
+        br.EV_ANALYSIS = was
+
+
+@case
+def case_no_ev_household_battery_serves_a_high_power_offpeak_import():
+    """Regression guard, not a #246 defect: this module dispatches through
+    battery_dispatch_policies.run_batt, whose gate #147 already keyed off the
+    intake flag, so this case passes on the pre-fix tree. It pins that gate
+    as seen through _steady_state_battery: with household.has_ev false the
+    4 kW off-peak import is house load and the steady-state dispatch this
+    module prices the floor against serves it."""
+    d, imp0, gen0 = _spike_toy()
+    imp_no_ev, _ = _with_flag(False, lambda: QNF._steady_state_battery(d, imp0, gen0))
+    imp_ev, _ = _with_flag(True, lambda: QNF._steady_state_battery(d, imp0, gen0))
+    served_no_ev = float(imp0[SPIKE_IDX] - imp_no_ev[SPIKE_IDX])
+    served_ev = float(imp0[SPIKE_IDX] - imp_ev[SPIKE_IDX])
+    assert abs(served_no_ev - SPIKE_KWH) < 1e-9, (
+        f"a no-EV household's {SPIKE_KW} kW off-peak import was not served: "
+        f"{served_no_ev} kWh delivered, expected {SPIKE_KWH}")
+    # positive control: an EV household still withholds that interval, so this
+    # case cannot pass against a build that deleted the rule
+    assert served_ev < 1e-9, (
+        f"an EV household's {SPIKE_KW} kW off-peak import was served: {served_ev} kWh")
+    return (f"household.has_ev false serves {served_no_ev:.3f} kWh of a {SPIKE_KW} kW "
+            f"off-peak import; true serves {served_ev:.0f} kWh")
+
+
+@case
+def case_battery_caveat_states_which_exclusion_ran():
+    """battery_interaction.caveat describes run_batt's EV-spillover gate. On a
+    no-EV household no gate ran, so the caveat must say so instead of
+    describing a confound that cannot arise; on an EV household it must keep
+    the string the committed artifact carries."""
+    ev = _with_flag(True, QNF.battery_caveat)
+    no_ev = _with_flag(False, QNF.battery_caveat)
+    if ARTIFACT.exists():
+        committed = json.loads(ARTIFACT.read_text())["battery_interaction"]["caveat"]
+        assert ev == committed, f"the EV household's caveat changed: {ev!r}"
+    assert "2.5 kW" in ev and "$26/yr" in ev, ev
+    assert no_ev != ev and "household.has_ev is false" in no_ev, no_ev
+    assert "$26/yr" not in no_ev, "the no-EV caveat quotes the EV household's confound figure"
+    # and the published block reads the same predicate
+    d, imp0, gen0 = _spike_toy()
+    block = _with_flag(False, lambda: QNF.battery_interaction(d, imp0, gen0, imp0 * 0.9, gen0))
+    assert block["caveat"] == no_ev, block["caveat"]
+    return "caveat is the EV string with an EV and names the absent gate without one"
+
+
+# ---------------------------------------------------------------------------
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), \

@@ -1173,7 +1173,10 @@ and the same billing engine (`rates.bill_nem` via `battery_
 dispatch_policies.billed()`); the charge/discharge decision differs between them by design,
 but that decision difference also changes how much load each policy serves (Run A cycles
 4,968 kWh/yr against Run B's 2,394), so this does not isolate a pure objective effect at
-matched utilization; see the throughput caveat below.
+matched utilization; see the throughput caveat below. Runs B and C carry their own copy of
+`run_batt`'s ≥2.5 kW EV-spillover exclusion, and gate it the same way: on
+`behavior_rebuild.EV_ANALYSIS` (the intake flag `household.has_ev`, issue #246), so a
+household with no EV has every off-peak import battery-servable in all three runs.
 
 - **Run A (cost-minimizing).** Calls `battery_dispatch_policies.run_batt(..., "greedy")`
   directly, unmodified, the same policy `data/battery_dispatch_policies.json`'s published
@@ -1364,7 +1367,10 @@ and `rates.py` beside it; writes `data/nem3_grandfathering.json`.
 script replaces it with a backtest: the real 2025 DSGS Option 3 event calendar, replayed
 against this household's own measured 15-minute load and solar, for a hypothetical
 Powerwall 3 (this household owns no battery today). Every figure in the artifact is
-labeled hypothetical for that reason.
+labeled hypothetical for that reason. `run_batt_vpp` carries its own copy of `run_batt`'s
+≥2.5 kW EV-spillover exclusion and gates it on the same intake flag
+(`behavior_rebuild.EV_ANALYSIS`, `household.has_ev`, issue #246), which is what keeps its
+empty-calendar byte-identity to `run_batt` true on a household with no EV as well.
 
 **Source data.** California Energy Commission docket 22-RENEW-01: TN 269155 (filed
 2026-03-12, "Anonymized Data - Staff Analysis of the DSGS 2025 Program Performance",
@@ -2258,7 +2264,17 @@ serve every import priced above the battery's stored-energy cost. Nobody had che
 close that gets to the best any controller could do on this house's own measured year, at
 identical hardware (13.5 kWh, 11.5 kW discharge / 5 kW charge, Tesla's own datasheet,
 issue #40; 90% round-trip) and the identical EV-spillover exclusion (≥2.5 kW outside
-on-peak never battery-served). This script computes the true annual-bill-minimizing
+on-peak never battery-served, and, like `run_batt`'s, applied only on a household whose
+intake says it has an EV: `ev_spillover_mask()` reads `behavior_rebuild.EV_ANALYSIS` and is
+all-False otherwise, issue #246; the greedy comparison it quotes from
+`battery_dispatch_policies.json` is refused, in both directions, when that artifact's
+`post_behavior.free_fix_scenario` disagrees with the same flag, a flag match that a
+different household with the same flag passes, and dropped from the comparison, announced
+by name, when its `baseline_bill_current_rates` differs from this frame's own `billed()`
+baseline by more than the artifact's whole-dollar rounding, so a foreign frame's greedy
+saving is never quoted while the synthetic CI run keeps its optional cross-check, issue
+#247). This script
+computes the true annual-bill-minimizing
 dispatch directly, as a linear program. That is a different thing from a heuristic or from
 naive price arbitrage: `rates.bill_nem_monthly` nets import against export per (month,
 season, TOU-period) bucket, charging the bucket's net position at the higher "energy" rate
@@ -3075,7 +3091,12 @@ by one uniform factor in `payback_of()`/`npv_of()`, so the decision-relevant que
 the spread trend, not any single period's own absolute level, and `tou_spread.json`'s own
 dedicated, structural-break-tested spread analysis already answers that: "not determined"
 in both seasons (`battery.per_period`), which is unknown and is evidence for neither a
-positive nor a zero-floored range.
+positive nor a zero-floored range. (`tou_spread.py` seeds that battery block from
+`battery_dispatch_policies.json`'s `post_behavior.mid.battery_marginal`, and refuses the
+artifact, in both directions, when its `post_behavior.free_fix_scenario` disagrees with the
+intake flag `behavior_rebuild.EV_ANALYSIS`, so a household with no EV cannot publish the
+committed EV household's seed as its own; a flag match that a different household with the
+same flag passes, since this script has no frame to check identity against; issue #247.)
 
 Per-TOU-cell absolute-level trends (on-peak delivery rates rising, individually, with 95%
 CIs excluding zero: summer +7.66%/yr, winter +11.3%/yr) do not prove the 0% floor correct:
@@ -3684,7 +3705,11 @@ de-prioritizes it: the owner identifies the cause as home-lab compute (report pr
 index.html §13; not independently recorded in any structured data file or in this
 document), so the floor is never costed. This script re-measures the floor directly from
 interval data (not by reading `phantom`'s hand-recorded numbers), prices it two
-independent ways, and reconciles them.
+independent ways, and reconciles them. Its battery section dispatches through
+`battery_dispatch_policies.run_batt`, whose EV-spillover exclusion runs only on a household
+whose intake says it has an EV, so `battery_interaction.caveat` is a claim about that gate
+and follows the same flag (`behavior_rebuild.EV_ANALYSIS`, issue #246): the confound it
+describes cannot arise on a household with no EV, and the caveat then says so instead.
 
 **This artifact is the report's only source for this load (issue #140).** Report §0, §9
 and §13 all resolve the floor's magnitude, energy, cost and sensitivity through the
@@ -5993,7 +6018,13 @@ bigger battery, more solar, a load reduction) reduces the dollar amount too; thi
 own `compute_package_gross_imports()` shows it: MID and HIGH import less gross power than
 the baseline, and `build_package_floor_fractions()` recomputes a *lower* NBC dollar figure
 for both as a direct result. Only the fixed charge is invariant under every purchase, by
-construction, and that invariance is what a floor requires.
+construction, and that invariance is what a floor requires. The denominators of those
+fractions come from `data/package_results.json`, so before dividing, the script checks that
+the artifact carries the same EV applicability as this run: its
+`packages.LOW.free_fix_scenario` and the numerator's own `free_fix_scenario` must both agree
+with the intake flag `behavior_rebuild.EV_ANALYSIS`, in both directions, or the run refuses
+and writes nothing (issue #247). That is a flag match, not an identity check: a different
+household with the same flag passes it.
 
 **The four-bucket classification.** Every one of the 26 electric periods in
 `data/bill_periods_electric.csv` is split into exactly four buckets that sum to

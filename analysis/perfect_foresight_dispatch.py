@@ -78,7 +78,9 @@ Constraints:
               class of bug in the heuristic dispatch script; built in here
               from the start rather than fixed after the fact)
   EV exclusion: discharge_i forced to 0 wherever kW_i >= 2.5 outside on-peak
-              (the same rule battery_dispatch_policies.run_batt applies)
+              (the same rule battery_dispatch_policies.run_batt applies), and
+              like run_batt's only on a household whose intake says it has an
+              EV (br.EV_ANALYSIS, issue #246); see ev_spillover_mask()
 
 Deriving imp_i/exp_i from imp0_i/gen0_i plus explicit, capped battery
 actions (rather than as free variables tied only to the signed net
@@ -156,7 +158,9 @@ Output: perfect_foresight_dispatch.json. This script fully regenerates the
 committed artifact.
 """
 import json
+import math
 import os
+import sys
 
 import numpy as np
 import scipy.sparse as sp
@@ -164,7 +168,7 @@ from scipy.optimize import linprog
 
 import behavior_rebuild as br
 import rates as R
-from battery_dispatch_policies import billed, CHARGE_KW
+from battery_dispatch_policies import billed, CHARGE_KW, ev_exclusion_note
 
 CAP_KWH = 13.5
 POWER_KW = 11.5   # continuous DISCHARGE, Tesla's own datasheet
@@ -196,6 +200,129 @@ def _bucket_assignment(d):
     bucket_idx = np.array([key_to_idx[k] for k in keys], dtype=np.int64)
     rates = [(R.energy(seas, p), R.credit(seas, p)) for (_ym, seas, p) in uniq]
     return bucket_idx, rates
+
+
+def ev_spillover_mask(imp0, p):
+    """The intervals no dispatch here may discharge into: imports at or above
+    2.5 kW outside on-peak, read as EV charging spilling out of its window
+    that the free schedule fix moves. The same rule as
+    battery_dispatch_policies.run_batt, and gated the same way (issue #246):
+    only on a household whose intake says it has an EV. With household.has_ev
+    false there is no spillover, and the same test would withhold ordinary
+    house load (a heat pump, an oven) from a battery that should serve it, so
+    every interval is dischargeable and the mask is all-False.
+
+    Keyed off the intake flag br.EV_ANALYSIS, never off the detector: a
+    detector that found no sessions is not the same fact as a household with
+    no EV. Both the annual LP (solve) and the rolling controller's
+    execution-time re-clip (rolling_day_ahead) build their mask here, so the
+    rule has one implementation in this module."""
+    if not br.EV_ANALYSIS:
+        return np.zeros(len(imp0), dtype=bool)
+    return (imp0 * 4.0 >= 2.5) & (p != "on")
+
+
+_METHOD_EV = ("linear program minimizing the exact rates.bill_nem_monthly "
+              "objective (36 month/season/period netting buckets + NBC on "
+              "gross imports), solved via scipy.optimize.linprog (HiGHS), "
+              "at identical capacity/power/efficiency/EV-exclusion "
+              "constraints as battery_dispatch_policies.run_batt's greedy "
+              "policy, with a cyclic (steady-state) SOC boundary")
+
+
+BASELINE_TOL_USD = 0.5   # the artifact rounds its baseline to whole dollars: |x - round(x)| <= 0.5
+
+
+def load_canon(path, base_bill):
+    """The committed dispatch artifact the greedy comparison quotes
+    (pw3.greedy.save, the shipping policy's own saving), or None when there is
+    none to quote. An artifact that exists is first checked against this run's
+    intake (issue #247): it states the EV applicability it was built under as
+    post_behavior.free_fix_scenario ("a", the EV charge reschedule only an EV household
+    runs; "c", the house-load shift a no-EV household gets), and that must
+    agree with br.EV_ANALYSIS (household.has_ev), the authority, in both
+    directions. Otherwise greedy_save_usd and every optimality-gap figure
+    built on it would be another household's. An artifact that states
+    neither predates the shape and is refused as well. That is a FLAG match,
+    not an identity check: a different household with the same flag passes
+    it. The one zero-cost identity check available is then applied: the
+    artifact's baseline_bill_current_rates is round(billed(d, imp0, gen0))
+    from the same billed() engine this script computes base_bill with, so
+    on the same frame the two agree to the artifact's whole-dollar rounding
+    (BASELINE_TOL_USD). A larger gap means the artifact was built on a
+    different frame; its greedy saving is then NOT quoted (the comparison is
+    dropped exactly as if no artifact existed: the top-level greedy_comparison
+    key is absent and purchasing_statement.greedy_save_usd is null) and the
+    mismatch is announced by name on stderr. Dropping rather than refusing
+    keeps this generator's documented CI contract (test_scripts_runnable.py
+    runs it on a synthetic frame beside the committed data/, where the
+    cross-check is optional and never a hard tie-out); a flag mismatch is
+    still a refusal, since the intake and the artifact then disagree about
+    the household's own inputs, not just about which frame was billed."""
+    if not os.path.exists(path):
+        return None
+    canon = json.load(open(path))
+    pb = canon.get("post_behavior")
+    scen = pb.get("free_fix_scenario") if isinstance(pb, dict) else None
+    if scen == "a":
+        artifact_has_ev = True
+    elif scen == "c":
+        artifact_has_ev = False
+    else:
+        raise SystemExit(
+            f"perfect_foresight_dispatch: {path} does not state which EV applicability "
+            f"it was built under: post_behavior.free_fix_scenario is {scen!r}, "
+            "expected 'a' (EV household) or 'c' (no EV). Regenerate it with "
+            "battery_dispatch_policies.py before quoting its greedy saving.")
+    ev_applies = br.EV_ANALYSIS    # read at call time; tests rebind it
+    if artifact_has_ev == ev_applies:
+        artifact_base = canon.get("baseline_bill_current_rates")
+        if not isinstance(artifact_base, (int, float)) or \
+                not math.isfinite(float(artifact_base)) or \
+                abs(float(artifact_base) - float(base_bill)) > BASELINE_TOL_USD:
+            print(
+                f"NOTICE: perfect_foresight_dispatch: {path} was built on a "
+                f"different frame: its baseline_bill_current_rates is "
+                f"{artifact_base!r}, but this frame bills ${base_bill:,.2f} "
+                "through the same battery_dispatch_policies.billed() engine "
+                f"(tolerance ${BASELINE_TOL_USD:.2f}, the artifact's whole-dollar "
+                "rounding). Its pw3.greedy.save is another frame's saving and is "
+                "NOT quoted: the top-level greedy_comparison key is omitted and "
+                "purchasing_statement.greedy_save_usd is null. Run "
+                "battery_dispatch_policies.py on THIS frame first to "
+                "get the comparison.", file=sys.stderr)
+            return None
+        return canon
+    if ev_applies:
+        flag_says = ("household.has_ev is NOT false (the intake applicability "
+                     "flag in private/household.yaml says this household HAS an EV)")
+        artifact_says = ("records post_behavior.free_fix_scenario 'c', the "
+                         "house-load shift a household with NO EV gets")
+    else:
+        flag_says = ("household.has_ev is false (the intake applicability flag "
+                     "in private/household.yaml says this household has NO EV)")
+        artifact_says = ("records post_behavior.free_fix_scenario 'a', the EV "
+                         "charge reschedule only a household WITH an EV can run")
+    raise SystemExit(
+        "EV APPLICABILITY MISMATCH between this run and its dispatch artifact: "
+        f"this run's intake says {flag_says}, but {path} {artifact_says}. "
+        "Quoting its pw3.greedy.save as greedy_save_usd would publish ANOTHER "
+        "household's saving, and every optimality-gap figure built on it, as "
+        "this household's (CLAUDE.md section 0: every figure must be this "
+        "household's). Run battery_dispatch_policies.py for THIS household "
+        "first; this script will not compare one household's optimum against "
+        "another household's greedy dispatch.")
+
+
+def method_note():
+    """The artifact's method string, stating the exclusion that ran. On an EV
+    household it is the string the artifact has always carried; on a no-EV
+    household it says outright that no EV-spillover exclusion applied, in
+    battery_dispatch_policies' own words, so the artifact cannot describe a
+    constraint the LP was not given."""
+    if br.EV_ANALYSIS:
+        return _METHOD_EV
+    return _METHOD_EV + "; " + ev_exclusion_note()
 
 
 def _solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
@@ -442,9 +569,8 @@ def solve(d, imp0, gen0, cap=CAP_KWH, power_kw=POWER_KW, charge_kw=None):
     charge-direction parameter; default None preserves the prior symmetric
     (power_kw both ways) behavior exactly."""
     n = len(d)
-    kw = imp0 * 4.0
     p = d.p.values
-    ev_spillover = (kw >= 2.5) & (p != "on")
+    ev_spillover = ev_spillover_mask(imp0, p)
     bucket_idx, bucket_rates = _bucket_assignment(d)
 
     imp, exp, charge, discharge, soc, soc_init, res = _solve_lp(
@@ -520,7 +646,9 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW,
     # a real controller would never actually discharge into real EV
     # spillover even if its plan (based on an imperfect forecast) called for
     # it, exactly as the SOC/power re-clip already enforces real feasibility.
-    real_ev_spillover = (imp0 * 4.0 >= 2.5) & (p != "on")
+    # Built by ev_spillover_mask, so it carries the same intake-flag gate as
+    # the annual LP (issue #246): all-False on a household with no EV.
+    real_ev_spillover = ev_spillover_mask(imp0, p)
     bucket_idx_full, bucket_rates = _bucket_assignment(d)
 
     dates = d.dt.dt.date.values
@@ -855,18 +983,11 @@ def main():
     n_days = f.dt.dt.date.nunique()
     lp_bill_with_bsc = info["lp_objective_usd"] + n_days * R.BSC
 
-    canon = None
-    canon_path = os.path.join(repo_root(), "data", "battery_dispatch_policies.json")
-    if os.path.exists(canon_path):
-        canon = json.load(open(canon_path))
+    canon = load_canon(os.path.join(repo_root(), "data", "battery_dispatch_policies.json"),
+                       base_bill)
 
     out = {
-        "method": ("linear program minimizing the exact rates.bill_nem_monthly "
-                   "objective (36 month/season/period netting buckets + NBC on "
-                   "gross imports), solved via scipy.optimize.linprog (HiGHS), "
-                   "at identical capacity/power/efficiency/EV-exclusion "
-                   "constraints as battery_dispatch_policies.run_batt's greedy "
-                   "policy, with a cyclic (steady-state) SOC boundary"),
+        "method": method_note(),
         "cap_kwh": CAP_KWH,
         "power_kw": POWER_KW,
         "charge_kw": CHARGE_KW,

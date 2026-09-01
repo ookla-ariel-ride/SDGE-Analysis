@@ -877,6 +877,99 @@ def _sanity_check_gross_imports(gross, floor):
             "built on a figure this far from what the bills actually show")
 
 
+def _check_ev_applicability(gross, pkg_doc, path):
+    """Fail closed when the package artifact behind every *_fraction_of_
+    projected_bill denominator belongs to a household with a DIFFERENT EV
+    applicability than this run's intake declares (issue #247).
+
+    Three facts are compared, and the intake flag is the authority over the
+    other two:
+      * behavior_rebuild.EV_ANALYSIS -- household.has_ev, read from THIS
+        run's private/household.yaml at call time;
+      * gross['free_fix_scenario'] -- the numerator's own record of which
+        free fix compute_package_gross_imports() ran, through battery_
+        dispatch_policies.free_fix_shift(): "a" (the EV charge reschedule)
+        or "c" (the house-load shift). This run built it, but it is checked
+        against the flag rather than trusted, so a numerator built under one
+        flag can never be divided by anything under another;
+      * packages.LOW.free_fix_scenario in the artifact -- package_results.
+        py's own statement of the EV applicability its projected bills were
+        built under. This is a FLAG match, not an identity check: a
+        different household with the same flag passes.
+
+    Both directions refuse: a no-EV intake dividing by an EV household's
+    projected bill publishes another household's denominator under this
+    household's fractions; an EV intake dividing by a no-EV household's bill
+    silently swaps this household's real EV-shift package for the house-load
+    shift. An artifact that states neither scenario predates the shape and
+    is refused too. The remedy is the script's own ordering contract: run
+    package_results.py for THIS household first.
+
+    behavior_rebuild and battery_dispatch_policies are imported lazily, per
+    the top-of-file note."""
+    import behavior_rebuild as br             # noqa: E402  -- lazy (see top-of-file note)
+    import battery_dispatch_policies as bdp   # noqa: E402  -- lazy (see top-of-file note)
+    ev_applies = br.EV_ANALYSIS               # read at call time; tests rebind it
+    expected = bdp.FREE_FIX_SCENARIO_EV if ev_applies else bdp.FREE_FIX_SCENARIO_NO_EV
+    flag_says = (
+        "household.has_ev is NOT false (the intake applicability flag in "
+        "private/household.yaml says this household HAS an EV)" if ev_applies else
+        "household.has_ev is false (the intake applicability flag in "
+        "private/household.yaml says this household has NO EV)")
+    numerator = gross.get("free_fix_scenario")
+    if numerator != expected:
+        raise SystemExit(
+            "irreducible_bill.py: the package gross-import numerator records "
+            f"free_fix_scenario {numerator!r}, but this run's intake says "
+            f"{flag_says}, so the free fix it should sit on is scenario "
+            f"{expected!r}. Refusing to divide a numerator built under one "
+            "household's flag by anything; rerun compute_package_gross_imports() "
+            "under the intake this run declares.")
+    low = pkg_doc.get("packages", {}).get("LOW")
+    scen = low.get("free_fix_scenario") if isinstance(low, dict) else None
+    if scen not in (bdp.FREE_FIX_SCENARIO_EV, bdp.FREE_FIX_SCENARIO_NO_EV):
+        raise SystemExit(
+            f"irreducible_bill.py: {path} does not state which EV applicability it "
+            f"was built under: packages.LOW.free_fix_scenario is {scen!r}, expected "
+            f"{bdp.FREE_FIX_SCENARIO_EV!r} (EV household) or "
+            f"{bdp.FREE_FIX_SCENARIO_NO_EV!r} (no EV). Regenerate it with "
+            "package_results.py before dividing by its projected bills.")
+    if scen == expected:
+        return
+    if ev_applies:
+        artifact_says = (f"records packages.LOW.free_fix_scenario {scen!r}, the "
+                         "house-load shift a household with NO EV gets")
+        harm = ("Dividing by its projected bills would price this household's "
+                "floor fractions against a package set that swapped the real "
+                "EV-shift saving for the house-load shift, deleting a real "
+                "saving")
+    else:
+        artifact_says = (f"records packages.LOW.free_fix_scenario {scen!r}, the "
+                         "EV charge reschedule only a household WITH an EV can run")
+        harm = ("Dividing by its projected bills would publish ANOTHER "
+                "household's projected_bill_current_rates_yr as the denominator "
+                "of every *_fraction_of_projected_bill in data/irreducible_bill.json")
+    raise SystemExit(
+        f"EV APPLICABILITY MISMATCH between this run and its package artifact: "
+        f"this run's intake says {flag_says}, but {path} {artifact_says}. "
+        f"{harm} (CLAUDE.md section 0: every figure must be this household's). "
+        "Run package_results.py for THIS household first, so the artifact the "
+        "denominators are read from is its own; this script will not divide "
+        "one household's gross imports by another household's projected bill.")
+
+
+def _load_packages_doc(gross):
+    """data/package_results.json, read and checked against this run's intake
+    (_check_ev_applicability) before any figure is built from it. Both readers
+    of the artifact go through here, so whichever field is divided by, the
+    artifact has been established as carrying this run's EV applicability
+    first (a flag match; the frame's own baseline bill is not in hand here,
+    so no identity check against model_baseline_current_rates is made)."""
+    pkg_doc = json.loads(PACKAGE_JSON.read_text())
+    _check_ev_applicability(gross, pkg_doc, PACKAGE_JSON)
+    return pkg_doc
+
+
 def build_package_floor_fractions(floor, gross):
     """What fraction of each LOW/MID/HIGH package's projected annual bill
     (data/package_results.json, current-rate model) is the STRICT floor
@@ -926,7 +1019,7 @@ def build_package_floor_fractions(floor, gross):
     what distinguishes term 1 from term 2."""
     _sanity_check_gross_imports(gross, floor)
     strictly_irreducible_usd = _c(gross["annual_days"] * R.BSC)
-    packages = json.loads(PACKAGE_JSON.read_text())["packages"]
+    packages = _load_packages_doc(gross)["packages"]
     out = {}
     for name, pkg in packages.items():
         bill = pkg["projected_bill_current_rates_yr"]
@@ -1004,7 +1097,7 @@ def build_baseline_floor_fraction(gross):
     strictly_irreducible_usd = _c(gross["annual_days"] * R.BSC)
     non_bypassable_usd = _c(gross["baseline_gross_kwh"] * R.NBC)
     combined_usd = _c(strictly_irreducible_usd + non_bypassable_usd)
-    pkg_doc = json.loads(PACKAGE_JSON.read_text())
+    pkg_doc = _load_packages_doc(gross)
     bill = pkg_doc["model_baseline_current_rates"]
     if bill <= 0:
         raise SystemExit(f"model_baseline_current_rates is non-positive: {bill}")
