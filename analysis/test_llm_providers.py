@@ -17,7 +17,10 @@ urllib.error.HTTPError -- never opening a socket.
 Run from the repo root:  ./.venv/bin/python analysis/test_llm_providers.py
 """
 import ast
+import errno
+import fcntl
 import io
+import os
 import pathlib
 import sys
 import tempfile
@@ -463,6 +466,122 @@ def case_post_json_is_the_only_socket_opening_call_site_in_the_module():
     assert finder.hits, "no urllib.request.Request/urlopen call found at all -- guard is broken"
     assert not offenders, f"socket-opening calls outside _post_json: {offenders}"
     return "urllib.request.Request/urlopen are constructed only inside _post_json"
+
+
+# ---------------------------------------------------------------------------
+# AC (issue #238): a stranded egress-scan-*.csv temp file from a killed prior
+# run is removed, or reported, never accumulated silently; the sweep cannot
+# remove a file a live sibling still holds; the cleanup actually runs on the
+# path that matters (a leftover from a dead run) and the tests below fail if
+# it is removed or gutted. All cases point _sweep_stale_egress_scans() (and,
+# for the integration case, _gitleaks_scan() itself) at a throwaway directory
+# via tempfile.gettempdir(), never the real machine-wide $TMPDIR.
+# ---------------------------------------------------------------------------
+def _stale_scan_path(d, name="egress-scan-deadbeef.csv"):
+    p = pathlib.Path(d) / name
+    p.write_text("stale scanned request text\n")
+    return p
+
+
+@case
+def case_stale_egress_scan_from_a_killed_prior_run_is_removed():
+    """The direct repro for the issue: a file left by a killed run (nobody
+    holds it open) must be removed by the sweep. Fails if the sweep call is
+    deleted from _sweep_stale_egress_scans, or if the function stops removing
+    a lock-winnable candidate."""
+    with tempfile.TemporaryDirectory() as d:
+        stale = _stale_scan_path(d)
+        assert stale.exists()
+        with _patched(tempfile, "gettempdir", lambda: d):
+            lp._sweep_stale_egress_scans()
+        assert not stale.exists(), \
+            "a stranded egress-scan-*.csv with no live holder must be removed"
+    return "a stale egress-scan-*.csv with no live holder is removed by the sweep"
+
+
+@case
+def case_sweep_never_removes_a_file_a_live_sibling_still_holds():
+    """AC2: the sweep must not win a race against a sibling that is still
+    using the file. Simulated by holding our own exclusive flock on the
+    candidate for the sweep's whole call -- exactly the state a concurrent
+    llm_providers.py run's own _gitleaks_scan() would be in mid-scan."""
+    with tempfile.TemporaryDirectory() as d:
+        live = _stale_scan_path(d, "egress-scan-stillinuse.csv")
+        fd = os.open(str(live), os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with _patched(tempfile, "gettempdir", lambda: d):
+                lp._sweep_stale_egress_scans()
+            assert live.exists(), \
+                "the sweep removed a file a live sibling still holds locked"
+        finally:
+            os.close(fd)  # releases the lock
+    return "a live-locked egress-scan-*.csv is left alone by the sweep"
+
+
+@case
+def case_sweep_reports_rather_than_silently_skips_when_liveness_is_unknowable():
+    """AC1's other branch: a candidate whose lock cannot be established at all
+    (not contention -- some other failure) must be REPORTED to stderr and left
+    in place, never silently skipped. Collapsing this into the same outcome as
+    'a live sibling holds it' is the issue #187 AC2 defect repeated."""
+    with tempfile.TemporaryDirectory() as d:
+        unreadable = _stale_scan_path(d, "egress-scan-unreadable.csv")
+
+        def _raise_not_contention(fd, op):
+            raise OSError(errno.EIO, "simulated non-contention lock failure")
+
+        buf = io.StringIO()
+        with _patched(tempfile, "gettempdir", lambda: d), \
+             _patched(fcntl, "flock", _raise_not_contention), \
+             _patched(sys, "stderr", buf):
+            lp._sweep_stale_egress_scans()
+        assert unreadable.exists(), \
+            "a candidate whose liveness could not be established must not be removed"
+        assert str(unreadable) in buf.getvalue(), \
+            f"the unreadable candidate was not reported to stderr: {buf.getvalue()!r}"
+    return "a candidate whose lock fails for a non-contention reason is reported, not removed"
+
+
+@case
+def case_gitleaks_scan_sweeps_a_stale_leftover_before_scanning_its_own_file():
+    """Integration: _gitleaks_scan() itself -- not just the standalone sweep
+    function -- must call the sweep before it creates its own temp file, so a
+    real (mocked-gitleaks) run actually cleans up a killed prior run's
+    leftover. Fails if the _sweep_stale_egress_scans() call site is removed
+    from _gitleaks_scan()."""
+    with tempfile.TemporaryDirectory() as d:
+        stale = _stale_scan_path(d)
+
+        def _fake_run(cmd, **kw):
+            class R:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+            return R()
+
+        with tempfile.TemporaryDirectory() as real_tmp:
+            # mkstemp still needs a real, writable temp dir for THIS run's own
+            # file; only the sweep's own directory listing is redirected, via
+            # gettempdir(), to `d` -- so this run's own file is created in
+            # `real_tmp` and never confused with the manufactured leftover.
+            def _fake_gettempdir():
+                return d
+
+            real_mkstemp = tempfile.mkstemp  # captured BEFORE patching, or the
+            # fake below would recurse into itself once tempfile.mkstemp is
+            # replaced by its own reference.
+            def _fake_mkstemp(**kw):
+                return real_mkstemp(dir=real_tmp, **kw)
+
+            with _patched(lp.shutil, "which", lambda name: "/usr/bin/true"), \
+                 _patched(lp.subprocess, "run", _fake_run), \
+                 _patched(tempfile, "gettempdir", _fake_gettempdir), \
+                 _patched(tempfile, "mkstemp", _fake_mkstemp):
+                lp._gitleaks_scan("clean text, nothing to flag")
+        assert not stale.exists(), \
+            "_gitleaks_scan() did not sweep a stale leftover before scanning its own file"
+    return "_gitleaks_scan() sweeps a killed prior run's leftover before creating its own file"
 
 
 def main():
