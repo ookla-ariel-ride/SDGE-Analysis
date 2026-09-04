@@ -264,7 +264,7 @@ def case_total_package_impact_is_the_hand_derived_combination():
     cur = tss._pipeline(d)
     for key, spec in tss.SCENARIOS.items():
         d_scen = tss.assign_structure(d, **spec["params"])
-        base, beh, batt = tss._pipeline(d_scen)
+        base, beh, batt, _scen = tss._pipeline(d_scen)
         baseline_delta = base - cur[0]
         behavior_delta = beh - cur[1]
         battery_delta = batt - cur[2]
@@ -287,6 +287,101 @@ def case_pipeline_conserves_energy_under_every_scenario():
         d_scen = tss.assign_structure(d, **spec["params"])
         tss._pipeline(d_scen)  # raises SystemExit internally if conservation fails
     return "every scenario's EV shift conserves energy (no SystemExit raised)"
+
+
+@case
+def case_no_ev_household_gets_the_house_shift_not_a_silent_baseline_noop():
+    """Issue #245: on a household whose intake says household.has_ev is
+    false, tss._free_fix() must apply behavior_rebuild's scenario c (25% of
+    remaining on-peak house load, capped at this house's own largest
+    observed 15-min import) -- the SAME free fix
+    battery_dispatch_policies.free_fix_shift() applies for every other
+    MID-package consumer -- rather than falling back to the unshifted
+    baseline the way this script's old local `if br.EV_ANALYSIS and
+    sessions:` branch silently did.
+
+    Checked ARITHMETICALLY, not merely by scenario label: a no-op branch
+    that happened to return the string "c" would still pass a label-only
+    check, which is exactly the failure mode this case exists to rule out.
+    The independent reference is behavior_rebuild.shift_house() itself,
+    called directly with the same recipe behavior_rebuild.main() uses to
+    publish scenarios.c.house_kwh_moved (25% of on-peak load, house_cap =
+    this house's own largest 15-min import, zero EV energy already
+    removed) -- a second, separate call, not a read of tss's own result."""
+    d = _synthetic_frame(n_days=14, kwh_per_interval=2.0)
+    onpk = d.p.values == "on"
+    d.loc[onpk, "Consumption"] = 3.0 / 4.0   # heavier on-peak load to shift
+    d["imp"] = d.Consumption.astype(float)
+    d["exp"] = d.Generation.astype(float)
+
+    real_ev_analysis = br.EV_ANALYSIS
+    br.EV_ANALYSIS = False
+    try:
+        ev, sessions = br.detect_sessions(d)
+        assert not sessions, "the no-EV fixture detected EV sessions -- fixture is wrong"
+        sop_idx, sop_ts = br.build_sop_index(d)
+        house_cap = float(np.max(d.imp.values))
+        # independent reference: behavior_rebuild's own scenario-c recipe,
+        # called directly rather than read back from tss
+        _imp_c, house_kwh_moved = br.shift_house(d, d.imp.values.astype(float),
+                                                 ev, 0.25, sop_idx, sop_ts, house_cap)
+        imp_shifted, moved, scenario = tss._free_fix(d)
+    finally:
+        br.EV_ANALYSIS = real_ev_analysis
+
+    assert scenario == "c", f"free fix did not select scenario c on a no-EV household: {scenario!r}"
+    assert house_kwh_moved > 0, ("fixture moved nothing under the independent reference -- "
+                                 "cannot distinguish a working shift from a no-op", house_kwh_moved)
+    assert abs(moved - house_kwh_moved) < 1e-6, (
+        "tou_structure_stress's free fix moved a different amount than behavior_rebuild's "
+        "own scenario-c convention", moved, house_kwh_moved)
+    assert not np.allclose(imp_shifted, d.imp.values), (
+        "tou_structure_stress's free fix left the no-EV household's import unchanged -- "
+        "this is the exact defect issue #245 named (a silent baseline no-op)")
+    return (f"on a no-EV household, tou_structure_stress applies scenario c and moves "
+            f"{moved:.2f} kWh, matching behavior_rebuild's own scenario-c convention exactly "
+            "(not a silent baseline no-op)")
+
+
+@case
+def case_no_ev_household_method_and_sentence_name_the_house_shift():
+    """Issue #245 fix round 1: the published artifact's own "method" and
+    worst_scenario.sentence prose must say WHICH free fix ran -- read from
+    _pipeline()'s own returned scenario letter, never re-derived from
+    household.has_ev a second time (that re-derivation is exactly the
+    eighth-site shape #245 removed). On a no-EV household this text must
+    name the house-load shift (behavior_rebuild.shift_house) and must NOT
+    say "shift_ev" or "the EV shift" -- publishing the EV-shift sentence
+    unconditionally, regardless of which fix actually ran, is the exact
+    defect this case guards against.
+
+    Uses tss._build_output() directly, NOT tss.main() -- _build_output is a
+    pure in-memory function split out of main() precisely so this synthetic
+    no-EV run never opens or writes the real committed
+    data/tou_structure_stress.json."""
+    d = _synthetic_frame(n_days=14, kwh_per_interval=2.0)
+    onpk = d.p.values == "on"
+    d.loc[onpk, "Consumption"] = 3.0 / 4.0
+    d["imp"] = d.Consumption.astype(float)
+    d["exp"] = d.Generation.astype(float)
+
+    real_ev_analysis = br.EV_ANALYSIS
+    br.EV_ANALYSIS = False
+    try:
+        out = tss._build_output(d)
+    finally:
+        br.EV_ANALYSIS = real_ev_analysis
+
+    method = out["method"]
+    sentence = out["worst_scenario"]["sentence"]
+    assert "shift_ev" not in method, f"no-EV method text still names shift_ev: {method!r}"
+    assert "the EV shift" not in sentence, f"no-EV sentence still names the EV shift: {sentence!r}"
+    assert "shift_house" in method and "house-load shift" in method, (
+        f"no-EV method text does not name the house-load shift: {method!r}")
+    assert "the house-load shift" in sentence, (
+        f"no-EV sentence does not name the house-load shift: {sentence!r}")
+    return ("on a no-EV household, the artifact's method and worst_scenario.sentence text "
+            "name the house-load shift, not the EV shift")
 
 
 @case
@@ -374,13 +469,17 @@ def case_current_pipeline_matches_the_committed_behavior_and_battery_artifacts()
     independent cross-check that the reused pipeline (shift_ev + run_batt)
     is wired correctly, not just internally self-consistent.
 
-    THE BEHAVIOR HALF IS AN EV CROSS-CHECK, AND NOT EVERY HOUSEHOLD HAS ONE
-    (issue #147). behavior_rebuild.py writes scenarios.a as an explicit
-    not-applicable stub when the intake says household.has_ev is false -- no
-    `saved` field at all -- so this case raised KeyError there. There is no EV
-    shift for _pipeline to reproduce on such a household, which makes it a
-    SKIP rather than a failure: the same treatment the two cases below already
-    give an artifact this checkout does not have."""
+    NOT EVERY HOUSEHOLD HAS AN EV (issue #147), and since #245 this script's
+    own free fix is not always the EV shift either: tss._pipeline() now
+    routes through battery_dispatch_policies.free_fix_shift(), which picks
+    scenario a (the EV shift) when household.has_ev is true and scenario c
+    (the house-load shift) when it is false, and RETURNS which one it ran.
+    This case reads that return value directly rather than re-deriving
+    household.has_ev from behavior_rebuild.json's own not-applicable stub
+    -- the same "read it from the return, don't re-derive it" discipline
+    issue #245 fix round 1 applied to main()'s method/sentence text -- and
+    no longer skips the no-EV case, since #245 means there is always a free
+    fix to reproduce now, just not always the EV one."""
     _require_archive()
     root = ROOT
     behavior_path = root / "data" / "behavior_rebuild.json"
@@ -389,15 +488,11 @@ def case_current_pipeline_matches_the_committed_behavior_and_battery_artifacts()
         raise SkipCase("sibling artifacts not committed in this checkout")
     behavior_json = json.loads(behavior_path.read_text())
     battery_json = json.loads(battery_path.read_text())
-    if behavior_json["scenarios"]["a"].get("not_applicable"):
-        raise SkipCase("household.has_ev is false, so behavior_rebuild.json publishes "
-                       "scenarios.a as a not-applicable stub and there is no EV shift "
-                       "to cross-check")
     d = br.load()
     d["imp"] = d.Consumption.astype(float)
     d["exp"] = d.Generation.astype(float)
-    base, beh, batt = tss._pipeline(d)
-    committed_behavior_save = behavior_json["scenarios"]["a"]["saved"]
+    base, beh, batt, scen_key = tss._pipeline(d)
+    committed_behavior_save = behavior_json["scenarios"][scen_key]["saved"]
     committed_battery_marginal = battery_json["post_behavior"]["mid"]["battery_marginal"]
     assert abs(beh - committed_behavior_save) < 5.0, (
         f"recomputed behavior save {beh:.2f} vs committed {committed_behavior_save:.2f}")
@@ -417,7 +512,7 @@ def case_worst_scenario_is_the_true_argmax_on_the_real_year():
     impacts = {}
     for key, spec in tss.SCENARIOS.items():
         d_scen = tss.assign_structure(d, **spec["params"])
-        base, beh, batt = tss._pipeline(d_scen)
+        base, beh, batt, _scen = tss._pipeline(d_scen)
         impacts[key] = (base - cur[0]) - (beh - cur[1]) - (batt - cur[2])
     worst_key = max(impacts, key=impacts.get)
     assert ARTIFACT.exists(), f"{ARTIFACT} is committed public data and must exist"
