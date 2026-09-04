@@ -473,9 +473,14 @@ def case_post_json_is_the_only_socket_opening_call_site_in_the_module():
 # run is removed, or reported, never accumulated silently; the sweep cannot
 # remove a file a live sibling still holds; the cleanup actually runs on the
 # path that matters (a leftover from a dead run) and the tests below fail if
-# it is removed or gutted. All cases point _sweep_stale_egress_scans() (and,
-# for the integration case, _gitleaks_scan() itself) at a throwaway directory
-# via tempfile.gettempdir(), never the real machine-wide $TMPDIR.
+# it is removed or gutted. `_sweep_stale_egress_scans(tmp_dir=...)` takes an
+# explicit directory (fix-round-1 Finding 4), so every standalone-sweep case
+# below passes its own throwaway directory directly rather than monkeypatching
+# tempfile.gettempdir. _gitleaks_scan() itself has no such parameter -- it
+# always sweeps the real tempfile.gettempdir() in production, which is the
+# point -- so the two cases that exercise it *through* _gitleaks_scan() still
+# monkeypatch tempfile.gettempdir(), scoped to a throwaway directory, to keep
+# this file from ever touching the real machine-wide $TMPDIR.
 # ---------------------------------------------------------------------------
 def _stale_scan_path(d, name="egress-scan-deadbeef.csv"):
     p = pathlib.Path(d) / name
@@ -492,8 +497,7 @@ def case_stale_egress_scan_from_a_killed_prior_run_is_removed():
     with tempfile.TemporaryDirectory() as d:
         stale = _stale_scan_path(d)
         assert stale.exists()
-        with _patched(tempfile, "gettempdir", lambda: d):
-            lp._sweep_stale_egress_scans()
+        lp._sweep_stale_egress_scans(tmp_dir=d)
         assert not stale.exists(), \
             "a stranded egress-scan-*.csv with no live holder must be removed"
     return "a stale egress-scan-*.csv with no live holder is removed by the sweep"
@@ -507,11 +511,10 @@ def case_sweep_never_removes_a_file_a_live_sibling_still_holds():
     llm_providers.py run's own _gitleaks_scan() would be in mid-scan."""
     with tempfile.TemporaryDirectory() as d:
         live = _stale_scan_path(d, "egress-scan-stillinuse.csv")
-        fd = os.open(str(live), os.O_RDWR)
+        fd = os.open(str(live), os.O_RDONLY)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with _patched(tempfile, "gettempdir", lambda: d):
-                lp._sweep_stale_egress_scans()
+            lp._sweep_stale_egress_scans(tmp_dir=d)
             assert live.exists(), \
                 "the sweep removed a file a live sibling still holds locked"
         finally:
@@ -521,7 +524,7 @@ def case_sweep_never_removes_a_file_a_live_sibling_still_holds():
 
 @case
 def case_sweep_reports_rather_than_silently_skips_when_liveness_is_unknowable():
-    """AC1's other branch: a candidate whose lock cannot be established at all
+    """AC1's other branch: a candidate whose LOCK cannot be established at all
     (not contention -- some other failure) must be REPORTED to stderr and left
     in place, never silently skipped. Collapsing this into the same outcome as
     'a live sibling holds it' is the issue #187 AC2 defect repeated."""
@@ -532,10 +535,9 @@ def case_sweep_reports_rather_than_silently_skips_when_liveness_is_unknowable():
             raise OSError(errno.EIO, "simulated non-contention lock failure")
 
         buf = io.StringIO()
-        with _patched(tempfile, "gettempdir", lambda: d), \
-             _patched(fcntl, "flock", _raise_not_contention), \
+        with _patched(fcntl, "flock", _raise_not_contention), \
              _patched(sys, "stderr", buf):
-            lp._sweep_stale_egress_scans()
+            lp._sweep_stale_egress_scans(tmp_dir=d)
         assert unreadable.exists(), \
             "a candidate whose liveness could not be established must not be removed"
         assert str(unreadable) in buf.getvalue(), \
@@ -544,12 +546,77 @@ def case_sweep_reports_rather_than_silently_skips_when_liveness_is_unknowable():
 
 
 @case
+def case_sweep_reports_rather_than_silently_skips_when_open_fails():
+    """Fix-round-1 Finding 1: the adversarial review reproduced a mode-000
+    leftover and a directory planted under the prefix both being skipped with
+    EMPTY stderr, because the old code's `except OSError: continue` around
+    os.open() treated every open failure the same as the healthy "it already
+    vanished" (ENOENT) case. Only ENOENT may stay silent; every other errno
+    (EACCES here, mocked so this passes under a root test runner too, where a
+    real mode-000 file would still be openable) must be reported and the
+    candidate left in place -- this is the SAME AC1 obligation as the
+    lock-failure case above, just at the open() step instead of the flock()
+    step. Fails if the open() failure branch reverts to a bare `except
+    OSError: continue`."""
+    with tempfile.TemporaryDirectory() as d:
+        unopenable = _stale_scan_path(d, "egress-scan-unopenable.csv")
+
+        real_open = os.open
+
+        def _raise_eacces_for_our_candidate(path, flags, *a, **kw):
+            if str(unopenable) == path:
+                raise OSError(errno.EACCES, "simulated permission denied")
+            return real_open(path, flags, *a, **kw)
+
+        buf = io.StringIO()
+        with _patched(os, "open", _raise_eacces_for_our_candidate), \
+             _patched(sys, "stderr", buf):
+            lp._sweep_stale_egress_scans(tmp_dir=d)
+        assert unopenable.exists(), \
+            "a candidate that could not even be opened must not be removed"
+        assert str(unopenable) in buf.getvalue(), \
+            f"the unopenable candidate was not reported to stderr: {buf.getvalue()!r}"
+    return "a candidate that cannot be opened at all (not ENOENT) is reported, not removed"
+
+
+@case
+def case_sweep_stays_silent_only_on_enoent_at_open():
+    """The mirror of the case above: ENOENT specifically (the candidate
+    vanished between the listing and this open -- almost always because its
+    own owner already removed it) is the one open() failure that must stay
+    silent. Guards against overcorrecting Finding 1 into reporting every
+    vanished-by-the-time-we-got-there candidate, which would make an ordinary,
+    healthy race print a false alarm on every run."""
+    with tempfile.TemporaryDirectory() as d:
+        vanished = _stale_scan_path(d, "egress-scan-vanished.csv")
+
+        real_open = os.open
+
+        def _raise_enoent_for_our_candidate(path, flags, *a, **kw):
+            if str(vanished) == path or str(vanished).encode() == path:
+                raise OSError(errno.ENOENT, "simulated vanished-by-the-time-we-opened-it")
+            return real_open(path, flags, *a, **kw)
+
+        buf = io.StringIO()
+        with _patched(os, "open", _raise_enoent_for_our_candidate), \
+             _patched(sys, "stderr", buf):
+            lp._sweep_stale_egress_scans(tmp_dir=d)
+        assert buf.getvalue() == "", \
+            f"ENOENT at open() must stay silent, but stderr got: {buf.getvalue()!r}"
+    return "ENOENT at open() (the candidate already vanished) stays silent, as designed"
+
+
+@case
 def case_gitleaks_scan_sweeps_a_stale_leftover_before_scanning_its_own_file():
     """Integration: _gitleaks_scan() itself -- not just the standalone sweep
     function -- must call the sweep before it creates its own temp file, so a
     real (mocked-gitleaks) run actually cleans up a killed prior run's
     leftover. Fails if the _sweep_stale_egress_scans() call site is removed
-    from _gitleaks_scan()."""
+    from _gitleaks_scan(). _gitleaks_scan() has no tmp_dir parameter of its
+    own (only the standalone sweep function does -- see the section banner
+    above), so the sweep's directory is still redirected here via
+    tempfile.gettempdir(), scoped to a throwaway directory for this case
+    only."""
     with tempfile.TemporaryDirectory() as d:
         stale = _stale_scan_path(d)
 
@@ -582,6 +649,69 @@ def case_gitleaks_scan_sweeps_a_stale_leftover_before_scanning_its_own_file():
         assert not stale.exists(), \
             "_gitleaks_scan() did not sweep a stale leftover before scanning its own file"
     return "_gitleaks_scan() sweeps a killed prior run's leftover before creating its own file"
+
+
+@case
+def case_locked_fd_write_never_recreates_a_path_a_sibling_has_unlinked():
+    """Fix-round-1 Finding 2: between mkstemp() and this run's own flock()
+    call there is a window -- unavoidable, POSIX has no atomic
+    create-and-lock -- in which a sibling's sweep could win the lock on the
+    still-unlocked file and unlink it. The OLD code then wrote via
+    pathlib.Path(tmp_name).write_text(text), which RECREATES the path: a new
+    inode this run's flock does not cover, at write_text's 0644 rather than
+    mkstemp's 0600 -- reproduced by the adversarial review as a real,
+    world-readable, unlocked file sitting in $TMPDIR mid-scan.
+
+    Simulated here by unlinking tmp_name from inside a wrapped fcntl.flock()
+    call -- the exact instant a sibling's sweep would win that race -- right
+    after this run's own (real) lock succeeds on the now-unlinked-but-still-
+    open fd. The fake subprocess.run (standing in for gitleaks) then records
+    whether the path exists on disk at the moment the scan would read it.
+    Fails (the assertion below) if _gitleaks_scan() goes back to writing via
+    pathlib.Path(tmp_name).write_text(...) instead of through the fd."""
+    captured = {}
+    seen_during_scan = {}
+    real_mkstemp = tempfile.mkstemp
+    real_flock = fcntl.flock
+
+    def _spy_mkstemp(**kw):
+        fd, tmp_name = real_mkstemp(**kw)
+        captured["tmp_name"] = tmp_name
+        return fd, tmp_name
+
+    def _flock_then_simulate_sibling_unlink(fd, op):
+        result = real_flock(fd, op)  # this run's own lock succeeds first
+        tmp_name = captured.get("tmp_name")
+        if tmp_name and os.path.exists(tmp_name):
+            os.unlink(tmp_name)  # simulates a sibling sweep winning the race
+        return result
+
+    def _fake_run(cmd, **kw):
+        tmp_name = captured.get("tmp_name")
+        seen_during_scan["exists_when_scan_would_read_it"] = (
+            tmp_name is not None and os.path.exists(tmp_name))
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return R()
+
+    with tempfile.TemporaryDirectory() as empty_dir:
+        # No candidates in here, so _sweep_stale_egress_scans() (called first,
+        # inside _gitleaks_scan()) never itself calls the patched flock below
+        # -- the patch below is exercised exactly once, for this run's own
+        # lock on its own brand-new file.
+        with _patched(lp.shutil, "which", lambda name: "/usr/bin/true"), \
+             _patched(lp.subprocess, "run", _fake_run), \
+             _patched(tempfile, "gettempdir", lambda: empty_dir), \
+             _patched(tempfile, "mkstemp", _spy_mkstemp), \
+             _patched(fcntl, "flock", _flock_then_simulate_sibling_unlink):
+            lp._gitleaks_scan("clean text, nothing to flag")
+
+    assert seen_during_scan.get("exists_when_scan_would_read_it") is False, (
+        "a sibling unlinked the scan file before gitleaks would have read it, but a "
+        "path existed there anyway -- the write step recreated an unlocked file")
+    return "writing through the already-locked fd never recreates a path a sibling has unlinked"
 
 
 def main():

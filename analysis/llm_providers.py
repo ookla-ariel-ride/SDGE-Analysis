@@ -498,13 +498,22 @@ _EGRESS_SCAN_SUFFIX = ".csv"
 _LOCK_CONTENTION_ERRNOS = frozenset((errno.EWOULDBLOCK, errno.EAGAIN))
 
 
-def _sweep_stale_egress_scans():
+def _sweep_stale_egress_scans(tmp_dir=None):
     """Remove `egress-scan-*.csv` temp files left behind by a killed prior run
     (issue #238) -- a SIGKILL between _gitleaks_scan()'s mkstemp() and its
     `finally` strands the scanned request text, which is exactly the text a
     real refusal means is unsafe to leave lying around. Called at the top of
     _gitleaks_scan(), before this run creates its own temp file, so a leftover
     is swept before it can accumulate past one.
+
+    `tmp_dir` defaults to `tempfile.gettempdir()` (the real, machine-wide temp
+    directory `_gitleaks_scan()` also uses) but is injectable so a test can
+    point this at a throwaway directory instead -- otherwise every test that
+    exercises the real preflight()/`_gitleaks_scan()` path (e.g.
+    test_egress_preflight.py) sweeps the developer's actual `$TMPDIR` on every
+    run, which can delete another concurrently running process's own
+    not-yet-locked or mid-scan file (see the "narrow window" paragraph in
+    _gitleaks_scan()'s docstring below).
 
     LIVENESS CHECK: this is a single scratch file, not a directory tree like
     dry_run.py's sandboxes (issue #187), so there is nothing to separate a
@@ -520,13 +529,28 @@ def _sweep_stale_egress_scans():
         process racing another llm_providers.py run, or gitleaks itself still
         reading it) really does hold it -> leave it alone, silently -- the
         normal, expected, healthy answer.
-      * the lock fails any other way, or the file cannot even be opened before
-        it vanishes -> liveness could not be established at all -> leave it in
-        place and report it to stderr. Silently skipping this case is the
-        issue #187 AC2 defect repeated: a genuinely abandoned file that is
-        neither removed nor reported is indistinguishable from nothing to do.
+      * the file cannot even be OPENED (any errno other than ENOENT -- a
+        mode-000 leftover, a directory planted under this prefix, a remounted
+        read-only filesystem, too many open files, a symlink loop) or the lock
+        fails any other way -> liveness could not be established at all ->
+        leave it in place and report it to stderr. Silently skipping this case
+        is the issue #187 AC2 defect repeated: a genuinely abandoned file that
+        is neither removed nor reported is indistinguishable from nothing to
+        do. ENOENT alone is exempt (silent): it means the candidate vanished
+        between the listing and this open, almost always because its own
+        owner (this run's earlier iteration, or a sibling's own successful
+        finally) already removed it -- nothing was left abandoned.
+
+    Opened `O_RDONLY | O_NOFOLLOW`, not `O_RDWR`: this sweep never writes to a
+    candidate (only flock()s and unlink()s it, neither of which needs write
+    access), and asking for write access it never uses is what makes the
+    read-only-filesystem failure mode reachable at all. `O_NOFOLLOW` refuses a
+    planted symlink under this prefix rather than opening whatever it points
+    at -- a symlink is reported via the same non-ENOENT branch as any other
+    unopenable candidate, never followed.
     """
-    tmp_dir = pathlib.Path(tempfile.gettempdir())
+    tmp_dir = pathlib.Path(tmp_dir) if tmp_dir is not None else pathlib.Path(
+        tempfile.gettempdir())
     try:
         candidates = list(tmp_dir.glob(_EGRESS_SCAN_PREFIX + "*" + _EGRESS_SCAN_SUFFIX))
     except OSError as e:
@@ -535,9 +559,15 @@ def _sweep_stale_egress_scans():
         return
     for path in candidates:
         try:
-            fd = os.open(str(path), os.O_RDWR)
-        except OSError:
-            continue  # vanished since the listing (removed by its own owner) -- fine
+            fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as e:
+            if e.errno == errno.ENOENT:
+                continue  # vanished since the listing (removed by its own owner) -- fine
+            print(f"[stale egress-scan candidate left in place: {path} -- it could not "
+                  "be opened, so this run cannot tell a live sibling's file from a "
+                  f"killed prior run's leftover holding scanned request text. Cause: {e}]",
+                  file=sys.stderr)
+            continue
         try:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -593,10 +623,28 @@ def _gitleaks_scan(text):
     a killed prior run (see _sweep_stale_egress_scans()), then keeps its own
     temp file's fd open and exclusively flocked for the file's whole
     lifetime -- instead of closing it right after mkstemp() -- so that lock
-    doubles as this run's own liveness marker for a future sweep. The lock is
-    released (via the `finally`'s os.close()) only after the file is already
-    unlinked, so a sibling's sweep can never observe an unlocked-but-still-
-    present file.
+    doubles as this run's own liveness marker for a future sweep.
+
+    The narrow window this does NOT close: between mkstemp() creating the
+    file (unlocked) and the flock() call immediately below, a sibling's sweep
+    could in principle win the lock on the still-unlocked file and unlink it.
+    POSIX has no atomic create-and-lock, so that instant cannot be closed from
+    user space, and this function does not pretend to. What it does instead is
+    make that race harmless: the scanned text is written through THIS fd
+    (os.ftruncate() + os.write()), never by reopening `tmp_name` through
+    pathlib -- an adversarial review found that reopening-by-path RECREATES
+    the file if a sibling won that race and unlinked it, at a new inode the
+    lock does not cover and at write_text's 0644 (not mkstemp's 0600),
+    reintroducing the exact unprotected-on-disk exposure this change exists to
+    remove. Writing through the already-open, already-locked fd never
+    recreates anything: if the path really was unlinked out from under this
+    run, gitleaks's `--source tmp_name` simply fails to find it, which the
+    exit-code check below already treats as neither clean nor "leaks found"
+    and refuses on -- fail safe, the same contract every other unexpected
+    failure in this function upholds. What the `finally` block's ordering
+    (remove-then-close) DOES guarantee, unconditionally, is that once this
+    run's own flock succeeds, no sibling sweep can unlink the file out from
+    under gitleaks while it is still reading it.
     """
     # Swept first, before even the gitleaks-installed check below: sweeping is
     # a pure filesystem operation with no dependency on gitleaks, so a
@@ -627,7 +675,18 @@ def _gitleaks_scan(text):
             f"could not lock this run's own scan temp file {tmp_name}: {e} -- refusing "
             "to send unscanned") from None
     try:
-        pathlib.Path(tmp_name).write_text(text)
+        # Written through the fd mkstemp() returned and this run already
+        # flocked -- never by reopening tmp_name via pathlib -- so a sibling
+        # that won the mkstemp-to-flock race and unlinked the path cannot
+        # cause this run to recreate an unlocked, 0644 file in its place. See
+        # the docstring's "narrow window" paragraph.
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        payload = text.encode("utf-8")
+        view = memoryview(payload)
+        while view:
+            n = os.write(fd, view)
+            view = view[n:]
         cmd = [binary, "detect", "--no-git", "--source", tmp_name, "--config", config_path,
                "--redact", "--verbose", "--exit-code", "1"]
         try:
