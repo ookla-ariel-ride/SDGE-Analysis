@@ -806,6 +806,18 @@ def _linked_worktree(td, name="dst"):
     refused, which is why the two pre-existing end-to-end cases below stage
     in here as well.
 
+    WHY A WORKTREE OF THIS CHECKOUT, NOT A THROWAWAY CLONE (issue #206's own
+    "the stronger fix" suggestion, round 1 /review): a throwaway clone's
+    --git-common-dir is its OWN, not this checkout's, so it would only ever
+    exercise the REFUSED path. `case_refuses_a_different_clone_of_the_same_
+    remote` specifically needs a worktree that IS this checkout to prove the
+    guard tells "the checkout I think it is" apart from "a clone that shares
+    its remote" -- and every "accepts a real worktree" case needs the same
+    identity to prove the guard doesn't refuse a legitimate destination. A
+    clone cannot stand in for either. The confinement above is what makes
+    registering against the real checkout safe rather than something to
+    avoid.
+
     The finally clause hands the directory back to git rather than leaving it
     registered: without it every run of this suite would leave a stale entry
     in the developer's real .git/worktrees. Its argument is always a path
@@ -896,6 +908,64 @@ def case_a_linked_worktree_hands_back_its_admin_entry_even_when_the_case_forges_
         f"{admin} -- exactly the shape of the dst/dst1..dst4 incident")
     return ("a worktree fixture hands back its own admin entry even when the "
             "case forged an ownership variable and died before unsetting it")
+
+
+@case
+def case_a_linked_worktree_hands_back_its_admin_entry_even_when_git_dir_and_cwd_are_tampered_with():
+    """issue #206 AC4, a second forcing vector (round 1 /review finding 3):
+    GIT_DIR and GIT_WORK_TREE, set for real in os.environ, point every git
+    invocation that does not carry an explicit -C at another repository
+    entirely, and a changed process cwd changes what a bare relative path
+    means to anything that does not pass one. Either could plausibly make
+    the admin-entry handback go looking in the wrong place.
+
+    It does not: `_register_entries_confined_to`'s `admin` and its "before"
+    snapshot are both resolved via `git -C ROOT` -- an explicit, absolute
+    -C -- before the case body can tamper with anything, and its teardown
+    sweep never calls git again at all; it reads each new entry's `gitdir`
+    file directly and `shutil.rmtree`s by absolute path. Only the PRIMARY
+    `git worktree remove --force` call (best-effort, in _linked_worktree's
+    own finally) is exposed to GIT_DIR/GIT_WORK_TREE at all -- its
+    stripped-env only removes GIT_TEST_*/GIT_CONFIG_* -- so this case also
+    proves the confined sweep catches what that call cannot."""
+    admin = _register_admin_dir()
+    if admin is None:
+        raise SkipCase("this checkout has no git common dir, so it has no register")
+    before = _register_entry_names(admin)
+    prior_git_dir = os.environ.get("GIT_DIR")
+    prior_work_tree = os.environ.get("GIT_WORK_TREE")
+    prior_cwd = os.getcwd()
+    died = False
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            with _linked_worktree(td) as wt:
+                assert wt.is_dir(), "the worktree must exist before the case dies"
+                elsewhere = pathlib.Path(td) / "nonexistent-elsewhere"
+                os.environ["GIT_DIR"] = str(elsewhere / ".git")
+                os.environ["GIT_WORK_TREE"] = str(elsewhere)
+                os.chdir(tempfile.gettempdir())
+                raise RuntimeError("simulated case failure mid-block, "
+                                   "GIT_DIR/GIT_WORK_TREE/cwd tampered")
+    except RuntimeError:
+        died = True
+    finally:
+        os.chdir(prior_cwd)
+        if prior_git_dir is None:
+            os.environ.pop("GIT_DIR", None)
+        else:
+            os.environ["GIT_DIR"] = prior_git_dir
+        if prior_work_tree is None:
+            os.environ.pop("GIT_WORK_TREE", None)
+        else:
+            os.environ["GIT_WORK_TREE"] = prior_work_tree
+    assert died, "the simulated failure did not propagate -- this case proves nothing"
+    leftover = sorted(_register_entry_names(admin) - before)
+    assert not leftover, (
+        f"a case that tampered with GIT_DIR/GIT_WORK_TREE/cwd and died "
+        f"mid-block left {leftover} in {admin}")
+    return ("a worktree fixture hands back its own admin entry even when the "
+            "case forged GIT_DIR/GIT_WORK_TREE and changed cwd, then died "
+            "before restoring any of them")
 
 
 def _assert_refused(result, dst, before, why):
@@ -3276,19 +3346,23 @@ def case_a_restage_from_a_second_household_is_refused_with_its_leftovers_named()
             "from the same source is accepted")
 
 
-# issue #213's OS-metadata exclusion list, mirrored here so the exact set of
-# names is checked against the script's own list rather than hand-typed twice.
-_OS_METADATA_NAMES = (".DS_Store", "._AppleDoubleSidecar", "Thumbs.db", "desktop.ini")
+# issue #213's OS-metadata names. The three DIRECTORY-CHROME ones describe a
+# directory's view state, carry no content specific to one file, and are
+# unconditionally excluded from the staleness scan. An AppleDouble sidecar
+# (._<name>) is different -- PER-FILE, and excluded from the scan only when
+# the file it shadows is still present (round 1 /review; see
+# stage-private-data.sh's _collect_stale_under) -- so it is tracked apart
+# rather than folded into one flat tuple that would hide that asymmetry.
+_DIRECTORY_CHROME_NAMES = (".DS_Store", "Thumbs.db", "desktop.ini")
 
 
 @case
 def case_os_metadata_is_excluded_from_the_staleness_scan_but_nothing_else_is():
     """issue #213. macOS Finder writes .DS_Store into any directory it has
-    browsed or Quick-Looked, and an AppleDouble sidecar (._*) appears the same
-    way when copying to a non-APFS/HFS volume; Windows Explorer writes
-    Thumbs.db and desktop.ini the same way. None of the four is household
-    data, so a destination carrying one and nothing else is not carrying a
-    previous household's leftover.
+    browsed or Quick-Looked; Windows Explorer writes Thumbs.db and
+    desktop.ini the same way. None of the three is household data, so a
+    destination carrying one and nothing else is not carrying a previous
+    household's leftover.
 
     REPRODUCED FIRST, before the fix existed: staging once, then dropping a
     lone `.DS_Store` into the destination's electric-bills/ and re-staging
@@ -3302,61 +3376,166 @@ def case_os_metadata_is_excluded_from_the_staleness_scan_but_nothing_else_is():
     AC): a destination that also carries an ordinary hidden file, or a
     genuine leftover from a household this source is not, must still refuse
     -- checked in the SAME run as the excluded names, so the fix cannot
-    regress into 'stop refusing'."""
+    regress into 'stop refusing'. The AppleDouble sidecar's own,
+    shadow-file-dependent exemption is a separate case, below."""
     with tempfile.TemporaryDirectory() as tda, tempfile.TemporaryDirectory() as tdb:
         src = _synthetic_src(tda, "household:\n  has_gas: false\n",
                              has_gas_bills_dir=False)
 
-        # ACCEPT: OS metadata alone must never refuse a re-stage from the
-        # same source, and must still be sitting there afterward -- excluded
-        # from the scan, not deleted by it.
+        # ACCEPT: directory-chrome metadata alone must never refuse a
+        # re-stage from the same source, and must still be sitting there
+        # afterward -- excluded from the scan, not deleted by it.
         with _linked_worktree(tda) as dst:
             first = _run_script(src, dst, cwd=src, timeout=120)
             assert first.returncode == 0, (
                 f"the first stage must succeed or this case proves nothing: "
                 f"{first.stderr}")
             ebills = dst / "private" / "1-raw-data" / "electric-bills"
-            for name in _OS_METADATA_NAMES:
+            for name in _DIRECTORY_CHROME_NAMES:
                 (ebills / name).write_text("not household data\n")
             again = _run_script(src, dst, cwd=src, timeout=120)
             assert again.returncode == 0, (
                 f"OS metadata left in the destination must not refuse a "
                 f"re-stage from the same source: {again.stderr}")
-            for name in _OS_METADATA_NAMES:
+            for name in _DIRECTORY_CHROME_NAMES:
                 assert (ebills / name).is_file(), (
                     f"{name} is excluded from the scan, not deleted -- it "
                     f"must still be there after the run")
 
-        # REFUSE: a genuine leftover, and an ordinary dotfile the exclusion
-        # list does not name, still refuse -- in the SAME destination as the
-        # four excluded names, so the exclusion is proven narrow rather than
-        # merely untested against these two.
+        # REFUSE: a genuine leftover, an ordinary dotfile the exclusion list
+        # does not name, and an ORPHAN AppleDouble sidecar (no file beside it
+        # to shadow) all still refuse -- in the SAME destination as the
+        # directory-chrome names, so the exclusion is proven narrow rather
+        # than merely untested against these three.
         with _linked_worktree(tdb) as dst:
             opened = _run_script(src, dst, cwd=src, timeout=120)
             assert opened.returncode == 0, (
                 f"the second destination's first stage must succeed or this "
                 f"half proves nothing: {opened.stderr}")
             ebills = dst / "private" / "1-raw-data" / "electric-bills"
-            for name in _OS_METADATA_NAMES:
+            for name in _DIRECTORY_CHROME_NAMES:
                 (ebills / name).write_text("not household data\n")
             (ebills / "unrelated-household.pdf").write_text("someone else's bill\n")
             (ebills / ".hidden-notes.txt").write_text("an ordinary dotfile\n")
+            (ebills / "._leftover").write_text("an orphan AppleDouble sidecar\n")
             result = _run_script(src, dst, cwd=src, timeout=120)
             assert result.returncode != 0, (
                 "a genuine leftover beside excluded OS metadata must still "
                 f"refuse the re-stage: {result.stdout}")
-            for named in ("unrelated-household.pdf", ".hidden-notes.txt"):
+            for named in ("unrelated-household.pdf", ".hidden-notes.txt",
+                          "._leftover"):
                 assert named in result.stderr, (
                     f"the refusal does not name {named}, so a real leftover "
                     f"went unreported: {result.stderr}")
-            for name in _OS_METADATA_NAMES:
+            for name in _DIRECTORY_CHROME_NAMES:
                 assert name not in result.stderr, (
                     f"{name} is OS metadata and must not appear in a "
                     f"staleness refusal: {result.stderr}")
-    return ("OS metadata (.DS_Store, an AppleDouble sidecar, Thumbs.db, "
-            "desktop.ini) is excluded from the staleness scan by name; an "
-            "ordinary dotfile and a genuine leftover from another household "
-            "still refuse, checked in the same run")
+    return ("directory-chrome OS metadata (.DS_Store, Thumbs.db, desktop.ini) "
+            "is excluded from the staleness scan by name; an ordinary "
+            "dotfile, a genuine leftover from another household, and an "
+            "orphan AppleDouble sidecar all still refuse, checked in the "
+            "same run")
+
+
+@case
+def case_an_appledouble_sidecar_is_excused_only_when_its_shadowed_file_is_present():
+    """issue #213, round 1 /review finding 1(b). An AppleDouble sidecar
+    (`._<name>`) is not directory chrome: on a real macOS system it is the
+    resource fork and extended-attribute store for the file it shadows, and
+    it can carry a cached preview of that file's actual content. So it is
+    excused from the staleness scan only when the file it shadows is still
+    right beside it -- then it is Finder chrome on a file this household's
+    own tree still has -- and an orphan (no such file) refuses like any
+    other leftover, proven directly above. This case proves the ACCEPTING
+    half: a legitimate sidecar beside its own file is not refused."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                             has_gas_bills_dir=False)
+        # The shadowed file has to come from the SOURCE -- not be planted only
+        # at the destination -- or the staleness scan would refuse it as an
+        # ordinary leftover on its own account and this case would prove
+        # nothing about the sidecar's exemption specifically.
+        (src / "private" / "1-raw-data" / "electric-bills"
+         / "real-bill.pdf").write_text("this household's own file\n")
+        with _linked_worktree(td) as dst:
+            first = _run_script(src, dst, cwd=src, timeout=120)
+            assert first.returncode == 0, (
+                f"the first stage must succeed or this case proves nothing: "
+                f"{first.stderr}")
+            ebills = dst / "private" / "1-raw-data" / "electric-bills"
+            assert (ebills / "real-bill.pdf").is_file(), (
+                "the shadowed file itself did not stage -- this case proves "
+                "nothing about the sidecar's exemption")
+            # Planted directly at the destination, standing in for Finder
+            # having Quick-Looked this household's own already-staged file --
+            # never staged FROM a source, which is the separate copy-phase
+            # guarantee proven above.
+            (ebills / "._real-bill.pdf").write_text("Finder's sidecar for it\n")
+            again = _run_script(src, dst, cwd=src, timeout=120)
+            assert again.returncode == 0, (
+                f"a sidecar beside the file it shadows must not refuse a "
+                f"re-stage from the same source: {again.stderr}")
+            assert (ebills / "._real-bill.pdf").is_file(), (
+                "the sidecar is excused from the scan, not deleted -- it "
+                "must still be there after the run")
+    return ("an AppleDouble sidecar beside the file it shadows is excused "
+            "from the staleness scan; an orphan one is not (see the case "
+            "above)")
+
+
+@case
+def case_os_metadata_in_the_source_is_never_copied_into_the_destination():
+    """issue #213, round 1 /review finding 1(a): claim -- 'OS metadata is
+    never household data' (the comment beside _is_os_metadata()) -- but the
+    exclusion used to reach only the staleness SCAN. The COPY phase's
+    `cp -R` calls staged a source's own .DS_Store / ._foo unfiltered, and
+    once staged it becomes permanently invisible to every future run of the
+    very scan that excuses it -- worse than never excusing it at all, and an
+    AppleDouble sidecar can carry a cached preview of the file it shadows.
+
+    REPRODUCED FIRST, before the fix existed: planting `.DS_Store` and
+    `._foo` in a synthetic source's electric-bills/, gas-bills/ and
+    caiso_raw/, then running the real script end to end, landed all six at
+    the matching destination paths (script exit 0) -- confirmed by re-running
+    this case's own assertions against the pre-fix script, which failed with
+    both names present under electric-bills/.
+
+    Covers all three `cp -R` subtrees (electric-bills/, gas-bills/,
+    caiso_raw/) -- the only three copies this fix touches -- not just the
+    one the issue's own reproduction used, per CLAUDE.md's sweep-the-shape
+    rule."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: true\n",
+                             has_gas_bills_dir=True)
+        raw = src / "private" / "1-raw-data"
+        (raw / "electric-bills" / "real-bill.pdf").write_text("real\n")
+        (raw / "gas-bills" / "real-gas-bill.pdf").write_text("real\n")
+        (raw / "caiso_raw").mkdir()
+        (raw / "caiso_raw" / "caiso_co2_2025-01-01.csv").write_text("real\n")
+        for sub in ("electric-bills", "gas-bills", "caiso_raw"):
+            (raw / sub / ".DS_Store").write_text("finder chrome\n")
+            (raw / sub / "._foo").write_text("appledouble sidecar\n")
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode == 0, (
+                f"the stage must succeed or this case proves nothing: "
+                f"{result.stderr}")
+            for sub in ("electric-bills", "gas-bills", "caiso_raw"):
+                subdir = dst / "private" / "1-raw-data" / sub
+                for name in (".DS_Store", "._foo"):
+                    assert not (subdir / name).exists(), (
+                        f"{sub}/{name} from the source was staged into the "
+                        f"destination -- OS metadata must never be copied")
+                assert (subdir / (
+                    "real-bill.pdf" if sub == "electric-bills" else
+                    "real-gas-bill.pdf" if sub == "gas-bills" else
+                    "caiso_co2_2025-01-01.csv")).is_file(), (
+                    f"{sub}'s real file did not survive stripping its "
+                    f"OS metadata siblings out of the staged copy")
+    return ("a source's own .DS_Store and AppleDouble sidecar are never "
+            "copied into the destination, in all three recursive subtrees, "
+            "while the real files beside them stage normally")
 
 
 @case

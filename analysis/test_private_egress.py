@@ -895,6 +895,18 @@ def _synthetic_src(td):
 def _worktree(td, name="dst"):
     """A REAL registered worktree of this checkout, handed back to git after.
 
+    WHY A WORKTREE OF THIS CHECKOUT, NOT A THROWAWAY CLONE (issue #206's own
+    "the stronger fix" suggestion, round 1 /review): a throwaway clone's
+    --git-common-dir is its OWN, not this checkout's. This module's
+    `case_refuses_a_different_clone_of_the_same_remote` (test_stage_private_
+    data.py) specifically needs a worktree that IS this checkout to prove
+    the guard tells "the checkout I think it is" apart from "a clone that
+    shares its remote", and every "accepts" case here needs that same
+    identity to prove the guard doesn't refuse a legitimate destination -- a
+    throwaway clone would only ever exercise the refused path. The
+    confinement below is what makes registering against the real checkout
+    safe rather than something to avoid.
+
     THE HANDBACK IS CONFINED, not just attempted (issue #206): nine call
     sites of this fixture relied on wrapping themselves in
     _register_entries_confined_to() separately, and nine had not, so a case
@@ -1032,6 +1044,64 @@ def case_a_worktree_fixture_hands_back_its_admin_entry_even_when_the_case_forges
         f"{admin}")
     return ("a worktree fixture hands back its own admin entry even when the "
             "case forged an ownership variable and died before unsetting it")
+
+
+@case
+def case_a_worktree_fixture_hands_back_its_admin_entry_even_when_git_dir_and_cwd_are_tampered_with():
+    """issue #206 AC4, a second forcing vector (round 1 /review finding 3):
+    GIT_DIR and GIT_WORK_TREE, set for real in os.environ, point every git
+    invocation that does not carry an explicit -C at another repository
+    entirely, and a changed process cwd changes what a bare relative path
+    means to anything that does not pass one. Either could plausibly make
+    the admin-entry handback go looking in the wrong place.
+
+    It does not: `_register_entries_confined_to`'s `admin` and its "before"
+    snapshot are both resolved via `git -C ROOT` -- an explicit, absolute
+    -C -- before the case body can tamper with anything, and its teardown
+    sweep never calls git again at all; it reads each new entry's `gitdir`
+    file directly and `shutil.rmtree`s by absolute path. Only the PRIMARY
+    `git worktree remove --force` call (best-effort, in _worktree's own
+    finally) is exposed to GIT_DIR/GIT_WORK_TREE at all -- its stripped-env
+    only removes GIT_TEST_*/GIT_CONFIG_* -- so this case also proves the
+    confined sweep catches what that call cannot."""
+    admin = _register_admin_dir()
+    if admin is None:
+        raise SkipCase("this checkout has no git common dir, so it has no register")
+    before = _register_entry_names(admin)
+    prior_git_dir = os.environ.get("GIT_DIR")
+    prior_work_tree = os.environ.get("GIT_WORK_TREE")
+    prior_cwd = os.getcwd()
+    died = False
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            with _worktree(td) as wt:
+                assert wt.is_dir(), "the worktree must exist before the case dies"
+                elsewhere = pathlib.Path(td) / "nonexistent-elsewhere"
+                os.environ["GIT_DIR"] = str(elsewhere / ".git")
+                os.environ["GIT_WORK_TREE"] = str(elsewhere)
+                os.chdir(tempfile.gettempdir())
+                raise RuntimeError("simulated case failure mid-block, "
+                                   "GIT_DIR/GIT_WORK_TREE/cwd tampered")
+    except RuntimeError:
+        died = True
+    finally:
+        os.chdir(prior_cwd)
+        if prior_git_dir is None:
+            os.environ.pop("GIT_DIR", None)
+        else:
+            os.environ["GIT_DIR"] = prior_git_dir
+        if prior_work_tree is None:
+            os.environ.pop("GIT_WORK_TREE", None)
+        else:
+            os.environ["GIT_WORK_TREE"] = prior_work_tree
+    assert died, "the simulated failure did not propagate -- this case proves nothing"
+    leftover = sorted(_register_entry_names(admin) - before)
+    assert not leftover, (
+        f"a case that tampered with GIT_DIR/GIT_WORK_TREE/cwd and died "
+        f"mid-block left {leftover} in {admin}")
+    return ("a worktree fixture hands back its own admin entry even when the "
+            "case forged GIT_DIR/GIT_WORK_TREE and changed cwd, then died "
+            "before restoring any of them")
 
 
 def _run_shell(src, dst, cwd, env=None, timeout=120):
