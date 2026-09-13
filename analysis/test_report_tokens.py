@@ -12112,6 +12112,37 @@ def case_the_two_figures_for_the_batterys_own_saving_quote_one_scenario():
             f"post-EV-fix scenario on every pair ({'; '.join(seen)})")
 
 
+@case
+def case_ev_fix_savings_and_free_win_card_share_one_sigil():
+    """ISSUE #136, fix round 2 (reviewer finding 1a). #136's fix itself had no
+    regression test: reverting EV_FIX_SAVINGS_100's formatter back to
+    _usd0_tilde_signed -- the exact pre-#136 code -- left both full suites
+    green, verified directly by the round-2 review.
+
+    All three of these tokens read behavior_rebuild.json's
+    `scenarios.<key>.saved` at the same cents precision --
+    S0_FREE_WIN_CARD_FIGURE's key varies by household (packages.LOW.
+    free_fix_scenario names it), but on THIS household it is "a", the exact
+    same cell EV_FIX_SAVINGS_100 reads -- so the "~" rule above _usd0_tilde
+    puts all three in one class: bare. `fmt` cannot see a revert here, because
+    none of the three declares one (all three are dim="$" and format
+    themselves), so this reads the RENDERED STRING's leading character
+    instead, which is exactly what reverting the formatter changes."""
+    values = {name: rt.resolve_token(name)
+              for name in ("EV_FIX_SAVINGS_100", "EV_FIX_SAVINGS_80",
+                           "S0_FREE_WIN_CARD_FIGURE")}
+    leading = {name: v.lstrip()[:1] for name, v in values.items()}
+    offenders = {name: ch for name, ch in leading.items() if ch != "$"}
+    assert not offenders, (
+        "EV_FIX_SAVINGS_100, EV_FIX_SAVINGS_80 and S0_FREE_WIN_CARD_FIGURE read the "
+        "same behavior_rebuild.json scenario `saved` field at the same precision and "
+        f"must all render bare ('$'), not hedged with '~': {offenders} "
+        f"(full values: {values})")
+    return (f"EV_FIX_SAVINGS_100 {values['EV_FIX_SAVINGS_100']!r}, EV_FIX_SAVINGS_80 "
+            f"{values['EV_FIX_SAVINGS_80']!r} and S0_FREE_WIN_CARD_FIGURE "
+            f"{values['S0_FREE_WIN_CARD_FIGURE']!r} all render bare, one sigil")
+
+
 # --- the round-6 findings, one regression case each -------------------------
 @contextlib.contextmanager
 def _csv_column_set(who, column, value, where=lambda row: True):

@@ -312,26 +312,56 @@ def _usd0(v):
 # EV_FIX_SAVINGS_100, EV_FIX_SAVINGS_80 and S0_FREE_WIN_CARD_FIGURE included
 # -- is NOT that coarser rounding. Whole-dollar is the report's baseline
 # currency precision, applied uniformly; it carries no more information loss
-# for one figure than for its neighbor, so it earns no hedge. The genuine
-# case is a token that rounds PAST that baseline on purpose, such as
-# FIRST_YEAR_VALUE, which rounds an exact-to-the-cent value_usd to the
-# nearest hundred before formatting it -- that second, coarser rounding is
-# what "~" exists to disclose.
+# for one figure than for its neighbor, so it earns no hedge.
+#
+# TWO CASES ARE GENUINE, and both are coarser than that baseline -- they
+# differ only in WHERE the coarser rounding happens:
+#
+#   1. IN THE TOKEN'S OWN CODE, rounding PAST the baseline on purpose.
+#      FIRST_YEAR_VALUE and SOLAR_ANNUAL_VALUE both do this: each rounds an
+#      exact-to-the-cent artifact value (value_usd; nosolar_bill_usd minus
+#      model_baseline_current_rates) to the nearest HUNDRED, in Python,
+#      before usd0_tilde ever sees it -- `round(x / 100) * 100`. That second
+#      rounding is real information loss past what usd0 alone would have
+#      lost, and "~" is what discloses it.
+#   2. IN THE CONSTANT'S OWN PROVENANCE, before it ever reached this file.
+#      BATTERY_COST and BATTERY_EXPANDED_COST format
+#      package_results.json:packages.{MID,HIGH}.cost, which are
+#      analysis/package_results.py's PW3_COST=14500 and
+#      HIGH_COST=PW3_COST+EXPANSION_COST -- hardcoded, cited to research/
+#      battery-research-notes.md's own pre-quote MARKET table ("Tesla
+#      Powerwall 3 | ... | Est. installed: ~$13,000-16,500 (unit
+#      ~$9.3-10.5k)", a range explicitly labeled "typical installed prices
+#      (2026, pre-quote estimates)"), not a modeled computation. The
+#      formatter performs no additional rounding on 14500 -- it is already
+#      whole-hundreds -- so case 1's test does not fit them. What "~" marks
+#      here is that the NUMBER ITSELF is a rounded point estimate pulled
+#      from a market range, something a real installer quote would not
+#      reproduce to the dollar; the coarseness lives one step upstream of
+#      the formatter, in the constant, and is disclosed at the point where
+#      that constant is finally printed. See the comment beside those two
+#      tokens for the citation.
 #
 # THE TEST: two tokens rendering the SAME artifact quantity at the SAME
 # precision, in the same sentence or not, carry the SAME sigil -- one cannot
-# be hedged while the other is bare with no rounding difference between them.
-# EV_FIX_SAVINGS_100, EV_FIX_SAVINGS_80 and S0_FREE_WIN_CARD_FIGURE are all
-# this shape: all three read behavior_rebuild.json's `scenarios.<key>.saved`
-# at the same cents precision (S0_FREE_WIN_CARD_FIGURE's key varies by
-# household, but is always one of that same artifact's scenario `saved`
-# fields), so all three are bare (#136 -- S0_FREE_WIN_CARD_FIGURE used to
-# hedge alone, justified in its own docstring as "the underlying figure is
-# modeled", the exact reasoning this rule rejects). Two DIFFERENT quantities
-# that merely happen to share a value on one household's data
-# (BATTERY_MARGINAL_SAVINGS vs BATTERY_SAVINGS_PRICE_AWARE) are judged on
-# this same rule independently, since a coincidence in the numbers is not a
-# reason to render them alike.
+# be hedged while the other is bare with no rounding difference (of either
+# case above) between them. EV_FIX_SAVINGS_100, EV_FIX_SAVINGS_80 and
+# S0_FREE_WIN_CARD_FIGURE are all this shape: all three read
+# behavior_rebuild.json's `scenarios.<key>.saved` at the same cents precision
+# (S0_FREE_WIN_CARD_FIGURE's key varies by household, but is always one of
+# that same artifact's scenario `saved` fields), so all three are bare (#136
+# -- S0_FREE_WIN_CARD_FIGURE used to hedge alone, justified in its own
+# docstring as "the underlying figure is modeled", the exact reasoning this
+# rule rejects). Two DIFFERENT quantities that merely happen to share a value
+# on one household's data (BATTERY_MARGINAL_SAVINGS vs
+# BATTERY_SAVINGS_PRICE_AWARE) are judged on this same rule independently,
+# since a coincidence in the numbers is not a reason to render them alike.
+#
+# THE FULL POPULATION, so the next token added has nowhere to hide: every
+# live usd0_tilde/usd0_tilde_signed user in this file, as of fix round 2, is
+# FIRST_YEAR_VALUE and SOLAR_ANNUAL_VALUE (case 1) and BATTERY_COST and
+# BATTERY_EXPANDED_COST (case 2). Every other dollar token in this report is
+# bare.
 def _usd0_tilde(v):
     return f"~${_unsigned_currency('usd0_tilde', v):,.0f}"
 
@@ -2125,6 +2155,21 @@ _tok("STORED_KWH_MIDDAY_SHARE", kind="derived", fmt="pct1",
      sources=["data/battery_dispatch_policies.json:stored_kwh_cost.solar_surplus."
               "by_period.sop.share_of_surplus_kwh (a fraction; rendered as percent)"])
 
+# TILDE KEPT, DECIDED UNDER THE #136 RULE (fix round 2, reviewer finding 2):
+# packages.MID/HIGH.cost are analysis/package_results.py's PW3_COST=14500 and
+# HIGH_COST=PW3_COST+EXPANSION_COST, both cited to research/battery-research-
+# notes.md's own pre-quote market table -- "Tesla Powerwall 3 | ... | Est.
+# installed: ~$13,000-16,500 (unit ~$9.3-10.5k)", explicitly labeled "typical
+# installed prices (2026, pre-quote estimates)", not this repo's own
+# computation. usd0_tilde performs no ADDITIONAL rounding here (14500 is
+# already whole-hundreds; formatting it loses nothing past the report's
+# baseline) -- unlike FIRST_YEAR_VALUE/SOLAR_ANNUAL_VALUE, whose rounding
+# happens in the token's own code. The coarseness these two tokens disclose
+# lives one step further upstream, in the CONSTANT'S OWN PROVENANCE: a
+# quoted-price estimate research pulled from a market range and rounded to a
+# round number before it ever reached this file, not something a real quote
+# would reproduce to the dollar. The "~" rule above _usd0_tilde covers this
+# as a second legitimate case for exactly that reason -- see its own text.
 _tok("BATTERY_COST", kind="data_json", file="package_results.json",
      path=("packages", "MID", "cost"), fmt="usd0_tilde")
 _tok("BATTERY_EXPANDED_COST", kind="data_json", file="package_results.json",
