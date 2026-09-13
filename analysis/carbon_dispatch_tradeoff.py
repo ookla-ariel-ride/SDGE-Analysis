@@ -385,12 +385,13 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold, charge_kw=None):
     so this gate is a genuinely separate condition here, not implied by
     disch_win the way it is in run_batt_carbon.
 
-    AND, since issue #240, the PRICED charge gate too: a surplus kWh is stored
-    only if battery_dispatch_policies.value_charge_gate() -- the published
-    policy's own rule, called rather than copied -- says its forgone export is
-    worth less than the import it can serve. Run A applies that rule; a Run C
-    that did not would be charging on hours Run A refuses and could not be
-    called the efficient union of the two. Run B is exempt and says why.
+    AND, since issue #240, the PRICED charge gate too, on BOTH charge branches:
+    battery_dispatch_policies.value_charge_gate() -- the published policy's own
+    rule, called rather than copied -- supplies `surplus_ok` for the solar branch
+    and `topup_ok` for the super-off-peak grid branch, so neither takes a charge
+    the price axis refuses. Run A applies both; a Run C that applied only one
+    would be charging on hours Run A refuses and could not be called the
+    efficient union of the two. Run B is exempt and says why.
 
     cond_b (the carbon-driven discharge trigger, as opposed to cond_a's
     price-driven one) uses the SAME higher discharge threshold as Run B
@@ -417,22 +418,36 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold, charge_kw=None):
     ev_spillover_excluded = br.EV_ANALYSIS
     # Run A's priced charge rule, from its own implementation rather than a
     # fourth copy of it (issue #240). Run C charges only where BOTH axes agree,
-    # so the surplus branch below reads this alongside the carbon gate.
-    priced_surplus_ok = bp.value_charge_gate(d, imp0, gen0)["surplus_ok"]
+    # so BOTH charge branches below read it alongside their carbon gate: the
+    # surplus branch takes `surplus_ok`, the grid top-up takes `topup_ok`. An
+    # earlier version read only `surplus_ok`, which left the grid branch able to
+    # take a top-up the price axis refuses -- a real gap in the "both axes agree"
+    # claim even though `topup_ok` is true on every super-off-peak interval of
+    # this household's year, so no published figure moved when it was closed.
+    _gate = bp.value_charge_gate(d, imp0, gen0)
+    priced_surplus_ok, priced_topup_ok = _gate["surplus_ok"], _gate["topup_ok"]
     for i in range(len(d)):
         chargeable = inten[i] <= threshold
         serve_ok = (kw[i] < 2.5) if ev_spillover_excluded else True
         cond_a = (16 <= h[i] < 21) or (p[i] != "sop" and serve_ok)
         cond_b = (inten[i] > disch_threshold) and serve_ok
         disch_win = cond_a or cond_b
-        cheap_clean = (p[i] == "sop") and chargeable
-        if exp[i] > 0 and chargeable and priced_surplus_ok[i] \
-                and not (disch_win and imp[i] > 0):
-            c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
-            if c > 0:
-                soc += c * ETA
-                exp[i] -= c
-                thru += c * ETA
+        cheap_clean = (p[i] == "sop") and chargeable and priced_topup_ok[i]
+        # THE PRICE MASK SITS INSIDE THE BRANCH, NOT IN ITS CONDITION, matching
+        # _run_batt_value() and run_batt_vpp() exactly. With it in the condition,
+        # a surplus interval the price axis DECLINED fell through to the grid
+        # top-up below and imported while it was exporting; every other
+        # adaptation of this rule stops for the interval instead. Unreachable on
+        # this household (no super-off-peak interval has surplus_ok false), but
+        # the three adaptations have to be the same shape or the equivalence
+        # test in test_battery_dispatch_policies.py is certifying something else.
+        if exp[i] > 0 and chargeable and not (disch_win and imp[i] > 0):
+            if priced_surplus_ok[i]:
+                c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
+                if c > 0:
+                    soc += c * ETA
+                    exp[i] -= c
+                    thru += c * ETA
             continue
         if cheap_clean:
             take = min(max((cap - soc) / ETA, 0), pwrq_chg)
@@ -644,6 +659,24 @@ def compute():
             "credit would likely differ in the same direction."),
         "caveat": [
             "Grid-AVERAGE intensity, not marginal (see average_vs_marginal_basis).",
+            # WHICH RUNS PRICE THE CHARGE SIDE, in the artifact rather than only
+            # in the module docstring (issue #240 review). A consumer reading
+            # this file alone could not otherwise tell that Run B's charge
+            # decision is deliberately blind to price -- the same gap the DSGS
+            # dispatch_policy stamp closed for its carried-forward block.
+            f"Runs A and C price the CHARGE side as well as the discharge side: "
+                f"both gate charging on battery_dispatch_policies."
+                f"value_charge_gate() (Run A through run_batt's "
+                f"{bp.PUBLISHED_POLICY!r} policy, Run C through both of its own "
+                "charge branches), so neither stores a kWh whose forgone export "
+                "is worth more than the import it could serve. RUN B DOES NOT, "
+                "AND THAT IS THE POLICY: it answers what a battery would do if "
+                "it minimized CO2 and nothing else, so a rule that declined a "
+                "charge on DOLLAR grounds would make it a hybrid and destroy "
+                "the comparison this artifact exists to draw. Run B's charge "
+                "decision is priced in the currency it optimizes instead -- it "
+                "charges only in clean hours, and declines dirty-hour surplus "
+                "for the carbon-side version of the same reason.",
             "Run B's threshold is sized to match Run A's measured non-sop TOU "
                 "fraction of the year, not an invented kg/MWh cutoff; ties at "
                 "0.1 kg/MWh resolution mean the achieved split is close to, not "

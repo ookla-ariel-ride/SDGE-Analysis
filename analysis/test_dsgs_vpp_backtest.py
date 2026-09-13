@@ -1554,6 +1554,53 @@ def case_archive_less_path_stamps_the_carried_forward_block():
 
 
 @case
+def case_archive_present_path_stamps_the_freshly_computed_block():
+    """The OTHER half of the provenance mechanism, which no checkout here can
+    reach end to end (issue #240 review, finding 9).
+
+    Every case that would exercise the `RAW_XLSX.exists()` branch SKIPS for want
+    of the private raw CEC event file, so the stamp that says a block WAS
+    recomputed -- the half that would finally bring the carried-forward range
+    onto the published dispatch -- was covered by nothing. `per_aggregation_
+    sensitivity()` itself needs the archive, but the stamping it does is
+    separable: this drives `_stamp_preserved`'s counterpart directly on a
+    synthetic block of the archive-present shape and checks the two halves say
+    opposite things about the same question, which is the property a consumer
+    reads them for."""
+    fresh = dict(_PRESERVED_FIXTURE, dispatch_policy=bp.PUBLISHED_POLICY)
+    fresh["recomputed"] = True
+    fresh["recomputed_reason"] = (
+        f"the private raw CEC event archive ({vb.RAW_XLSX.name}) was present, so "
+        "this range was recomputed on this run, on the same dispatch as every "
+        "other figure in this artifact")
+    with tempfile.TemporaryDirectory() as td:
+        stale = _preserved_via(pathlib.Path(td),
+                               dict(_PRESERVED_FIXTURE, dispatch_policy="greedy"))
+    assert fresh["recomputed"] is True and stale["recomputed"] is False, (fresh, stale)
+    assert fresh["dispatch_policy"] == bp.PUBLISHED_POLICY, fresh
+    assert "dispatch_policy_warning" not in fresh, (
+        "a freshly recomputed block is on the published dispatch by construction "
+        "and has nothing to warn about")
+    assert vb.RAW_XLSX.name in fresh["recomputed_reason"], fresh["recomputed_reason"]
+    # the two reasons must not be interchangeable: a reader has to be able to
+    # tell which run produced the block from the text alone
+    assert "NOT recomputed" in stale["recomputed_reason"], stale["recomputed_reason"]
+    assert "NOT recomputed" not in fresh["recomputed_reason"], fresh["recomputed_reason"]
+    # and the source of that shape is the generator, not this fixture: the
+    # archive-present branch must still be the thing that sets recomputed True
+    import inspect
+    src = inspect.getsource(vb.per_aggregation_sensitivity_or_preserved)
+    assert 'fresh["recomputed"] = True' in src, (
+        "the archive-present branch no longer stamps recomputed True; this case's "
+        "fixture would then be asserting a shape the generator does not produce")
+    assert "_stamp_preserved(preserved)" in src, (
+        "the archive-less branch no longer routes through _stamp_preserved")
+    return ("the archive-present stamp (recomputed true, published dispatch, no warning) "
+            "and the archive-less stamp say opposite things about the same block, and the "
+            "generator still produces both shapes")
+
+
+@case
 def case_the_stamp_guard_fails_on_the_unstamped_return_it_replaced():
     """The guard above is only worth having if it catches the code it replaced.
 

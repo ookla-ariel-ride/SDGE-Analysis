@@ -699,8 +699,18 @@ def _greedy_loop_with_gate(d, imp0, gen0, cap, charge_kw, gate):
 
     Deliberately a TRANSCRIPTION rather than a call into the module: an
     independent loop is what makes the equivalence above evidence rather than
-    a tautology. It mirrors what dsgs_vpp_backtest.run_batt_vpp and
-    carbon_dispatch_tradeoff.run_batt_union do with the same masks.
+    a tautology.
+
+    IT MIRRORS ALL THREE ADAPTATIONS, in the shape all three now share:
+    `surplus_ok` and `topup_ok` are read INSIDE their own charge branch, and a
+    refused charge ends the interval rather than falling through to the next
+    branch. `_run_batt_value()` does that with a lot ledger,
+    `dsgs_vpp_backtest.run_batt_vpp()` with the VPP event rules on top, and
+    `carbon_dispatch_tradeoff.run_batt_union()` with the carbon gate beside it
+    (issue #240 review: run_batt_union used to put the mask in the branch's own
+    CONDITION and gate only the solar branch, so a refused surplus fell through
+    to a grid top-up and the grid branch was never priced at all -- two
+    divergences this docstring would have gone on certifying).
     """
     eta = B.ETA
     imp = imp0.copy(); exp = gen0.copy()

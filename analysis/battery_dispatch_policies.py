@@ -34,8 +34,13 @@ the argument even though the decision it supports is the same.
 SOLAR SURPLUS IS NOT A SUPER-OFF-PEAK PHENOMENON ON THIS TARIFF, which is why the
 published policy has to price the charge side too. The 6-10h and 14-16h shoulders
 are OFF-PEAK and the summer sun is still up well into the 16-21h on-peak window, so
-surplus arrives in buckets whose forgone export is worth 46-50c, or 53-55c per kWh
-delivered after the round trip -- against an off-peak import worth 51-52c. A policy
+surplus arrives in buckets whose forgone export is worth 46.2-49.8c, or 51.3-55.3c per
+kWh delivered after the round trip -- against an off-peak import worth 48.3-51.9c. (Both
+brackets span the same three off-peak buckets, and the low end of each is the summer
+buckets that run net-EXPORT and therefore settle at credit() rather than energy(): 46.2c
+delivers at 51.3c and faces a 48.3c import, so it is declined on the same test, by a
+thinner margin. Quoting only 49.0-49.8c/54.5-55.3c against 51.1-51.9c would be the same
+one-end-of-the-bracket error this docstring warns about two paragraphs down.) A policy
 that stores every kWh it has room for cannot see that: the "greedy" run this module
 still publishes as a sensitivity takes half its surplus from those shoulders. The
 published "value" policy declines them, and its artifact says so directly --

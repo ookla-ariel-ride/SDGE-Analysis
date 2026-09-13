@@ -1005,10 +1005,15 @@ two stay within 1 kWh of each other.
 
 **The "value" policy (issue #240): the price-aware dispatch with both sides priced,
 adopted as the published basis.**
-`stored_kwh_cost` (above, issue #189) showed that only 47.6% of the surplus the `"greedy"`
-run stores is midday surplus; 50% of it is 6-10h and 14-16h off-peak surplus whose forgone
-export is worth `rates.energy(off)` in a net-import bucket, 53.5c per kWh delivered after
-the round trip, more than the 51.1-51.9c off-peak import it may then serve. `"greedy"`
+Run `stored_kwh_cost` (above, issue #189) against `"greedy"` and only 47.6% of the surplus
+that policy stores is midday surplus; 50% of it is 6-10h and 14-16h off-peak surplus whose
+forgone export is worth `rates.energy(off)` in a net-import bucket, 53.5c per kWh delivered
+after the round trip, more than the 51.1-51.9c off-peak import it may then serve. (Those
+two figures are `"greedy"`'s, and are not readable from the committed artifact: the block
+is computed on `PUBLISHED_POLICY`, so `share_of_surplus_kwh` there reads 1.0 and the
+off-peak cell is absent -- which is the whole result of this issue, and the reason the
+`"greedy"` numbers are quoted here rather than cited to a field that no longer holds
+them.) `"greedy"`
 cannot see that because it prices neither side: it stores every kWh it has room for, in
 time order. `run_batt(..., "value")` prices both sides with the one test `bill_nem_monthly()`
 bills by. Each interval's (month, season, TOU period) bucket is signed on the pre-battery
@@ -1148,7 +1153,7 @@ but the DSGS backtest is a partial-season observation (2025-07-24..2025-10-30 on
 `BATT_COST / (G + dsgs_dollars)` would misrepresent four months of VPP revenue as a full
 year's recurring figure, the payback-arithmetic problem CLAUDE.md §2 exists to catch. An
 earlier version of this script computed a `dsgs_revenue` lever this way; it was removed rather than re-labeled, because a caveat does not repair payback arithmetic and CLAUDE.md leans toward removing a shaky calculation over defending it. `tornado_battery.dsgs_excluded_note` reports the backtested dollars
-($139.95 at 20% reserve, primary; $199.14 at 0%-reserve sensitivity, both over the observed
+($138.52 at 20% reserve, primary; $197.70 at 0%-reserve sensitivity, both over the observed
 2025-07-24..2025-10-30 window, not an annual figure; both read from
 `data/dsgs_vpp_backtest.json` at runtime) as an additive amount on top of the arbitrage
 payback above, once a full season is measured, and points to `per_aggregation_sensitivity`
@@ -1235,7 +1240,7 @@ and billing replicates `analyze_norelief.py` exactly (interval netting, export c
 max(rate − NBC, 0), BSC × 365, holiday-as-weekend TOU assignment) so the no-battery column
 ties out to the committed `data/plan_results.csv` (asserted in-script). All three plans
 share the same 2026 three-period TOU windows, so a single dispatch trace is billed under
-each plan. Results: EV-TOU-5 $4,882 → $2,564 (battery value **$2,318/yr**), EV-TOU-2
+each plan. Results: EV-TOU-5 $4,882 → $2,424 (battery value **$2,458/yr**), EV-TOU-2
 $5,843 → $4,084 ($1,759), TOU-ELEC $6,356 → $5,308 ($1,048); the battery is worth the most
 on EV-TOU-5, so it strengthens the plan answer. The artifact also records a
 `canonical_crosscheck_ev_tou_5` block ($4,904 no-battery / $2,466 battery value from
@@ -1305,7 +1310,7 @@ policies.py` already uses (13.5 kWh usable, 11.5 kW, 90% round-trip efficiency),
 and the same billing engine (`rates.bill_nem` via `battery_
 dispatch_policies.billed()`); the charge/discharge decision differs between them by design,
 but that decision difference also changes how much load each policy serves (Run A cycles
-4,968 kWh/yr against Run B's 2,394), so this does not isolate a pure objective effect at
+4,958 kWh/yr against Run B's 2,394), so this does not isolate a pure objective effect at
 matched utilization; see the throughput caveat below. Runs B and C carry their own copy of
 `run_batt`'s ≥2.5 kW EV-spillover exclusion, and gate it the same way: on
 `behavior_rebuild.EV_ANALYSIS` (the intake flag `household.has_ev`, issue #246), so a
@@ -1468,8 +1473,8 @@ billing both the no-battery and with-battery series through
 its own `bill_nbt()`. Result: **$2,517.25/yr** for both vintages (NBT26/NBT00 year-1 figures
 again coincide), **+$51.25** above the NEM 2.0 figure (consistent with the nbt_2039
 finding that the battery is worth more once exports price at NBT rather than near-retail), and
-inside the existing flat 3–8¢ bracket ($2,507–2,542/yr), within $5.39 of the 5¢
-figure (vs −$19.39 from the 3¢ figure and +$15.61 from the 8¢ figure). The
+inside the existing flat 3–8¢ bracket ($2,500–2,534/yr), within $2.75 of the 5¢
+figure (vs −$16.75 from the 3¢ figure and +$17.25 from the 8¢ figure). The
 disagreement is stated for each reference point in the artifact
 (`battery_marginal_reconciliation_vs_nbt_2039 → disagreement_vs_reference`): for this
 household's measured export shape, the real hourly schedule lands
@@ -1623,7 +1628,7 @@ empirical $/kW-month rate × this household's monthly LMP-weighted demonstrated 
 a prescriptive baseline derived the same empirical way, ~10.8% of nameplate), summed over
 the participation months inside the measured window that are not excluded as partial
 (see below), over the observed 2025-07-24..2025-10-30 window (not an annual figure):
-**$128.47**. Opportunity cost is computed: `rates.bill_nem` re-billed for
+**$127.26**. Opportunity cost is computed: `rates.bill_nem` re-billed for
 the full measured window with vs without the VPP dispatch modification (the same
 "re-bill the modified year" technique the rest of this repo's battery/behavior work uses,
 CLAUDE.md §1b), from a dispatch run that excludes any partial month's
@@ -1633,10 +1638,10 @@ already this household's highest-value discharge window under ordinary price-awa
 dispatch, so the extra forced export there mostly draws down SOC that would otherwise have
 been used in cheaper off-peak/super-off-peak hours (refilled overnight anyway) rather than
 costing expensive on-peak service later, a NEM-netting effect specific to
-this household's usage pattern. Net = **$139.95** at the 20% reserve
-(primary); a 0%-reserve sensitivity gives $187.78 gross, −$11.36 opportunity cost,
-**$199.14** net. AC4's kWh figure: **182.19 kWh** delivered across the 46 in-window event
-hours at 20% reserve (241.11 kWh at 0% reserve), `revenue.<scenario>.total_discharge_kwh`
+this household's usage pattern. Net = **$138.52** at the 20% reserve
+(primary); a 0%-reserve sensitivity gives $186.56 gross, −$11.14 opportunity cost,
+**$197.70** net. AC4's kWh figure: **181.12 kWh** delivered across the 46 in-window event
+hours at 20% reserve (240.04 kWh at 0% reserve), `revenue.<scenario>.total_discharge_kwh`
 in the artifact (from the full event set, including any partial month, since AC2 requires
 every in-window event replayed), event-forced discharge (which `run_batt_vpp` routes
 entirely to export) plus any concurrent ordinary/BAU discharge that hour, matching the
@@ -1661,7 +1666,7 @@ pre-window test, 2025-07-22, and three in-window tests, 2025-07-29..31), so the
 household's own measured load exists for only 6 of July's 8 real event hours. Pricing
 that incomplete 6-hour subset at July's full published $/kW-month rate would misrepresent
 a partial month as a complete settlement (July's in-window-only
-demonstrated capacity, priced at the full rate, would contribute $36.87 to gross
+demonstrated capacity, priced at the full rate, would contribute $31.18 to gross
 revenue). Any month with
 event hours on both sides of the window boundary is therefore excluded from
 `monthly_gross_usd`/net revenue
@@ -1748,13 +1753,13 @@ fact no 2024 per-event payment rate is published (TN 266629 states the rate "var
 month" without printing the figures), so the 2024 rate is **not determined**.
 
 **Reconciliation with §6.** The retired estimate's $150–350/season range and this
-backtest's $128.47 gross for the ~3 in-window, fully-priced participation months (August,
+backtest's $127.26 gross for the ~3 in-window, fully-priced participation months (August,
 September, October; July is excluded as a partial month, above) are the same order of
 magnitude (a partial season at the program-terms rate), the sanity check the module's
 own docstring sets out to perform. `extended_findings.py`'s `tornado_battery` does not
 turn this into a payback-year figure (§3.14):
 `dsgs_excluded_note` reads this artifact's two union-scenario net-revenue figures
-read-only ($139.95 primary, $199.14 0%-reserve sensitivity, both over the observed
+read-only ($138.52 primary, $197.70 0%-reserve sensitivity, both over the observed
 2025-07-24..2025-10-30 window) and reports them as an
 additive dollar amount on top of the arbitrage-only `base_payback_yr` (6.2 yr). Across the
 14 individual aggregation schedules
@@ -1824,13 +1829,13 @@ untouched`).
 
 **The delta vs. reactive: foresight shows up as more revenue per served hour, not as fewer
 misses.** Over this household's
-real 2025 event calendar and measured load, pre-staging raises net revenue from $139.95 to
-**$176.82** (+$36.87, +26.3%) and gross revenue from $128.47 to $176.96 (+$48.49), with
+real 2025 event calendar and measured load, pre-staging raises net revenue from $138.52 to
+**$169.70** (+$31.18, +22.5%) and gross revenue from $127.26 to $176.96 (+$49.70), with
 opportunity cost falling from −$11.48 to **$0.14** (pre-staging trades away some
 off-peak-hour arbitrage savings the reactive path was capturing, which very nearly
 cancels out against the bill impact of the extra event-hour export). Total delivered
-discharge across the 46 in-window event hours rises from 182.19 kWh to 235.65 kWh
-(+53.46 kWh, +29.3%). The miss rate, by contrast, moves only marginally: 23 of 46 misses
+discharge across the 46 in-window event hours rises from 181.12 kWh to 235.65 kWh
+(+54.53 kWh, +30.1%). The miss rate, by contrast, moves only marginally: 23 of 46 misses
 (50.0%) vs the reactive path's 24 of 46 (52.2%), a single additional event hour served.
 The mechanism: pre-staging can only ever leave SOC
 entering an event hour greater than or equal to the reactive path's SOC at that same
@@ -1847,7 +1852,7 @@ alternative dispatch policy replayed against the same real load/calendar the rea
 backtest already uses.
 
 **These are union-calendar figures (issue #53). A real household would not have this
-foreknowledge, but that does not make $176.82/+26.3% a ceiling on realizable benefit.** A
+foreknowledge, but that does not make $169.70/+22.5% a ceiling on realizable benefit.** A
 single real household belongs to exactly one aggregation and knows only that aggregation's
 own test calendar, never the union of all ~14 aggregations' combined schedules this figure
 assumes foreknowledge of. The union calendar, though, is an inclusive upper bound on event
@@ -1863,7 +1868,7 @@ realizable range works. That range needs the private raw CEC archive to
 (re)compute, which was not available when this sensitivity was added, so the committed
 artifact's `per_aggregation_sensitivity` section still predates it (flagged
 there via `prestaged_range_pending_archive_regeneration`). Until a future run with the
-archive present recomputes it, read the $176.82/+26.3% figure as one scenario
+archive present recomputes it, read the $169.70/+22.5% figure as one scenario
 computed from an inclusive event-frequency assumption, not as a bound in either direction
 on what a real single-aggregation household would have earned.
 
@@ -2296,8 +2301,8 @@ is the same constant (the fit's own slope, $437.04/kWh) at every grid point. The
 the smallest energy-grid point whose own marginal kWh (versus the previous grid point)
 fails to pay back that constant marginal cost within **10 years**, the Powerwall 3
 warranty term §6 already cites. The rule is stated in the script before the sweep runs.
-Result on the real data: **20 kWh** in both scenarios (marginal saving/kWh drops to $42.10
-current-behavior, $22.46 post-behavior; marginal payback 10.4 yr / 19.5 yr, both past the
+Result on the real data: **20 kWh** in both scenarios (marginal saving/kWh drops to $42.38
+current-behavior, $22.66 post-behavior; marginal payback 10.3 yr / 19.3 yr, both past the
 $437.04/10 ≈ $43.70/kWh/yr line a 10-year payback requires). The knee's location is unchanged by either the cost-model change or the steady-state correction or on the steady-state iteration above; only its stated
 marginal-payback years do.
 
@@ -2539,7 +2544,8 @@ annual LP never wants combined throughput above the cap even without this constr
 simultaneous full charge and full discharge always wastes round-trip efficiency for no
 bill benefit, so the cost-minimizing solution avoids it on its own, and the annual
 headline figures of that era ($2,546.24/yr perfect-foresight save, $217.24/yr gap; issue
-#40's power-split change later moved them to today's $2,545.39/yr and $217.39/yr) are the
+#40's power-split change later moved them to $2,545.39/yr and $217.39/yr, and issue
+#240's priced charge rule then moved the heuristic side again, to today's $79.39/yr) are the
 same with or without the constraint. The day-ahead case does move slightly: a single day's
 local LP, optimizing over a much shorter horizon with a fixed starting SOC, finds the
 combined cap binding on some days, moving day-ahead's save from $1,711.13/yr to
@@ -2846,12 +2852,12 @@ correction, confirming the boundary artifact was real but immaterial to every pu
 dollar figure in this section.
 
 **Result: a counterintuitive finding, checked against the physical data.** On-peak
-shifting later hurts most (**+$132.81/yr** even after the EV shift and battery): the
+shifting later hurts most (**+$136.27/yr** even after the EV shift and battery): the
 newly-captured evening hour (9-10pm) is pure grid import with no solar to offset it (731.8
 kWh imported, 0 kWh exported in that slot across the measured year, every day of the week;
 the on-peak window applies daily, weekends included). Widening on-peak and narrowing the
-midday super-off-peak window each lower this household's bill (−$515.25/yr and
-−$1,437.37/yr): both reclassify hours when this household is a heavy net exporter
+midday super-off-peak window each lower this household's bill (−$522.94/yr and
+−$1,398.88/yr): both reclassify hours when this household is a heavy net exporter
 (10am-4pm weekday: 6,508 kWh exported vs 459 kWh imported across the 10am-4pm weekday
 window in the measured year) into periods with a materially higher export credit rate, a
 windfall a grid-dependent household would not see. This inverts the naive "wider/narrower
@@ -3105,8 +3111,8 @@ and pre-behavior calibration runs into one value, then applying it to the alread
 `c`-blended `base_marginal = c*mid + (1-c)*pre`, uses a slope that is half pre-behavior at
 `c=1` (pure post-behavior), so the real mid-only calibration point is never exactly
 reproduced, and symmetrically at `c=0`. Quantified at this household's real soil-surplus
-point: the averaged-slope prediction is $2,202.19 against the real measured $2,198.66, the
-$3.53 (0.16%) gap issue #89's own review first surfaced. `save1_of()` now applies each
+point: the averaged-slope prediction is $2,357.56 against the real measured $2,355.37, the
+$2.19 (0.09%) gap issue #89's own review first surfaced. `save1_of()` now applies each
 side's own slope to that side's own nominal value first (`mid*factor_mid`,
 `pre*factor_pre`), then blends the two resulting dollar figures by `c`
 (`c*mid_adjusted +
@@ -3133,9 +3139,10 @@ way regardless of direction; the artifact's `rte_points_mid`/`rte_points_pre` ca
 exact old/new numbers. Downstream this is a very small correction, smaller than issue
 #89's own: `production_measurement_spread`'s own tornado swing widens again, from 0.0761
 yr to 0.0789 yr at full precision (both still round to the same 0.1 yr in the published,
-rounded artifact field); 10-yr NPV median at 4% discount $7,496 → $7,497, at 7% discount
-$4,357 → $4,360; payback median/p10/p90 unchanged at the published 1dp rounding
-(5.8/5.1/6.8 yr).
+rounded artifact field); the 10-yr NPV median moved by about $1 at a 4% discount rate and
+about $3 at 7%, and payback median/p10/p90 did not move at the published 1dp rounding.
+(Those are the SIZES of that fix's effect, measured when it landed; the artifact's own
+current percentiles are in the paragraph above, and have moved since for other reasons.)
 
 **Correlation structure: assumed independent, stated bias direction.** All seven draws are
 independent random variables. No correlation between them is measured anywhere in this
@@ -3211,7 +3218,7 @@ independence assumption are themselves correct, several of which are labeled "es
 above. The artifact records this distinction in a dedicated `epistemic_caveat` field,
 separate from the sampling-only `finite_sample_caveat`, and the report states the result
 as conditional on the model, never as an unconditional real-world guarantee. NPV: 10-yr
-median $7,497 at a 4% discount rate ($4,360 at 7%); 15-yr median $18,954 at 4% ($12,297 at
+median $8,873 at a 4% discount rate ($5,509 at 7%); 15-yr median $20,971 at 4% ($13,902 at
 7%), reported per draw as the standard `-price + PV(savings)`, unlike the old artifact's
 own `npv10_at_4pct_median` (a `median(npv) - median(price)` convention, reproduced exactly
 but only inside `legacy_reproduction()` for special-case matching, not used for this
@@ -3339,10 +3346,10 @@ sweeps (the Beta(2,1)-blended nominal save1, not the raw post-behavior `mid` alo
 that this grid's +0% point agrees with the figure it claims to match), explicitly labeled
 as carrying no evidence-backed weight for any point (`not_a_probability_distribution` in
 the artifact). This grid's +0% point is identical, by construction, to `tornado()`'s own
-escalation lever's ESC_LO payback endpoint (6.8 yr), not to `tornado()`'s overall
-`nominal_payback_yr` (5.8 yr), which uses 6%, not 0%, escalation, a different scenario.
-The result: payback stays within the 10-yr warranty down to -6%/yr (8.5 yr), but misses it
-at -9%/yr (10.2 yr) and worse at -12%/yr (13.9 yr), a concrete, computed answer to "how
+escalation lever's ESC_LO payback endpoint (6.4 yr), not to `tornado()`'s overall
+`nominal_payback_yr` (5.5 yr), which uses 6%, not 0%, escalation, a different scenario.
+The result: payback stays within the 10-yr warranty down to -9%/yr (7.0 yr at -3%, 7.8 at
+-6%, 9.2 at -9%) and misses it only at -12%/yr (11.8 yr), a concrete, computed answer to "how
 much downside would it take to matter," reported as a labeled sensitivity, the same
 pattern `dsgs_vpp_backtest.py`'s own additive sensitivities already established in this
 repo, never folded into the Monte Carlo's own percentile claims.
@@ -5000,7 +5007,7 @@ update both the `D` block and the prose numbers, then grep the HTML for the old 
 **Report structure conventions (preserve on regeneration; specs in `CLAUDE.md` §§9–11).**
 
 - **One rate vintage per projection:** the §7 package cards state projected bills **at
-  constant 6/1/2026 rates**: LOW ~$3,700/yr (~$307/mo), MID ~$1,445/yr (~$120/mo) vs the
+  constant 6/1/2026 rates**: LOW ~$3,700/yr (~$307/mo), MID ~$1,304/yr (~$109/mo) vs the
   ~$4,904/yr no-change model baseline, never against the $3,282 actual (billed largely on
   2025 tariffs), which is noted as non-comparable.
 - **Confidence labels:** inline pills tag claims as `measured`
@@ -6512,10 +6519,10 @@ historical on purpose: it answers "what did these components actually cost over 
 is each component."
 
 On the current artifacts, the strict floor (identical dollars, $289.60/yr, across all
-three packages) is **LOW 7.9%** of its $3,683/yr projected bill, **MID 20.0%** of
-$1,445/yr, **HIGH 23.6%** of $1,229/yr. Non-bypassable charges at each package's own
-modeled usage add **LOW 13.3%** ($490.91), **MID 33.6%** ($485.44), **HIGH 39.6%**
-($486.90); MID and HIGH are both lower in dollars than LOW despite the larger percentage,
+three packages) is **LOW 7.9%** of its $3,683/yr projected bill, **MID 22.2%** of
+$1,304/yr, **HIGH 26.7%** of $1,085/yr. Non-bypassable charges at each package's own
+modeled usage add **LOW 13.3%** ($490.91), **MID 37.3%** ($486.07), **HIGH 44.9%**
+($487.53); MID and HIGH are both lower in dollars than LOW despite the larger percentage,
 because their projected bills are smaller and their gross imports fall relative to the
 baseline. Combined (**LOW 21.2%, MID 53.6%, HIGH 63.2%**), the figure is a larger fraction
 of a *smaller* projected bill by arithmetic necessity; it says nothing about which package
@@ -6525,8 +6532,8 @@ is better, and it is not itself a floor. (MID/HIGH's non-bypassable dollars refl
 unit and `charge_kw=CHARGE_KW_WITH_EXPANSION` for HIGH's 27 kWh with-expansion unit, the
 same split `battery_dispatch_policies.json` itself uses, where a call with no `charge_kw`
 would default to the old symmetric 11.5 kW charge behavior. The difference between the two
-charge behaviors is small (MID's non-bypassable figure $485.78 → $485.44, HIGH's $487.02 →
-$486.90) because a tighter charge cap only marginally changes how much of this household's
+charge behaviors is small (MID's non-bypassable figure $486.41 → $486.07, HIGH's $487.65 →
+$487.53) because a tighter charge cap only marginally changes how much of this household's
 solar surplus and grid top-up get stored before NBC-priced import happens.)
 
 **Baseline floor fraction (`build_baseline_floor_fraction()`).** The report's §12 compares
