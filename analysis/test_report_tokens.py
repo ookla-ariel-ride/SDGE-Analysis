@@ -10732,9 +10732,18 @@ _EV_VOCABULARY = re.compile(r"\bEVs?\b(?!-TOU)|\bcharger\b|\bcharging\b|"
 # character. These four strings are report-template.html's own fixed prose as
 # it read before issue #147 tokenized any of it, so the change that makes a
 # no-EV report true is proved not to have moved this one.
+#
+# THE FIRST LITERAL WAS RE-PINNED BY ISSUE #136 (fix round 1): its "~" was
+# S0_FREE_WIN_CARD_FIGURE hedging a rounding no coarser than this report's
+# whole-dollar baseline, the exact shape #136's "~" rule (report_tokens.py,
+# above _usd0_tilde) exists to catch -- EV_FIX_SAVINGS_100 and
+# EV_FIX_SAVINGS_80 read the same behavior_rebuild.json scenario field at the
+# same precision and were already bare. The token now renders bare too, so
+# this control literal is bare to match -- an intentional presentation
+# change, not a figure drift (the digits, 1,221, are unchanged).
 _EV_HOUSEHOLD_LITERALS = (
     ("section 0's free-win card",
-     '<div class="card"><div class="big">~$1,221/yr</div><div class="lbl">Free win: '
+     '<div class="card"><div class="big">$1,221/yr</div><div class="lbl">Free win: '
      'fully super-off-peak EV charging (session-level, 100% compliance)</div></div>'),
     ("the Monday appendix's first instruction",
      "<h3>1 · Reprogram charging (this week, $0)</h3>"),
@@ -17265,6 +17274,39 @@ def _resolution_failures():
         except BaseException as e:                # noqa: BLE001 - that is the assertion
             out[name] = f"{type(e).__name__}: {e}"
     return out
+
+
+@case
+def case_a_or_an_picks_the_vowel_sound_boundaries():
+    """_a_or_an(n) precedes n's ENGLISH WORD, not its digit, with "a" or "an":
+    "an" only before the four ranges whose leading number-word opens on a
+    vowel SOUND -- eight, eleven, eighteen, eighty through eighty-nine -- and
+    "a" everywhere else, including compounds like twenty-eight where the
+    leading word ("twenty") is a consonant sound. Table-driven across every
+    boundary (7/8, 8/9, 10/11, 11/12, 17/18, 18/19, 79/80, 89/90) so a future
+    off-by-one at any of them fails by name instead of by chance (deferred
+    minor from #276's review of this file family).
+
+    Also covers the two argument shapes callers actually pass: a float
+    percentage (int(abs(n)) truncates 11.8 to 11, still "an") and a signed
+    delta (abs() runs before the range test, so -8 is "an" like 8)."""
+    cases = [
+        (0, "a"), (1, "a"), (7, "a"), (8, "an"), (9, "a"),
+        (10, "a"), (11, "an"), (12, "a"),
+        (17, "a"), (18, "an"), (19, "a"),
+        (28, "a"),
+        (79, "a"), (80, "an"), (81, "an"), (85, "an"), (89, "an"), (90, "a"),
+        (99, "a"),
+        (11.8, "an"),
+        (-8, "an"),
+    ]
+    offences = [(n, want, got) for n, want in cases
+                if (got := rt._a_or_an(n)) != want]
+    assert not offences, (
+        "_a_or_an disagrees with the vowel-sound table at: "
+        + "; ".join(f"{n} -> {got!r}, want {want!r}" for n, want, got in offences))
+    return (f"_a_or_an holds all {len(cases)} vowel-sound boundary cases "
+            "(8/9, 10/11, 17/18, 18/19, 79/80, 89/90, plus a float and a signed input)")
 
 
 class _example_household:

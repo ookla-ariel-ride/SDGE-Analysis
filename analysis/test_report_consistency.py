@@ -2703,6 +2703,74 @@ def case_cleaning_heading_is_the_templates_h3_line_rendered():
             f"({len(names)} tokens: {', '.join(names)})")
 
 
+# The card's label starts with one of three fixed prefixes _free_win_card_label
+# can return (Free win / No modeled saving / Costs money here -- see
+# report_tokens.py's S0_FREE_WIN_CARD_LABEL); the rest of the line is the
+# free-fix noun, which varies by household and is not pinned here.
+_S0_FREE_WIN_CARD_RE = re.compile(
+    r'<div class="card"><div class="big">[^<]*</div><div class="lbl">'
+    r'(?:Free win|No modeled saving|Costs money here):[^<]*</div></div>')
+
+
+def case_s0_free_win_card_is_the_templates_card_line_rendered():
+    """issue #136 (fix round 1): index.html's committed §0 free-win card read
+    "~$1,220/yr" against two separate defects, neither caught by any existing
+    case -- this card had NO consistency pin at all before this one.
+
+    First, the sigil: S0_FREE_WIN_CARD_FIGURE hedged with usd0_tilde_signed
+    while EV_FIX_SAVINGS_100 and EV_FIX_SAVINGS_80, reading the very same
+    behavior_rebuild.json scenario field at the same cents precision, were
+    bare -- report_tokens.py's own "~" rule (above _usd0_tilde) says all
+    three take the same sigil, and the token now renders bare.
+
+    Second, and independently of the sigil, the DIGITS were stale: on the
+    committed archive the token resolves to $1,221 (behavior_rebuild.json's
+    scenarios.a.saved is 1220.85, and usd0's whole-dollar rounding is
+    :,.0f, which rounds .85 up), not the $1,220 index.html carried. That
+    one-dollar drift is the same class issue #276 pinned elsewhere: a live
+    template token with no test reading its rendered card, so a stale
+    figure or a stale sigil can sit in the shipped page indefinitely.
+
+    Renders the template's own card line, token by token, and requires it
+    verbatim in index.html -- both halves at once, the same way the §12
+    heading case above does it, so a future edit to either token or to this
+    card's markup is checked without a new case."""
+    lines = [ln for ln in TEMPLATE_HTML.splitlines()
+             if "{{S0_FREE_WIN_CARD_FIGURE}}" in ln and '<div class="card">' in ln]
+    assert len(lines) == 1, (
+        f"report-template.html carries {{{{S0_FREE_WIN_CARD_FIGURE}}}} inside "
+        f'\'<div class="card">\' markup on {len(lines)} lines (the item-2 TODO '
+        "comment also names the token, by design, and is excluded here); this case "
+        "renders the one live §0 card line")
+    line, = lines
+    assert "{{S0_FREE_WIN_CARD_LABEL}}" in line, (
+        f"the §0 free-win card line no longer pairs the figure with its label: {line!r}")
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    rt = _report_tokens()
+    names = sorted(set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", line)))
+    try:
+        rendered = re.sub(r"\{\{([A-Z0-9_]+)\}\}",
+                          lambda m: rt.resolve_token(m.group(1)), line)
+    except BaseException as e:                    # noqa: BLE001 - archive-gated
+        assert _missing_archive_exit(e, archive, loader), (
+            f"the §0 free-win card line could not be rendered, and NOT because this "
+            f"checkout lacks the private archive (present: {archive}): "
+            f"{type(e).__name__}: {e}")
+        return (f"§0 free-win card line ({len(names)} tokens) not rendered: this "
+                f"checkout has no private archive ({e})")
+    assert rendered in HTML, (
+        f"index.html's §0 free-win card is not the template's card line rendered:\n"
+        f"  template renders: {rendered}\n"
+        f"  page carries:     {(_S0_FREE_WIN_CARD_RE.search(HTML) or [''])[0]!r}\n"
+        "the card states the free fix's own annual saving and its label from tokens; "
+        "the page has to carry exactly what they render, sigil and digits both")
+    return (f"index.html's §0 free-win card is the template's card line rendered "
+            f"verbatim ({len(names)} tokens: {', '.join(names)})")
+
+
 def case_cleaning_heading_and_gain_describe_the_same_event():
     """issue #138: the §12 h3 names a cleaning ({{CLEANING_DATE}},
     {{CLEANING_PRICE}}) and states a measured gain ({{CLEANING_EFFECT_PCT}}) in
@@ -7625,6 +7693,7 @@ CASES = [
     case_soiling_rate_bracket_matches_the_token_that_renders_it,
     case_cleaning_effect_heading_matches_the_sections_own_conclusion,
     case_cleaning_heading_is_the_templates_h3_line_rendered,
+    case_s0_free_win_card_is_the_templates_card_line_rendered,
     case_cleaning_heading_and_gain_describe_the_same_event,
     case_cleaned_ratio_row_is_the_templates_row_rendered,
     case_control_year_rows_render_the_generators_no_cleaning_label,
