@@ -1267,7 +1267,7 @@ their whole-dollar neighbours are rounded independently off the unrounded differ
 can sit a dollar from the cents' own rounding. `report_tokens` refuses a row whose dollar
 cell is more than $0.50 from its cents twin, since the generator writes both from one bill
 and a wider gap means a hand-edited or half-updated artifact. On this household the cents
-are 488173 / 256417 (EV-TOU-5), 584296 / 417564 (EV-TOU-2), 635622 / 534897 (TOU-ELEC),
+are 488173 / 242419 (EV-TOU-5), 584296 / 408404 (EV-TOU-2), 635622 / 530793 (TOU-ELEC),
 margins of hundreds of dollars, so the ranked verdict is the same as on the dollar cells.
 The §4 table's rival-row order (`report_blocks._s4_battery_plan_rows`) and the §0 runner-up
 pick read the cents too, and the #141 margin pins now read them: `test_report_consistency.py`
@@ -1359,8 +1359,8 @@ exactly on, the target). The discharge threshold (185.0 ÷ 0.9 = 205.6 kg/MWh) i
 that charge threshold, not independently fit, so it carries no separate free parameter.
 
 **Net, not gross, CO₂.** The three policies consume different amounts of exportable solar via
-battery charging (Run A's own solar-charging displaces 827.1 kg/yr of exports, Run C's only
-601.4), so ranking policies on gross import CO₂ alone drops that difference and can
+battery charging (Run A's own solar-charging displaces 832.2 kg/yr of exports, Run C's only
+627.2), so ranking policies on gross import CO₂ alone drops that difference and can
 invert which policy is cleaner for the atmosphere: on gross import alone Run C reads cleaner
 than Run B (4,826.4 vs 4,917.9 kg), but net accounting (import minus that policy's own
 export-avoided) reverses it. Every comparison below is therefore
@@ -1633,7 +1633,7 @@ the full measured window with vs without the VPP dispatch modification (the same
 "re-bill the modified year" technique the rest of this repo's battery/behavior work uses,
 CLAUDE.md §1b), from a dispatch run that excludes any partial month's
 event-forcing (see "Partial calendar months" below). It came
-out small and slightly negative (**−$11.48**): DSGS event hours fall inside 4–9pm on-peak,
+out small and slightly negative (**−$11.26**): DSGS event hours fall inside 4–9pm on-peak,
 already this household's highest-value discharge window under ordinary price-aware
 dispatch, so the extra forced export there mostly draws down SOC that would otherwise have
 been used in cheaper off-peak/super-off-peak hours (refilled overnight anyway) rather than
@@ -1831,9 +1831,10 @@ untouched`).
 misses.** Over this household's
 real 2025 event calendar and measured load, pre-staging raises net revenue from $138.52 to
 **$169.70** (+$31.18, +22.5%) and gross revenue from $127.26 to $176.96 (+$49.70), with
-opportunity cost falling from −$11.48 to **$0.14** (pre-staging trades away some
-off-peak-hour arbitrage savings the reactive path was capturing, which very nearly
-cancels out against the bill impact of the extra event-hour export). Total delivered
+opportunity cost moving from −$11.26 to **$7.26** (pre-staging trades away some
+off-peak-hour arbitrage savings the reactive path was capturing, and that giveback now
+outweighs the bill impact of the extra event-hour export instead of very nearly cancelling
+against it). Total delivered
 discharge across the 46 in-window event hours rises from 181.12 kWh to 235.65 kWh
 (+54.53 kWh, +30.1%). The miss rate, by contrast, moves only marginally: 23 of 46 misses
 (50.0%) vs the reactive path's 24 of 46 (52.2%), a single additional event hour served.
@@ -2323,8 +2324,8 @@ grid is not symmetric around it, which is true for both grids here (energy neigh
 11.5 kW). The unequal-spacing formula (`h0 = ref-lo`, `h1 = hi-ref`) reduces to the
 ordinary centered difference when `h0 == h1`, and `analysis/test_battery_sizing_curve.py`
 checks it against a known quadratic `f(x) = x²` on a deliberately asymmetric grid, where
-it is exact. Result: energy elasticity 0.47 current-behavior / 0.38 post-behavior vs power
-elasticity 0.0025 / ~0. Energy is far more sensitive at this reference point in both
+it is exact. Result: energy elasticity 0.45 current-behavior / 0.37 post-behavior vs power
+elasticity 0.0023 / ~0. Energy is far more sensitive at this reference point in both
 scenarios (the secant formula gives 0.56/0.48 vs 0.0025/−0.0001, with the same qualitative
 conclusion: capacity, not discharge rate, is what this house's load shape responds to near
 the reference configuration), and both sweeps' `save_usd` at the shared reference point
@@ -2343,10 +2344,10 @@ charge circuitry in this sweep (only the hypothetical discharge rating varies), 
 isolates discharge power without inventing a rating for a hypothetical unit. Effect on the
 real data: the non-anchor power-sweep points' `save_usd` shift down a few cents each (less
 charging capacity than the symmetric fallback gave them); power elasticity moves from
-0.003 → 0.0025 current-behavior and from 0.0004 → ~1e-15 (a true zero: `save_usd` is
+0.003 → 0.0023 current-behavior and from 0.0004 → ~1e-15 (a true zero: `save_usd` is
 identical to the penny at kw = 10, 11.5, 12.5, 15 once the confound is removed)
 post-behavior. Both changes sharpen the qualitative conclusion (energy binds, power does
-not): the energy/power elasticity ratio moves from ~158× to 191.7× current-behavior;
+not): the energy/power elasticity ratio moves from ~158× to 193.0× current-behavior;
 post-behavior's ratio is no longer a finite number to report (there is no measurable local
 power sensitivity left to form a ratio against, so
 `sensitivity.energy_elasticity_ratio_to_power_real` reports `null` in place of a large
@@ -2365,10 +2366,10 @@ price real per-product hardware), so it is not "fixed" there. Instead,
 `sensitivity.energy_elasticity_charge_held_fixed_diagnostic` recomputes the same local
 derivative a second way, counterfactually holding the 15 kWh flanking point's charge rate
 at 5 kW too (diagnostic only; it does not touch the published `energy_sweep_at_11.5kw`
-rows or `energy_elasticity`). Result: 0.4721 (charge-held-fixed) vs 0.473 (published,
-real-hardware) current-behavior, a 0.2% difference; 0.3829 vs 0.3837 post-behavior, a 0.2%
-difference. The >150×-energy-vs-power conclusion is unaffected either way (191.4× vs
-191.7× current-behavior; post-behavior has no finite power elasticity to compare against
+rows or `energy_elasticity`). Result: 0.4500 (charge-held-fixed) vs 0.4495 (published,
+real-hardware) current-behavior, a 0.1% difference; 0.3662 vs 0.3657 post-behavior, a 0.1%
+difference. The >150×-energy-vs-power conclusion is unaffected either way (193.2× vs
+193.0× current-behavior; post-behavior has no finite power elasticity to compare against
 under either variant). The published `energy_elasticity` stays the real-hardware number
 (it is more representative: every point really does run its own product's real charge
 rate); the diagnostic exists to show the confound's size is negligible next to the ~190×
@@ -2422,7 +2423,7 @@ its own varying discharge power (needs no private archive; a synthetic fixture w
 `power_kw` varying across the grid); a live case (needs the real archive) asserting the
 charge-held-fixed diagnostic elasticity stays within 2% of the published one and that
 energy still dominates power by >10x under either variant; and a committed-artifact
-regression pin on the `power_elasticity` values themselves (0.0025 current-behavior, ~0
+regression pin on the `power_elasticity` values themselves (0.0023 current-behavior, ~0
 post-behavior, never the symmetric-fallback 0.003/0.0004) and on the ratio fields'
 null-handling when there is no finite power sensitivity to divide by.
 
@@ -2863,7 +2864,7 @@ window in the measured year) into periods with a materially higher export credit
 windfall a grid-dependent household would not see. This inverts the naive "wider/narrower
 window = worse" intuition for a net-exporting solar household specifically; the
 import/export figures above are the evidence. The summer extension is roughly neutral
-(−$1.04/yr).
+(−$0.81/yr).
 
 **Tests** `analysis/test_tou_structure_stress.py`, 15 cases: `period_variant` reproduces
 `rates.period` exactly at CURRENT's parameters; `assign_structure` preserves physical

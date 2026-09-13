@@ -274,32 +274,47 @@ def case_committed_index_html_clears_every_limit_in_both_tiers():
 
 
 # --- seeded defects: one per metric, injected into the committed page --------
+# WHAT THESE TWO CASES OWN, AND WHAT THEY MUST NOT (issue #240 review round 3).
+# Each seeds a known number of defects into the COMMITTED page and asserts the
+# rule fires. The property under test is "N seeded defects raise the count by N
+# and trip the rate", which is about the MEASURE -- so the page's own baseline is
+# read from the page, never written down here. A hardcoded total silently pins
+# the committed prose as well: a legitimate edit that adds one em dash or one
+# "X, not Y" tail anywhere in the basic tier then fails a case whose name says it
+# is about seeding, with an assertion error that names neither the sentence nor
+# the file. That is exactly what happened when section 6 gained two tails, and
+# it is the only reason this suite went red on a branch whose own prose gate
+# (prose_rhythm.py --strict, which measures a RATE) was passing.
 @case
 def case_seeded_em_dash_run_fails_the_committed_page():
     html = PAGE.read_text(encoding="utf-8")
+    baseline = prose_rhythm.measure(html, "basic")["em_dashes"]
     line = "<p>alpha — beta — gamma — delta — epsilon — zeta — eta</p>"
     seeded = _seed_into_basic(html, "\n".join([line] * 5))
     m = prose_rhythm.measure(seeded, "basic")
-    assert m["em_dashes"] == 31 and m["em_per_1k"] > 3.0, m
+    assert m["em_dashes"] == baseline + 30 and m["em_per_1k"] > 3.0, (baseline, m)
     v = prose_rhythm.check(seeded, "basic")
     assert _kinds(v) == {"em dashes"}, v
     assert m["em_sites"] and m["em_sites"][0].startswith("L"), m["em_sites"][:1]
-    return ("seeded 30 extra em dashes into the basic tier (1 -> 31, 0.1 -> "
-            f"{m['em_per_1k']:.1f}/1k): the em-dash rule fires and nothing else does")
+    return (f"seeded 30 extra em dashes into the basic tier ({baseline} -> "
+            f"{m['em_dashes']}, {m['em_per_1k']:.1f}/1k): the em-dash rule fires "
+            "and nothing else does")
 
 
 @case
 def case_seeded_x_not_y_tails_fail_the_committed_page():
     html = PAGE.read_text(encoding="utf-8")
+    baseline = prose_rhythm.measure(html, "basic")["tails"]
     line = ("<p>the meter reads load, not export, and stores charge, not heat, "
             "and bills demand, not energy</p>")
     seeded = _seed_into_basic(html, "\n".join([line] * 5))
     m = prose_rhythm.measure(seeded, "basic")
-    assert m["tails"] == 17 and m["tails_per_1k"] > 1.5, m
+    assert m["tails"] == baseline + 15 and m["tails_per_1k"] > 1.5, (baseline, m)
     v = prose_rhythm.check(seeded, "basic")
     assert _kinds(v) == {"'X, not Y' tails"}, v
-    return ("seeded 15 extra 'X, not Y' tails into the basic tier (2 -> 17, 0.2 -> "
-            f"{m['tails_per_1k']:.1f}/1k): the tail rule fires and nothing else does")
+    return (f"seeded 15 extra 'X, not Y' tails into the basic tier ({baseline} -> "
+            f"{m['tails']}, {m['tails_per_1k']:.1f}/1k): the tail rule fires and "
+            "nothing else does")
 
 
 @case
