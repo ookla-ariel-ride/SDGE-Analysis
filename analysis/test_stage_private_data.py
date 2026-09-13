@@ -227,14 +227,26 @@ class SkipCase(Exception):
 
 _CP_ARG = re.compile(r'^\s*cp\s+(?:-R\s+)?"?\$SRC"?/private/1-raw-data/([^\s"\\]+)', re.M)
 
+# issue #213, round 2: electric-bills/, gas-bills/ and caiso_raw/ are no
+# longer copied by a literal `cp -R "$SRC/.../<name>" ...` line -- they go
+# through _copy_subtree_skipping_os_metadata "<name>" instead, which decides
+# file-by-file what to copy so it can skip OS metadata at copy time rather
+# than deleting it afterward. This is the second, ADDITIONAL shape that
+# counts as staging a subtree; a literal `cp -R` line is still the only
+# shape recognized for anything this function does not wrap.
+_SKIP_METADATA_CALL_ARG = re.compile(
+    r'^\s*_copy_subtree_skipping_os_metadata\s+"([^"]+)"', re.M)
+
 
 def _staged_basenames(script_text):
     """Every source basename (or glob pattern) an actual cp/cp -R INVOCATION
-    line copies out of private/1-raw-data/ -- e.g. "Electric_15_Minute_*.csv",
+    line, or a _copy_subtree_skipping_os_metadata call, copies out of
+    private/1-raw-data/ -- e.g. "Electric_15_Minute_*.csv",
     "enphase_sam8760_2025.csv", "electric-bills". Anchored to a leading `cp`
-    so the script's own unrelated caiso_raw existence-check `ls` line is
-    never mistaken for a real copy."""
-    return {pathlib.PurePosixPath(m.group(1)).name for m in _CP_ARG.finditer(script_text)}
+    (or the wrapper call) so the script's own unrelated caiso_raw
+    existence-check `ls` line is never mistaken for a real copy."""
+    return ({pathlib.PurePosixPath(m.group(1)).name for m in _CP_ARG.finditer(script_text)}
+            | {m.group(1) for m in _SKIP_METADATA_CALL_ARG.finditer(script_text)})
 
 
 def _is_staged(name, script_text):
@@ -736,6 +748,65 @@ def _snapshot(root):
     return out
 
 
+def _register_admin_dir():
+    """<git-common-dir>/worktrees for THIS checkout -- the directory holding
+    one admin entry per linked worktree of it. None when this checkout has
+    no git identity to ask; this is a hygiene helper, not a guard under
+    test, so it reports "nothing to check" instead of raising (issue #206)."""
+    r = subprocess.run(["git", "-C", str(ROOT), "rev-parse",
+                        "--path-format=absolute", "--git-common-dir"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    return pathlib.Path(r.stdout.strip()) / "worktrees"
+
+
+def _register_entry_names(admin):
+    """The admin entry names that exist right now, or an empty set if there
+    is no admin directory yet -- also true before this checkout's first
+    worktree is ever added, which a diff against this treats the same way."""
+    if admin is None:
+        return set()
+    try:
+        return {p.name for p in admin.iterdir()}
+    except OSError:
+        return set()
+
+
+@contextlib.contextmanager
+def _register_entries_confined_to(td):
+    """Hand back ONLY the admin entries a block registers for worktrees
+    inside `td`, and leave every other entry -- including one that predates
+    the block -- exactly as it was found (issue #206).
+
+    Never `git worktree prune` here: prune is not scoped to one fixture, it
+    removes EVERY entry whose directory is missing, including a developer's
+    own worktree on an unmounted volume or a network share. An entry is
+    removed only when BOTH hold: it is NEW since this block started, and the
+    `gitdir` file git wrote in it names a directory inside `td` -- the
+    caller's own TemporaryDirectory. `finally`, so a block that raises
+    mid-way still hands its own entries back, and the check reads the
+    filesystem directly rather than asking git, so it cannot be blocked by
+    any environment state a case inside the block may have changed."""
+    admin = _register_admin_dir()
+    before = _register_entry_names(admin)
+    fence = os.path.realpath(str(td))
+    try:
+        yield
+    finally:
+        if admin is None:
+            return
+        for name in sorted(_register_entry_names(admin) - before):
+            entry = admin / name
+            try:
+                owner = os.path.realpath(
+                    os.path.dirname((entry / "gitdir").read_text().strip()))
+            except OSError:
+                continue        # not ours to read, so not ours to remove
+            if owner == fence or owner.startswith(fence + os.sep):
+                shutil.rmtree(entry, ignore_errors=True)
+
+
 @contextlib.contextmanager
 def _linked_worktree(td, name="dst"):
     """A REAL linked worktree of THIS checkout, as the destination.
@@ -747,28 +818,166 @@ def _linked_worktree(td, name="dst"):
     refused, which is why the two pre-existing end-to-end cases below stage
     in here as well.
 
+    WHY A WORKTREE OF THIS CHECKOUT, NOT A THROWAWAY CLONE (issue #206's own
+    "the stronger fix" suggestion, round 1 /review): a throwaway clone's
+    --git-common-dir is its OWN, not this checkout's, so it would only ever
+    exercise the REFUSED path. `case_refuses_a_different_clone_of_the_same_
+    remote` specifically needs a worktree that IS this checkout to prove the
+    guard tells "the checkout I think it is" apart from "a clone that shares
+    its remote" -- and every "accepts a real worktree" case needs the same
+    identity to prove the guard doesn't refuse a legitimate destination. A
+    clone cannot stand in for either. The confinement above is what makes
+    registering against the real checkout safe rather than something to
+    avoid.
+
     The finally clause hands the directory back to git rather than leaving it
     registered: without it every run of this suite would leave a stale entry
     in the developer's real .git/worktrees. Its argument is always a path
     this contextmanager itself created inside the caller's
     TemporaryDirectory, asserted below, and if the removal fails the
-    TemporaryDirectory still clears the files."""
+    TemporaryDirectory still clears the files.
+
+    THE HANDBACK IS CONFINED, not just attempted (issue #206): a plain `git
+    worktree remove --force` left five admin husks (dst, dst1..dst4) in this
+    checkout's real .git/worktrees, none of them prunable, because a case
+    inside the block can leave the real process environment in a state
+    (an ownership-check variable, a GIT_CONFIG_* override) that makes that
+    one command refuse -- and the caller of this contextmanager has no way to
+    know that happened. So this wraps itself in
+    _register_entries_confined_to(), whose sweep reads the filesystem
+    directly and does not depend on git succeeding at all, run AFTER the
+    ordinary removal below gets its best shot with a stripped environment."""
     path = pathlib.Path(td) / name
     assert path.parent == pathlib.Path(td), "worktree must live inside the test's tempdir"
     if subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--git-common-dir"],
                       capture_output=True, text=True).returncode != 0:
         raise SkipCase("this checkout is not a git repository, so a linked "
                        "worktree of it cannot be built")
-    added = subprocess.run(
-        ["git", "-C", str(ROOT), "worktree", "add", "--detach", str(path), "HEAD"],
-        capture_output=True, text=True)
-    assert added.returncode == 0, (
-        f"could not create a worktree of this checkout: {added.stderr}")
+    with _register_entries_confined_to(td):
+        added = subprocess.run(
+            ["git", "-C", str(ROOT), "worktree", "add", "--detach", str(path), "HEAD"],
+            capture_output=True, text=True)
+        assert added.returncode == 0, (
+            f"could not create a worktree of this checkout: {added.stderr}")
+        try:
+            yield path
+        finally:
+            # A clean environment for this one housekeeping call: a case may
+            # have really set GIT_TEST_ASSUME_DIFFERENT_OWNER or a
+            # GIT_CONFIG_* override in os.environ for the DURATION of its own
+            # `with` block, and this teardown must not inherit the very
+            # forgery the case built it to exercise. The confined sweep above
+            # is what actually guarantees no residue; this just means it is
+            # rarely needed.
+            clean_env = {k: v for k, v in os.environ.items()
+                        if not k.startswith(("GIT_TEST_", "GIT_CONFIG_"))}
+            subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force",
+                            str(path)], capture_output=True, text=True, env=clean_env)
+
+
+@case
+def case_a_linked_worktree_hands_back_its_admin_entry_even_when_the_case_forges_ownership_and_dies():
+    """issue #206 AC3/AC4, reproduced directly rather than inferred: the
+    exact incident that left dst/dst1..dst4 in this checkout's real
+    .git/worktrees.
+
+    GIT_TEST_ASSUME_DIFFERENT_OWNER=1, set for real in os.environ (not
+    handed to one subprocess call) is git's own test hook for "every
+    repository is dubiously owned" -- measured on this machine's git just
+    above this file's own docstring era: `git worktree remove --force` under
+    it exits 128, 'detected dubious ownership'. A case that sets this to
+    exercise the safe.directory guard elsewhere, and then dies before
+    unsetting it, leaves _linked_worktree's plain removal call exactly the
+    way the incident did.
+
+    The case body here raises DELIBERATELY, after forging the variable,
+    which stands in for 'dies mid-case' -- and the admin entry must still be
+    gone afterward, with the variable restored so this case cannot leak the
+    forgery into whatever runs after it."""
+    admin = _register_admin_dir()
+    if admin is None:
+        raise SkipCase("this checkout has no git common dir, so it has no register")
+    before = _register_entry_names(admin)
+    prior = os.environ.get("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+    died = False
     try:
-        yield path
+        with tempfile.TemporaryDirectory() as td:
+            with _linked_worktree(td) as wt:
+                assert wt.is_dir(), "the worktree must exist before the case dies"
+                os.environ["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1"
+                raise RuntimeError("simulated case failure mid-block")
+    except RuntimeError:
+        died = True
     finally:
-        subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(path)],
-                       capture_output=True, text=True)
+        if prior is None:
+            os.environ.pop("GIT_TEST_ASSUME_DIFFERENT_OWNER", None)
+        else:
+            os.environ["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = prior
+    assert died, "the simulated failure did not propagate -- this case proves nothing"
+    leftover = sorted(_register_entry_names(admin) - before)
+    assert not leftover, (
+        f"a case that forges ownership and dies mid-block left {leftover} in "
+        f"{admin} -- exactly the shape of the dst/dst1..dst4 incident")
+    return ("a worktree fixture hands back its own admin entry even when the "
+            "case forged an ownership variable and died before unsetting it")
+
+
+@case
+def case_a_linked_worktree_hands_back_its_admin_entry_even_when_git_dir_and_cwd_are_tampered_with():
+    """issue #206 AC4, a second forcing vector (round 1 /review finding 3):
+    GIT_DIR and GIT_WORK_TREE, set for real in os.environ, point every git
+    invocation that does not carry an explicit -C at another repository
+    entirely, and a changed process cwd changes what a bare relative path
+    means to anything that does not pass one. Either could plausibly make
+    the admin-entry handback go looking in the wrong place.
+
+    It does not: `_register_entries_confined_to`'s `admin` and its "before"
+    snapshot are both resolved via `git -C ROOT` -- an explicit, absolute
+    -C -- before the case body can tamper with anything, and its teardown
+    sweep never calls git again at all; it reads each new entry's `gitdir`
+    file directly and `shutil.rmtree`s by absolute path. Only the PRIMARY
+    `git worktree remove --force` call (best-effort, in _linked_worktree's
+    own finally) is exposed to GIT_DIR/GIT_WORK_TREE at all -- its
+    stripped-env only removes GIT_TEST_*/GIT_CONFIG_* -- so this case also
+    proves the confined sweep catches what that call cannot."""
+    admin = _register_admin_dir()
+    if admin is None:
+        raise SkipCase("this checkout has no git common dir, so it has no register")
+    before = _register_entry_names(admin)
+    prior_git_dir = os.environ.get("GIT_DIR")
+    prior_work_tree = os.environ.get("GIT_WORK_TREE")
+    prior_cwd = os.getcwd()
+    died = False
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            with _linked_worktree(td) as wt:
+                assert wt.is_dir(), "the worktree must exist before the case dies"
+                elsewhere = pathlib.Path(td) / "nonexistent-elsewhere"
+                os.environ["GIT_DIR"] = str(elsewhere / ".git")
+                os.environ["GIT_WORK_TREE"] = str(elsewhere)
+                os.chdir(tempfile.gettempdir())
+                raise RuntimeError("simulated case failure mid-block, "
+                                   "GIT_DIR/GIT_WORK_TREE/cwd tampered")
+    except RuntimeError:
+        died = True
+    finally:
+        os.chdir(prior_cwd)
+        if prior_git_dir is None:
+            os.environ.pop("GIT_DIR", None)
+        else:
+            os.environ["GIT_DIR"] = prior_git_dir
+        if prior_work_tree is None:
+            os.environ.pop("GIT_WORK_TREE", None)
+        else:
+            os.environ["GIT_WORK_TREE"] = prior_work_tree
+    assert died, "the simulated failure did not propagate -- this case proves nothing"
+    leftover = sorted(_register_entry_names(admin) - before)
+    assert not leftover, (
+        f"a case that tampered with GIT_DIR/GIT_WORK_TREE/cwd and died "
+        f"mid-block left {leftover} in {admin}")
+    return ("a worktree fixture hands back its own admin entry even when the "
+            "case forged GIT_DIR/GIT_WORK_TREE and changed cwd, then died "
+            "before restoring any of them")
 
 
 def _assert_refused(result, dst, before, why):
@@ -3149,6 +3358,288 @@ def case_a_restage_from_a_second_household_is_refused_with_its_leftovers_named()
             "from the same source is accepted")
 
 
+# issue #213's OS-metadata names. The three DIRECTORY-CHROME ones describe a
+# directory's view state, carry no content specific to one file, and are
+# unconditionally excluded from the staleness scan. An AppleDouble sidecar
+# (._<name>) is different -- PER-FILE, and excluded from the scan only when
+# the file it shadows is still present (round 1 /review; see
+# stage-private-data.sh's _collect_stale_under) -- so it is tracked apart
+# rather than folded into one flat tuple that would hide that asymmetry.
+_DIRECTORY_CHROME_NAMES = (".DS_Store", "Thumbs.db", "desktop.ini")
+
+
+@case
+def case_os_metadata_is_excluded_from_the_staleness_scan_but_nothing_else_is():
+    """issue #213. macOS Finder writes .DS_Store into any directory it has
+    browsed or Quick-Looked; Windows Explorer writes Thumbs.db and
+    desktop.ini the same way. None of the three is household data, so a
+    destination carrying one and nothing else is not carrying a previous
+    household's leftover.
+
+    REPRODUCED FIRST, before the fix existed: staging once, then dropping a
+    lone `.DS_Store` into the destination's electric-bills/ and re-staging
+    from the very source that had just filled it, refused -- naming a Finder
+    artifact as though it were a stale bill from another household. Recorded
+    failing run (this checkout, before the exclusion was added): `again`
+    exited 1 with 'the destination holds staged files this source does not
+    supply ... private/1-raw-data/electric-bills/.DS_Store'.
+
+    The exclusion is NARROW, not a general dotfile allowance (issue #213's
+    AC): a destination that also carries an ordinary hidden file, or a
+    genuine leftover from a household this source is not, must still refuse
+    -- checked in the SAME run as the excluded names, so the fix cannot
+    regress into 'stop refusing'. The AppleDouble sidecar's own,
+    shadow-file-dependent exemption is a separate case, below."""
+    with tempfile.TemporaryDirectory() as tda, tempfile.TemporaryDirectory() as tdb:
+        src = _synthetic_src(tda, "household:\n  has_gas: false\n",
+                             has_gas_bills_dir=False)
+
+        # ACCEPT: directory-chrome metadata alone must never refuse a
+        # re-stage from the same source, and must still be sitting there
+        # afterward -- excluded from the scan, not deleted by it.
+        with _linked_worktree(tda) as dst:
+            first = _run_script(src, dst, cwd=src, timeout=120)
+            assert first.returncode == 0, (
+                f"the first stage must succeed or this case proves nothing: "
+                f"{first.stderr}")
+            ebills = dst / "private" / "1-raw-data" / "electric-bills"
+            for name in _DIRECTORY_CHROME_NAMES:
+                (ebills / name).write_text("not household data\n")
+            again = _run_script(src, dst, cwd=src, timeout=120)
+            assert again.returncode == 0, (
+                f"OS metadata left in the destination must not refuse a "
+                f"re-stage from the same source: {again.stderr}")
+            for name in _DIRECTORY_CHROME_NAMES:
+                assert (ebills / name).is_file(), (
+                    f"{name} is excluded from the scan, not deleted -- it "
+                    f"must still be there after the run")
+
+        # REFUSE: a genuine leftover, an ordinary dotfile the exclusion list
+        # does not name, and an ORPHAN AppleDouble sidecar (no file beside it
+        # to shadow) all still refuse -- in the SAME destination as the
+        # directory-chrome names, so the exclusion is proven narrow rather
+        # than merely untested against these three.
+        with _linked_worktree(tdb) as dst:
+            opened = _run_script(src, dst, cwd=src, timeout=120)
+            assert opened.returncode == 0, (
+                f"the second destination's first stage must succeed or this "
+                f"half proves nothing: {opened.stderr}")
+            ebills = dst / "private" / "1-raw-data" / "electric-bills"
+            for name in _DIRECTORY_CHROME_NAMES:
+                (ebills / name).write_text("not household data\n")
+            (ebills / "unrelated-household.pdf").write_text("someone else's bill\n")
+            (ebills / ".hidden-notes.txt").write_text("an ordinary dotfile\n")
+            (ebills / "._leftover").write_text("an orphan AppleDouble sidecar\n")
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode != 0, (
+                "a genuine leftover beside excluded OS metadata must still "
+                f"refuse the re-stage: {result.stdout}")
+            for named in ("unrelated-household.pdf", ".hidden-notes.txt",
+                          "._leftover"):
+                assert named in result.stderr, (
+                    f"the refusal does not name {named}, so a real leftover "
+                    f"went unreported: {result.stderr}")
+            for name in _DIRECTORY_CHROME_NAMES:
+                assert name not in result.stderr, (
+                    f"{name} is OS metadata and must not appear in a "
+                    f"staleness refusal: {result.stderr}")
+    return ("directory-chrome OS metadata (.DS_Store, Thumbs.db, desktop.ini) "
+            "is excluded from the staleness scan by name; an ordinary "
+            "dotfile, a genuine leftover from another household, and an "
+            "orphan AppleDouble sidecar all still refuse, checked in the "
+            "same run")
+
+
+@case
+def case_an_appledouble_sidecar_is_excused_only_when_its_shadowed_file_is_present():
+    """issue #213, round 1 /review finding 1(b). An AppleDouble sidecar
+    (`._<name>`) is not directory chrome: on a real macOS system it is the
+    resource fork and extended-attribute store for the file it shadows, and
+    it can carry a cached preview of that file's actual content. So it is
+    excused from the staleness scan only when the file it shadows is still
+    right beside it -- then it is Finder chrome on a file this household's
+    own tree still has -- and an orphan (no such file) refuses like any
+    other leftover, proven directly above. This case proves the ACCEPTING
+    half: a legitimate sidecar beside its own file is not refused."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                             has_gas_bills_dir=False)
+        # The shadowed file has to come from the SOURCE -- not be planted only
+        # at the destination -- or the staleness scan would refuse it as an
+        # ordinary leftover on its own account and this case would prove
+        # nothing about the sidecar's exemption specifically.
+        (src / "private" / "1-raw-data" / "electric-bills"
+         / "real-bill.pdf").write_text("this household's own file\n")
+        with _linked_worktree(td) as dst:
+            first = _run_script(src, dst, cwd=src, timeout=120)
+            assert first.returncode == 0, (
+                f"the first stage must succeed or this case proves nothing: "
+                f"{first.stderr}")
+            ebills = dst / "private" / "1-raw-data" / "electric-bills"
+            assert (ebills / "real-bill.pdf").is_file(), (
+                "the shadowed file itself did not stage -- this case proves "
+                "nothing about the sidecar's exemption")
+            # Planted directly at the destination, standing in for Finder
+            # having Quick-Looked this household's own already-staged file --
+            # never staged FROM a source, which is the separate copy-phase
+            # guarantee proven above.
+            (ebills / "._real-bill.pdf").write_text("Finder's sidecar for it\n")
+            again = _run_script(src, dst, cwd=src, timeout=120)
+            assert again.returncode == 0, (
+                f"a sidecar beside the file it shadows must not refuse a "
+                f"re-stage from the same source: {again.stderr}")
+            assert (ebills / "._real-bill.pdf").is_file(), (
+                "the sidecar is excused from the scan, not deleted -- it "
+                "must still be there after the run")
+    return ("an AppleDouble sidecar beside the file it shadows is excused "
+            "from the staleness scan; an orphan one is not (see the case "
+            "above)")
+
+
+@case
+def case_os_metadata_in_the_source_is_never_copied_into_the_destination():
+    """issue #213, round 1 /review finding 1(a): claim -- 'OS metadata is
+    never household data' (the comment beside _is_os_metadata()) -- but the
+    exclusion used to reach only the staleness SCAN. The COPY phase's
+    `cp -R` calls staged a source's own .DS_Store / a shadowed AppleDouble
+    sidecar unfiltered, and once staged it becomes permanently invisible to
+    every future run of the very scan that excuses it -- worse than never
+    excusing it at all.
+
+    REPRODUCED FIRST, before this fix existed (round 1's `_strip_os_metadata`
+    did not exist yet): planting `.DS_Store` and a shadowed `._foo` (with
+    `foo` present beside it) in a synthetic source's electric-bills/,
+    gas-bills/ and caiso_raw/, then running the real script end to end,
+    landed all six at the matching destination paths (script exit 0).
+
+    The sidecar here has a SHADOW (`foo` sits beside `._foo`) so this case
+    tests the skip-when-legitimate half; an ORPHAN sidecar -- no shadow, an
+    ordinary file that must be COPIED, not skipped -- is the separate
+    critical fix in round 2, proven below. Skipping this pair is announced,
+    checked here too, on top of case_a_source_file_literally_named_os_
+    metadata_is_skipped_and_announced's more targeted check.
+
+    Covers all three `cp -R` subtrees (electric-bills/, gas-bills/,
+    caiso_raw/) -- the only three copies this fix touches -- not just the
+    one the issue's own reproduction used, per CLAUDE.md's sweep-the-shape
+    rule."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: true\n",
+                             has_gas_bills_dir=True)
+        raw = src / "private" / "1-raw-data"
+        (raw / "electric-bills" / "real-bill.pdf").write_text("real\n")
+        (raw / "gas-bills" / "real-gas-bill.pdf").write_text("real\n")
+        (raw / "caiso_raw").mkdir()
+        (raw / "caiso_raw" / "caiso_co2_2025-01-01.csv").write_text("real\n")
+        for sub in ("electric-bills", "gas-bills", "caiso_raw"):
+            (raw / sub / ".DS_Store").write_text("finder chrome\n")
+            (raw / sub / "foo").write_text("the shadowed file\n")
+            (raw / sub / "._foo").write_text("appledouble sidecar for foo\n")
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode == 0, (
+                f"the stage must succeed or this case proves nothing: "
+                f"{result.stderr}")
+            for sub in ("electric-bills", "gas-bills", "caiso_raw"):
+                subdir = dst / "private" / "1-raw-data" / sub
+                for name in (".DS_Store", "._foo"):
+                    assert not (subdir / name).exists(), (
+                        f"{sub}/{name} from the source was staged into the "
+                        f"destination -- OS metadata must never be copied")
+                    assert f"private/1-raw-data/{sub}/{name}" in result.stdout, (
+                        f"skipping {sub}/{name} was not announced: "
+                        f"{result.stdout}")
+                assert (subdir / "foo").is_file(), (
+                    f"{sub}'s shadowed file did not survive skipping the "
+                    f"sidecar beside it")
+                assert (subdir / (
+                    "real-bill.pdf" if sub == "electric-bills" else
+                    "real-gas-bill.pdf" if sub == "gas-bills" else
+                    "caiso_co2_2025-01-01.csv")).is_file(), (
+                    f"{sub}'s real file did not survive skipping its "
+                    f"OS metadata siblings out of the staged copy")
+    return ("a source's own .DS_Store and a shadowed AppleDouble sidecar are "
+            "never copied into the destination, announced when skipped, in "
+            "all three recursive subtrees, while the real files beside them "
+            "stage normally")
+
+
+@case
+def case_an_orphan_appledouble_sidecar_in_the_source_is_copied_not_stripped():
+    """issue #213, round 2 /review -- the CRITICAL finding, reproduced
+    directly first: round 1's `_strip_os_metadata` ran AFTER the `cp -R` and
+    deleted every `._*`-shaped name from the staged copy unconditionally,
+    with no shadow check at all. A genuine household file that merely
+    happens to be named like a sidecar -- the exact shape a botched zip
+    extraction or a mail client's MIME handling can leave as the only
+    surviving copy of an attachment -- vanished from the staged copy with
+    exit 0 and no message of any kind.
+
+    An ORPHAN `._X` (no `X` beside it in the source) is not metadata by this
+    fix's own rule: it is an ordinary file, and must be copied like any
+    other name, exactly as this case's `._realbill.pdf` -- holding real bill
+    content, no `realbill.pdf` anywhere in the source -- is here."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                             has_gas_bills_dir=False)
+        raw = src / "private" / "1-raw-data"
+        (raw / "electric-bills" / "._realbill.pdf").write_text(
+            "THIS IS THE ACTUAL BILL CONTENT, not a sidecar\n")
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode == 0, (
+                f"the stage must succeed or this case proves nothing: "
+                f"{result.stderr}")
+            staged = dst / "private" / "1-raw-data" / "electric-bills" / "._realbill.pdf"
+            assert staged.is_file(), (
+                "an orphan AppleDouble-shaped file with real content and no "
+                "shadow was not copied -- a genuine household file was "
+                "silently dropped")
+            assert staged.read_text() == "THIS IS THE ACTUAL BILL CONTENT, not a sidecar\n", (
+                "the orphan file staged with the wrong content")
+            assert "skipped OS metadata" not in result.stdout, (
+                f"an orphan (no shadow) must not be reported as skipped: "
+                f"{result.stdout}")
+    return ("an orphan AppleDouble-shaped file with real content and no "
+            "shadow in the source is copied like any ordinary file, never "
+            "silently dropped")
+
+
+@case
+def case_a_source_file_literally_named_os_metadata_is_skipped_and_announced():
+    """issue #213, round 2 /review's other reproduction: a source file
+    literally named `Thumbs.db` -- real bill content, not chrome -- also
+    vanished silently under round 1's post-copy deletion. The three literal
+    names have no shadow question to ask (stated as the accepted cost beside
+    _is_os_metadata), so a file that happens to be named exactly one of them
+    is still skipped -- but NEVER in silence: the skip must be announced, on
+    stdout, naming the exact path, so the collision is visible in the run's
+    own output instead of discovered later by the file's absence."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                             has_gas_bills_dir=False)
+        raw = src / "private" / "1-raw-data"
+        (raw / "electric-bills" / "Thumbs.db").write_text(
+            "THIS IS ACTUALLY A REAL BILL FILE NAMED Thumbs.db\n")
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode == 0, (
+                f"the stage must succeed or this case proves nothing: "
+                f"{result.stderr}")
+            assert not (dst / "private" / "1-raw-data" / "electric-bills"
+                        / "Thumbs.db").exists(), (
+                "a file literally named Thumbs.db must still be skipped -- "
+                "the three literal names have no shadow to check")
+            announced = result.stdout + result.stderr
+            assert "private/1-raw-data/electric-bills/Thumbs.db" in announced, (
+                f"the skip was not announced anywhere: stdout={result.stdout!r} "
+                f"stderr={result.stderr!r}")
+            assert "skipped OS metadata" in announced, (
+                f"the announcement does not say what happened: {announced!r}")
+    return ("a source file literally named Thumbs.db is still skipped, and "
+            "the skip is announced by exact path on stdout")
+
+
 @case
 def case_an_incomplete_source_is_refused_before_the_first_copy():
     """issue #185, the failure-atomicity half. The copies used to run against
@@ -4091,6 +4582,13 @@ def case_real_archive_stage_script_produces_every_required_path():
 
 
 def run():
+    # issue #206 AC1: a full run of this suite must leave this checkout's own
+    # .git/worktrees exactly as it found it. Snapshotted here, around every
+    # case, rather than inside any one fixture, so a regression in a fixture
+    # not yet written still fails the run instead of leaving silent litter in
+    # the developer's real repository.
+    admin = _register_admin_dir()
+    before_register = _register_entry_names(admin)
     passed = failed = skipped = 0
     for fn in CASES:
         try:
@@ -4103,6 +4601,13 @@ def run():
         except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
             suite_runner.report_case_failure(fn, e)
             failed += 1
+    leftover = sorted(_register_entry_names(admin) - before_register)
+    if leftover:
+        failed += 1
+        print(f"FAIL  worktree_admin_left_as_found: {len(leftover)} admin "
+              f"entr{'y' if len(leftover) == 1 else 'ies'} in {admin} that "
+              f"were not there before this run and are still there after "
+              f"it: {leftover} (issue #206)")
     print(f"\n{passed}/{len(CASES)} passed, {skipped} skipped, {failed} failed")
     return 1 if failed else 0
 
