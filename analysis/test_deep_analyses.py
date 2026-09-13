@@ -85,16 +85,22 @@ def _generator_constants():
 _WFNBC, _PCIA, _UDC5, _CEA5 = _generator_constants()
 
 
-def _house_base_kw():
-    """deep_analyses.py's EV_SESSION_HOUSE_BASE_KW, exec'd out of its own
-    source for the same reason _generator_constants() does: a hand-copied
-    0.4 here would keep the hand computations below agreeing with a generator
-    whose base had moved, for the wrong reason."""
-    ns = _exec_declarations(("EV_SESSION_HOUSE_BASE_KW",))
-    return float(ns["EV_SESSION_HOUSE_BASE_KW"])
-
-
-_HOUSE_BASE_KW = _house_base_kw()
+# EV-session house base this suite's fixtures stage (issue #267). The generator
+# no longer declares EV_SESSION_HOUSE_BASE_KW as a literal -- it reads
+# night_floor.median_kw out of data/quiet_night_floor.json (_read_night_floor_kw)
+# -- so this file can no longer exec a declaration line out of the generator's
+# own source to get the number (there is none left to exec; _exec_declarations
+# would fail on a call expression, not a literal). Instead this constant IS the
+# artifact's value for every case in this suite: _stage() writes it into the
+# staged root's data/quiet_night_floor.json (the same key the generator reads),
+# and the hand computations below read the SAME constant, so both sides are
+# pinned to the fixture artifact rather than to generator text. If the
+# generator's read path (file name, "night_floor"/"median_kw" keys) breaks, the
+# staged value flows through unchanged and the end-to-end oracle comparison
+# below still passes -- exactly why case_ev_session_house_base_is_read_from_
+# quiet_night_floor_json below additionally asserts the WRITTEN and RETURNED
+# value round-trip through a real subprocess run of the generator.
+_HOUSE_BASE_KW = 0.4   # arbitrary synthetic value; staged, not this household's 1.03
 
 
 def _plan_rates_binding():
@@ -293,8 +299,15 @@ def _household_yaml(has_ev, plan=SYNTH_PLAN):
     return hh
 
 
+_NIGHT_FLOOR_DEFAULT = object()
+"""Sentinel for _stage(night_floor_kw=...): stage this suite's own
+_HOUSE_BASE_KW (the default every case except the ones that vary this
+parameter relies on). Distinct from _OMIT, which leaves the file out
+entirely."""
+
+
 def _stage(tmp, src_text=None, has_ev=True, free_fix_scenario=FREE_FIX_EV,
-           where="current-run", plan=SYNTH_PLAN):
+           where="current-run", plan=SYNTH_PLAN, night_floor_kw=_NIGHT_FLOOR_DEFAULT):
     """Build one throwaway root deep_analyses.py can run in.
 
     `src_text` substitutes a PATCHED copy of the generator's own source (used
@@ -303,11 +316,25 @@ def _stage(tmp, src_text=None, has_ev=True, free_fix_scenario=FREE_FIX_EV,
     rate plan; `free_fix_scenario` is what the dispatch artifact says about the
     household IT came from; `where` puts that artifact in the CWD (the
     current-run copy, which wins), in data/ (the committed fallback), or in
-    both."""
+    both. `night_floor_kw` is data/quiet_night_floor.json's night_floor.median_kw
+    (issue #267): the default stages this suite's own _HOUSE_BASE_KW; _OMIT
+    leaves the file out entirely (fail-closed probe); any other value stages
+    that value verbatim (drift probe -- see case_ev_session_house_base_moves_
+    with_the_staged_quiet_night_floor_artifact below)."""
     (tmp / "analysis").mkdir()
     (tmp / "data").mkdir()          # so _repo_root() resolves tmp as root
     (tmp / "private").mkdir()
     (tmp / "private" / "household.yaml").write_text(_household_yaml(has_ev, plan))
+    # quiet_night_floor.json is a "data"-owned artifact (test_scripts_runnable.py's
+    # OWNS map), read directly from data/ with no CWD/committed distinction (issue
+    # #267's _read_night_floor_kw) -- so the one copy staged here is the only one
+    # the generator can see. _HOUSE_BASE_KW is this suite's single source of truth
+    # for that value: staged here, and read back unchanged by the hand computations
+    # in _session_expectations, so both sides are pinned to this fixture artifact.
+    if night_floor_kw is not _OMIT:
+        kw = _HOUSE_BASE_KW if night_floor_kw is _NIGHT_FLOOR_DEFAULT else night_floor_kw
+        (tmp / "data" / "quiet_night_floor.json").write_text(
+            json.dumps({"night_floor": {"median_kw": kw}}))
     for mod in ("rates.py", "household.py", "behavior_rebuild.py"):
         shutil.copy(ANALYSIS / mod, tmp / mod)
     (tmp / "deep_analyses.py").write_text(
@@ -943,13 +970,89 @@ def case_dispatch_artifact_from_the_other_household_is_refused():
             "Monte Carlo from its own household's artifact")
 
 
+def case_ev_session_house_base_moves_with_the_staged_quiet_night_floor_artifact():
+    """issue #267 AC3: the EV-session house base must be pinned to its SOURCE
+    artifact (data/quiet_night_floor.json's night_floor.median_kw), not to a
+    literal in the generator's own text -- there is no longer a literal to
+    exec (EV_SESSION_HOUSE_BASE_KW is now a call expression), so the only way
+    left to prove the generator actually reads the staged artifact, rather
+    than some other hardcoded fallback nobody deleted, is to change the
+    staged value and watch the published ev_sessions figures move by exactly
+    the amount the fixture's own hand computation predicts.
+
+    Two distinct staged values (this suite's default 0.4 kW, and a second,
+    unrelated 0.9 kW) run the SAME synthetic sessions; _session_expectations
+    recomputes the hand oracle for each, so kwh_total/cost_total/
+    cost_if_all_sop/wasted_vs_perfect are checked to move to the SECOND
+    value's own predicted figures, not just away from the first's."""
+    n_summer, n_winter = _season_days()
+    seen = {}
+    assert _HOUSE_BASE_KW != 0.9, "pick a second probe value distinct from the suite default"
+    for kw in (_HOUSE_BASE_KW, 0.9):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = _stage(pathlib.Path(td), night_floor_kw=kw)
+            r = _run(tmp)
+            assert r.returncode == 0, f"kw={kw}: {r.stderr[-2000:]}"
+            ev = json.loads((tmp / "deep_results.json").read_text())["ev_sessions"]
+        base_slot = kw * 0.25
+        on_ev = (EV_ON_KWH - base_slot) * EV_ON_SLOTS
+        off_ev = (EV_OFF_KWH - base_slot) * EV_OFF_SLOTS
+        exp_kwh = round(n_summer * (on_ev + off_ev) + n_winter * (on_ev + off_ev))
+        assert abs(ev["kwh_total"] - exp_kwh) <= 2, (
+            f"kw={kw}: kwh_total {ev['kwh_total']}, staged artifact predicts "
+            f"{exp_kwh} -- the generator is not reading the staged value")
+        seen[kw] = ev["kwh_total"]
+    assert seen[_HOUSE_BASE_KW] != seen[0.9], (
+        "kwh_total did not move when the staged quiet_night_floor.json's "
+        f"median_kw changed from {_HOUSE_BASE_KW} to 0.9: {seen}")
+    return (f"ev_sessions.kwh_total tracks the staged quiet_night_floor.json "
+            f"artifact: {seen[_HOUSE_BASE_KW]} kWh at {_HOUSE_BASE_KW} kW base, "
+            f"{seen[0.9]} kWh at 0.9 kW base")
+
+
+def case_missing_quiet_night_floor_json_fails_closed():
+    """issue #267: a missing or malformed data/quiet_night_floor.json must be
+    an ERROR, the same fail-closed shape _read_marginal already applies to a
+    broken battery_dispatch_policies.json -- never a silent fall-back to some
+    hardcoded EV-session house-base literal, which is exactly the shape this
+    issue closes."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _stage(pathlib.Path(td), night_floor_kw=_OMIT)
+        r = _run(tmp)
+        assert r.returncode != 0, (
+            "deep_analyses.py ran with no data/quiet_night_floor.json at all:\n"
+            f"{r.stdout[-2000:]}")
+        assert "quiet_night_floor.json" in r.stderr, r.stderr
+        assert "night_floor.median_kw" in r.stderr, r.stderr
+        assert "quiet_night_floor.py" in r.stderr, r.stderr
+        assert not (tmp / "deep_results.json").exists(), (
+            "deep_results.json was written despite the missing artifact")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _stage(pathlib.Path(td))
+        (tmp / "data" / "quiet_night_floor.json").write_text(
+            json.dumps({"night_floor": {"NOT_median_kw": 1.0}}))
+        r = _run(tmp)
+        assert r.returncode != 0, (
+            "deep_analyses.py ran against a quiet_night_floor.json missing "
+            f"night_floor.median_kw:\n{r.stdout[-2000:]}")
+        assert "quiet_night_floor.json" in r.stderr, r.stderr
+        assert not (tmp / "deep_results.json").exists(), (
+            "deep_results.json was written despite the malformed artifact")
+    return ("deep_analyses.py refuses to run with no data/quiet_night_floor.json "
+            "or one missing night_floor.median_kw, rather than falling back to a "
+            "hardcoded EV-session house-base literal")
+
+
 CASES = [case_deep_analyses_end_to_end_matches_hand_and_oracle_computations,
          case_wasted_vs_perfect_prices_the_same_ev_only_energy_on_both_sides,
          case_no_published_dollar_figure_survives_a_change_to_its_rate_table,
          case_the_wildcard_block_prices_this_households_own_plan,
          case_the_wildcard_rate_table_is_analyze_pys_published_rows,
          case_the_ev_session_workpaper_prices_this_households_plan,
-         case_dispatch_artifact_from_the_other_household_is_refused]
+         case_dispatch_artifact_from_the_other_household_is_refused,
+         case_ev_session_house_base_moves_with_the_staged_quiet_night_floor_artifact,
+         case_missing_quiet_night_floor_json_fails_closed]
 
 
 def main():

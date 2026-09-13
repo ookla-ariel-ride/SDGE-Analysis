@@ -479,13 +479,13 @@ committed artifact from §3.6/§3.8 results as above).
    `quiet_night_floor.py` models and a single blended rate cannot.
 3. **EV charging sessions.** Interval kW = `Consumption × 4`; intervals with kW > 6.5 are
    charger-on; contiguous runs form sessions. EV-only energy is taken per interval: each
-   15-minute import less an assumed `EV_SESSION_HOUSE_BASE_KW` = 0.4 kW house base × 0.25 h,
-   summed over the session; sessions < 3 kWh discarded. Results: 580 sessions, 14,226 kWh
-   of EV-only energy; `cost_total` $3,009/yr is that energy priced at each interval's actual
-   rate, `cost_if_all_sop` $1,795 is the same energy if every session had charged in
-   super-off-peak, and `wasted_vs_perfect` $1,214/yr is their difference: what the timing of
-   the sessions cost, with the house base on neither side. `onpeak_kwh_in_sessions` (958
-   kWh) and `offpeak_kwh_in_sessions` (1,716 kWh) are gross session imports by period,
+   15-minute import less an `EV_SESSION_HOUSE_BASE_KW` house base × 0.25 h, summed over the
+   session; sessions < 3 kWh discarded. Results: 573 sessions, 13,457 kWh of EV-only energy;
+   `cost_total` $2,839/yr is that energy priced at each interval's actual rate,
+   `cost_if_all_sop` $1,698 is the same energy if every session had charged in
+   super-off-peak, and `wasted_vs_perfect` $1,142/yr is their difference: what the timing of
+   the sessions cost, with the house base on neither side. `onpeak_kwh_in_sessions` (948
+   kWh) and `offpeak_kwh_in_sessions` (1,709 kWh) are gross session imports by period,
    house base included; they say where the sessions sat, not how much EV-only energy fell
    there. Both operands price one quantity (issue #229): the house base comes off each
    interval before anything is priced, so the actual-timing side cannot carry the base at
@@ -495,20 +495,50 @@ committed artifact from §3.6/§3.8 results as above).
    household's sessions off the hardcoded EV-TOU-5 row, whatever plan the intake declared),
    so one rate vintage sits on both sides of the subtraction. It
    replaced a hardcoded `0.1257` $/kWh, the second flat literal issue #172 found in this
-   script. The 0.4 kW base is an assumption, not a measurement: a whole-house meter
-   cannot separate the house from the charger while both run. The repo's two measured
-   floors (this script's own 3–5 am rule, 1.02 kW; `quiet_night_floor.py`, 1.03 kW) are read
-   on EV-free nights, and whether the house draws the same while the charger runs is not
-   determined. The base enters `wasted_vs_perfect` only through session intervals outside
-   super-off-peak (its share is −base × 0.25 h × Σ(interval rate − sop rate) over those
-   intervals), so a larger base lowers the figure; it also scales `kwh_total`,
-   `cost_if_all_sop` and the 3 kWh cutoff directly, which is why swapping in a measured
-   floor is a change to the session accounting itself and is left open in issue #267. All
-   three dollar figures are workpaper values, not published ones: the report's EV-mistiming
-   numbers come from `behavior_rebuild.py`'s canonical NEM re-bill ($1,221/yr at 100%
-   compliance) and `extended_findings.py`'s `home_ev_cost_if_all_sop` ($1,742/yr), both
+   script.
+
+   **The house base is derived from a measured quantity, not typed in as a literal (issue
+   #267).** `EV_SESSION_HOUSE_BASE_KW` is read, via `_read_night_floor_kw`, from the
+   committed `data/quiet_night_floor.json`'s `night_floor.median_kw` — currently **1.03
+   kW**, §3.28's per-night quiet-floor measurement (the 1–5 am median import power, whole
+   night dropped once any interval reaches the 2 kW exclusion gate, 43 of 365 nights kept,
+   cross-priced two independent ways there and agreeing to 1.2%). This is chosen over this
+   script's own 3–5 am per-interval rule (`base_kw` above, 1.02 kW) because §3.28's per-night
+   design is the more carefully built of the two measurements, and it replaces the retired
+   flat `0.4` kW literal that had no source at all. It remains an assumed stand-in, not a
+   settled fact: a single whole-house meter cannot separate the house's own draw from the
+   charger's while both run, so no interval inside a session can measure this quantity
+   directly, and whether the house draws its quiet-night floor while the charger runs —
+   more, less, or the same — is not determined by anything measured here. Reading the
+   published quiet-night measurement is the closest defensible stand-in available, not a
+   claim that the question is settled. The base enters `wasted_vs_perfect` only through
+   session intervals outside super-off-peak (its share is −base × 0.25 h × Σ(interval rate
+   − sop rate) over those intervals), so a larger base lowers the figure — the sensitivity is
+   about −$102/yr per additional kW of assumed base, session set held fixed; it also scales
+   `kwh_total`, `avg_kwh`, `cost_if_all_sop` and the 3 kWh cutoff (hence `count`) directly.
+   Swapping the base from 0.4 kW to the measured 1.03 kW moves every one of those keys: count
+   580 → 573, `kwh_total` 14,226 → 13,457, `avg_kwh` 24.5 → 23.5,
+   `sessions_touching_onpeak` 50 → 47, `onpeak_kwh_in_sessions` 958 → 948,
+   `offpeak_kwh_in_sessions` 1,716 → 1,709, `cost_total` $3,009 → $2,839, `cost_if_all_sop`
+   $1,795 → $1,698, `wasted_vs_perfect` $1,214 → $1,142. `test_deep_analyses.py` pins the
+   base to this artifact source directly — it stages the same `night_floor.median_kw` key
+   into a fixture `data/quiet_night_floor.json` and reads the value back out of that staged
+   file for its hand computations, rather than executing a literal out of
+   `deep_analyses.py`'s own source (there is no literal left to execute), and separately
+   asserts the generator fails closed when the artifact is missing or malformed. Reading
+   `quiet_night_floor.json` from `deep_analyses.py` creates no run-to-run generator-order
+   dependency: it is a "data"-owned artifact (`test_scripts_runnable.py`'s `OWNS` map),
+   written in place to the repo's committed `data/` directory by `quiet_night_floor.py`
+   rather than produced fresh per run in the working directory the way
+   `battery_dispatch_policies.json` is, so there is only the one committed copy to read and
+   it is always present in git — the same shape every other "data"-owned artifact this
+   pipeline reads already carries.
+
+   All three dollar figures remain workpaper values, not published ones: the report's
+   EV-mistiming numbers come from `behavior_rebuild.py`'s canonical NEM re-bill ($1,221/yr at
+   100% compliance) and `extended_findings.py`'s `home_ev_cost_if_all_sop` ($1,742/yr), both
    priced through `rates.py`. Those use a different session detector (563 sessions, 13,806
-   kWh, against 580 and 14,226 kWh here) and a different method, and this workpaper figure
+   kWh, against 573 and 13,457 kWh here) and a different method, and this workpaper figure
    is not reconciled to them.
 4. **Vacation detection.** Daily sums of the SAM hourly load excluding hours > 7 kWh (crude
    non-EV load); away threshold = max(10th percentile, 20 kWh/day) = 26.3; 37 away-days detected
