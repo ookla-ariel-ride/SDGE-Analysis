@@ -340,8 +340,8 @@ Mono data — with system fallbacks).
   - `tr.win`, `tr.tie-win`, `tr.tie`, `tr.s3-tie` — sop-green (wins or ties)
   - `tr.trails-win`, `tr.trails-tie` — off-peak-amber (trails in one column only)
   - `tr.trails`, `tr.s3-trails` — on-peak-red (trails outright)
-  - `.pill.g` / `.pill.y` / `.pill.r` — sop-green/off-peak-amber/on-peak-red as a confidence
-    scale (measured/modeled/estimated), not a TOU label
+  - `.pill.g` / `.pill.y` / `.pill.r` — the same measured/modeled/estimated confidence scale
+    as the "Evidence pills" bullet below, not a TOU label
   `report-template.html` carries all of the above; a given household's `index.html` renders
   only the classes its own data triggers (a household with no tied or trailing plan emits
   none of the tie or trails row classes above) — that is a data difference, not a drift
