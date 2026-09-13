@@ -749,7 +749,7 @@ new Chart(document.getElementById('periods'),{type:'bar',data:{
  labels:['Super off-peak ({{SOP_IMPORT_SHARE_PCT}}% of imports)','Off-peak ({{OFFPEAK_IMPORT_SHARE_PCT}}%)','On-peak {{PEAK_WINDOW}} ({{ONPEAK_IMPORT_SHARE_PCT}}%)'],
  datasets:[{label:'Annual import kWh',data:[/* 3 values: kWh by TOU period */],backgroundColor:A(PAL.sub,.55)},
   {label:'Annual import cost $',data:[/* 3 values: gross import $ by TOU period */],backgroundColor:A(PAL.on,.75)}]},
- // e.g. "X% of the energy causes ~Y% of gross import cost — the on-peak problem in one picture".
+ // e.g. "X% of imports happen on-peak, driving Y% of gross import cost".
  options:{indexAxis:'y',plugins:{title:{display:true,text:'{{CHART_TITLE_PERIODS}}',color:PAL.ink}}}});
 // LAZY CHART REGISTRY — keep this generic; do not special-case a single canvas.
 // A Chart.js canvas built while any ancestor <details> is closed measures 0x0 and never

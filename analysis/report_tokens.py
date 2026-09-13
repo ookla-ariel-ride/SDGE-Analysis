@@ -322,6 +322,10 @@ def _num2(v):
     return f"{_numeric('num2', v):,.2f}"
 
 
+def _num3(v):
+    return f"{_numeric('num3', v):,.3f}"
+
+
 def _pct0(v):
     return f"{round(_numeric('pct0', v))}%"
 
@@ -438,7 +442,7 @@ FORMATTERS = {
     "usd0": _usd0, "usd0_tilde": _usd0_tilde, "usd0_signed": _usd0_signed,
     "usd0_tilde_signed": _usd0_tilde_signed, "usd0_plus": _usd0_plus,
     "usd2": _usd2, "usd3": _usd3,
-    "num0": _num0, "num1": _num1, "num2": _num2, "year": _year,
+    "num0": _num0, "num1": _num1, "num2": _num2, "num3": _num3, "year": _year,
     "pct0": _pct0, "pct1": _pct1, "yr1": _yr1, "cents1": _cents1,
 }
 
@@ -1737,10 +1741,34 @@ _tok("SEC9_TEASER", phrase=True, kind="derived", get=_sec9_teaser,
               "data/quiet_night_floor.json:pricing.method_a_price_map.total_usd"])
 
 
+# The tariff structure this whole report prices "current rates" against. Not
+# read from any JSON artifact -- rates.py's own module docstring states it,
+# sourced from the actual bills ("EV-TOU-5 delivery + CEA ... generation,
+# effective 6/1/2026"), the same bill-verified fact every other "2026 TOU"
+# mention already published in this report cites (index.html's own §0 finding
+# bullet, §8's more-panels paragraph, and §12's own fixed cadence-caveat
+# paragraph all say it in fixed prose). A cited constant, not a derived one,
+# for the same reason BATTERY_CHARGE_KW is one: a real number this repo has
+# no artifact JSON for, only a citation to an official source (the bills).
+_CURRENT_TARIFF_YEAR = 2026
+
+
+def _a_or_an(n):
+    """"a" or "an" before the English word a number like 11.8 is read as
+    ("eleven point eight", so "an"). Covers every 0-99 range a percentage
+    figure in this report lands in: the only leading number-words that open
+    on a vowel SOUND are eight, eleven, eighteen, and eighty through
+    eighty-nine -- everything else (including compounds like twenty-eight,
+    where "twenty" leads) opens on a consonant."""
+    i = int(abs(n))
+    return "an" if i == 8 or i in (11, 18) or 80 <= i <= 89 else "a"
+
+
 def _sec12_teaser(ctx):
     """Section 12's own one-line conclusion: what the measured cleaning
-    recovered -- or, for a household that never had one, that it is not
-    determined and why.
+    recovered, AND whether paying for a routine one still pencils -- or, for
+    a household that never had a measured cleaning, that it is not determined
+    and why.
 
     ISSUE #167. This used to subscript the sanity-check block for
     known_cleaning_gain_pct. soiling_analysis.py writes that block in TWO
@@ -1755,15 +1783,53 @@ def _sec12_teaser(ctx):
     event beside it, so both halves come off one record. When that binding
     cannot be made the answer is rendered, not raised -- _claim(...,
     NOT_DETERMINED, ...) is a SystemExit and would reproduce the total failure
-    this fix removes."""
+    this fix removes.
+
+    ISSUE #276. A <summary> teaser is section 12's own one-line CONCLUSION
+    (CLAUDE.md section 10), and the section asks two questions -- did the
+    measured cleaning work, and does paying for a future one still pencil --
+    so the teaser is wrong stating only the first half's figure while the
+    page beside it prints a full verdict sentence covering both. The second
+    half is read off the same cadence model CLEANING_SINGLE_VALUE_RANGE
+    already publishes (data/extra_results.json:cleaning[*].save1): the best a
+    modeled cleaning is worth in ANY scenario is compared against what this
+    entry's own cleaning actually cost, so the verdict is computed, not
+    asserted -- a household whose cadence model clears its own cleaning price
+    gets the opposite sentence rather than a copy-pasted one.
+
+    ROUND 1 (parent meaning-check): the first draft dropped the tariff the
+    payback is priced at and the cadence timing, and read as a sentence
+    fragment (lowercase open, "a 11.8%", "modelled" beside 56 uses of
+    "modeled" elsewhere in the page). Fixed: a capitalized, complete verdict
+    sentence; _CURRENT_TARIFF_YEAR names the tariff; the cadence clause is
+    read from data/extra_results.json:cleaning[*].best1 (never a literal like
+    "early-to-mid July") and is only stated when every soiling scenario
+    modeled agrees on one month -- when they do not, the sentence stops
+    after the pay/no-pay verdict rather than picking one scenario's date to
+    state as if it were the only one."""
     entry, why = _measured_cleaning()
     if entry is None:
-        return (f"what a cleaning recovers on this array is "
+        return (f"What a cleaning recovers on this array is "
                 f"{_NOT_DETERMINED_VERDICT} — {why}")
     sc = _cleaning_sanity_check()
     gain, = _figures("SEC12_TEASER", "how much production the cleaning recovered",
                      known_cleaning_gain_pct=sc["known_cleaning_gain_pct"])
-    return f"the {sc['cleaning_date']} cleaning measured a {gain}% production gain"
+    price, = _amounts("SEC12_TEASER", "what the measured cleaning cost",
+                       cleaning_price=entry["cost_usd"])
+    cad, keys = _cleaning_cadence()
+    best_case, = _amounts(
+        "SEC12_TEASER", "the most a modeled cleaning is worth in any scenario",
+        best_case_save1=max(cad[k]["save1"] for k in keys))
+    if best_case >= price:
+        verdict = (f"a ${price:,.0f} routine cleaning pays for itself at every "
+                   "soiling rate modeled")
+    else:
+        verdict = (f"a ${price:,.0f} routine cleaning does not pay for itself — "
+                   f"the most any modeled scenario recovers is ${best_case:,.0f}/yr")
+    months = {cad[k]["best1"] for k in keys}
+    cadence = f", and at most once a year, near {next(iter(months))}" if len(months) == 1 else ""
+    return (f"The {sc['cleaning_date']} cleaning measured {_a_or_an(gain)} {gain}% "
+            f"production gain, but under the {_CURRENT_TARIFF_YEAR} TOU {verdict}{cadence}.")
 
 
 _tok("SEC12_TEASER", phrase=True, kind="derived", get=_sec12_teaser,
@@ -4706,7 +4772,12 @@ _tok("CLEANED_RATIO", kind="derived",
      get=lambda ctx: (lambda pre, post: round(post / pre, 3))(
          *_cleaning_window_medians(ctx, "CLEANED_RATIO")),
      sources=["data/cleaning_study_daily.csv", "private/household.yaml:cleaning_history",
-              "data/soiling_results.json:sanity_check_2024_cleaning"], fmt="num2")
+              "data/soiling_results.json:sanity_check_2024_cleaning"],
+     # num3, matching the value's own round(..., 3): the per-year control-year
+     # rows beside this one (report_blocks._s12_control_year_rows) publish the
+     # SAME statistic to three decimals (e.g. 0.922), so a two-decimal fmt here
+     # printed one column at two different precisions (issue #276).
+     fmt="num3")
 def _cleaning_effect_pct(ctx):
     """The cleaning's measured production gain: the DIFFERENCE-IN-DIFFERENCES
     estimate, read off the soiling study's own artifact.

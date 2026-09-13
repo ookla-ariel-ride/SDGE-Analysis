@@ -154,7 +154,7 @@
 <div class="meta">
   <div class="meta-row"><span class="meta-k">Household</span><span class="meta-v">Single-family home · SDG&amp;E Coastal climate zone · 10.05 kW solar + two EVs (all-electric transportation) · NEM 2.0 · Clean Energy Alliance (CEA) generation</span></div>
   <div class="meta-row"><span class="meta-k">Window</span><span class="meta-v"><b>Jul 24, 2025 → Jul 23, 2026</b> · rates effective June 1, 2026</span></div>
-  <div class="meta-row"><span class="meta-k">Version</span><span class="meta-v" id="report-version">2026-09-01 · build 3b1ea2c492</span></div>
+  <div class="meta-row"><span class="meta-k">Version</span><span class="meta-v" id="report-version">2026-09-12 · build 3f144ee48a</span></div>
   <div class="meta-row"><span class="meta-k">Sources</span><span class="meta-v">SDG&amp;E Green Button 15-min electric + daily gas interval data · 24 detailed bill PDFs (12 electric — 13 billing periods covering a full 365 days — + 12 gas) · SDG&amp;E + CEA official rate schedules (with SDG&amp;E's plan-comparison tool as validation, and the published average-rate history behind §11) · Enphase Enlighten (SAM 8760 hourly consumption + daily production + device inventory) · PVOutput generation records (daily 2020–2026, per-year stats, 5-min intraday power, system registration) · Tesla telemetry (per-car app Charge Stats, Wall Connector daily export, odometers) · Open-Meteo temperatures · NOAA/RCC ACIS precipitation · CAISO Today's Outlook CO₂ + demand history (364-of-365-day hourly measurement) · solar install invoice (2019) — <a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/blob/main/DATA-SOURCES-CHEATSHEET.md">how to gather each source for your own home</a></span></div>
 </div>
 
@@ -747,18 +747,18 @@ Every answer carries its evidence: <span class="pill g">measured</span> from met
 <p class="small">This array's output is valued mostly against super-off-peak and on-peak, which moved opposite ways, so a single average escalator cannot track it. The 2024–2026 rows above carry that approximation, and the crossovers stay ± a few months without tightening. Years before 5/2024 sit outside the statement corpus entirely and have no bill evidence of any kind. (<code>analysis/bill_decomposition.py</code> → <code>data/bill_decomposition.json</code>.)</p>
 
 <details class="sec" id="sec12" open>
-<summary><h2 id="s12">12 · Panel cleaning &amp; soiling — measured, not assumed</h2><span class="teaser">The 2024 cleaning measurably worked (+11.8%), but under the 2026 TOU a $200 routine cleaning does not pay for itself — at most once a year, early-to-mid July.</span></summary>
+<summary><h2 id="s12">12 · Panel cleaning &amp; soiling — measured, not assumed</h2><span class="teaser">The 2024-08-12 cleaning measured an 11.8% production gain, but under the 2026 TOU a $200 routine cleaning does not pay for itself — the most any modeled scenario recovers is $126/yr, and at most once a year, near Jul 17.</span></summary>
 <p>Two questions: did the 2024 cleaning actually work, and is paying for future cleanings still worth it?</p>
 <h3>The August 12, 2024 cleaning ($200): +11.8% production gain, difference-in-differences vs the control years <span class="pill g">measured · single event</span></h3>
 <p>Comparing the 30 days before vs after the cleaning, against the identical calendar windows in control years (which capture the normal seasonal decline). Each row below is one year's own raw post ÷ pre ratio; the heading's figure is the cleaned year's ratio measured against the control years':</p>
 <table>
 <thead><tr><th>Year</th><th>Pre-window median (kWh/day)</th><th>Post-window median</th><th>Post ÷ pre (raw)</th></tr></thead>
 <tbody>
-<tr><td>2021</td><td>61.0</td><td>56.2</td><td>0.922</td></tr>
-<tr><td>2022</td><td>59.6</td><td>56.7</td><td>0.951</td></tr>
-<tr><td>2023</td><td>60.0</td><td>56.8</td><td>0.947</td></tr>
+<tr><td>2021 (no cleaning)</td><td>61.0</td><td>56.2</td><td>0.922</td></tr>
+<tr><td>2022 (no cleaning)</td><td>59.6</td><td>56.7</td><td>0.951</td></tr>
+<tr><td>2023 (no cleaning)</td><td>60.0</td><td>56.8</td><td>0.947</td></tr>
 <tr class="win"><td>2024 — cleaned Aug 12</td><td>57.8</td><td>60.7</td><td><b>1.051</b></td></tr>
-<tr><td>2025</td><td>59.8</td><td>56.2</td><td>0.940</td></tr>
+<tr><td>2025 (no cleaning)</td><td>59.8</td><td>56.2</td><td>0.940</td></tr>
 </tbody>
 </table>
 <p><span class="small">(2025 pre-window covers 19 days, since its daily record starts 7/24/25; all windows in <code>data/cleaning_study_daily.csv</code>, peaks in <code>data/cleaning_study_peaks_2024.csv</code>.)</span> Every normal year drops 5–8% across this window; the cleaned year <i>rose</i> 5%, from the dirtiest pre-window of all five years (57.8 kWh/day). Difference-in-differences: <b>+11.8%</b> (median; +10.9% on clear-sky p90 days; the clear-sky p90 variant is computed on the same committed daily windows and not artifact-backed). Corroboration: the meter recorded <b>0 kWh on August 12, 2024</b> (system off during the wash) and top-10 daily peak power jumped 8,263 → 8,971 W (<b>+8.6%</b>). At 2024's blended value (~$0.446/kWh pre-TOU-change: <code>data/lifetime_payback.json</code>'s 2024 row, $7,433 ÷ 16,654 kWh), the ~350–450 kWh recovered before the fall rains was worth roughly <b>$155–200; the $200 cleaning approximately paid for itself</b>.</p>
@@ -926,7 +926,7 @@ new Chart(document.getElementById('periods'),{type:'bar',data:{
  labels:['Super off-peak (64% of imports)','Off-peak (19%)','On-peak 4–9pm (17%)'],
  datasets:[{label:'Annual import kWh',data:[14856,4498,4022],backgroundColor:A(PAL.sub,.55)},
   {label:'Annual import cost $',data:[1875,2316,2998],backgroundColor:A(PAL.on,.75)}]},
- options:{indexAxis:'y',plugins:{title:{display:true,text:'17% of the energy causes ~42% of gross import cost — the on-peak problem in one picture',color:PAL.ink}}}});
+ options:{indexAxis:'y',plugins:{title:{display:true,text:'17% of imports happen on-peak, driving 42% of gross import cost',color:PAL.ink}}}});
 // A chart built while any ancestor <details> is closed measures 0x0 and never recovers,
 // so every canvas inside a collapsible section is registered here and built on first
 // reveal rather than on load. The registry walks each canvas's OWN <details> ancestors,
