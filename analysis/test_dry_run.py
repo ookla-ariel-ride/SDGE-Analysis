@@ -321,6 +321,49 @@ def case_baseline_index_matches_the_section_9_gates_git_diff_semantics():
             "disk) and --baseline head (the last commit)")
 
 
+@case
+def case_baseline_index_fails_closed_on_an_unmerged_index():
+    """git write-tree fails on an index carrying unmerged entries -- an
+    ordinary, reachable state (a conflicted merge or rebase left unresolved),
+    not a theoretical one. index_data_dir() must not swallow that failure:
+    --baseline index has to fail closed the same way every other git call in
+    this module does, and must not strand the sandbox it already built."""
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": "print('hi')\n"}, {"out.json": "{}\n"})
+        blob = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"],
+                              input="conflict\n", capture_output=True, text=True, env=env)
+        assert blob.returncode == 0, blob.stderr
+        sha = blob.stdout.strip()
+        # Stage the same path at stages 1 (base), 2 (ours) and 3 (theirs) --
+        # an unmerged entry, without going through an actual merge.
+        info = "".join(f"100644 {sha} {stage}\tdata/out.json\n" for stage in (1, 2, 3))
+        r = subprocess.run(["git", "-C", str(repo), "update-index", "--index-info"],
+                           input=info, capture_output=True, text=True, env=env)
+        assert r.returncode == 0, r.stderr
+        wt = subprocess.run(["git", "-C", str(repo), "write-tree"],
+                            capture_output=True, text=True, env=env)
+        assert wt.returncode != 0, "the fixture failed to produce an unmerged index"
+
+        tmpdir = pathlib.Path(tempfile.gettempdir())
+        before = set(tmpdir.glob(DR.SANDBOX_PREFIX + "*"))
+
+        try:
+            DR.dry_run(repo / "analysis" / "g.py", baseline="index")
+            raise AssertionError("write-tree's failure on an unmerged index was swallowed")
+        except DR.DryRunError as e:
+            assert "write-tree" in str(e), e
+
+        after = set(tmpdir.glob(DR.SANDBOX_PREFIX + "*"))
+        assert after == before, f"a sandbox was left stranded: {sorted(after - before)}"
+
+        code, out = _cli(repo / "analysis" / "g.py", "--baseline", "index", "--check")
+        assert code == 2, (code, out)
+    return ("an index with unmerged entries makes git write-tree fail, and "
+            "--baseline index reports that as a dry-run FAILURE (exit 2), never "
+            "'no changes', with no sandbox stranded on disk")
+
+
 # ---------------------------------------------------------------------------
 # AC: a run that did not really happen is a FAILURE, never "no changes".
 # ---------------------------------------------------------------------------

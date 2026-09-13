@@ -1162,14 +1162,26 @@ def index_data_dir(root, dest):
     """Materialise data/ as currently STAGED into `dest` (used by --baseline
     index).
 
-    `git write-tree` writes a tree object for the index exactly as it stands --
-    a read-only introspection query, it touches neither the working tree nor
-    the index -- and archiving that tree with a `data` pathspec extracts
-    precisely what the section 9 gate's `git diff --exit-code data/...` (no
-    ref: working tree vs the INDEX) compares the working tree against. `head`
-    is a different comparison: it is HEAD, not the index, and the two diverge
-    the moment a regenerated artifact is `git add`ed but not yet committed
-    (issue #158 AC4) -- `index` is the one that matches the gate exactly.
+    `git write-tree` writes a tree object for the index exactly as it stands.
+    It touches neither the working tree nor the index -- no ref moves, no
+    index entry changes, no file under the checkout is written -- but it is
+    NOT read-only end to end: it adds one loose, content-addressed object to
+    .git/objects (skipped entirely if that exact tree already exists, since
+    the object is addressed by its content). That object is unreferenced by
+    any ref the moment write-tree returns, so it is ordinary git-gc litter,
+    not a change to the repo's tracked state -- but it is a real write, and
+    dry_run.py's own "writes nothing into the repo" claim (see main()'s
+    description) is about the tracked tree and data/, not about .git/objects
+    itself. Archiving that tree with a `data` pathspec extracts precisely what
+    the section 9 gate's `git diff --exit-code data/...` (no ref: working tree
+    vs the INDEX) compares the working tree against. `head` is a different
+    comparison: it is HEAD, not the index, and the two diverge the moment a
+    regenerated artifact is `git add`ed but not yet committed (issue #158
+    AC4) -- `index` is the one that matches the gate exactly. An index with
+    unmerged entries (a conflicted merge or rebase) makes `write-tree` fail;
+    that failure is not swallowed here, it raises DryRunError like any other
+    git call in this module (see case_baseline_index_fails_closed_on_an_unmerged_index
+    in test_dry_run.py).
     """
     r = subprocess.run(["git", "-C", str(root), "write-tree"],
                        capture_output=True, text=True)

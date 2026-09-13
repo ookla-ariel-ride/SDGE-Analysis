@@ -4659,13 +4659,20 @@ not as a diff.
 **The diff.** The sandbox's `data/` against the baseline: `data/` as it stands on disk
 (`--baseline worktree`, the default), as of HEAD (`--baseline head`, materialised with
 `git archive HEAD`), or as currently staged (`--baseline index`, materialised by running
-`git write-tree` -- a read-only query that touches neither the index nor the working tree
--- and archiving the tree it returns). JSON is described by top-level keys added, removed
-and changed; CSV by header change and by rows added or removed as a multiset; anything
-else by byte length. Added paths `.gitignore` would exclude are put to `git check-ignore`
-and dropped, so `parse_bills.py`'s publication lock is not reported as a new artifact.
-Generators that write their artifact into the CWD while the repo commits it under `data/`
-are compared the way the §9 gate's `cmp` does.
+`git write-tree` and archiving the tree it returns). `write-tree` changes no ref, no index
+entry and no working-tree file, but it is not read-only end to end: it adds one loose,
+content-addressed object to `.git/objects` (skipped if that exact tree already exists),
+unreferenced the moment the command returns and eventually garbage-collected -- ordinary
+git-gc litter, not a change to the repo's tracked state, but a real write this module's
+"writes nothing into the repo" claim is about the tracked tree and `data/`, not
+`.git/objects`, and does not cover. An index with unmerged entries makes `write-tree` fail,
+which `dry_run.py` reports as a FAILURE rather than "no changes," same as any other git
+call in this module. JSON is described by top-level keys added, removed and changed; CSV by
+header change and by rows added or removed as a multiset; anything else by byte length.
+Added paths `.gitignore` would exclude are put to `git check-ignore` and dropped, so
+`parse_bills.py`'s publication lock is not reported as a new artifact. Generators that
+write their artifact into the CWD while the repo commits it under `data/` are compared the
+way the §9 gate's `cmp` does.
 
 **Exit codes.** 0 ran cleanly (with `--check`, nothing would change); 1 `--check` and at
 least one artifact would change; 2 the dry run itself failed, which is never reported as
@@ -4675,12 +4682,14 @@ rebuilt artifact in the tree. The gate's own comparison (`git diff --exit-code d
 no ref) is the working tree against the INDEX, and `--baseline index` (issue #158 AC4) is
 the one baseline that matches it exactly -- `--baseline head` compares against HEAD
 instead, which diverges from the index the moment an artifact is `git add`ed but not yet
-committed, and `--baseline worktree` (the default) diverges from the index whenever
-anything under `data/` is staged at all. Each generator also gets its own sandbox, seeded
-from the repo's own artifacts, so a chain where one generator consumes another's freshly
-rewritten output is not reproduced; run the gate for a chain.
+committed, and `--baseline worktree` (the default) diverges from the index whenever the
+working tree holds `data/` content the index does not (an unstaged edit, or an edit made
+after staging -- staging alone, with no further edit, leaves the working tree and the
+index identical). Each generator also gets its own sandbox, seeded from the repo's own
+artifacts, so a chain where one generator consumes another's freshly rewritten output is
+not reproduced; run the gate for a chain.
 
-**Tests.** `test_dry_run.py` (47 cases), run by CI and counted by `check_coverage.sh`. Among
+**Tests.** `test_dry_run.py` (48 cases), run by CI and counted by `check_coverage.sh`. Among
 them: the real `data/` is byte-identical after a dry run; both repo-root idioms land their
 writes in the sandbox; a generator that writes nothing, one that crashes, and an empty or
 rootless sandbox are each a failure rather than "no changes"; a generator that only deletes
@@ -4688,9 +4697,10 @@ an artifact is reported as a removal, not a no-op; a generator writing under `pr
 over a CWD fixture cannot reach the real one; a generator reading a NESTED
 `private/verify/` path fails closed naming the missing file; a sandbox escape is caught by
 the `data/` hash guard; disposal refuses any path that is not its own sandbox; `--check`
-exits 0 when a generator reproduces its artifact; and `--baseline index` agrees with `git
+exits 0 when a generator reproduces its artifact; `--baseline index` agrees with `git
 diff --exit-code` against a repo where HEAD, the index and the working tree each hold
-different content for the same artifact.
+different content for the same artifact; and an index with unmerged entries makes
+`--baseline index` fail closed (exit 2) with no sandbox left stranded.
 
 ### 3.31 `analysis/marginal_capacity_value.py` — what one more kW of panels is worth (`data/marginal_capacity_value.json`)
 
