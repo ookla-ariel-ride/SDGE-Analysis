@@ -414,14 +414,27 @@ committed artifact from §3.6/§3.8 results as above).
 
 ### 3.5 `analysis/deep_analyses.py` — five targeted studies
 
-**Inputs.** `usage.csv`, `samB.csv`, `samA.csv`. Rates: EV-TOU-5 + CEA (no relief). All results
-land in `deep_results.json`.
+**Inputs.** `usage.csv`, `samB.csv`, `samA.csv`, and from the intake `household.has_ev` and
+`household.plan`. Rates: this household's plan + CEA (no relief). All results land in
+`deep_results.json`.
 
-1. **TOU-DR-P + battery wildcard.** TOU-DR-P priced with UDC 0.32948 flat and the CEA TOU-DR-P
-   generation row (§3.0), plus a Reduce-Your-Use surcharge of **$1.16/kWh** on 15 assumed event
-   days (the 15 summer days with the highest on-peak imports), 4–9 pm. Three scenarios: TOU-DR-P
-   with a PW3 that dodges every event ($6,757), EV-TOU-5 with the same PW3 ($3,202), TOU-DR-P
-   with no battery and all events hit ($7,527). Each key names its plan and its configuration
+1. **Plan-vs-TOU-DR-P battery wildcard.** TOU-DR-P priced with UDC 0.32948 flat and the CEA
+   TOU-DR-P generation row (§3.0), plus a Reduce-Your-Use surcharge of **$1.16/kWh** on 15
+   assumed event days (the 15 summer days with the highest on-peak imports), 4–9 pm. The other
+   side is the plan the intake declares, read from `household.plan` and priced from `PLAN_RATES`,
+   the script's own published SDG&E UDC + CEA table (6/1/2026, the same values `analyze.py`
+   declares for the cross-plan ranking — a labelled exception to the one-rates-module rule, since
+   `rates.py` carries this household's own bill-derived plan and nothing else). `PLAN_RATES`
+   covers the three plans `battery_plan_matrix.py` ranks (EV-TOU-5, EV-TOU-2, TOU-ELEC) plus
+   TOU-DR-P; a household on any other plan is refused by name rather than priced from a table
+   that does not carry it, TOU-DR1 because its baseline credit is a structural term this block
+   does not model and TOU-DR2 because it is a two-period tariff with no super-off-peak rate to
+   read. On this household's EV-TOU-5 that gives three scenarios: TOU-DR-P with a PW3 that dodges
+   every event ($6,757), EV-TOU-5 with the same PW3 ($3,202), TOU-DR-P with no battery and all
+   events hit ($7,527). A household already on TOU-DR-P is priced the other way round — its plan
+   against every other plan in the table, since nothing in the intake says which one it would
+   otherwise be on — so section 9's heading always has a rival to name. Each key names its plan
+   and its configuration
    (`<plan> + <battery>` or `<plan> no battery`, plus an optional parenthetical note that is
    not part of the configuration; the plan is one `plan_results.csv` prices and the battery is
    one token), and `report_tokens.py` enforces that shape when it reads the block. Section 0's
@@ -475,8 +488,10 @@ land in `deep_results.json`.
    there. Both operands price one quantity (issue #229): the house base comes off each
    interval before anything is priced, so the actual-timing side cannot carry the base at
    whatever period it fell under. The super-off-peak counterfactual prices each session's
-   kWh at its own season's sop rate, read from the same `UDC5`/`CEA5` table the
-   actual-timing cost uses, so one rate vintage sits on both sides of the subtraction. It
+   kWh at its own season's sop rate, read from the same `PLAN_RATES` row for
+   `household.plan` the actual-timing cost uses (issue #278: both sides used to price every
+   household's sessions off the hardcoded EV-TOU-5 row, whatever plan the intake declared),
+   so one rate vintage sits on both sides of the subtraction. It
    replaced a hardcoded `0.1257` $/kWh, the second flat literal issue #172 found in this
    script. The 0.4 kW base is an assumption, not a measurement: a whole-house meter
    cannot separate the house from the charger while both run. The repo's two measured

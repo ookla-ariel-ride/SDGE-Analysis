@@ -4021,25 +4021,27 @@ def _wildcard_plan(ctx):
     split of the keys, with this household's battery ("PW3") written into it;
     see _WILDCARD_KEY_RE for what the two disagreed about.
 
-    THE USUAL WAY TO LAND HERE is a household on neither EV-TOU-5 nor
-    TOU-DR-P: deep_analyses.py's wildcard block prices only those two plans,
-    hardcoded, and never household.plan, so for any other plan the block
-    carries no entry for this household and ranks nothing. The refusal is
-    right (a heading off a block that never priced the plan is the false
-    claim), and the remedy is in the generator, not here: extend that block
-    to price household.plan. That generator defect is tracked as its own
-    issue; the message below points at it.
+    WHAT LANDS HERE. deep_analyses.py builds that block FROM household.plan:
+    it prices this household's own plan against the rival(s), and a plan its
+    PLAN_RATES table cannot price is refused in the generator, by name, rather
+    than published as some other plan's workup. So a block carrying no entry
+    for this run's plan is a block from another run -- a stale artifact, one
+    written before household.plan changed, or a hand edit -- and the remedy is
+    to run deep_analyses.py in this working directory, not to loosen the
+    reading here. A non-finite total reaches this refusal by the same drop.
+    The message below says both.
     """
     if _wildcard_scenario(ctx) is None:
         raise SystemExit(f"{_WILDCARD_SOURCE} does not rank this household's plan "
                          f"({hh1('household.plan')!r}) against another in its battery "
                          "configuration, so section 9's heading has no wildcard plan to "
                          "name; section 0's card drops the scenario for the same reason. "
-                         "If the plan is missing from the block: deep_analyses.py's "
-                         "wildcard block prices only the two plans it hardcodes "
-                         "(EV-TOU-5 and TOU-DR-P), never household.plan, and must be "
-                         "extended to price this household's plan (a generator defect, "
-                         "tracked as issue #278)")
+                         "deep_analyses.py prices household.plan against the rival(s), so "
+                         "a block with no entry for this plan is one another run wrote: "
+                         "run deep_analyses.py in this working directory. A plan its "
+                         "PLAN_RATES table cannot price is refused there, by name, with "
+                         "the plans it does price. Otherwise a total in the block is not "
+                         "a number")
     return _wildcard_rivals(hh1("household.plan"))[0]
 
 

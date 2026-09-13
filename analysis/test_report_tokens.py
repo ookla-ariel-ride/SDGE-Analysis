@@ -5675,6 +5675,107 @@ def _wildcard_plans():
     return plan, rivals
 
 
+def _wildcard_generator_convention():
+    """(event plan, battery token, every plan it can price) READ OUT OF
+    deep_analyses.py's own source, never typed here.
+
+    The wildcard block's keys are a contract between that generator and
+    _wildcard_totals, and the case below exists to check the reader against the
+    shape the generator really emits for a household on any plan. Spelling the
+    plan names and the battery token out in this file would check the reader
+    against this file's memory of the contract instead, which is what left the
+    two sides free to drift in the first place (issue #202).
+
+    ast rather than exec: PLAN_RATES maps plan names to rate tables declared
+    above it, so the declaration does not stand alone, but its KEYS are plain
+    string literals and that is all this needs.
+    """
+    tree = ast.parse((rt.ROOT / "analysis" / "deep_analyses.py").read_text())
+    found = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if target.id in ("WILDCARD_EVENT_PLAN", "WILDCARD_BATTERY"):
+            found[target.id] = ast.literal_eval(node.value)
+        elif target.id == "PLAN_RATES":
+            found["PLAN_RATES"] = [ast.literal_eval(k) for k in node.value.keys]
+    missing = {"WILDCARD_EVENT_PLAN", "WILDCARD_BATTERY", "PLAN_RATES"} - set(found)
+    assert not missing, (
+        f"deep_analyses.py no longer declares {sorted(missing)} at module level, so "
+        "this case cannot read the wildcard convention off the generator")
+    return (found["WILDCARD_EVENT_PLAN"], found["WILDCARD_BATTERY"],
+            found["PLAN_RATES"])
+
+
+def _wildcard_block_for(plan, event_plan, battery, priced_plans):
+    """The wildcard block deep_analyses.py emits for a household on `plan`:
+    every rival's battery entry, this plan's battery entry, and the event
+    plan's no-battery context entry. Totals are invented and ordered so the
+    household's plan wins, which is not what this case is about."""
+    rivals = ([event_plan] if plan != event_plan
+              else [p for p in priced_plans if p != plan])
+    totals = {}
+    for i, name in enumerate(rivals + [plan]):
+        note = " (15 events dodged)" if name == event_plan else ""
+        totals[f"{name} + {battery}{note}"] = 3000 if name == plan else 7000 + i
+    totals[f"{event_plan} no battery (events hit)"] = 7500
+    return rivals, totals
+
+
+@case
+def case_the_wildcard_reads_the_block_the_generator_emits_for_any_plan():
+    """issue #278: a household on a plan other than EV-TOU-5 gets a wildcard
+    block naming its own plan, and both readers of that block resolve.
+
+    deep_analyses.py used to build the block from two hardcoded rate tables and
+    emit keys for EV-TOU-5 and TOU-DR-P alone. A household on EV-TOU-2 or
+    TOU-ELEC therefore reached WILDCARD_PLAN with a workup that never priced
+    its plan: _wildcard_scenario returned None, section 0's card silently
+    dropped a scenario it could not score, and section 9's heading refused by
+    name -- so the report could not be generated at all.
+
+    Driven over every plan the generator's own table prices, in the key shape
+    it emits for that household (_wildcard_generator_convention), including the
+    household already ON the event plan, whose block carries several rivals
+    instead of one. S0_BEST_PLAN_CARD is asserted only for the plans
+    data/battery_plan_matrix.json ranks, since the card reads that matrix too
+    and a plan outside it is a different artifact's gap, not this one's.
+
+    Every artifact is substituted in memory and every household answer stubbed,
+    so this runs with or without the private archive.
+    """
+    event_plan, battery, priced_plans = _wildcard_generator_convention()
+    known = rt._known_plans()
+    unpriced = [p for p in priced_plans if p not in known]
+    assert not unpriced, (
+        f"deep_analyses.py's wildcard table prices {unpriced}, which "
+        f"data/plan_results.csv does not carry ({sorted(known)}); _wildcard_totals "
+        "refuses those keys by name")
+    in_matrix = set(rt._json("battery_plan_matrix.json")["plans"])
+
+    named = {}
+    for plan in priced_plans:
+        rivals, totals = _wildcard_block_for(plan, event_plan, battery, priced_plans)
+        with _stub_household({"household.plan": plan}), _wildcard_priced(totals):
+            got = rt.resolve_token("WILDCARD_PLAN")
+            assert got == sorted(rivals)[0], (
+                f"a household on {plan} whose wildcard block is {sorted(totals)} got "
+                f"section 9's heading plan {got!r}, not {sorted(rivals)[0]!r}")
+            phrase, _standing = rt._wildcard_scenario(rt.CTX)
+            named[plan] = (got, phrase)
+            if plan in in_matrix:
+                card = rt.resolve_token("S0_BEST_PLAN_CARD")
+                assert phrase in card, (
+                    f"section 0's card for a household on {plan} does not count the "
+                    f"wildcard it was handed ({phrase!r}): {card}")
+    return ("every plan deep_analyses.py's wildcard table prices reaches section 9's "
+            "heading and section 0's card with its own block: "
+            + "; ".join(f"{plan} -> {rival}" for plan, (rival, _p) in named.items()))
+
+
 @case
 def case_a_non_finite_wildcard_total_drops_the_scenario_instead_of_ranking_the_rest():
     """A nan in data/deep_results.json:wildcard used to be FILTERED OUT and

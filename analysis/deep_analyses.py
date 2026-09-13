@@ -18,13 +18,16 @@ ORDERING CONTRACT (this script runs SECOND):
 
 Inputs beside it in the CWD: usage.csv, samA.csv, samB.csv, rates.py,
 behavior_rebuild.py (imported for the intake flag only, not for its models), and
-this run's battery_dispatch_policies.json.  Output: deep_results.json in the CWD.
+this run's battery_dispatch_policies.json. From the intake it reads
+household.has_ev and household.plan, the plan the wildcard block prices against
+TOU-DR-P.  Output: deep_results.json in the CWD.
 """
 import pandas as pd, numpy as np, json, datetime as dt
 import sys, pathlib as _pl
 sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 import rates as R   # canonical TOU assignment (holiday rule included)
 import behavior_rebuild as br   # THIS run's intake flag (household.has_ev)
+import household as HH          # THIS run's intake answer household.plan (issue #278)
 
 def _repo_root():
     for start in (_pl.Path.cwd(), _pl.Path(__file__).resolve().parent):
@@ -198,13 +201,56 @@ d["p"]=[R.period_at(t) for t in d.dt]; d["date"]=d.dt.dt.date
 WFNBC=0.00591;PCIA=0.02828;NBC=0.01515-0.00007+WFNBC;BSC=0.79343
 out={}
 
-# ---------- 1. TOU-DR-P + battery wildcard ----------
+# ---------- 1. <this household's plan> vs TOU-DR-P + battery wildcard ----------
 # TOU-DR-P rates (CEA TOU-DR-PK gen + SDGE UDC), RYU events: assume 15 events/yr, 4-9pm,
 # hottest summer days, +$1.16/kWh adder. Battery dodges by discharging through events.
+# The other side of that comparison is HOUSE_PLAN, read from the intake (issue
+# #278) -- this block used to price EV-TOU-5 whatever household.plan said, so
+# on any other plan section 0's card and section 9's heading were handed a
+# workup that never priced the household's plan and refused by name.
 UDCP={"S":{"on":0.32948,"off":0.32948,"sop":0.32948},"W":{"on":0.32948,"off":0.32948,"sop":0.32948}}
 CEAP={"S":{"on":0.38778,"off":0.15609,"sop":0.04914},"W":{"on":0.13854,"off":0.05903,"sop":0.05138}}
 UDC5={"S":{"on":0.31711,"off":0.31711,"sop":0.04114},"W":{"on":0.31711,"off":0.31711,"sop":0.04114}}
 CEA5={"S":{"on":0.51684,"off":0.15975,"sop":0.04961},"W":{"on":0.24430,"off":0.15782,"sop":0.05187}}
+UDC2={"S":{"on":0.30372,"off":0.30372,"sop":0.16275},"W":{"on":0.30372,"off":0.30372,"sop":0.16275}}
+UDCE={"S":{"on":0.25317,"off":0.25317,"sop":0.25317},"W":{"on":0.25317,"off":0.25317,"sop":0.25317}}
+# THE PLANS THIS BLOCK CAN PRICE, published SDG&E UDC totals and CEA (the CCA)
+# generation, both effective 6/1/2026. Every row declared above is the row
+# analyze.py declares for the cross-plan ranking, value for value: UDCP, UDC5,
+# UDC2 and UDCE are its UDC[plan] rows, CEAP and CEA5 its CEA[plan] rows. Pinned
+# in test_deep_analyses.py, which reads both files' literals, so the two copies
+# cannot drift apart in silence. NOT analyze.py's EECC table, which is SDG&E's
+# own BUNDLED generation, carried there for the bundled-vs-CCA comparison and
+# holding different numbers (EV-TOU-5 summer on-peak 0.47019 against 0.51684
+# here); this household buys its generation from the CCA.
+# CLAUDE.md section 9's one labelled exception to rates.py, since rates.py
+# carries this household's own bill-derived plan and nothing else. CEA maps
+# EV-TOU-2 and TOU-ELEC onto its EV-TOU generation row, so those two share
+# CEA5. The set is the three plans battery_plan_matrix.py ranks plus the event
+# plan: TOU-DR1 and TOU-DR2 are left out on purpose, the first because its
+# baseline credit is a structural term this block does not model and the
+# second because it is a two-period tariff with no super-off-peak rate to read.
+PLAN_RATES={"TOU-DR-P":(UDCP,CEAP),"EV-TOU-5":(UDC5,CEA5),
+            "EV-TOU-2":(UDC2,CEA5),"TOU-ELEC":(UDCE,CEA5)}
+WILDCARD_EVENT_PLAN="TOU-DR-P"   # the plan whose RYU events a battery can dodge
+WILDCARD_BATTERY="PW3"           # the key convention's <battery>: one token, no spaces
+HOUSE_PLAN=HH.get("household.plan")
+if HOUSE_PLAN not in PLAN_RATES:
+    raise SystemExit(
+        f"household.plan is {HOUSE_PLAN!r}, which this script's wildcard rate table "
+        f"does not price ({', '.join(PLAN_RATES)}). The block compares this "
+        f"household's own plan against {WILDCARD_EVENT_PLAN}, so it cannot be run for a "
+        "plan it has no published UDC/CEA row for. Add that plan's row to PLAN_RATES "
+        "with its source, or correct household.plan in private/household.yaml "
+        "(CLAUDE.md section 0: read the plan off the detailed bill).")
+# THE RIVAL(S) section 9's heading names. Normally the event plan, the whole
+# point of the wildcard: can peak-day pricing plus a battery that discharges
+# through the events beat the plan you are on? A household ALREADY on the event
+# plan gets the question the other way round -- there is no fact in the intake
+# saying which plan it would otherwise be on, so the block prices it against
+# every other plan its table carries and the ranking takes the cheapest.
+RIVAL_PLANS=([WILDCARD_EVENT_PLAN] if HOUSE_PLAN!=WILDCARD_EVENT_PLAN
+             else [p for p in PLAN_RATES if p!=HOUSE_PLAN])
 def rates(U,C): return np.array([U[s][p]+WFNBC+PCIA+C[s][p] for s,p in zip(d.seas,d.p)])
 # pick 15 event days = highest on-peak import summer days
 onp=d[(d.p=="on")&(d.seas=="S")].groupby("date").Consumption.sum().sort_values(ascending=False)
@@ -233,9 +279,6 @@ def cost_with_batt(U,C,adder_on_events, cap=13.5,pwr=11.5,eff=0.90,charge_pwr=No
 # real Powerwall 3 (cap=13.5, pwr=11.5 defaults), so both get the cited
 # charge cap. See research/battery-research-notes.md.
 CHARGE_KW_PW3=5.0
-drp_batt=cost_with_batt(UDCP,CEAP,True,charge_pwr=CHARGE_KW_PW3)
-ev5_batt=cost_with_batt(UDC5,CEA5,False,charge_pwr=CHARGE_KW_PW3)
-drp_nobatt_energy=(d.Consumption.values*(rates(UDCP,CEAP)+np.where(d.event,1.16,0))).sum() - (d.Generation.values*np.clip(rates(UDCP,CEAP)-NBC,0,None)).sum()
 # KEY CONVENTION (issue #202), enforced where report_tokens.py reads this
 # block (_wildcard_totals): "<plan> + <battery>" or "<plan> no battery", each
 # with an optional trailing parenthetical note. <plan> is a plan
@@ -247,9 +290,23 @@ drp_nobatt_energy=(d.Consumption.values*(rates(UDCP,CEAP)+np.where(d.event,1.16,
 # "PW3" are the same battery, so a configuration appears once per plan, and
 # the note is neither validated nor compared across plans. A block outside
 # this shape refuses there by name.
-out["wildcard"]={"TOU-DR-P + PW3 (15 events dodged)":round(drp_batt),
-                 "EV-TOU-5 + PW3":round(ev5_batt),
-                 "TOU-DR-P no battery (events hit)":round(drp_nobatt_energy+365*BSC)}
+#
+# The rival(s) come first and this household's plan last, which is the order
+# the block has always emitted; the event plan's note says what its run
+# assumed, and only its run has one.
+wildcard={}
+for wc_plan in RIVAL_PLANS+[HOUSE_PLAN]:
+    wc_U,wc_C=PLAN_RATES[wc_plan]
+    wc_events=wc_plan==WILDCARD_EVENT_PLAN
+    wc_note=" (15 events dodged)" if wc_events else ""
+    wildcard[f"{wc_plan} + {WILDCARD_BATTERY}{wc_note}"]=round(
+        cost_with_batt(wc_U,wc_C,wc_events,charge_pwr=CHARGE_KW_PW3))
+# ...and the event plan without a battery, the context entry: what the 15
+# events cost a household that cannot discharge through them.
+wc_UE,wc_CE=PLAN_RATES[WILDCARD_EVENT_PLAN]
+event_nobatt_energy=(d.Consumption.values*(rates(wc_UE,wc_CE)+np.where(d.event,1.16,0))).sum() - (d.Generation.values*np.clip(rates(wc_UE,wc_CE)-NBC,0,None)).sum()
+wildcard[f"{WILDCARD_EVENT_PLAN} no battery (events hit)"]=round(event_nobatt_energy+365*BSC)
+out["wildcard"]=wildcard
 
 # ---------- 2. Phantom / baseload ----------
 # non-EV floor: 3-5am intervals excluding EV charging (kW>2) days-hours.
@@ -291,14 +348,19 @@ out["phantom"]={"baseload_kw":round(float(base_kw),2),
          "365 nights kept, 1.03 kW), not this block's baseload_kw priced"}
 
 # ---------- 3. EV sessions ----------
-r5=rates(UDC5,CEA5)
+# Priced on THIS HOUSEHOLD'S plan, from the same PLAN_RATES table the wildcard
+# block reads (issue #278). It used to price every household's sessions off the
+# hardcoded EV-TOU-5 table, which is the plan this house is on and no reason for
+# a house on another one to be billed at it.
+HOUSE_UDC,HOUSE_CEA=PLAN_RATES[HOUSE_PLAN]
+r_house=rates(HOUSE_UDC,HOUSE_CEA)
 # Super-off-peak price for the "if every session had charged super-off-peak"
-# counterfactual, per season, built from THIS SCRIPT'S OWN EV-TOU-5 table --
-# the same vintage r5 prices the actual sessions with. That is the point:
+# counterfactual, per season, built from THAT SAME plan row -- the same vintage
+# r_house prices the actual sessions with. That is the point:
 # wasted_vs_perfect is the difference between those two, so both sides must be
 # on one rate vintage (CLAUDE.md section 9). It replaces a hardcoded 0.1257,
 # which was the second flat $/kWh literal issue #172 found in this file.
-SOP5={s:UDC5[s]["sop"]+WFNBC+PCIA+CEA5[s]["sop"] for s in ("S","W")}
+SOP_HOUSE={s:HOUSE_UDC[s]["sop"]+WFNBC+PCIA+HOUSE_CEA[s]["sop"] for s in ("S","W")}
 # House draw ASSUMED to run underneath the charger during a session, in kW.
 # It is an assumption, not a measurement: a single whole-house meter cannot
 # separate the house from the charger while both run, so no interval inside a
@@ -331,7 +393,7 @@ for k,g in d[ev].groupby(d.evblk[ev]):
     ev_kwh=g.Consumption.values-EV_SESSION_HOUSE_BASE_KW*0.25
     kwh=float(ev_kwh.sum())
     if kwh<3: continue
-    r=r5[g.index]
+    r=r_house[g.index]
     cost=float((ev_kwh*r).sum())   # EV-only kWh at actual timing and rates
     sess.append({"start":g.dt.iloc[0],"h":len(g)*0.25,"kwh":kwh,"cost":cost,
                  "seas":g.seas.iloc[0],
@@ -344,7 +406,7 @@ S=pd.DataFrame(sess)
 # day, never across seasons. S.kwh is the same per-interval EV-only energy
 # S.cost priced, so cost_total and cost_if_all_sop price ONE quantity and
 # their difference is the timing cost alone.
-sop_ref=float((S.kwh*S.seas.map(SOP5)).sum())
+sop_ref=float((S.kwh*S.seas.map(SOP_HOUSE)).sum())
 out["ev_sessions"]={"count":len(S),"kwh_total":round(S.kwh.sum()),"cost_total":round(S.cost.sum()),
   "avg_kwh":round(S.kwh.mean(),1),"sessions_touching_onpeak":int((S.on_kwh>1).sum()),
   "onpeak_kwh_in_sessions":round(S.on_kwh.sum()),"offpeak_kwh_in_sessions":round(S.off_kwh.sum()),
