@@ -575,6 +575,27 @@ def _require_finite(token, subject, **values):
            ", ".join(f"{k} is {v!r}" for k, v in (bad or values).items()))
 
 
+def _refuse_if_zero(token, subject, name, value, why):
+    """Refuse, naming `name` and `why`, before `value` becomes a divisor.
+
+    ZeroDivisionError is an ArithmeticError, so resolve_token's caught tuple
+    already turns an unguarded zero denominator into a named SystemExit --
+    the module's fail-closed contract holds even without this helper (issue
+    #145 AC 1). But that wrapper's message is only "ZeroDivisionError: float
+    division by zero": it does not say WHICH quantity was zero or why the
+    sentence cannot be written without it, which is the diagnostic a
+    reproducer actually needs (issue #145 AC 2). Same shape as
+    _cleaning_window_medians and _assert_profiles_rebuild_the_year's own
+    named zero-guards below, factored once here for the nine leaf tokens
+    issue #145 found dividing with no guard at all -- a legitimate household
+    (no export, an empty production window, a zero-day study range) can hit
+    any one of these zeros without anything being broken."""
+    if value == 0:
+        raise SystemExit(f"report_tokens: {token} cannot say {subject} -- "
+                          f"{name} is {value!r}, so {why}")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # THE SAME TWO PRECONDITIONS, FOR A FORMULA THAT WRITES ITS OWN PROSE
 # (issue #131, review round 5, part B).
@@ -1346,20 +1367,35 @@ _tok("NEM_EXPIRY_YEAR", kind="derived",
      get=lambda ctx: _as_date(hh1("household.pto_date")).year + 20,
      sources=["private/household.yaml:household.pto_date (+20 yr NEM 2.0 term)"], fmt="year")
 
-_tok("INVERTER_DESCRIPTION", kind="derived",
-     get=lambda ctx: (lambda count, kw_ac:
-         f"{int(count)} × {hh1('solar.inverter_model')}"
-         f", ~{kw_ac * 1000 / count:.0f} VA each")(
-         *_figures("INVERTER_DESCRIPTION", "what each microinverter is rated at",
-                   **{"solar.inverter_count": hh1("solar.inverter_count"),
-                      "solar.kw_ac": hh1("solar.kw_ac")})),
+def _inverter_description(ctx):
+    count, kw_ac = _figures(
+        "INVERTER_DESCRIPTION", "what each microinverter is rated at",
+        **{"solar.inverter_count": hh1("solar.inverter_count"),
+           "solar.kw_ac": hh1("solar.kw_ac")})
+    _refuse_if_zero(
+        "INVERTER_DESCRIPTION", "what each microinverter is rated at",
+        "private/household.yaml:solar.inverter_count", count,
+        "there is no inverter count to divide the array's AC rating by")
+    return f"{int(count)} × {hh1('solar.inverter_model')}, ~{kw_ac * 1000 / count:.0f} VA each"
+
+
+_tok("INVERTER_DESCRIPTION", kind="derived", get=_inverter_description,
      sources=["private/household.yaml:solar.inverter_count/inverter_model/kw_ac"])
 
-_tok("PANEL_MODEL_WATTS", kind="derived",
-     get=lambda ctx: (lambda kw_dc, modules: f"{kw_dc * 1000 / modules:.0f} W")(
-         *_figures("PANEL_MODEL_WATTS", "what each module is rated at",
-                   **{"solar.kw_dc": hh1("solar.kw_dc"),
-                      "solar.module_count": hh1("solar.module_count")})),
+
+def _panel_model_watts(ctx):
+    kw_dc, modules = _figures(
+        "PANEL_MODEL_WATTS", "what each module is rated at",
+        **{"solar.kw_dc": hh1("solar.kw_dc"),
+           "solar.module_count": hh1("solar.module_count")})
+    _refuse_if_zero(
+        "PANEL_MODEL_WATTS", "what each module is rated at",
+        "private/household.yaml:solar.module_count", modules,
+        "there is no module count to divide the array's DC rating by")
+    return f"{kw_dc * 1000 / modules:.0f} W"
+
+
+_tok("PANEL_MODEL_WATTS", kind="derived", get=_panel_model_watts,
      sources=["private/household.yaml:solar.kw_dc/module_count"])
 
 
@@ -1435,7 +1471,13 @@ def _pvoutput_annual_kwh(ctx):
 
 def _production_agreement_pct(ctx):
     a, b = _annual_production_kwh(ctx), _pvoutput_annual_kwh(ctx)
-    return abs(a - b) / ((a + b) / 2) * 100
+    avg = (a + b) / 2
+    _refuse_if_zero(
+        "PRODUCTION_AGREEMENT_PCT", "how closely the two production totals agree",
+        "the two production totals' average, (Enphase + PVOutput) / 2", avg,
+        "there is no combined production for the two measurements to agree "
+        "against")
+    return abs(a - b) / avg * 100
 
 
 _tok("PRODUCTION_SOURCE_COUNT", kind="cited_constant", value=2, fmt="num0",
@@ -1456,16 +1498,45 @@ def _annual_load_kwh(ctx):
 
 _tok("ANNUAL_LOAD_KWH", kind="derived", get=lambda ctx: round(_annual_load_kwh(ctx)),
      sources=["data/report_data.json:totals", "data/enphase_daily_production.csv"], fmt="num0")
-_tok("SOLAR_COVERAGE_PCT", kind="derived",
-     get=lambda ctx: round(_annual_production_kwh(ctx) / _annual_load_kwh(ctx) * 100),
+def _solar_coverage_pct(ctx):
+    load = _annual_load_kwh(ctx)
+    _refuse_if_zero(
+        "SOLAR_COVERAGE_PCT", "what share of the home's load solar covers",
+        "this window's annual load, data/report_data.json:totals.imp plus "
+        "production minus totals.exp", load,
+        "there is no load for solar's production to cover")
+    return round(_annual_production_kwh(ctx) / load * 100)
+
+
+_tok("SOLAR_COVERAGE_PCT", kind="derived", get=_solar_coverage_pct,
      sources=["data/report_data.json:totals", "data/enphase_daily_production.csv"], fmt="pct0")
-_tok("SELF_CONSUMED_SHARE", kind="derived",
-     get=lambda ctx: (lambda p, e: round((p - e) / p * 100))(
-         _annual_production_kwh(ctx), _json("report_data.json")["totals"]["exp"]),
+
+
+def _self_consumed_share(ctx):
+    p = _annual_production_kwh(ctx)
+    e = _json("report_data.json")["totals"]["exp"]
+    _refuse_if_zero(
+        "SELF_CONSUMED_SHARE", "what share of production was self-consumed",
+        "data/enphase_daily_production.csv's Total footer", p,
+        "there is no production to divide the self-consumed kWh by")
+    return round((p - e) / p * 100)
+
+
+_tok("SELF_CONSUMED_SHARE", kind="derived", get=_self_consumed_share,
      sources=["data/report_data.json:totals", "data/enphase_daily_production.csv"], fmt="pct0")
-_tok("EXPORTED_SHARE", kind="derived",
-     get=lambda ctx: (lambda p, e: round(e / p * 100))(
-         _annual_production_kwh(ctx), _json("report_data.json")["totals"]["exp"]),
+
+
+def _exported_share(ctx):
+    p = _annual_production_kwh(ctx)
+    e = _json("report_data.json")["totals"]["exp"]
+    _refuse_if_zero(
+        "EXPORTED_SHARE", "what share of production was exported",
+        "data/enphase_daily_production.csv's Total footer", p,
+        "there is no production to divide the exported kWh by")
+    return round(e / p * 100)
+
+
+_tok("EXPORTED_SHARE", kind="derived", get=_exported_share,
      sources=["data/report_data.json:totals", "data/enphase_daily_production.csv"], fmt="pct0")
 def _capacity_factor(ctx):
     """The array's output as a share of running at nameplate all year.
@@ -1480,14 +1551,26 @@ def _capacity_factor(ctx):
         **{"data/enphase_daily_production.csv's annual production":
            _annual_production_kwh(ctx),
            "solar.kw_dc": hh1("solar.kw_dc")})
+    _refuse_if_zero(
+        "CAPACITY_FACTOR", "what fraction of nameplate the array delivers",
+        "private/household.yaml:solar.kw_dc", kw_dc,
+        "there is no nameplate capacity to divide the year's production by")
     return f"~{production / (kw_dc * 8760) * 100:.1f}%"
 
 
 _tok("CAPACITY_FACTOR", kind="derived", get=_capacity_factor,
      sources=["data/enphase_daily_production.csv", "private/household.yaml:solar.kw_dc"],
      dim="%")
-_tok("SPECIFIC_YIELD", kind="derived",
-     get=lambda ctx: round(_annual_production_kwh(ctx) / hh1("solar.kw_dc")),
+def _specific_yield(ctx):
+    kw_dc = hh1("solar.kw_dc")
+    _refuse_if_zero(
+        "SPECIFIC_YIELD", "how many kWh per kW of nameplate the array yielded",
+        "private/household.yaml:solar.kw_dc", kw_dc,
+        "there is no nameplate capacity to divide the year's production by")
+    return round(_annual_production_kwh(ctx) / kw_dc)
+
+
+_tok("SPECIFIC_YIELD", kind="derived", get=_specific_yield,
      sources=["data/enphase_daily_production.csv", "private/household.yaml:solar.kw_dc"], fmt="num0")
 
 _tok("ONPEAK_IMPORT_SHARE_PCT", kind="derived",
@@ -1503,12 +1586,19 @@ _tok("SOP_IMPORT_SHARE_PCT", kind="derived",
          _json("report_data.json")["periods_chart"]["order"].index("sop")] * 100),
      sources=["data/report_data.json:periods_chart"], fmt="num0")
 
-_tok("CHART_TITLE_PERIODS", phrase=True, kind="derived",
-     get=lambda ctx: (lambda pc, i: (
-         f"{round(pc['import_share'][i] * 100)}% of imports happen on-peak, driving "
-         f"{round(pc['import_cost'][i] / sum(pc['import_cost']) * 100)}% of gross "
-         "import cost"))(_json("report_data.json")["periods_chart"],
-                          _json("report_data.json")["periods_chart"]["order"].index("on")),
+def _chart_title_periods(ctx):
+    pc = _json("report_data.json")["periods_chart"]
+    i = pc["order"].index("on")
+    total_cost = sum(pc["import_cost"])
+    _refuse_if_zero(
+        "CHART_TITLE_PERIODS", "what share of gross import cost happens on-peak",
+        "data/report_data.json:periods_chart.import_cost, summed across periods",
+        total_cost, "there is no gross import cost to divide the on-peak share by")
+    return (f"{round(pc['import_share'][i] * 100)}% of imports happen on-peak, driving "
+            f"{round(pc['import_cost'][i] / total_cost * 100)}% of gross import cost")
+
+
+_tok("CHART_TITLE_PERIODS", phrase=True, kind="derived", get=_chart_title_periods,
      sources=["data/report_data.json:periods_chart"])
 
 
@@ -2167,6 +2257,10 @@ def _house_kwh_day(ctx):
     det, _reason = _ev_detection()
     ev = 0.0 if det is None else det["ev_kwh_total"]
     days = _json("behavior_rebuild.json")["window"]["days"]
+    _refuse_if_zero(
+        "HOUSE_KWH_DAY", "what the whole-home load averages per day",
+        "data/behavior_rebuild.json:window.days", days,
+        "there is no window length to divide the load by")
     return round((load - ev) / days)
 
 
@@ -4860,9 +4954,18 @@ def _metric_now(ctx):
 _tok("METRIC_NOW", kind="derived",
      get=_metric_now, fmt="pct0",
      sources=["data/report_data.json:periods_chart (on-peak import share)"])
-_tok("METRIC_TARGET", kind="derived", dim="%",
-     get=lambda ctx: (lambda dp, tot: f"~{round(dp['pw3']['onpeak_after_greedy'] / tot * 100)}%")(
-         _json("battery_dispatch_policies.json"), _json("report_data.json")["totals"]["imp"]),
+def _metric_target(ctx):
+    dp = _json("battery_dispatch_policies.json")
+    tot = _json("report_data.json")["totals"]["imp"]
+    _refuse_if_zero(
+        "METRIC_TARGET", "what on-peak import share a battery leaves after "
+        "its greedy dispatch", "data/report_data.json:totals.imp", tot,
+        "there is no imported energy to divide the after-dispatch on-peak "
+        "import by")
+    return f"~{round(dp['pw3']['onpeak_after_greedy'] / tot * 100)}%"
+
+
+_tok("METRIC_TARGET", kind="derived", dim="%", get=_metric_target,
      sources=["data/battery_dispatch_policies.json:pw3.onpeak_after_greedy",
               "data/report_data.json:totals.imp"])
 
