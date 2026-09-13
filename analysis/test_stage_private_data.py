@@ -736,6 +736,65 @@ def _snapshot(root):
     return out
 
 
+def _register_admin_dir():
+    """<git-common-dir>/worktrees for THIS checkout -- the directory holding
+    one admin entry per linked worktree of it. None when this checkout has
+    no git identity to ask; this is a hygiene helper, not a guard under
+    test, so it reports "nothing to check" instead of raising (issue #206)."""
+    r = subprocess.run(["git", "-C", str(ROOT), "rev-parse",
+                        "--path-format=absolute", "--git-common-dir"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    return pathlib.Path(r.stdout.strip()) / "worktrees"
+
+
+def _register_entry_names(admin):
+    """The admin entry names that exist right now, or an empty set if there
+    is no admin directory yet -- also true before this checkout's first
+    worktree is ever added, which a diff against this treats the same way."""
+    if admin is None:
+        return set()
+    try:
+        return {p.name for p in admin.iterdir()}
+    except OSError:
+        return set()
+
+
+@contextlib.contextmanager
+def _register_entries_confined_to(td):
+    """Hand back ONLY the admin entries a block registers for worktrees
+    inside `td`, and leave every other entry -- including one that predates
+    the block -- exactly as it was found (issue #206).
+
+    Never `git worktree prune` here: prune is not scoped to one fixture, it
+    removes EVERY entry whose directory is missing, including a developer's
+    own worktree on an unmounted volume or a network share. An entry is
+    removed only when BOTH hold: it is NEW since this block started, and the
+    `gitdir` file git wrote in it names a directory inside `td` -- the
+    caller's own TemporaryDirectory. `finally`, so a block that raises
+    mid-way still hands its own entries back, and the check reads the
+    filesystem directly rather than asking git, so it cannot be blocked by
+    any environment state a case inside the block may have changed."""
+    admin = _register_admin_dir()
+    before = _register_entry_names(admin)
+    fence = os.path.realpath(str(td))
+    try:
+        yield
+    finally:
+        if admin is None:
+            return
+        for name in sorted(_register_entry_names(admin) - before):
+            entry = admin / name
+            try:
+                owner = os.path.realpath(
+                    os.path.dirname((entry / "gitdir").read_text().strip()))
+            except OSError:
+                continue        # not ours to read, so not ours to remove
+            if owner == fence or owner.startswith(fence + os.sep):
+                shutil.rmtree(entry, ignore_errors=True)
+
+
 @contextlib.contextmanager
 def _linked_worktree(td, name="dst"):
     """A REAL linked worktree of THIS checkout, as the destination.
@@ -752,23 +811,91 @@ def _linked_worktree(td, name="dst"):
     in the developer's real .git/worktrees. Its argument is always a path
     this contextmanager itself created inside the caller's
     TemporaryDirectory, asserted below, and if the removal fails the
-    TemporaryDirectory still clears the files."""
+    TemporaryDirectory still clears the files.
+
+    THE HANDBACK IS CONFINED, not just attempted (issue #206): a plain `git
+    worktree remove --force` left five admin husks (dst, dst1..dst4) in this
+    checkout's real .git/worktrees, none of them prunable, because a case
+    inside the block can leave the real process environment in a state
+    (an ownership-check variable, a GIT_CONFIG_* override) that makes that
+    one command refuse -- and the caller of this contextmanager has no way to
+    know that happened. So this wraps itself in
+    _register_entries_confined_to(), whose sweep reads the filesystem
+    directly and does not depend on git succeeding at all, run AFTER the
+    ordinary removal below gets its best shot with a stripped environment."""
     path = pathlib.Path(td) / name
     assert path.parent == pathlib.Path(td), "worktree must live inside the test's tempdir"
     if subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--git-common-dir"],
                       capture_output=True, text=True).returncode != 0:
         raise SkipCase("this checkout is not a git repository, so a linked "
                        "worktree of it cannot be built")
-    added = subprocess.run(
-        ["git", "-C", str(ROOT), "worktree", "add", "--detach", str(path), "HEAD"],
-        capture_output=True, text=True)
-    assert added.returncode == 0, (
-        f"could not create a worktree of this checkout: {added.stderr}")
+    with _register_entries_confined_to(td):
+        added = subprocess.run(
+            ["git", "-C", str(ROOT), "worktree", "add", "--detach", str(path), "HEAD"],
+            capture_output=True, text=True)
+        assert added.returncode == 0, (
+            f"could not create a worktree of this checkout: {added.stderr}")
+        try:
+            yield path
+        finally:
+            # A clean environment for this one housekeeping call: a case may
+            # have really set GIT_TEST_ASSUME_DIFFERENT_OWNER or a
+            # GIT_CONFIG_* override in os.environ for the DURATION of its own
+            # `with` block, and this teardown must not inherit the very
+            # forgery the case built it to exercise. The confined sweep above
+            # is what actually guarantees no residue; this just means it is
+            # rarely needed.
+            clean_env = {k: v for k, v in os.environ.items()
+                        if not k.startswith(("GIT_TEST_", "GIT_CONFIG_"))}
+            subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force",
+                            str(path)], capture_output=True, text=True, env=clean_env)
+
+
+@case
+def case_a_linked_worktree_hands_back_its_admin_entry_even_when_the_case_forges_ownership_and_dies():
+    """issue #206 AC3/AC4, reproduced directly rather than inferred: the
+    exact incident that left dst/dst1..dst4 in this checkout's real
+    .git/worktrees.
+
+    GIT_TEST_ASSUME_DIFFERENT_OWNER=1, set for real in os.environ (not
+    handed to one subprocess call) is git's own test hook for "every
+    repository is dubiously owned" -- measured on this machine's git just
+    above this file's own docstring era: `git worktree remove --force` under
+    it exits 128, 'detected dubious ownership'. A case that sets this to
+    exercise the safe.directory guard elsewhere, and then dies before
+    unsetting it, leaves _linked_worktree's plain removal call exactly the
+    way the incident did.
+
+    The case body here raises DELIBERATELY, after forging the variable,
+    which stands in for 'dies mid-case' -- and the admin entry must still be
+    gone afterward, with the variable restored so this case cannot leak the
+    forgery into whatever runs after it."""
+    admin = _register_admin_dir()
+    if admin is None:
+        raise SkipCase("this checkout has no git common dir, so it has no register")
+    before = _register_entry_names(admin)
+    prior = os.environ.get("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+    died = False
     try:
-        yield path
+        with tempfile.TemporaryDirectory() as td:
+            with _linked_worktree(td) as wt:
+                assert wt.is_dir(), "the worktree must exist before the case dies"
+                os.environ["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1"
+                raise RuntimeError("simulated case failure mid-block")
+    except RuntimeError:
+        died = True
     finally:
-        subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(path)],
-                       capture_output=True, text=True)
+        if prior is None:
+            os.environ.pop("GIT_TEST_ASSUME_DIFFERENT_OWNER", None)
+        else:
+            os.environ["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = prior
+    assert died, "the simulated failure did not propagate -- this case proves nothing"
+    leftover = sorted(_register_entry_names(admin) - before)
+    assert not leftover, (
+        f"a case that forges ownership and dies mid-block left {leftover} in "
+        f"{admin} -- exactly the shape of the dst/dst1..dst4 incident")
+    return ("a worktree fixture hands back its own admin entry even when the "
+            "case forged an ownership variable and died before unsetting it")
 
 
 def _assert_refused(result, dst, before, why):
@@ -3149,6 +3276,89 @@ def case_a_restage_from_a_second_household_is_refused_with_its_leftovers_named()
             "from the same source is accepted")
 
 
+# issue #213's OS-metadata exclusion list, mirrored here so the exact set of
+# names is checked against the script's own list rather than hand-typed twice.
+_OS_METADATA_NAMES = (".DS_Store", "._AppleDoubleSidecar", "Thumbs.db", "desktop.ini")
+
+
+@case
+def case_os_metadata_is_excluded_from_the_staleness_scan_but_nothing_else_is():
+    """issue #213. macOS Finder writes .DS_Store into any directory it has
+    browsed or Quick-Looked, and an AppleDouble sidecar (._*) appears the same
+    way when copying to a non-APFS/HFS volume; Windows Explorer writes
+    Thumbs.db and desktop.ini the same way. None of the four is household
+    data, so a destination carrying one and nothing else is not carrying a
+    previous household's leftover.
+
+    REPRODUCED FIRST, before the fix existed: staging once, then dropping a
+    lone `.DS_Store` into the destination's electric-bills/ and re-staging
+    from the very source that had just filled it, refused -- naming a Finder
+    artifact as though it were a stale bill from another household. Recorded
+    failing run (this checkout, before the exclusion was added): `again`
+    exited 1 with 'the destination holds staged files this source does not
+    supply ... private/1-raw-data/electric-bills/.DS_Store'.
+
+    The exclusion is NARROW, not a general dotfile allowance (issue #213's
+    AC): a destination that also carries an ordinary hidden file, or a
+    genuine leftover from a household this source is not, must still refuse
+    -- checked in the SAME run as the excluded names, so the fix cannot
+    regress into 'stop refusing'."""
+    with tempfile.TemporaryDirectory() as tda, tempfile.TemporaryDirectory() as tdb:
+        src = _synthetic_src(tda, "household:\n  has_gas: false\n",
+                             has_gas_bills_dir=False)
+
+        # ACCEPT: OS metadata alone must never refuse a re-stage from the
+        # same source, and must still be sitting there afterward -- excluded
+        # from the scan, not deleted by it.
+        with _linked_worktree(tda) as dst:
+            first = _run_script(src, dst, cwd=src, timeout=120)
+            assert first.returncode == 0, (
+                f"the first stage must succeed or this case proves nothing: "
+                f"{first.stderr}")
+            ebills = dst / "private" / "1-raw-data" / "electric-bills"
+            for name in _OS_METADATA_NAMES:
+                (ebills / name).write_text("not household data\n")
+            again = _run_script(src, dst, cwd=src, timeout=120)
+            assert again.returncode == 0, (
+                f"OS metadata left in the destination must not refuse a "
+                f"re-stage from the same source: {again.stderr}")
+            for name in _OS_METADATA_NAMES:
+                assert (ebills / name).is_file(), (
+                    f"{name} is excluded from the scan, not deleted -- it "
+                    f"must still be there after the run")
+
+        # REFUSE: a genuine leftover, and an ordinary dotfile the exclusion
+        # list does not name, still refuse -- in the SAME destination as the
+        # four excluded names, so the exclusion is proven narrow rather than
+        # merely untested against these two.
+        with _linked_worktree(tdb) as dst:
+            opened = _run_script(src, dst, cwd=src, timeout=120)
+            assert opened.returncode == 0, (
+                f"the second destination's first stage must succeed or this "
+                f"half proves nothing: {opened.stderr}")
+            ebills = dst / "private" / "1-raw-data" / "electric-bills"
+            for name in _OS_METADATA_NAMES:
+                (ebills / name).write_text("not household data\n")
+            (ebills / "unrelated-household.pdf").write_text("someone else's bill\n")
+            (ebills / ".hidden-notes.txt").write_text("an ordinary dotfile\n")
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode != 0, (
+                "a genuine leftover beside excluded OS metadata must still "
+                f"refuse the re-stage: {result.stdout}")
+            for named in ("unrelated-household.pdf", ".hidden-notes.txt"):
+                assert named in result.stderr, (
+                    f"the refusal does not name {named}, so a real leftover "
+                    f"went unreported: {result.stderr}")
+            for name in _OS_METADATA_NAMES:
+                assert name not in result.stderr, (
+                    f"{name} is OS metadata and must not appear in a "
+                    f"staleness refusal: {result.stderr}")
+    return ("OS metadata (.DS_Store, an AppleDouble sidecar, Thumbs.db, "
+            "desktop.ini) is excluded from the staleness scan by name; an "
+            "ordinary dotfile and a genuine leftover from another household "
+            "still refuse, checked in the same run")
+
+
 @case
 def case_an_incomplete_source_is_refused_before_the_first_copy():
     """issue #185, the failure-atomicity half. The copies used to run against
@@ -4091,6 +4301,13 @@ def case_real_archive_stage_script_produces_every_required_path():
 
 
 def run():
+    # issue #206 AC1: a full run of this suite must leave this checkout's own
+    # .git/worktrees exactly as it found it. Snapshotted here, around every
+    # case, rather than inside any one fixture, so a regression in a fixture
+    # not yet written still fails the run instead of leaving silent litter in
+    # the developer's real repository.
+    admin = _register_admin_dir()
+    before_register = _register_entry_names(admin)
     passed = failed = skipped = 0
     for fn in CASES:
         try:
@@ -4103,6 +4320,13 @@ def run():
         except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
             suite_runner.report_case_failure(fn, e)
             failed += 1
+    leftover = sorted(_register_entry_names(admin) - before_register)
+    if leftover:
+        failed += 1
+        print(f"FAIL  worktree_admin_left_as_found: {len(leftover)} admin "
+              f"entr{'y' if len(leftover) == 1 else 'ies'} in {admin} that "
+              f"were not there before this run and are still there after "
+              f"it: {leftover} (issue #206)")
     print(f"\n{passed}/{len(CASES)} passed, {skipped} skipped, {failed} failed")
     return 1 if failed else 0
 

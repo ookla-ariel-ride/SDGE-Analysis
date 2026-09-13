@@ -893,22 +893,46 @@ def _synthetic_src(td):
 
 @contextlib.contextmanager
 def _worktree(td, name="dst"):
-    """A REAL registered worktree of this checkout, handed back to git after."""
+    """A REAL registered worktree of this checkout, handed back to git after.
+
+    THE HANDBACK IS CONFINED, not just attempted (issue #206): nine call
+    sites of this fixture relied on wrapping themselves in
+    _register_entries_confined_to() separately, and nine had not, so a case
+    among them whose plain `git worktree remove --force` below was refused
+    (a real ownership-check or GIT_CONFIG_* variable a case sets in
+    os.environ for its own `with` block, still there when this teardown
+    runs) left an admin husk in the developer's real .git/worktrees with no
+    caller positioned to catch it. The confinement now lives HERE, where an
+    omission cannot happen, and a caller that also wraps this finds nothing
+    left to sweep -- its own sweep runs after this one and sees an empty
+    diff."""
     path = pathlib.Path(td) / name
     assert path.parent == pathlib.Path(td), "the worktree must live in the case's tempdir"
     if subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--git-common-dir"],
                       capture_output=True).returncode != 0:
         raise SkipCase("this checkout is not a git repository")
-    added = subprocess.run(
-        ["git", "-C", str(ROOT), "worktree", "add", "--detach", str(path), "HEAD"],
-        capture_output=True, text=True)
-    if added.returncode != 0:
-        raise SkipCase(f"could not create a worktree of this checkout: {added.stderr[:200]}")
-    try:
-        yield path
-    finally:
-        subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(path)],
-                       capture_output=True, text=True)
+    with _register_entries_confined_to(td):
+        added = subprocess.run(
+            ["git", "-C", str(ROOT), "worktree", "add", "--detach", str(path), "HEAD"],
+            capture_output=True, text=True)
+        if added.returncode != 0:
+            raise SkipCase(f"could not create a worktree of this checkout: "
+                           f"{added.stderr[:200]}")
+        try:
+            yield path
+        finally:
+            # A clean environment for this one housekeeping call: a case may
+            # have really set GIT_TEST_ASSUME_DIFFERENT_OWNER or a
+            # GIT_CONFIG_* override in os.environ for the duration of its own
+            # `with` block, and this teardown must not inherit the very
+            # forgery the case built it to exercise. The confined sweep this
+            # is nested inside is what actually guarantees no residue (it
+            # reads the filesystem directly and needs no git call to
+            # succeed); this just means it is rarely needed.
+            clean_env = {k: v for k, v in os.environ.items()
+                        if not k.startswith(("GIT_TEST_", "GIT_CONFIG_"))}
+            subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force",
+                            str(path)], capture_output=True, text=True, env=clean_env)
 
 
 def _register_admin_dir():
@@ -963,6 +987,51 @@ def _register_entries_confined_to(td):
                 continue        # not ours to read, so not ours to remove
             if owner == fence or owner.startswith(fence + os.sep):
                 shutil.rmtree(entry, ignore_errors=True)
+
+
+@case
+def case_a_worktree_fixture_hands_back_its_admin_entry_even_when_the_case_forges_ownership_and_dies():
+    """issue #206 AC3/AC4, reproduced directly rather than inferred.
+
+    GIT_TEST_ASSUME_DIFFERENT_OWNER=1, set for real in os.environ (not
+    handed to one subprocess call) is git's own test hook for "every
+    repository is dubiously owned" -- measured on this machine's git:
+    `git worktree remove --force` under it exits 128, 'detected dubious
+    ownership'. A case in this suite that sets this to exercise
+    _git_calls_it_dubiously_owned() or the ambient safe.directory guard, and
+    then dies before unsetting it, would leave _worktree's plain removal
+    call in exactly that state.
+
+    The case body here raises DELIBERATELY, after forging the variable,
+    which stands in for 'dies mid-case' -- and the admin entry must still be
+    gone afterward, with the variable restored so this case cannot leak the
+    forgery into whatever runs after it."""
+    admin = _register_admin_dir()
+    if admin is None:
+        raise SkipCase("this checkout has no git common dir, so it has no register")
+    before = _register_entry_names(admin)
+    prior = os.environ.get("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+    died = False
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            with _worktree(td) as wt:
+                assert wt.is_dir(), "the worktree must exist before the case dies"
+                os.environ["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1"
+                raise RuntimeError("simulated case failure mid-block")
+    except RuntimeError:
+        died = True
+    finally:
+        if prior is None:
+            os.environ.pop("GIT_TEST_ASSUME_DIFFERENT_OWNER", None)
+        else:
+            os.environ["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = prior
+    assert died, "the simulated failure did not propagate -- this case proves nothing"
+    leftover = sorted(_register_entry_names(admin) - before)
+    assert not leftover, (
+        f"a case that forges ownership and dies mid-block left {leftover} in "
+        f"{admin}")
+    return ("a worktree fixture hands back its own admin entry even when the "
+            "case forged an ownership variable and died before unsetting it")
 
 
 def _run_shell(src, dst, cwd, env=None, timeout=120):
@@ -9316,6 +9385,13 @@ def case_every_required_case_is_a_case_this_suite_runs():
 
 
 def main():
+    # issue #206 AC2: a full run of this suite must leave this checkout's own
+    # .git/worktrees exactly as it found it. Snapshotted here, around every
+    # case, rather than inside any one fixture, so a regression in a fixture
+    # not yet written still fails the run instead of leaving silent litter in
+    # the developer's real repository.
+    admin = _register_admin_dir()
+    before_register = _register_entry_names(admin)
     ran = skipped = failures = 0
     skips = []
     for c in CASES:
@@ -9330,6 +9406,13 @@ def main():
         except suite_runner.CASE_FAILURES as e:  # noqa: BLE001
             suite_runner.report_case_failure(c, e)
             failures += 1
+    leftover = sorted(_register_entry_names(admin) - before_register)
+    if leftover:
+        failures += 1
+        print(f"FAIL  worktree_admin_left_as_found: {len(leftover)} admin "
+              f"entr{'y' if len(leftover) == 1 else 'ies'} in {admin} that "
+              f"were not there before this run and are still there after "
+              f"it: {leftover} (issue #206)")
     if skips:
         print(f"\n{'=' * 72}\nSKIPPED, and what each leaves unproven:")
         for name, why in skips:

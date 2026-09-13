@@ -2895,6 +2895,25 @@ _stale_paths=()
 
 _note_stale() { _stale_paths[${#_stale_paths[@]}]="$1"; }
 
+# OS METADATA EXCLUSION (issue #213), narrow and named beside the scan it
+# changes -- not a general dotfile allowance. macOS Finder writes .DS_Store
+# into any directory it has merely browsed or Quick-Looked, and writes an
+# AppleDouble sidecar (a `._` prefix on the original's name) when a file is
+# copied to a volume that cannot hold Finder's extended attributes any other
+# way; Windows Explorer writes Thumbs.db and desktop.ini the same
+# way -- present because the directory was looked at, never because a
+# household staged it. None of the four is a household's data, so a
+# destination carrying one and nothing else is not carrying a previous
+# household's leftover, and refusing on it misdescribes what was found. Every
+# OTHER name -- including every other dotfile -- is still compared to the
+# source and still refuses: this list is exhaustive, not a pattern.
+_is_os_metadata() {   # $1 = a basename under a scanned subtree
+  case "$1" in
+    .DS_Store|._*|Thumbs.db|desktop.ini) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 _collect_stale_under() {   # $1 = a subtree name under private/1-raw-data/
   local sub="$1" dstdir srcdir listing rel
   dstdir="$DST_REAL/private/1-raw-data/$sub"
@@ -2941,6 +2960,12 @@ _collect_stale_under() {   # $1 = a subtree name under private/1-raw-data/
         "             per line, so a stale file cannot hide in a split record"
     fi
     rel=${_p#"$dstdir/"}
+    # Excluded by basename, whether or not the source happens to supply it:
+    # OS metadata is never household data, so its presence or absence in the
+    # source says nothing about whether the destination holds a leftover.
+    if _is_os_metadata "$(basename -- "$_p")"; then
+      continue
+    fi
     if [ ! -e "$srcdir/$rel" ] && [ ! -L "$srcdir/$rel" ]; then
       _note_stale "private/1-raw-data/$sub/$rel"
     fi
