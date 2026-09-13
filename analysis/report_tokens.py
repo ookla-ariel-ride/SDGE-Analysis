@@ -6375,12 +6375,24 @@ def _s2_export_timing_note(ctx):
     the way #143's hand-written copy did -- that copy passed a referent-error
     rewrite ("During peak solar production, 60% ...") the blocklist guard in
     test_report_consistency.py could not see, because the guard can only
-    screen wording it has been told to look for. A hand edit to this
-    paragraph now fails the exact-value pin
-    (test_report_consistency.case_s2_key_architectural_fact_is_token_rendered)
-    on ANY wording, not just a listed one -- see that case's docstring, and
-    _referent_guard_rejects's, for what the blocklist guard is kept for now
-    that this paragraph no longer needs it.
+    screen wording it has been told to look for.
+
+    TWO DIFFERENT EDITS, TWO DIFFERENT GUARANTEES. A hand edit to
+    index.html's PAGE TEXT alone -- any wording, listed or not -- fails
+    test_report_consistency.case_s2_key_architectural_fact_is_token_rendered,
+    the exact-value pin, because the page would then disagree with this
+    function's own output. That pin proves nothing about an edit made HERE,
+    to the formula itself, with index.html regenerated to match: both sides
+    move together, so the pin still passes. That path is guarded only at
+    the blocklist's strength, by
+    case_s2_export_timing_note_formula_is_blocklist_guarded, which calls
+    resolve_token fresh (never index.html) and runs it through the same
+    _assert_the_two_shares_stay_apart the page text is held to -- so a
+    LISTED time-of-day phrase written into this f-string is caught here
+    even if index.html is regenerated to agree with it, but an unlisted
+    paraphrase (this docstring's own opening example) is not: that is
+    _assert_the_two_shares_stay_apart's own stated limit, issue #180
+    documents it, and this function's formula is not exempt from it.
 
     RELATIONSHIP, this paragraph against S2_VERDICT: not just "same
     quantity, independently checked" -- literally the same function calls,

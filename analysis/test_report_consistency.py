@@ -3873,16 +3873,31 @@ def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
     and nearly all of it at lunchtime" all measured clean against the live
     guard when #180 was filed, each a referent error in different words.
     Widening the vocabulary only moves the boundary to the next unlisted
-    phrase; it does not close it. For §2's own paragraph this is no longer
-    the operative protection -- since #180, that paragraph is
-    report_tokens.S2_EXPORT_TIMING_NOTE rendered verbatim
-    (case_s2_key_architectural_fact_is_token_rendered pins the exact string),
-    so a referent error can only enter it by editing the token's own formula,
-    which every other case in this file that reads report_tokens continues to
-    guard directly. This guard remains what stands between a referent error
-    and every OTHER hand-written restatement of these two figures -- §8's
-    'more panels' paragraph today -- and for those, an unlisted paraphrase
-    still gets through undetected."""
+    phrase; it does not close it.
+
+    TWO DIFFERENT EDITS TO §2's PARAGRAPH, TWO DIFFERENT GUARANTEES. Since
+    #180, §2's paragraph is report_tokens.S2_EXPORT_TIMING_NOTE rendered
+    verbatim. An edit to index.html's PAGE TEXT alone -- ANY
+    wording, listed or not -- fails
+    case_s2_key_architectural_fact_is_token_rendered, the exact-value pin,
+    because the page would then disagree with the token. An edit to the
+    TOKEN'S OWN FORMULA in report_tokens.py, with index.html regenerated to
+    match, is a different attack: both sides move together, so that pin
+    still passes, and this docstring used to claim "every other case in
+    this file that reads report_tokens continues to guard [it] directly" --
+    no such case existed. It does now:
+    case_s2_export_timing_note_formula_is_blocklist_guarded calls
+    resolve_token fresh (never index.html) and runs this guard against it,
+    so a LISTED phrase written into the formula is caught even if
+    index.html is regenerated to agree with it. An UNLISTED one -- "During
+    peak solar production, 60% ..." itself, reproduced and confirmed still
+    accepted by this guard as part of fix round 1 -- is not: that is this
+    guard's limit stated two paragraphs up, and the formula is not exempt
+    from it. This guard remains what stands between a referent error and
+    every OTHER hand-written restatement of these two figures -- §8's 'more
+    panels' paragraph today -- where a PAGE edit gets only this same
+    blocklist-strength protection, with the same unlisted-paraphrase
+    limit."""
     assert export_pct != midday_pct, (
         f"{where}: the export share and the 10am-2pm share of exports both round "
         f"to {export_pct}%, so this guard cannot tell which figure a percentage "
@@ -4042,6 +4057,85 @@ def case_s2_key_architectural_fact_is_token_rendered():
             f"the exact-match pin (unlike the blocklist guard) rejects all "
             f"{len(unlisted_paraphrases)} of issue #180's unlisted paraphrases, which "
             "the guard alone accepts")
+
+
+def case_s2_export_timing_note_formula_is_blocklist_guarded():
+    """issue #180 fix round 1. The exact-value pin
+    (case_s2_key_architectural_fact_is_token_rendered, above) only catches a
+    PAGE edit that makes index.html disagree with
+    report_tokens.S2_EXPORT_TIMING_NOTE. It says nothing about an edit to the
+    TOKEN'S OWN FORMULA in report_tokens.py: change the f-string and
+    regenerate index.html to match, and both sides move together, so that
+    pin still passes. Reproduced directly for this fix -- editing
+    _s2_export_timing_note to prepend "During peak solar production, " and
+    regenerating index.html to match left every case in this file, in
+    test_report_tokens.py and in test_report_blocks.py green (95/95 + 214/214
+    + 30/30) -- a real gap an earlier version of this function's docstring
+    and of _assert_the_two_shares_stay_apart's claimed was already covered by
+    "every other case in this file that reads report_tokens".
+
+    So the formula gets its own guard, independent of whatever index.html
+    currently says: call resolve_token FRESH (never index.html) and run it
+    through the same blocklist the page text is held to. Proven live, not
+    vacuous, against a LISTED phrase spliced into that fresh value -- and
+    proven, honestly, NOT to catch the specific unlisted phrase that
+    motivated this fix. That is _assert_the_two_shares_stay_apart's own
+    stated limit; the formula gets no exemption from it that index.html's
+    page text doesn't also get, and this case's own assertions would fail
+    (by design, on the second `assert _referent_guard_rejects(...) is None`
+    below) the day someone widens the vocabulary to close it without
+    updating what the two docstrings claim."""
+    rt = _report_tokens_module()
+    export_pct = _export_share_pct()
+    midday_pct = _midday_export_share_pct()
+    fresh = rt.resolve_token("S2_EXPORT_TIMING_NOTE")
+
+    # THE GATE ITSELF: today's formula passes, at the blocklist's strength.
+    _assert_the_two_shares_stay_apart(fresh, "S2_EXPORT_TIMING_NOTE's own fresh output",
+                                      export_pct, midday_pct)
+
+    lead = f"{export_pct}% of what the array makes leaves as exports."
+    assert lead in fresh, (
+        "the probes below rewrite this lead sentence, which is no longer in "
+        "S2_EXPORT_TIMING_NOTE's fresh output -- update them to the current lead")
+
+    # PROOF THE GATE IS LIVE: a LISTED time-of-day phrase spliced into the
+    # fresh value (index.html never touched) is caught here -- the mechanism
+    # this case exists to add actually rejects something.
+    listed_defect = fresh.replace(
+        lead, f"{export_pct}% of what the array makes leaves as exports, and it "
+        "leaves in the middle of the day.")
+    assert listed_defect != fresh, "the listed-phrase probe did not change the value"
+    assert _referent_guard_rejects(listed_defect), (
+        "a LISTED time-of-day phrase spliced into S2_EXPORT_TIMING_NOTE's fresh "
+        "output was expected to be caught at the blocklist's strength -- it was not, "
+        "so this case is not exercising a live guard")
+
+    # HONEST ABOUT THE LIMIT: the exact reviewer rewrite that motivated fix
+    # round 1 is unlisted, by design, and is NOT caught here either. This is
+    # not a gap this case introduces -- it is the same limit
+    # _assert_the_two_shares_stay_apart's own docstring states two paragraphs
+    # up, and the formula is not held to a standard index.html's page text
+    # isn't also held to (case_s2_key_architectural_fact_is_token_rendered
+    # shows the identical phrase slipping the same guard run against the
+    # page). If this assertion ever fails, the vocabulary closed the gap --
+    # update this case and both docstrings to say so, in the same change.
+    unlisted_defect = fresh.replace(
+        lead, f"During peak solar production, {export_pct}% of what the array "
+        "makes leaves as exports.")
+    assert unlisted_defect != fresh, "the unlisted-phrase probe did not change the value"
+    assert _referent_guard_rejects(unlisted_defect) is None, (
+        "the unlisted paraphrase that motivated issue #180 is now caught at the "
+        "blocklist's strength -- if the vocabulary was widened to catch it, update "
+        "this case and the two docstrings it backs (report_tokens._s2_export_timing_"
+        "note, _assert_the_two_shares_stay_apart) to say so, rather than leaving them "
+        "describing a limit that no longer holds")
+
+    return (f"S2_EXPORT_TIMING_NOTE's fresh resolve_token() output (not index.html) "
+            f"passes the blocklist guard at {export_pct}% exported / {midday_pct}% "
+            "midday; the same guard, run against that fresh output, catches a listed "
+            "phrase spliced into it and still misses the unlisted paraphrase that "
+            "motivated this fix -- a documented limit, not a silent one")
 
 
 def case_s8_more_panels_timing_matches_the_artifacts():
@@ -7913,6 +8007,7 @@ CASES = [
     case_weather_regression_paragraph_matches_the_artifact,
     case_s2_key_architectural_fact_matches_the_artifacts,
     case_s2_key_architectural_fact_is_token_rendered,
+    case_s2_export_timing_note_formula_is_blocklist_guarded,
     case_s8_more_panels_timing_matches_the_artifacts,
     case_s8_export_value_is_published_as_a_bounded_range,
     case_s8_export_period_split_matches_the_profiles,
