@@ -42,7 +42,7 @@ def _require_household():
 
 
 # ---------------------------------------------------------------------------
-# AC: every one of the (currently 105) TODO blocks the template actually
+# AC: every one of the (currently 104) TODO blocks the template actually
 # contains is classified, and the classification covers the template EXACTLY
 # -- re-parsed fresh, not against a hardcoded count.
 # ---------------------------------------------------------------------------

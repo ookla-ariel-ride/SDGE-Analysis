@@ -212,7 +212,7 @@ def validate_classification(html=None):
 
 
 # ---------------------------------------------------------------------------
-# THE CLASSIFICATION MAP. 105 entries, one per parsed block id (verified by
+# THE CLASSIFICATION MAP. 104 entries, one per parsed block id (verified by
 # validate_classification() / test_report_blocks.py against a fresh parse).
 # ---------------------------------------------------------------------------
 CLASSIFICATION = {
@@ -234,7 +234,10 @@ CLASSIFICATION = {
     "s2#3": "prose",   # daily range -- DAILY_PRODUCTION_MEAN/BEST/WORST, enphase_daily_production.csv
     "s2#4": "prose",   # output health -- DEGRADATION_NAIVE_RANGE; the per-panel ask is retired
                         # from the TODO because nothing committed records per-module output
-    "s2#5": "prose",   # key architectural fact -- SOLAR_COVERAGE_PCT/SELF_CONSUMED_SHARE etc.
+    # s2#5 (key architectural fact) retired (issue #180): the paragraph is now the
+    # literal {{S2_EXPORT_TIMING_NOTE}} token, not a TODO comment, so report_blocks.py
+    # no longer parses a block there and there is nothing left for CLASSIFICATION to
+    # classify.
 
     # --- s3 Rate plan comparison ------------------------------------------
     "s3#1": "prose",   # pricing methodology, qualitative
