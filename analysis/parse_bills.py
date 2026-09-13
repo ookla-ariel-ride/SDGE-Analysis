@@ -190,6 +190,36 @@ THE CORPUS BOUNDARY — which statements get published, and why it is derived
     Mirrors bill_decomposition.py, which also treats a missing export as "cannot
     check" rather than "nothing to check".
 
+    THIS IS A DECISION, NOT AN OVERSIGHT (issue #150). The reviewed alternative was
+    making the export mandatory — fail closed by default, with an explicit opt-in
+    flag (e.g. --no-export-boundary) for export-less forks. Rejected: HISTORY_CSV
+    lives under gitignored private/, so a mandatory export would make this parser
+    unusable for any fork that has bill PDFs and no export, which is the
+    reproduction path this repository is written to support. The mitigation is the
+    boundary_not_derived record plus the artifact diff described above: an
+    accidentally removed export still leaves a visible trail in
+    data/bill_corpus_boundary.json (every excluded_statements entry disappears,
+    boundary_not_derived appears, previously-excluded statements reappear in the
+    other six artifacts) rather than a silent broadening, and a staged-but-unreadable
+    export (the next paragraph) still fails closed either way.
+    test_parse_bills.py's case_no_export_publishes_the_whole_corpus and
+    case_no_export_records_the_underivable_boundary_in_the_artifact pin both halves
+    of this path and fail if either is removed.
+
+    WHAT HAPPENS DOWNSTREAM WHEN THE EXPORT IS ABSENT AND THE COMMITTED ARTIFACTS
+    ALREADY EXCLUDE A STATEMENT. bill_decomposition.py's statement_dates() computes
+    `outside = sorted(set(dates) - seen) if seen else []`; with no export staged,
+    seen is None, so outside is empty, and a PDF this parser would have excluded
+    under a derived boundary (were the export present) instead reads there as an
+    unexplained `extra` against the committed data/bill_periods_electric.csv.
+    bill_decomposition.py raises SystemExit rather than reconcile a corpus it
+    cannot check — correct, not a defect to fix: an artifact that claims an
+    unchecked boundary must not go on being read as reconciled by a downstream
+    script either. Re-stage the export to run bill_decomposition.py against a
+    corpus this parser has published under an exclusion. In
+    test_bill_decomposition.py, case_no_export_and_a_boundary_excluded_pdf_fails_closed
+    pins this state and its message.
+
     AN UNREADABLE EXPORT IS NOT A MISSING ONE. A file that is present but yields no
     statement_date value (truncated download, renamed column, layout drift) is an
     error, not a configuration: reading it as "no boundary is derivable" would let a
