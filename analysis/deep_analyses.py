@@ -21,6 +21,15 @@ behavior_rebuild.py (imported for the intake flag only, not for its models), and
 this run's battery_dispatch_policies.json. From the intake it reads
 household.has_ev and household.plan, the plan the wildcard block prices against
 TOU-DR-P.  Output: deep_results.json in the CWD.
+
+It also reads the repo's committed data/quiet_night_floor.json (issue #267,
+_read_night_floor_kw) for the EV-session block's house-base kW. Unlike
+battery_dispatch_policies.json above, this is a "data"-owned artifact (see
+test_scripts_runnable.py's OWNS map), written in place by quiet_night_floor.py
+rather than produced fresh in the working directory each run, so no
+current-run-vs-committed-copy resolution and no run-to-run ordering
+requirement applies to it -- there is only the one committed copy, and it is
+tracked in git.
 """
 import pandas as pd, numpy as np, json, datetime as dt
 import sys, pathlib as _pl
@@ -53,6 +62,48 @@ def _read_marginal(path):
                          f"({type(e).__name__}: {e}). Regenerate it with "
                          "battery_dispatch_policies.py; this script will not fall "
                          "back past a broken artifact.")
+
+def _read_night_floor_kw(path):
+    """night_floor.median_kw out of the committed data/quiet_night_floor.json
+    (issue #267). This is a MEASURED quantity -- quiet_night_floor.py's own
+    per-night rule (1-5am median import power, whole night dropped once any
+    interval reaches its 2 kW exclusion gate, 43 of 365 nights kept) -- not a
+    literal typed into this file. It stands in for the EV-session house base
+    below because it is the closest measured analogue available, not because
+    it settles the question: no instrument on this house can separate the
+    house's own draw from the charger's while both run, so whether the house
+    draws its quiet-night floor DURING a session, more, or less, is not
+    determined by anything measured here. Using it says "assume the house
+    keeps drawing what it measurably draws on a quiet night," which is a
+    stated, defensible assumption grounded in a real measurement, in place of
+    a number with no source at all.
+
+    Ordering note: quiet_night_floor.json is a "data"-owned artifact (see
+    test_scripts_runnable.py's OWNS map: ("data", "quiet_night_floor.json")),
+    written in place to the repo's committed data/ directory by
+    quiet_night_floor.py rather than produced per run in the working
+    directory the way battery_dispatch_policies.json is (see _base_save
+    above). Reading it via DATA (this script's existing repo-root discovery,
+    already used for the committed battery_dispatch_policies.json fallback)
+    therefore creates NO run-to-run generator-order dependency inside the
+    private/verify sandbox: there is no current-run copy to prefer, only the
+    one committed artifact, and it is tracked in git so it is always present.
+    A stale value only follows from someone editing quiet_night_floor.py's
+    measurement rule without re-running it to update data/ -- the same
+    staleness risk every other "data"-owned artifact this pipeline reads
+    already carries, not a new one.
+
+    Fail-closed like _read_marginal: a missing or malformed artifact is an
+    ERROR, not a reason to fall back to a hardcoded literal -- that is exactly
+    the shape issue #267 is closing."""
+    try:
+        with open(path) as fh: doc=json.load(fh)
+        return float(doc["night_floor"]["median_kw"])
+    except (OSError,ValueError,TypeError,KeyError) as e:
+        raise SystemExit(f"{path}: cannot read night_floor.median_kw "
+                         f"({type(e).__name__}: {e}). Regenerate it with "
+                         "quiet_night_floor.py; this script will not fall back to "
+                         "a hardcoded EV-session house-base literal (issue #267).")
 
 FREE_FIX_SCENARIO_EV="a"      # EV-only charge reschedule (battery_dispatch_policies.py)
 FREE_FIX_SCENARIO_NO_EV="c"   # 25% of flexible on-peak house load, moved to SOP
@@ -361,13 +412,27 @@ r_house=rates(HOUSE_UDC,HOUSE_CEA)
 # on one rate vintage (CLAUDE.md section 9). It replaces a hardcoded 0.1257,
 # which was the second flat $/kWh literal issue #172 found in this file.
 SOP_HOUSE={s:HOUSE_UDC[s]["sop"]+WFNBC+PCIA+HOUSE_CEA[s]["sop"] for s in ("S","W")}
-# House draw ASSUMED to run underneath the charger during a session, in kW.
-# It is an assumption, not a measurement: a single whole-house meter cannot
-# separate the house from the charger while both run, so no interval inside a
-# session can measure it. The two measured floors in this repo (this script's
-# own base_kw above, 1.02 kW; quiet_night_floor.json, 1.03 kW) are read on
-# EV-free nights, and whether the house draws the same while the charger runs
-# is not determined. The base enters the fields below two ways:
+# House draw ASSUMED to run underneath the charger during a session, in kW,
+# now DERIVED from a measured quantity rather than a hardcoded literal (issue
+# #267). A single whole-house meter cannot separate the house from the
+# charger while both run, so no interval inside a session can directly
+# measure this: the derivation below is a stated assumption grounded in a
+# real measurement, not a settled fact. The repo carries two measured floors,
+# both read on EV-free nights, and whether the house draws the same while the
+# charger runs is not determined by either: this script's own 3-5am
+# per-interval rule (base_kw above, 1.02 kW) and quiet_night_floor.json's
+# per-night rule (1.03 kW). This block uses the LATTER -- read via
+# _read_night_floor_kw, never hardcoded -- because it is the more carefully
+# designed of the two (a whole-night gate against a fixed exclusion
+# threshold, cross-priced two independent ways in quiet_night_floor.py and
+# agreeing to 1.2%) and because reading a committed artifact, rather than
+# retyping a number this script could instead compute itself from usage.csv,
+# is the same discipline _base_save applies to the battery marginal above:
+# one published measurement, read, not two independently maintained copies
+# of the same fact drifting apart. See TECHNICAL.md section 3.5 item 3 for
+# the sensitivity this choice carries (roughly -$102/yr in wasted_vs_perfect
+# per additional kW of assumed base, session set held fixed) and the fields
+# below for exactly how the base enters:
 #   * kwh_total / avg_kwh / cost_if_all_sop (and the 3 kWh session cutoff,
 #     hence count) scale with it directly;
 #   * wasted_vs_perfect feels it ONLY through session intervals outside
@@ -375,10 +440,7 @@ SOP_HOUSE={s:HOUSE_UDC[s]["sop"]+WFNBC+PCIA+HOUSE_CEA[s]["sop"] for s in ("S","W
 #     sum_i ev_i*(r_i - sop_s), and the base's share of that is
 #     -base*0.25*sum_i (r_i - sop_s), zero wherever r_i == sop_s. A larger
 #     base lowers the figure.
-# Replacing it with a measured floor is a change to the session energy
-# accounting itself, not to the pricing below, and is left as a separate
-# decision (issue #267).
-EV_SESSION_HOUSE_BASE_KW=0.4
+EV_SESSION_HOUSE_BASE_KW=_read_night_floor_kw(DATA/"quiet_night_floor.json")
 d["kw"]=d.Consumption*4
 ev=d.kw>6.5   # EV charger signature ~7-11.5 kW
 d["evblk"]=(ev!=ev.shift()).cumsum()

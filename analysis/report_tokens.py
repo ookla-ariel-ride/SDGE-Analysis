@@ -1573,7 +1573,7 @@ _tok("CHART_TITLE_SPREAD", kind="derived", get=_chart_title_spread,
 
 def _sec9_teaser(ctx):
     # Sessions come from behavior_rebuild.json, NOT deep_results.json (issue
-    # #130). Both detectors are committed and they disagree -- 563 vs 580 --
+    # #130). Both detectors are committed and they disagree -- 563 vs 573 --
     # because they detect differently: deep_analyses.py gates on a flat
     # kw > 6.5 and drops blocks under 3 kWh, while behavior_rebuild.py
     # subtracts a rolling-percentile baseline and additionally gates on
@@ -7309,7 +7309,7 @@ _tok("SETPOINT_VALUE", dim="$", kind="derived",
 def _ev_detection():
     """behavior_rebuild.json's detector, NOT deep_results.json's.
 
-    The two are committed and they disagree (563 sessions vs 580) because they
+    The two are committed and they disagree (563 sessions vs 573) because they
     detect differently -- SEC9_TEASER's own comment traces the mechanism, and
     issue #130 settled that section 9's body and every dollar figure downstream
     of it read behavior_rebuild's. Two DIFFERENT DETECTORS on the same series
