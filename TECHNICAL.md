@@ -1392,8 +1392,8 @@ MIDAS export-pricing files (`--build-rates`, needs the private raw archive at
 `private/1-raw-data/sdge_nbt_export_rates/`; the normal run needs only the committed CSV).
 Two vintages are priced for TARIFF_YEAR = 2026 only: NBT26 (a 9-year *escalating* rate
 schedule, of which only year 1/2026 is priced here) and NBT00 (no-lock, current-year-only),
-found to be byte-identical in this one year (see the script's own "GENUINE FINDING" docstring
-note). NBT26 locks a 9-year *schedule*, not a repeated snapshot: the raw NBT26 archive shows
+found to be byte-identical in this one year (flagged in the script's own docstring, not
+papered over). NBT26 locks a 9-year *schedule*, not a repeated snapshot: the raw NBT26 archive shows
 rates escalating year over year (this household's own "Jan Weekend HS0" Generation rate:
 $0.087115/kWh in 2026, $0.090474/kWh in 2027). This script prices only that schedule's first
 year, as a like-for-like comparison against NBT00's own single-year guarantee, not a claim
@@ -3630,7 +3630,7 @@ $4,904.13   native_window_total              billing_model_nem's own window, cur
                                              counterpart, so neither vintage nor window-shape
   + $+3.94     state_surcharge_tax_usd         real, unmodeled per-period state tax -- same
                                              reasoning as the CIP adder
-  + $-25.50    fixed_charge_vintage_effect     genuinely a vintage/regime effect: flat Monthly
+  + $-25.50    fixed_charge_vintage_effect     actually a vintage/regime effect: flat Monthly
                                              Service Fee vs. today's per-day Base Services Charge
   + $-47.39    delivery_vintage_effect         UDC delivery at its own historical vintage vs.
                                              current (SOURCED portion only -- see caveat below)
@@ -4928,7 +4928,7 @@ deep-dive figures §9, bill audit §10) is static HTML transcribed from `plan_re
 `battery_plan_matrix.json` (the §4 matrix), `package_results.json`, `battery_sim.json`,
 `backup_endurance.json`, `deep_results.json`, `weather_results.json`, and the bill
 summaries. The extended findings woven into §6 (VPP/resilience, tornado), §9 (dividend,
-away-days, supercharge/weekend workups), §10 (AB 205, gas HDD decomposition), §13 (2039
+away-days, `supercharge_delta`/weekend workups), §10 (AB 205, gas HDD decomposition), §13 (2039
 NBT strategy, full-year carbon) and the "What to do Monday" appendix are transcribed the
 same way from `extended_results.json` and `carbon_fullyear_results.json`. After any rerun,
 update both the `D` block and the prose numbers, then grep the HTML for the old figures
@@ -5052,7 +5052,7 @@ length, and reports which blocks exceed a cap.
 how long a paragraph runs. Neither ever read the finished `index.html`, so four habits of
 machine prose accumulated across roughly thirty commits with every suite green: em dashes at
 17 per 1,000 words, 156 ALL-CAPS emphasis words, "X, not Y" tails, and the intensifiers
-"genuine", "honest" and "robust". Issues #251–#255 removed them. `prose_rhythm.py` is the
+in `prose_lint.INTENSIFIERS`. Issues #251–#255 removed them. `prose_rhythm.py` is the
 gate that keeps them gone.
 
 - **What it measures.** The blocks come from `prose_blocks.extract(html, min_words=1)`, so
