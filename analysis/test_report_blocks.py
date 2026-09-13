@@ -888,6 +888,16 @@ _QUALIFIER_ACCOUNTED = {
          "ladder's own marginal_usd_per_100w column and prints the spread across the "
          "rungs this floor can reach, so the curvature is stated as a range rather than "
          "quoted as a note", None),
+    ("s13#11", "quiet_night_floor.json", "sensitivity_per_100w",
+     "linearity_note_full_ladder"):
+        ("issue #264: this note qualifies usd_per_100w_full_ladder_average, the "
+         "linear-fit slope and its deviation across ALL twelve rungs. "
+         "NIGHT_FLOOR_SENSITIVITY_PER_100W never reads either field -- it quotes "
+         "marginal_range.reachable's own min/max spread whenever a rung is reachable "
+         "(the real archive always has one) and falls back to marginal_range."
+         "full_ladder's raw min/max only when none is, but never the linear-fit average "
+         "or the deviation this note states. No figure in this block's scope carries "
+         "the condition linearity_note_full_ladder qualifies", None),
     ("s13#11", "quiet_night_floor.json",
      "sensitivity_per_100w.usd_per_100w_at_current_floor", "note"):
         ("NIGHT_FLOOR_SENSITIVITY_PER_100W states this note's own conclusion -- the "
