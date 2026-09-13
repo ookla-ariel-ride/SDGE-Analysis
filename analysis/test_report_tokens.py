@@ -12832,6 +12832,28 @@ _SEAM_TOKEN_RE = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 # Sigils a template can supply on either side of a value. Strict adjacency.
 _SEAM_SIGILS = ("~", "$", "%", "≈", "+", "−", "-")
 
+
+def _seam_sigil_exempts(before):
+    """True when the text immediately before a bare number is a sigil that
+    IS the number's unit ("$14,500", "~2"), per _SEAM_SIGILS.
+
+    NARROWED for "-" and "−" (issue #162): a hyphen or minus sign is only a
+    unit-supplying sigil when nothing alphanumeric sits against it. "-14" is
+    a minus sign in front of a bare number and supplies its reading; the
+    hyphen in "2019-14" is a compound JOINER, and the digit or letter right
+    before it is what tells the two apart -- exempting the second shape too
+    would let a template line like "2019-{{NEM_EXPIRY_YEAR}}" or
+    "EV-TOU-{{PLAN_NUM}}" lose its unit and leave class 2 through this exit
+    unreported. Every other member of _SEAM_SIGILS keeps its plain adjacency
+    test; only the two dash characters carry the extra check, because only
+    they are ever used as a joiner rather than a sign."""
+    sigil = before[-1:]
+    if sigil not in _SEAM_SIGILS:
+        return False
+    if sigil in ("-", "−") and before[-2:-1].isalnum():
+        return False
+    return True
+
 # Unit suffixes a template can supply behind a value; one optional space
 # allowed, matched case-insensitively and only on a word boundary at both ends
 # (see _seam_doubled). Matched longest-first so "kWh/yr" wins over "kWh".
@@ -13563,8 +13585,10 @@ def _seam_missing_unit(value, head, tail, fmt=None, name=None):
         return None
     # A sigil in front of a bare number IS its unit ("$14,500", "~2"), and the
     # template may have written it as an entity or put an inline tag between
-    # the two, so the head is read the way a reader reads it.
-    if _seam_visible_before(head)[-1:] in _SEAM_SIGILS:
+    # the two, so the head is read the way a reader reads it. NOT a hyphen or
+    # minus sign joining a compound ("2019-{{TOKEN}}") -- see
+    # _seam_sigil_exempts (issue #162).
+    if _seam_sigil_exempts(_seam_visible_before(head)):
         return None
     # Read THROUGH markup, as the block comment describes: container
     # boundaries become whitespace so the next word can be in the next table
@@ -13881,10 +13905,23 @@ class _seam_stand_in_household:
         node["household"]["plan"] = priced[0]
         days = sorted(dt.datetime.strptime(r["date"], "%Y%m%d").date()
                       for r in rt._csv_rows("cleaning_study_daily.csv"))
-        assert (days[-1] - days[0]).days >= 60, (
-            "data/cleaning_study_daily.csv spans fewer than 60 days, so no stand-in "
-            "cleaning date has a 30-day window on both sides of it")
-        node["cleaning_history"] = [{"date": days[len(days) // 2], "cost_usd": 150}]
+        # THE PRECONDITION CHECKED HERE HAS TO BE THE ONE THE SELECTION BELOW
+        # DEPENDS ON (issue #161). The selection picks the series' MEDIAN
+        # INDEX; the property _cleaning_window_medians actually needs is >= 30
+        # days on EACH SIDE of that specific day. Those two agree only while
+        # the series is contiguous -- an overall-span check (what this used to
+        # assert) can pass on a series with a gap, while the median-INDEX day
+        # still sits within 30 days of one end of it. Checked against the
+        # chosen day itself, not the series' endpoints, so a future gap in
+        # data/cleaning_study_daily.csv fails HERE, by name, instead of
+        # surfacing as an unrelated resolve_token SystemExit out of one of the
+        # cleaning tokens three functions away.
+        chosen = days[len(days) // 2]
+        assert (chosen - days[0]).days >= 30 and (days[-1] - chosen).days >= 30, (
+            f"data/cleaning_study_daily.csv's median-index day {chosen} has fewer "
+            f"than 30 days on one side of it (series runs {days[0]} to {days[-1]}), "
+            "so this stand-in cleaning date has no full 30-day window on both sides")
+        node["cleaning_history"] = [{"date": chosen, "cost_usd": 150}]
         # The provenance answers (issue #135). household.example.yaml leaves the
         # two review fields null ON PURPOSE -- "nobody reviewed this" is the
         # honest default for a reproduction, and REVIEW_TOOL_1/2 refuse to
@@ -13960,6 +13997,61 @@ class _seam_stand_in_household:
         rt._generation_provider_short = self.old_provider
         for spec, old in self.old_specs:
             spec["get"] = old
+
+
+@case
+def case_stand_in_cleaning_date_precondition_checks_days_either_side_not_span():
+    """ISSUE #161. _seam_stand_in_household.__enter__ SELECTS the cleaning
+    date by the series' MEDIAN INDEX, but used to VALIDATE the series' overall
+    SPAN -- two properties that agree only while the series is contiguous. A
+    two-cluster series can clear a 60-day overall span while its median-INDEX
+    day sits within 30 days of the far cluster's own end, which is exactly
+    the shape data/cleaning_study_daily.csv could take on with a gap. This
+    fixture is built to do exactly that: five days at the start, five more
+    starting on day 65, a 69-day overall span (clears the OLD >= 60 check),
+    and a median-index day (the sixth, day 65) with only 4 days to its right
+    (fails the >= 30 EITHER SIDE the cleaning tokens actually need).
+
+    Reverting the fix restores the old span-only assert, which lets this
+    fixture's __enter__ succeed instead of refusing -- and this case fails on
+    the missing AssertionError rather than merely producing a different
+    message, so it cannot pass for the wrong reason."""
+    start = dt.date(2024, 1, 1)
+    days = ([start + dt.timedelta(days=i) for i in range(5)] +
+            [start + dt.timedelta(days=65 + i) for i in range(5)])
+    assert (days[-1] - days[0]).days >= 60, (
+        "fixture no longer clears the OLD overall-span check -- adjust the gap")
+    chosen = days[len(days) // 2]
+    assert (days[-1] - chosen).days < 30, (
+        "fixture's median-index day no longer starves its own right-hand side -- "
+        "adjust the cluster sizes")
+    rows = [{"date": d.strftime("%Y%m%d")} for d in days]
+    key = "cleaning_study_daily.csv"
+    original = rt._csv_rows(key)   # warms the cache and gives us the real rows back
+    rt._csv_cache[key] = rows
+    try:
+        raised = None
+        try:
+            with _seam_stand_in_household():
+                pass
+        except AssertionError as e:
+            raised = e
+        assert raised is not None, (
+            "_seam_stand_in_household built a household off a gapped series whose "
+            "median-index cleaning date has fewer than 30 days on one side of it, "
+            "and did not refuse")
+        msg = str(raised)
+        assert "30 days on one side" in msg, (
+            f"the precondition failure does not name the days-either-side property "
+            f"the date selection actually depends on: {msg}")
+        assert "spans fewer than 60 days" not in msg, (
+            f"the precondition still validates the series' overall SPAN rather than "
+            f"the days either side of the chosen date: {msg}")
+    finally:
+        rt._csv_cache[key] = original
+    return ("_seam_stand_in_household's cleaning-date precondition checks days "
+            "either side of the chosen date and fires, by its own named message, "
+            "on a gapped series that clears the old 60-day span check")
 
 
 def _seam_values():
@@ -14107,7 +14199,7 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
             if dimension is not None and dimension not in value \
                     and head[-1:] != dimension and tail[:1] != dimension:
                 bucket = "lost its declared dimension"
-            elif head[-1:] in _SEAM_SIGILS:
+            elif _seam_sigil_exempts(head):
                 bucket = "sigil-fronted"
             elif not text:
                 bucket = "at end of line"
@@ -15269,6 +15361,42 @@ def case_the_false_positive_guards_inside_the_seam_rules_are_load_bearing():
     return ("the two word boundaries in _seam_doubled and the preceding-sigil "
             "exemption in _seam_missing_unit are each pinned in isolation, and the "
             "real doubling and the real missing unit are still reported")
+
+
+@case
+def case_a_hyphen_joining_a_compound_does_not_exempt_the_number_after_it():
+    """ISSUE #162. "-" and "−" are members of _SEAM_SIGILS, and the
+    preceding-sigil exemption used to read ANY occurrence of either as "this
+    bare number's unit is a minus sign" -- true for "-14" but not for the
+    hyphen in "2019-14", which is a compound JOINER, not a sign. A template
+    line like "2019-{{NEM_EXPIRY_YEAR}}" or "EV-TOU-{{PLAN_NUM}}" would leave
+    class 2 through that exit unreported, with a genuinely lost unit right
+    behind it.
+
+    Both shapes are driven here so the fix cannot be satisfied by dropping
+    the hyphen/minus exemption outright: a compound joiner (alphanumeric
+    immediately before the dash) must no longer exempt the number, and a true
+    minus sign (nothing alphanumeric before it) must still exempt it, for
+    both dash characters _SEAM_SIGILS carries. Reverting _seam_sigil_exempts'
+    alnum check (or the call sites that use it) makes the compound
+    assertions below fail because the rule goes back to answering None."""
+    for dash in ("-", "−"):
+        # THE COMPOUND: a digit right against the dash. No longer exempt --
+        # the bare number has a genuine next word to be judged by, and here
+        # that word ("today") is not a unit, so the rule must report it.
+        compound = _seam_missing_unit("14", f"<p>the term runs 2019{dash}", " today")
+        assert compound and "'today'" in compound, (
+            f"a {dash!r} joining a compound ('2019{dash}{{{{TOKEN}}}}') still exempts "
+            f"the number after it from the missing-unit rule: {compound!r}")
+        # THE TRUE SIGN: nothing alphanumeric before the dash. Still exempt --
+        # this is an ordinary negative figure, not a compound.
+        assert _seam_missing_unit("14", f"<p>the balance is {dash}", " today") is None, (
+            f"a genuine minus sign ({dash!r}) in front of a bare number is now "
+            "reported as missing a unit; the narrowing over-reached past compounds "
+            "into ordinary negative figures")
+    return ("a hyphen or minus sign joining a compound no longer exempts the number "
+            "after it from the missing-unit rule, and a true minus sign in front of a "
+            "figure still does, for both dash characters _SEAM_SIGILS carries")
 
 
 @case
@@ -17419,6 +17547,177 @@ def case_the_expansion_payback_gap_names_the_derived_yield_and_the_missing_cost(
     assert "not run by anything committed" not in reason, (
         "the gap's reason still says the counterfactual is not run; it is")
     return "EXPANSION_PAYBACK_YEARS is still a gap, blocked on the cost half only"
+
+
+# ---------------------------------------------------------------------------
+# ISSUE #145. Nine tokens divided an artifact value with NO ZERO CHECK at all,
+# found while sweeping this class inside PR #144 (issue #131) and left alone
+# there because fixing them means touching guards and tests those tokens
+# otherwise never need.
+#
+# AC 1 was ALREADY met at main: resolve_token's caught tuple includes
+# ArithmeticError (see the comment two screens above resolve_token's `except`
+# clause), so a ZeroDivisionError never escaped as a raw traceback even before
+# this file changed. What was missing is AC 2 -- a message naming WHICH
+# quantity was zero and WHY the sentence cannot be written, in place of
+# resolve_token's generic wrapper, whose only text is "ZeroDivisionError:
+# float division by zero".
+#
+# Each case drives exactly the named denominator to zero -- nothing else in
+# the artifact moves -- and asserts the SPECIFIC wording _refuse_if_zero
+# raises, not merely `SystemExit`. A case that asserted only the exception
+# type would keep passing if analysis/report_tokens.py's _refuse_if_zero call
+# at that site were reverted, because resolve_token's ArithmeticError backstop
+# still fires with its own generic message; asserting the "no
+# production"/"no load"/etc. wording is what actually fails when the guard is
+# removed (verified by hand: reverting any one of the nine _refuse_if_zero
+# calls turns that call's case into a failure on the missing wording, not a
+# skip or a pass).
+# ---------------------------------------------------------------------------
+@case
+def case_self_consumed_share_refuses_on_zero_annual_production():
+    with _patched(rt, "_annual_production_kwh", lambda ctx: 0):
+        try:
+            value = rt.resolve_token("SELF_CONSUMED_SHARE")
+            raise AssertionError(
+                f"SELF_CONSUMED_SHARE rendered {value!r} off zero annual production")
+        except SystemExit as e:
+            assert "SELF_CONSUMED_SHARE" in str(e) and "no production" in str(e), e
+    return "SELF_CONSUMED_SHARE refuses, by name, on zero annual production"
+
+
+@case
+def case_exported_share_refuses_on_zero_annual_production():
+    with _patched(rt, "_annual_production_kwh", lambda ctx: 0):
+        try:
+            value = rt.resolve_token("EXPORTED_SHARE")
+            raise AssertionError(
+                f"EXPORTED_SHARE rendered {value!r} off zero annual production")
+        except SystemExit as e:
+            assert "EXPORTED_SHARE" in str(e) and "no production" in str(e), e
+    return "EXPORTED_SHARE refuses, by name, on zero annual production"
+
+
+@case
+def case_solar_coverage_pct_refuses_on_zero_annual_load():
+    with _patched(rt, "_annual_load_kwh", lambda ctx: 0):
+        try:
+            value = rt.resolve_token("SOLAR_COVERAGE_PCT")
+            raise AssertionError(
+                f"SOLAR_COVERAGE_PCT rendered {value!r} off zero annual load")
+        except SystemExit as e:
+            assert "SOLAR_COVERAGE_PCT" in str(e) and "no load" in str(e), e
+    return "SOLAR_COVERAGE_PCT refuses, by name, on zero annual load"
+
+
+@case
+def case_capacity_factor_refuses_on_zero_nameplate():
+    with _stub_household({"solar.kw_dc": 0.0}):
+        try:
+            value = rt.resolve_token("CAPACITY_FACTOR")
+            raise AssertionError(
+                f"CAPACITY_FACTOR rendered {value!r} off a zero solar.kw_dc")
+        except SystemExit as e:
+            assert "CAPACITY_FACTOR" in str(e) and "no nameplate capacity" in str(e), e
+    return "CAPACITY_FACTOR refuses, by name, on a zero nameplate capacity"
+
+
+@case
+def case_specific_yield_refuses_on_zero_nameplate():
+    with _stub_household({"solar.kw_dc": 0.0}):
+        try:
+            value = rt.resolve_token("SPECIFIC_YIELD")
+            raise AssertionError(
+                f"SPECIFIC_YIELD rendered {value!r} off a zero solar.kw_dc")
+        except SystemExit as e:
+            assert "SPECIFIC_YIELD" in str(e) and "no nameplate capacity" in str(e), e
+    return "SPECIFIC_YIELD refuses, by name, on a zero nameplate capacity"
+
+
+@case
+def case_house_kwh_day_refuses_on_zero_window_days():
+    window = rt._json("behavior_rebuild.json")["window"]
+    with _swapped(window, "days", 0):
+        try:
+            value = rt.resolve_token("HOUSE_KWH_DAY")
+            raise AssertionError(
+                f"HOUSE_KWH_DAY rendered {value!r} off a zero-day behavior window")
+        except SystemExit as e:
+            assert "HOUSE_KWH_DAY" in str(e) and "no window length" in str(e), e
+    return "HOUSE_KWH_DAY refuses, by name, on a zero-day behavior_rebuild.json window"
+
+
+@case
+def case_production_agreement_pct_refuses_on_zero_combined_production():
+    with _patched(rt, "_annual_production_kwh", lambda ctx: 0), \
+         _patched(rt, "_pvoutput_annual_kwh", lambda ctx: 0):
+        try:
+            value = rt.resolve_token("PRODUCTION_AGREEMENT_PCT")
+            raise AssertionError(
+                f"PRODUCTION_AGREEMENT_PCT rendered {value!r} off two zero production totals")
+        except SystemExit as e:
+            assert "PRODUCTION_AGREEMENT_PCT" in str(e) and "no combined production" in str(e), e
+    return ("PRODUCTION_AGREEMENT_PCT refuses, by name, when both production totals "
+            "are zero")
+
+
+@case
+def case_metric_target_refuses_on_zero_annual_import():
+    totals = rt._json("report_data.json")["totals"]
+    with _swapped(totals, "imp", 0):
+        try:
+            value = rt.resolve_token("METRIC_TARGET")
+            raise AssertionError(
+                f"METRIC_TARGET rendered {value!r} off zero annual imports")
+        except SystemExit as e:
+            assert "METRIC_TARGET" in str(e) and "no imported energy" in str(e), e
+    return "METRIC_TARGET refuses, by name, on zero annual imported energy"
+
+
+@case
+def case_chart_title_periods_refuses_on_zero_gross_import_cost():
+    pc = rt._json("report_data.json")["periods_chart"]
+    with _swapped(pc, "import_cost", [0] * len(pc["import_cost"])):
+        try:
+            value = rt.resolve_token("CHART_TITLE_PERIODS")
+            raise AssertionError(
+                f"CHART_TITLE_PERIODS rendered {value!r} off zero gross import cost")
+        except SystemExit as e:
+            assert "CHART_TITLE_PERIODS" in str(e) and "no gross import cost" in str(e), e
+    return "CHART_TITLE_PERIODS refuses, by name, on zero gross import cost"
+
+
+# ---------------------------------------------------------------------------
+# FIX ROUND 1 (parent ruling: sweep, not patch -- CLAUDE.md section 8).
+# INVERTER_DESCRIPTION and PANEL_MODEL_WATTS were found during the AC 4 grep
+# census as the exact same defect shape #145 named nine other instances of --
+# a household-sourced count divided into with only a finiteness check
+# (_figures), no zero check -- and they live in this same owned file, so they
+# are fixed here rather than filed away as a separate ticket.
+# ---------------------------------------------------------------------------
+@case
+def case_inverter_description_refuses_on_zero_inverter_count():
+    with _stub_household({"solar.inverter_count": 0, "solar.kw_ac": 9.45,
+                          "solar.inverter_model": "IQ8+"}):
+        try:
+            value = rt.resolve_token("INVERTER_DESCRIPTION")
+            raise AssertionError(
+                f"INVERTER_DESCRIPTION rendered {value!r} off a zero inverter count")
+        except SystemExit as e:
+            assert "INVERTER_DESCRIPTION" in str(e) and "no inverter count" in str(e), e
+    return "INVERTER_DESCRIPTION refuses, by name, on a zero solar.inverter_count"
+
+
+@case
+def case_panel_model_watts_refuses_on_zero_module_count():
+    with _stub_household({"solar.kw_dc": 11.55, "solar.module_count": 0}):
+        try:
+            value = rt.resolve_token("PANEL_MODEL_WATTS")
+            raise AssertionError(
+                f"PANEL_MODEL_WATTS rendered {value!r} off a zero module count")
+        except SystemExit as e:
+            assert "PANEL_MODEL_WATTS" in str(e) and "no module count" in str(e), e
+    return "PANEL_MODEL_WATTS refuses, by name, on a zero solar.module_count"
 
 
 def main():
