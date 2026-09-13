@@ -38,6 +38,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_private_egress.py
 import ast
 import contextlib
 import inspect
+import io
 import os
 import pathlib
 import re
@@ -2850,6 +2851,12 @@ class _DubiousOwnership:
         self.name = name
         self.hook = hook
         self.measured = measured
+        # Set by _git_calls_it_dubiously_owned's `finally`, never here: the
+        # take-back happens after this object has already been yielded, so
+        # the case that receives it can carry a failed give-it-back into its
+        # own printed result instead of it being swallowed (issue #207
+        # /review round one, finding 1).
+        self.takeback_failure = None
 
     def environ(self, **extra):
         """kwargs for _environ(): None unsets, exactly as that helper reads it."""
@@ -2902,10 +2909,14 @@ def _hand_directory_to_another_uid(path):
     on creating files in a directory it no longer owns, and git's ownership
     check reads st_uid and has no opinion about the mode.
 
-    Root does it itself; anyone else needs passwordless sudo, which the CI
-    runners have and a laptop generally does not. `-n` so a machine whose sudo
-    wants a password says so immediately instead of waiting for a person who is
-    not there.
+    This is the FALLBACK for a git that does not honour the test hook (see
+    _git_calls_it_dubiously_owned) -- root does it itself; anyone else needs
+    passwordless sudo, which some CI runner images provide and a laptop
+    generally does not. That is a statement about what this needs, not a claim
+    that any particular runner takes this path; measure that separately (see
+    _git_calls_it_dubiously_owned's docstring). `-n` so a machine whose sudo
+    wants a password says so immediately instead of waiting for a person who
+    is not there.
     """
     try:
         os.chmod(path, 0o777)
@@ -2930,19 +2941,195 @@ def _hand_directory_to_another_uid(path):
     return None
 
 
-def _take_directory_back(path, mode):
-    """Undo _hand_directory_to_another_uid. Best effort, and it does not assert:
-    the tempdir this runs in is removable either way -- the directory is
-    world-writable and its parent is ours -- so a machine that will not chown
-    back leaves nothing behind but a failure message nobody could act on."""
-    with contextlib.suppress(OSError):
-        if os.stat(path).st_uid != os.geteuid():
-            if os.geteuid() == 0:
-                os.chown(path, os.geteuid(), -1)
-            else:
-                subprocess.run(["sudo", "-n", "chown", str(os.geteuid()), str(path)],
-                               capture_output=True)
+def _take_directory_back(path, mode, owner_uid=None):
+    """Undo _hand_directory_to_another_uid, and say so when it does not work.
+
+    `owner_uid` is who `path` should belong to when this returns -- always
+    this process's own euid in the real fixture, overridable so a test can
+    make this helper believe the directory is still foreign-owned without a
+    real chown to another uid, which would need root this suite does not have.
+
+    ISSUE #207 /review round one, finding 1. The ORIGINAL code restored the
+    ORIGINAL (narrow) mode unconditionally after attempting the chown-back,
+    whether or not that attempt actually gave the directory back -- and it
+    trusted `sudo`'s exit code, which is not proof: a sudoers policy can
+    permit the invocation and still not perform it. Either way, a chown-back
+    that does not take used to leave the directory foreign-owned AND narrow --
+    the opposite of world-writable, and worse than the leftover the old
+    docstring promised, because this process could then no longer write into
+    or remove it -- with no message anywhere.
+
+    So: verify the uid is really back (re-stat, never the exit code alone)
+    BEFORE narrowing the mode. On any failure -- the chown-back itself, or the
+    verification -- the mode is left WIDE (as _hand_directory_to_another_uid
+    left it) rather than narrowed onto a directory this process cannot prove
+    it owns, and the exact command and path that failed are printed to stderr
+    (a fixture's `finally` is not somewhere a caller is watching a return
+    value) and returned, so the caller can carry the failure into its own
+    printed result.
+
+    Returns None on success, or the failure message on report.
+    """
+    if owner_uid is None:
+        owner_uid = os.geteuid()
+
+    def _fail(msg):
+        full = f"_take_directory_back({str(path)!r}): {msg}"
+        print(full, file=sys.stderr)
+        return full
+
+    try:
+        current_uid = os.stat(path).st_uid
+    except OSError as e:
+        return _fail(f"could not stat it back ({e.strerror})")
+
+    if current_uid != owner_uid:
+        if os.geteuid() == 0:
+            attempted = f"os.chown({str(path)!r}, {owner_uid}, -1)"
+            try:
+                os.chown(path, owner_uid, -1)
+            except OSError as e:
+                return _fail(f"{attempted} failed ({e.strerror}); left "
+                             "foreign-owned and WORLD-WRITABLE, mode not "
+                             "narrowed")
+        else:
+            cmd = ["sudo", "-n", "chown", str(owner_uid), str(path)]
+            attempted = " ".join(cmd)
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True)
+            except OSError as e:
+                return _fail(f"`{attempted}` could not even run "
+                             f"({e.strerror}); left foreign-owned and "
+                             "WORLD-WRITABLE, mode not narrowed")
+            if r.returncode != 0:
+                said = " ".join(r.stderr.split())[:120] or "nothing on stderr"
+                return _fail(f"`{attempted}` exited {r.returncode}: {said}; "
+                             "left foreign-owned and WORLD-WRITABLE, mode not "
+                             "narrowed")
+        # The exit code is not proof by itself -- re-stat before trusting it.
+        try:
+            took = os.stat(path).st_uid == owner_uid
+        except OSError as e:
+            return _fail(f"{attempted} ran but the result could not be "
+                         f"verified ({e.strerror}); left WORLD-WRITABLE, mode "
+                         "not narrowed")
+        if not took:
+            return _fail(f"{attempted} exited 0 but did not change the "
+                         "owner; left foreign-owned and WORLD-WRITABLE, mode "
+                         "not narrowed")
+
+    try:
         os.chmod(path, mode)
+    except OSError as e:
+        return _fail(f"the owner is back but the mode could not be restored "
+                     f"({e.strerror})")
+    return None
+
+
+def _sudo_shim(td, *, lies=False):
+    """A directory holding an executable `sudo` that intercepts `chown` and
+    refuses it, execing the real `sudo` for anything else.
+
+    `lies=True` models a sudoers policy that permits the invocation and exits
+    0 without actually changing the owner -- the exact shape the ORIGINAL
+    _take_directory_back trusted blindly, because it never looked past the
+    exit code. Otherwise the shim exits 1 with a message on stderr, modelling
+    an outright refusal (an expired sudo token, a policy that does not cover
+    this uid, ...). Either way it never really touches the filesystem, so
+    this needs no privilege to run.
+    """
+    d = pathlib.Path(td) / "sudo-shim"
+    d.mkdir()
+    real = shutil.which("sudo") or "/usr/bin/sudo"
+    if lies:
+        intercept = 'if [ "$a" = "chown" ]; then exit 0; fi\n'
+    else:
+        intercept = ('if [ "$a" = "chown" ]; then\n'
+                     '    echo "sudo: a password is required" 1>&2\n'
+                     '    exit 1\n'
+                     '  fi\n')
+    (d / "sudo").write_text(
+        "#!/bin/sh\n"
+        'for a in "$@"; do\n'
+        f'  {intercept}'
+        'done\n'
+        f'exec {shlex.quote(real)} "$@"\n')
+    (d / "sudo").chmod(0o755)
+    return d
+
+
+@case
+def case_take_directory_back_reports_a_chown_back_that_does_not_take():
+    """ISSUE #207 /review round one, finding 1. The ORIGINAL
+    _take_directory_back restored the ORIGINAL (narrow) mode unconditionally
+    after attempting the chown-back, whether or not that attempt actually gave
+    the directory back -- so a chown-back that failed left a directory this
+    process no longer owned AND could no longer write into (the opposite of
+    the world-writable leftover its own docstring promised), and reported it
+    nowhere.
+
+    Two ways the chown-back can fail to take, both manufactured here with a
+    fake `sudo` on PATH -- no real root and no second uid needed, because
+    `owner_uid=` overrides who the helper checks for, so the mismatch this
+    case is about is real without the directory's actual ownership ever
+    changing:
+
+      1. sudo refuses outright (nonzero exit) -- what a person sees when
+         their sudo token has expired or the policy does not cover this uid.
+      2. sudo exits 0 but the owner does not really change -- what a sudoers
+         policy that "permits" the command without performing it would
+         produce, and the shape the ORIGINAL code could not have caught,
+         because it trusted the exit code and never re-checked.
+
+    Both must, and this is what the fix is: (a) leave the mode UNCHANGED --
+    still wide, never narrowed onto a directory this process cannot prove it
+    owns; (b) return a message naming the path and the command that failed;
+    (c) print that same message to stderr, since a fixture's own `finally` is
+    not somewhere a caller is watching a return value.
+
+    THIS CASE FAILS ON THE ORIGINAL CODE: with the unconditional `os.chmod`
+    restored (drop the take/verify logic from _take_directory_back and go
+    back to `contextlib.suppress(OSError)` around an unchecked chown), both
+    iterations below observe the mode narrowed to 0o700 despite the chown-back
+    never taking, and the "not narrowed" assertion fails.
+    """
+    if os.geteuid() == 0:
+        raise SkipCase(
+            "this case targets the sudo branch specifically; running as root "
+            "takes _take_directory_back's os.chown branch instead, which this "
+            "fixture does not model")
+    wide, narrow = 0o777, 0o700
+    for lies, label in ((False, "sudo refuses outright"),
+                        (True, "sudo exits 0 without changing the owner")):
+        with tempfile.TemporaryDirectory() as td:
+            d = pathlib.Path(td) / "handed-away"
+            d.mkdir()
+            d.chmod(wide)
+            shim = _sudo_shim(td, lies=lies)
+            fake_owner = os.geteuid() + 1  # never real; no chown needed to prove it
+            captured = io.StringIO()
+            with _environ(PATH=f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"), \
+                 contextlib.redirect_stderr(captured):
+                result = _take_directory_back(d, narrow, owner_uid=fake_owner)
+            assert result is not None, (
+                f"{label}: a chown-back that did not take was reported as "
+                "success")
+            assert str(d) in result and "chown" in result, (
+                f"{label}: the failure message does not name the path or the "
+                f"command that failed: {result}")
+            assert stat.S_IMODE(os.stat(d).st_mode) == wide, (
+                f"{label}: the mode was narrowed even though the chown-back "
+                f"did not take -- this process may no longer own {d} and the "
+                "fix just made it unwritable too")
+            assert captured.getvalue().strip(), (
+                f"{label}: the failure was returned but never printed, so a "
+                "caller that discards the return value (a bare `finally:` "
+                "cleanup, exactly how the real fixture calls this) never "
+                "sees it")
+    return ("a chown-back that refuses outright, and one that lies with exit "
+            "0 but does not change the owner, are both reported by message "
+            "and by stderr, and neither narrows the mode onto a directory "
+            "this process can no longer prove it owns")
 
 
 @contextlib.contextmanager
@@ -2966,13 +3153,26 @@ def _git_calls_it_dubiously_owned(wt, xdg):
          the refusal never happens. That is a property of the MACHINE, so it is
          measured here and reported, not inferred.
       2. A REAL DIRECTORY OWNED BY ANOTHER UID, which is the thing the hook
-         stands in for. It needs root or passwordless sudo, so it is the
-         runner's way rather than the laptop's, and it is taken back in
-         `finally`. Measured against both implementations before it was
-         written: with `wt` handed to uid 65534 on a Linux runner's git, the
-         module refuses with git's ownership message and accepts once the
-         operator's global configuration declares the path, and
-         stage-private-data.sh does the same.
+         stands in for. It is the FALLBACK, tried only when the hook does not
+         produce a refusal, for a git that does not honour the hook at all --
+         it needs root or passwordless sudo, available on some CI images and
+         not guaranteed on any of them. It is taken back in `finally`.
+         Measured against both implementations before it was written: with
+         `wt` handed to uid 65534 on a Linux runner's git, the module refuses
+         with git's ownership message and accepts once the operator's global
+         configuration declares the path, and stage-private-data.sh does the
+         same.
+
+    WHICH ONE RAN IS MEASURED, NEVER ASSUMED FROM A RUNNER'S NAME. On the
+    runner image this workflow uses today, git's own test hook already
+    produces the refusal (confirmed from CI's own logs, both runs of PR #291:
+    the case's printed result named the hook, not the fallback) -- so the
+    sudo/chown path exists for whichever git stops honouring the hook (a
+    future runner image, a contributor's machine), and has not been observed
+    to run in CI. Neither this docstring nor the workflow's own comment claims
+    otherwise. `yield` hands back which one worked (`.name`), and the case
+    below folds that into the string it returns, so every run's own printed
+    result -- not a comment -- says which path CI exercised that day.
 
     `xdg` is the config home the case is about to drive its measurements
     through, and every probe here runs with it, for the reason _raw_git's
@@ -2999,6 +3199,7 @@ def _git_calls_it_dubiously_owned(wt, xdg):
             f"this machine, so the repair cannot be exercised: {hook_note}; and "
             f"the worktree could not be given to uid {FOREIGN_UID} because "
             f"{why_not}")
+    dubious = None
     try:
         owned = _raw_git(probe, wt, XDG_CONFIG_HOME=str(xdg),
                          GIT_TEST_ASSUME_DIFFERENT_OWNER=None)
@@ -3009,12 +3210,20 @@ def _git_calls_it_dubiously_owned(wt, xdg):
                 f"and a worktree really owned by uid {FOREIGN_UID} left `git "
                 f"rev-parse` exiting {owned.returncode} ("
                 + _protected_safe_directories(wt, XDG_CONFIG_HOME=str(xdg)) + ")")
-        yield _DubiousOwnership(f"a worktree really owned by uid {FOREIGN_UID}",
-                                False,
-                                f"{hook_note}, so the fixture gave the worktree "
-                                f"away to uid {FOREIGN_UID} instead")
+        dubious = _DubiousOwnership(f"a worktree really owned by uid {FOREIGN_UID}",
+                                    False,
+                                    f"{hook_note}, so the fixture gave the worktree "
+                                    f"away to uid {FOREIGN_UID} instead")
+        yield dubious
     finally:
-        _take_directory_back(wt, mode)
+        # ISSUE #207 /review round one, finding 1: a take-back that does not
+        # take must not vanish silently. _take_directory_back already prints
+        # it; fold it onto the object the case already holds (`dubious` is
+        # None only if a SkipCase fired before it was ever created, in which
+        # case there is no printed case result left to carry it into).
+        failure = _take_directory_back(wt, mode)
+        if failure is not None and dubious is not None:
+            dubious.takeback_failure = failure
 
 
 @case
@@ -3179,7 +3388,10 @@ def case_an_operators_safe_directory_is_not_taken_away_by_the_isolation():
     return ("a worktree git considers dubiously owned is refused with git's own "
             "words when the operator has not declared it safe, accepted and "
             "staged when they have, and refused again when only the destination's "
-            f"own config says so -- in both implementations, on {how.name}")
+            f"own config says so -- in both implementations, on {how.name}"
+            + (f"; WARNING -- the fixture could not give the worktree back "
+               f"afterwards: {how.takeback_failure}"
+               if how.takeback_failure else ""))
 
 
 # The MATCHING keys, and what makes each one a lever: a rule the destination
