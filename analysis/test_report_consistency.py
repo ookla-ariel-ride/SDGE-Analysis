@@ -335,6 +335,47 @@ def case_every_lazy_chart_id_resolves_to_a_unique_canvas():
     return "every lazyChart id is unique and resolves to a canvas in both files"
 
 
+def case_the_policy_table_marks_the_published_row_and_prints_its_figures():
+    """Section 6's policy table lists every dispatch the artifact ran, so exactly
+    one row has to be marked as the published one AND carry that policy's own
+    figures (issue #240).
+
+    Both halves matter. If PUBLISHED_POLICY were changed without regenerating,
+    the marked row would keep its label while the figures under it belonged to a
+    sensitivity; if the table were re-based without moving the marker, the
+    numbers would be right and the reader would be pointed at the wrong row. This
+    checks the marked row against `pw3`/`pw3x`[`published_policy`] directly, and
+    that no unmarked row carries those same figures."""
+    art = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
+    pub = art["published_policy"]
+    start = HTML.index("Dispatch policy: price-aware beats evening-only")
+    end = HTML.index("Electrical caveat", start)
+    rows = re.findall(r"<tr([^>]*)>(.*?)</tr>", HTML[start:end], re.S)
+    marked = [(attrs, body) for attrs, body in rows if "published" in body.lower()]
+    assert len(marked) == 1, (
+        f"section 6's policy table marks {len(marked)} rows as the published dispatch; "
+        "exactly one row must carry that marker")
+    attrs, body = marked[0]
+    assert 'class="win"' in attrs, (
+        "the row marked as the published dispatch is not the table's win row, so the "
+        "page's own emphasis points somewhere else")
+    for cfg in ("pw3", "pw3x"):
+        want = f"${art[cfg][pub]['save']:,}/yr"
+        assert want in body, (
+            f"section 6's published row does not print {cfg}'s published save {want}: "
+            f"{re.sub(r'<[^>]+>', '', body).strip()!r}")
+    # and no OTHER row may print the published figures, which is what a stale
+    # marker after a policy change would look like
+    others = [b for a, b in rows if b is not body]
+    pub_pw3 = f"${art['pw3'][pub]['save']:,}/yr"
+    for b in others:
+        assert pub_pw3 not in b, (
+            f"an unmarked policy row also prints the published saving {pub_pw3}; the "
+            "marker and the figures have come apart")
+    return (f"section 6's policy table marks exactly one row as published ({pub}) and it "
+            f"prints ${art['pw3'][pub]['save']:,}/${art['pw3x'][pub]['save']:,}/yr")
+
+
 def case_headline_figures_present_and_stale_ones_absent():
     """One pinned figure per artifact class, plus absence of the retired value:
     presence-anywhere alone cannot catch a partial re-base (the §3 failure), but
@@ -7989,6 +8030,7 @@ CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
     case_hourly_profiles_match_their_artifact,
+    case_the_policy_table_marks_the_published_row_and_prints_its_figures,
     case_battery_chart_series_match_their_artifacts,
     case_carb_chart_matches_its_artifact,
     case_spread_chart_series_match_their_artifact,

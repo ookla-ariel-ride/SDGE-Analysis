@@ -603,6 +603,16 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
     pre_min_agg = min(pre_nets, key=pre_nets.get)
     pre_max_agg = max(pre_nets, key=pre_nets.get)
     return {
+        # WHICH DISPATCH THIS RANGE WAS COMPUTED UNDER, stamped by the run that
+        # computed it (issue #240). This block is the one field in the artifact
+        # that can be CARRIED FORWARD from a previous run instead of recomputed
+        # -- it needs the private raw CEC event archive, and an archive-less
+        # checkout preserves it rather than destroying it. A carried-forward
+        # range beside freshly-computed union figures is two dispatches in one
+        # artifact, and a reader cannot see that unless the artifact says so.
+        # per_aggregation_sensitivity_or_preserved() below writes the matching
+        # recomputed/reason fields on both paths.
+        "dispatch_policy": bp.PUBLISHED_POLICY,
         "n_aggregations": len(per_agg),
         "net_usd_min": nets[min_agg],
         "net_usd_min_aggregation": min_agg,
@@ -1103,6 +1113,13 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
     result = {
         "hypothetical": True,
         "household_has_battery_today": False,
+        # WHICH DISPATCH EVERY FIGURE BELOW IS ON (issue #240): the BAU run and
+        # every union-calendar revenue figure come from
+        # battery_dispatch_policies.PUBLISHED_POLICY, recomputed on this run.
+        # per_aggregation_sensitivity carries its own stamp, because it is the
+        # one block an archive-less run cannot recompute -- compare the two
+        # before reading the range and the union figures as one result.
+        "dispatch_policy": bp.PUBLISHED_POLICY,
         "battery_config": {"usable_kwh": CAP, "power_kw": BATT_KW,
                             "charge_kw": BATT_KW if charge_kw is None else charge_kw,
                             "round_trip_eta": 0.90},
@@ -1410,7 +1427,13 @@ def per_aggregation_sensitivity_or_preserved(d):
     committed yet (e.g. a from-scratch bootstrap with no archive ever available,
     which should not happen in practice but must not crash)."""
     if RAW_XLSX.exists():
-        return per_aggregation_sensitivity(d, charge_kw=CHARGE_KW)
+        fresh = per_aggregation_sensitivity(d, charge_kw=CHARGE_KW)
+        fresh["recomputed"] = True
+        fresh["recomputed_reason"] = (
+            f"the private raw CEC event archive ({RAW_XLSX.name}) was present, so "
+            "this range was recomputed on this run, on the same dispatch as every "
+            "other figure in this artifact")
+        return fresh
     if RESULTS_JSON.exists():
         existing = json.loads(RESULTS_JSON.read_text())
         preserved = existing.get(
@@ -1442,7 +1465,7 @@ def per_aggregation_sensitivity_or_preserved(d):
                 "net_usd/delta_vs_reactive as a ceiling on realizable benefit "
                 "until a future run with the private raw CEC archive present "
                 "recomputes this field.")
-        return preserved
+        return _stamp_preserved(preserved)
     return (
         "NOT COMPUTED: needs the private raw CEC archive "
         f"({RAW_XLSX}), which this checkout does not have, and there is no "
@@ -1451,6 +1474,57 @@ def per_aggregation_sensitivity_or_preserved(d):
         "above -- the union-calendar figures elsewhere in this artifact are an "
         "inclusive upper bound, not this household's actual single-aggregation "
         "revenue.")
+
+
+def _stamp_preserved(preserved):
+    """Mark a CARRIED-FORWARD per-aggregation block as what it is (issue #240).
+
+    Everything else in this artifact is recomputed on every run, on whatever
+    battery_dispatch_policies.PUBLISHED_POLICY currently is. This one block
+    cannot be, without the private raw CEC event archive, so an archive-less run
+    carries the committed one forward. That is the right call -- overwriting real
+    evidence with a placeholder is worse -- but it means the artifact can hold a
+    range computed under ONE dispatch beside union figures computed under
+    ANOTHER, and CLAUDE.md section 0 does not allow a block to read as fresh when
+    it is not. These fields say so in the artifact itself, where every consumer
+    of the range can see them.
+
+    `dispatch_policy` is the preserved block's OWN stamp, carried through
+    untouched: this function cannot know which dispatch produced a block it did
+    not compute, and will not guess. A block written before the stamp existed
+    says so instead. Every derived field is rebuilt from scratch on each pass and
+    never carried forward, so the output is identical whether the input came from
+    a stamped run or an unstamped one -- which is what keeps the archive-less
+    path idempotent and the committed artifact byte-reproducible.
+    """
+    if not isinstance(preserved, dict):
+        return preserved
+    derived = ("recomputed", "recomputed_reason", "published_dispatch_policy",
+               "dispatch_policy_matches_published", "dispatch_policy_warning")
+    out = {k: v for k, v in preserved.items() if k not in derived}
+    stamped = out.get("dispatch_policy")
+    out["recomputed"] = False
+    out["recomputed_reason"] = (
+        "NOT recomputed on this run: the private raw CEC event archive "
+        f"({RAW_XLSX.name}) is absent from this checkout, so this block was "
+        "carried forward verbatim from the committed artifact. Every OTHER figure "
+        "here was recomputed. Re-stage that archive and re-run this script to "
+        "bring the range onto the same dispatch as the rest of the artifact.")
+    out["published_dispatch_policy"] = bp.PUBLISHED_POLICY
+    out["dispatch_policy_matches_published"] = (stamped == bp.PUBLISHED_POLICY)
+    if stamped is None:
+        out["dispatch_policy"] = (
+            "not recorded: this block was committed before the provenance stamp "
+            "existed, so which dispatch produced it is not readable from the "
+            "artifact")
+    elif stamped != bp.PUBLISHED_POLICY:
+        out["dispatch_policy_warning"] = (
+            f"This range was computed on the {stamped!r} dispatch, while every "
+            f"other figure in this artifact is on {bp.PUBLISHED_POLICY!r}, the "
+            "published one. Do not read the two side by side as one result: the "
+            "union figures moved with the dispatch and this range did not, and "
+            "cannot until the raw event archive is available again.")
+    return out
 
 
 def main():

@@ -8,6 +8,7 @@
   "usable_kwh": 13.5
  },
  "bau_battery_bill_usd": 2438.39,
+ "dispatch_policy": "value",
  "events_in_window": {
   "count": 46,
   "dates": [
@@ -649,6 +650,9 @@
  "partial_season_caveat": "This backtest's revenue/kWh/miss-rate figures cover ONLY 2025-07-24 through 2025-10-30 -- the portion of the household's measured window that overlaps the 2025 DSGS season (which runs May-October), NOT the whole season. 22 union event hours before 2025-07-24 are excluded (unreplayable -- no measured load exists for them in any year), so this is a PARTIAL-SEASON observation, not a complete season and not an annualized figure. A full season would very likely earn MORE (it only adds event hours relative to this partial figure), but a full-season/annual revenue figure is NOT DETERMINED here -- it is not extrapolated from the partial figure, because no measured load exists for the missing May-July hours in any year. Any downstream use of this figure as an annual input (e.g. extended_findings.py's payback tornado lever) must carry this same caveat, not present it as a complete season's revenue.",
  "payment_rate_source": "EMPIRICAL: Monthly Capacity Payment ($) / Demonstrated Capacity (MW) from the Monthly Aggregation Dataset, UDC2/Residential/2-hr rows with positive demonstrated capacity (essentially constant within each month). Tesla's $150-350/season program-terms figure (already cited in \u00a76) is used only as an order-of-magnitude sanity check, not as the payment source.",
  "per_aggregation_sensitivity": {
+  "dispatch_policy": "greedy",
+  "dispatch_policy_matches_published": false,
+  "dispatch_policy_warning": "This range was computed on the 'greedy' dispatch, while every other figure in this artifact is on 'value', the published one. Do not read the two side by side as one result: the union figures moved with the dispatch and this range did not, and cannot until the raw event archive is available again.",
   "miss_rate_max": 0.6,
   "miss_rate_min": 0.5,
   "n_aggregations": 14,
@@ -771,7 +775,10 @@
     "total_discharge_kwh": 28.23
    }
   },
-  "prestaged_range_pending_archive_regeneration": "The preserved per-aggregation range above predates issue #53's prestaged_sensitivity field. It does NOT yet include a prestaged_net_usd_min/max range, so the union calendar's prestaged_sensitivity headline elsewhere in this artifact has no realizable single-aggregation counterpart computed yet -- that headline reflects an inclusive UNION calendar (more candidate event hours than any single real household saw), which bounds event FREQUENCY only, not the resulting dollar economics (a real household's own smaller, more selectively-timed calendar is not proven to earn less). Do not treat net_usd/delta_vs_reactive as a ceiling on realizable benefit until a future run with the private raw CEC archive present recomputes this field."
+  "prestaged_range_pending_archive_regeneration": "The preserved per-aggregation range above predates issue #53's prestaged_sensitivity field. It does NOT yet include a prestaged_net_usd_min/max range, so the union calendar's prestaged_sensitivity headline elsewhere in this artifact has no realizable single-aggregation counterpart computed yet -- that headline reflects an inclusive UNION calendar (more candidate event hours than any single real household saw), which bounds event FREQUENCY only, not the resulting dollar economics (a real household's own smaller, more selectively-timed calendar is not proven to earn less). Do not treat net_usd/delta_vs_reactive as a ceiling on realizable benefit until a future run with the private raw CEC archive present recomputes this field.",
+  "published_dispatch_policy": "value",
+  "recomputed": false,
+  "recomputed_reason": "NOT recomputed on this run: the private raw CEC event archive (dsgs_2025_performance.xlsx) is absent from this checkout, so this block was carried forward verbatim from the committed artifact. Every OTHER figure here was recomputed. Re-stage that archive and re-run this script to bring the range onto the same dispatch as the rest of the artifact."
  },
  "prestaged_sensitivity": {
   "delta_vs_reactive": {

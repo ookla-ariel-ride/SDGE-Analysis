@@ -773,10 +773,26 @@ def case_main_preserves_committed_per_aggregation_sensitivity_without_the_archiv
         # Calls the REAL function main() uses, not a reimplementation of its logic --
         # `d` is unused on this branch (RAW_XLSX absent) so None is fine here.
         value = vb.per_aggregation_sensitivity_or_preserved(None)
-        assert value == preserved_marker, (
-            "the committed per_aggregation_sensitivity must be preserved, not "
-            f"overwritten with a placeholder -- got {value}")
-        return "an archive-less run preserves the existing committed per_aggregation_sensitivity"
+        # EVERY committed key survives with its committed value. Since issue
+        # #240 the archive-less path also STAMPS the block with its provenance
+        # (see _stamp_preserved and its own cases below), so the return is the
+        # preserved dict PLUS those fields -- never fewer fields, never a changed
+        # value, and never a placeholder, which is what this case has always been
+        # about. Spelling the additions out here rather than loosening the
+        # comparison keeps an unexpected fifth key from slipping in unnoticed.
+        provenance = {"recomputed", "recomputed_reason", "published_dispatch_policy",
+                      "dispatch_policy_matches_published", "dispatch_policy"}
+        for k, v in preserved_marker.items():
+            assert value[k] == v, (
+                "the committed per_aggregation_sensitivity must be preserved, not "
+                f"overwritten with a placeholder -- {k} came back {value[k]!r}, "
+                f"not {v!r}")
+        assert set(value) - set(preserved_marker) == provenance, (
+            "the archive-less path added or dropped something other than the "
+            f"provenance stamp: {sorted(set(value) ^ set(preserved_marker))}")
+        assert value["recomputed"] is False, value["recomputed"]
+        return ("an archive-less run preserves the existing committed "
+                "per_aggregation_sensitivity, stamped with its provenance")
     finally:
         vb.RAW_XLSX = real_raw_xlsx
         vb.RESULTS_JSON = real_results_json
@@ -1452,6 +1468,137 @@ def case_vpp_dispatch_gates_on_the_intake_flag_not_the_detector():
     assert "br.EV_ANALYSIS" in code, "run_batt_vpp no longer gates on br.EV_ANALYSIS"
     assert "detect_sessions" not in code, "run_batt_vpp reads the EV detector"
     return "run_batt_vpp reads br.EV_ANALYSIS and never the detector"
+
+
+# ---------------------------------------------------------------------------
+# ONE BLOCK IN THIS ARTIFACT CANNOT BE RECOMPUTED WITHOUT THE PRIVATE RAW CEC
+# EVENT ARCHIVE (issue #240). per_aggregation_sensitivity_or_preserved() carries
+# the committed one forward instead of destroying it, which is right -- and it
+# means the artifact can carry a range computed under one dispatch beside union
+# figures computed under another. The stamp is what makes that visible. These
+# cases are what keep the stamp from being dropped in a later edit: each one is
+# verified to FAIL against the un-stamped return the function used to make.
+# ---------------------------------------------------------------------------
+def _preserved_via(tmp, preserved, raw_present=False):
+    """per_aggregation_sensitivity_or_preserved() against a throwaway artifact.
+
+    RAW_XLSX and RESULTS_JSON are module constants, so both are rebound for the
+    call and restored after; `d` is never touched on the archive-less path.
+    """
+    results = tmp / "dsgs_vpp_backtest.json"
+    results.write_text(json.dumps({"per_aggregation_sensitivity": preserved}))
+    raw = tmp / "dsgs_2025_performance.xlsx"
+    if raw_present:
+        raw.write_text("not a real xlsx")
+    real_raw, real_results = vb.RAW_XLSX, vb.RESULTS_JSON
+    vb.RAW_XLSX, vb.RESULTS_JSON = raw, results
+    try:
+        return vb.per_aggregation_sensitivity_or_preserved(None)
+    finally:
+        vb.RAW_XLSX, vb.RESULTS_JSON = real_raw, real_results
+
+
+_PRESERVED_FIXTURE = {"n_aggregations": 14, "net_usd_min": 96.99, "net_usd_max": 213.19,
+                      "prestaged_net_usd_min": 100.0, "prestaged_net_usd_max": 200.0}
+
+
+@case
+def case_archive_less_path_stamps_the_carried_forward_block():
+    """The archive-less path must say the block was not recomputed, name the
+    dispatch it WAS computed under, name the published one, and warn when the
+    two disagree. Driven at all three shapes a preserved block can have."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+
+        # 1. a block stamped with a DIFFERENT dispatch than the published one
+        other = "greedy" if bp.PUBLISHED_POLICY != "greedy" else "evening"
+        out = _preserved_via(tmp, dict(_PRESERVED_FIXTURE, dispatch_policy=other))
+        assert out["recomputed"] is False, out
+        assert out["dispatch_policy"] == other, out["dispatch_policy"]
+        assert out["published_dispatch_policy"] == bp.PUBLISHED_POLICY, out
+        assert out["dispatch_policy_matches_published"] is False, out
+        assert other in out["dispatch_policy_warning"] and \
+            bp.PUBLISHED_POLICY in out["dispatch_policy_warning"], \
+            "the warning must name BOTH dispatches, or a reader cannot tell what " \
+            "is being compared with what"
+        assert vb.RAW_XLSX.name in out["recomputed_reason"], \
+            "the reason must name the missing input, or nobody knows how to fix it"
+        assert out["net_usd_min"] == 96.99 and out["net_usd_max"] == 213.19, \
+            "the stamp must not disturb the evidence it is stamping"
+
+        # 2. a block on the SAME dispatch: stamped, no warning
+        same = _preserved_via(tmp, dict(_PRESERVED_FIXTURE,
+                                        dispatch_policy=bp.PUBLISHED_POLICY))
+        assert same["recomputed"] is False and \
+            same["dispatch_policy_matches_published"] is True, same
+        assert "dispatch_policy_warning" not in same, \
+            "a preserved block already on the published dispatch has nothing to warn about"
+
+        # 3. a block from before the stamp existed: says so, never guesses
+        old = _preserved_via(tmp, dict(_PRESERVED_FIXTURE))
+        assert old["dispatch_policy"].startswith("not recorded"), old["dispatch_policy"]
+        assert old["dispatch_policy_matches_published"] is False, old
+        for policy in ("greedy", "value", "evening", "twowin"):
+            assert not old["dispatch_policy"].startswith(policy), (
+                "the stamp invented a dispatch for a block it did not compute: "
+                f"{old['dispatch_policy']!r}")
+
+        # 4. IDEMPOTENT: re-stamping an already-stamped block changes nothing,
+        #    which is what keeps the committed artifact byte-reproducible on
+        #    every archive-less regeneration.
+        again = _preserved_via(tmp, out)
+        assert again == out, "the stamp is not idempotent; the artifact would drift"
+    return ("the archive-less path stamps the carried-forward per-aggregation block "
+            "(recomputed false, both dispatches named, warning only on a mismatch, "
+            "no guess when the block predates the stamp) and is idempotent")
+
+
+@case
+def case_the_stamp_guard_fails_on_the_unstamped_return_it_replaced():
+    """The guard above is only worth having if it catches the code it replaced.
+
+    `per_aggregation_sensitivity_or_preserved()` used to `return preserved`
+    unchanged on the archive-less path. Driven here directly: every assertion the
+    case above makes must fail against that return."""
+    raw = dict(_PRESERVED_FIXTURE)            # what the old code returned verbatim
+    for field in ("recomputed", "recomputed_reason", "published_dispatch_policy",
+                  "dispatch_policy_matches_published"):
+        assert field not in raw, field
+    stamped = vb._stamp_preserved(dict(_PRESERVED_FIXTURE, dispatch_policy="greedy"))
+    assert stamped != raw, "the stamp is a no-op; the guard above proves nothing"
+    assert set(stamped) - set(raw) >= {"recomputed", "recomputed_reason",
+                                       "published_dispatch_policy",
+                                       "dispatch_policy_matches_published"}, stamped
+    return ("the un-stamped return the archive-less path used to make carries none of "
+            "the four provenance fields, so dropping the stamp fails the case above")
+
+
+@case
+def case_committed_artifact_carries_the_dispatch_provenance():
+    """The committed artifact itself, not just the function. A regeneration that
+    dropped either stamp would leave the published range readable as fresh."""
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"{vb.RESULTS_JSON} not present")
+    art = json.loads(vb.RESULTS_JSON.read_text())
+    assert art.get("dispatch_policy") == bp.PUBLISHED_POLICY, (
+        "the committed artifact does not name the dispatch its union figures are "
+        f"on: {art.get('dispatch_policy')!r} vs {bp.PUBLISHED_POLICY!r}")
+    pa = art.get("per_aggregation_sensitivity")
+    if not isinstance(pa, dict):
+        raise SkipCase("no per-aggregation block committed yet")
+    for field in ("dispatch_policy", "recomputed", "published_dispatch_policy",
+                  "dispatch_policy_matches_published"):
+        assert field in pa, (
+            f"the committed per-aggregation block has no {field!r}: a consumer "
+            "cannot tell whether that range is on the published dispatch")
+    assert pa["published_dispatch_policy"] == bp.PUBLISHED_POLICY, pa
+    if not pa["dispatch_policy_matches_published"]:
+        assert "dispatch_policy_warning" in pa, (
+            "the committed range is on a different dispatch than the union figures "
+            "beside it and the artifact does not warn about it")
+    return (f"the committed artifact names its union dispatch ({art['dispatch_policy']}) "
+            f"and stamps the carried-forward range (recomputed={pa['recomputed']}, "
+            f"dispatch_policy={str(pa['dispatch_policy'])[:24]!r})")
 
 
 # ---------------------------------------------------------------------------

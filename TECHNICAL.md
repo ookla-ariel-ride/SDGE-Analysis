@@ -1693,8 +1693,35 @@ figure above sits inside this range rather than bounding it from above (a househ
 on a smaller, better-timed aggregation calendar can net more than the union: fewer event
 hours can mean less opportunity cost without proportionally less demonstrated capacity).
 Committed in the artifact's `per_aggregation_sensitivity` field (`net_usd_min/max`,
-`miss_rate_min/max`, and the full 14-row `per_aggregation` breakdown), computed fresh from
-the private raw archive on every regeneration.
+`miss_rate_min/max`, and the full 14-row `per_aggregation` breakdown).
+
+**This is the one block in the artifact that is not recomputed on every run, and it says
+so (issue #240).** Recomputing it needs the private raw CEC per-aggregation event file
+(`private/1-raw-data/dsgs_events/dsgs_2025_performance.xlsx`). When that file is present,
+`per_aggregation_sensitivity()` recomputes the range on
+`battery_dispatch_policies.PUBLISHED_POLICY` and stamps it `dispatch_policy: <that
+policy>`, `recomputed: true`. When it is absent — the normal case for CI, a fresh clone,
+and every checkout here today — `per_aggregation_sensitivity_or_preserved()` carries the
+committed block forward verbatim rather than overwriting real evidence with a placeholder,
+and `_stamp_preserved()` marks it: `recomputed: false`, a `recomputed_reason` naming the
+missing file, `published_dispatch_policy`, and `dispatch_policy_matches_published`. Where
+the two disagree it adds a `dispatch_policy_warning` naming both. The stamp never guesses:
+a block committed before the field existed gets `dispatch_policy: "not recorded: ..."`
+instead of an invented policy, and re-stamping an already-stamped block is idempotent, so
+the artifact stays byte-reproducible on every archive-less regeneration.
+
+**As committed today, that range is the `"greedy"` (unconditional-charge) dispatch's, while
+every other figure in the artifact is the published `"value"` dispatch's.** The raw event
+file is in no checkout available here, so the range cannot be brought onto the published
+dispatch until it is re-staged; the artifact's own `dispatch_policy_warning` says this, and
+report §6, §0, §7 and GLOSSARY.md label the published $97–$213 range accordingly. The one
+`dispatch_policy: "greedy"` value in the committed block is a one-time provenance backfill:
+the block is byte-identical at `bed2520` (before the adoption) and `dd52fba` (after), so it
+demonstrably predates the published policy, and seeding that fact once is what lets
+`_stamp_preserved()` carry it forward. `test_dsgs_vpp_backtest.py` covers all of this
+(`case_archive_less_path_stamps_the_carried_forward_block`,
+`case_the_stamp_guard_fails_on_the_unstamped_return_it_replaced`,
+`case_committed_artifact_carries_the_dispatch_provenance`).
 
 **Coverage gaps: this is a partial season, not a complete
 one.** This household's measured window starts 2025-07-24, so 22 May–July 2025 event
