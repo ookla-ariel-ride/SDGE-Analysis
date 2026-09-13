@@ -38,6 +38,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_private_egress.py
 import ast
 import contextlib
 import inspect
+import io
 import os
 import pathlib
 import re
@@ -2828,22 +2829,401 @@ def case_a_git_that_ignores_the_config_variables_cannot_be_told_a_committable_pa
             + (f" ({len(inert)} inert on this git: {inert})" if inert else ""))
 
 
-def _dubious_ownership_env(**extra):
-    """An environment in which git treats every repository as owned by somebody
-    else -- git's own test hook, GIT_TEST_ASSUME_DIFFERENT_OWNER.
+# The uid a fixture gives a directory away to when it needs git's ownership
+# refusal for real. 65534 is `nobody` on the Linux runners, and it is the NUMBER
+# that chown writes and that git compares against geteuid(), so a machine
+# without that account still produces the refusal. Never 0: a directory owned by
+# root is one this suite could not take back.
+FOREIGN_UID = 65534
 
-    A real fixture would need a directory owned by another uid, which a test
-    suite cannot create without root. The hook short-circuits exactly the check
-    the finding is about (`ensure_valid_ownership`) and nothing else, so the
-    refusal it produces is git's real one, word for word.
 
-    Neither implementation clears the variable, and that is deliberate rather
-    than overlooked: sanitized_env() drops what says WHICH REPOSITORY answers,
-    and this says nothing about that. It is also the reason this case can drive
-    the guards through their public doors instead of a private parameter.
+class _DubiousOwnership:
+    """How THIS machine was made to produce git's `detected dubious ownership`,
+    and what every probe about it must carry.
+
+    `hook` decides both: the test-hook way needs the variable really set in the
+    environment of every git the case drives, and the real-ownership way needs
+    it really UNSET, so an inherited one cannot be what produced a refusal the
+    case is about to attribute to a uid.
     """
-    env = dict(os.environ, GIT_TEST_ASSUME_DIFFERENT_OWNER="1", **extra)
-    return env
+
+    def __init__(self, name, hook, measured):
+        self.name = name
+        self.hook = hook
+        self.measured = measured
+        # Set by _git_calls_it_dubiously_owned's `finally`, never here: the
+        # take-back happens after this object has already been yielded, so
+        # the case that receives it can carry a failed give-it-back into its
+        # own printed result instead of it being swallowed (issue #207
+        # /review round one, finding 1).
+        self.takeback_failure = None
+
+    def environ(self, **extra):
+        """kwargs for _environ(): None unsets, exactly as that helper reads it."""
+        return dict(extra,
+                    GIT_TEST_ASSUME_DIFFERENT_OWNER="1" if self.hook else None)
+
+    def subprocess_env(self, **extra):
+        """A full environment for a child process, the same way round."""
+        env = dict(os.environ, **extra)
+        if self.hook:
+            env["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1"
+        else:
+            env.pop("GIT_TEST_ASSUME_DIFFERENT_OWNER", None)
+        return env
+
+
+def _protected_safe_directories(cwd, **env):
+    """How many safe.directory entries this machine's PROTECTED configuration
+    declares, and whether one of them is the `*` that makes every path safe.
+
+    The measured answer to "why did the ownership refusal not happen", since
+    that list is consulted BEFORE the refusal is issued and an entry covering
+    the fixture's path silences it. Counts and scopes only, never the values:
+    they are paths on the operator's machine and this string is printed by a
+    run that skipped.
+    """
+    r = _raw_git(["config", "--show-scope", "-z", "--get-all", "safe.directory"],
+                 cwd, **env)
+    if r.returncode != 0:
+        return "git could not be asked which directories are declared safe"
+    fields = r.stdout.split("\0")
+    scoped = [v for s, v in zip(fields[0::2], fields[1::2])
+              if s in PE.PROTECTED_SCOPES]
+    # An empty value is git's RESET entry, and the fixture writes one itself, so
+    # it is counted apart from the declarations rather than as one of them.
+    resets = sum(1 for v in scoped if not v)
+    entries = [v for v in scoped if v]
+    return (f"protected configuration declares {len(entries)} safe.directory "
+            f"entr{'y' if len(entries) == 1 else 'ies'} "
+            f"({sum(1 for v in entries if v == '*')} of them '*') and "
+            f"{resets} reset entr{'y' if resets == 1 else 'ies'}")
+
+
+def _hand_directory_to_another_uid(path):
+    """Give `path` away to FOREIGN_UID, keeping it writable by this suite, and
+    return None -- or, where this machine will not do it, the MEASURED reason.
+
+    Order matters: the mode is widened while we still own the directory, because
+    afterwards we cannot change it. World-writable is what lets the fixture go
+    on creating files in a directory it no longer owns, and git's ownership
+    check reads st_uid and has no opinion about the mode.
+
+    This is the FALLBACK for a git that does not honour the test hook (see
+    _git_calls_it_dubiously_owned) -- root does it itself; anyone else needs
+    passwordless sudo, which some CI runner images provide and a laptop
+    generally does not. That is a statement about what this needs, not a claim
+    that any particular runner takes this path; measure that separately (see
+    _git_calls_it_dubiously_owned's docstring). `-n` so a machine whose sudo
+    wants a password says so immediately instead of waiting for a person who
+    is not there.
+    """
+    try:
+        os.chmod(path, 0o777)
+    except OSError as e:
+        return f"its mode could not be widened first ({e.strerror})"
+    if os.geteuid() == 0:
+        try:
+            os.chown(path, FOREIGN_UID, -1)
+            return None
+        except OSError as e:
+            return f"this suite runs as root and os.chown still failed ({e.strerror})"
+    try:
+        r = subprocess.run(["sudo", "-n", "chown", str(FOREIGN_UID), str(path)],
+                           capture_output=True, text=True)
+    except OSError as e:
+        return ("this suite does not run as root and sudo could not be run "
+                f"({e.strerror})")
+    if r.returncode != 0:
+        said = " ".join(r.stderr.split())[:120] or "nothing on stderr"
+        return ("this suite does not run as root and `sudo -n chown` exited "
+                f"{r.returncode}: {said}")
+    return None
+
+
+def _take_directory_back(path, mode, owner_uid=None):
+    """Undo _hand_directory_to_another_uid, and say so when it does not work.
+
+    `owner_uid` is who `path` should belong to when this returns -- always
+    this process's own euid in the real fixture, overridable so a test can
+    make this helper believe the directory is still foreign-owned without a
+    real chown to another uid, which would need root this suite does not have.
+
+    ISSUE #207 /review round one, finding 1. The ORIGINAL code restored the
+    ORIGINAL (narrow) mode unconditionally after attempting the chown-back,
+    whether or not that attempt actually gave the directory back -- and it
+    trusted `sudo`'s exit code, which is not proof: a sudoers policy can
+    permit the invocation and still not perform it. Either way, a chown-back
+    that does not take used to leave the directory foreign-owned AND narrow --
+    the opposite of world-writable, and worse than the leftover the old
+    docstring promised, because this process could then no longer write into
+    or remove it -- with no message anywhere.
+
+    So: verify the uid is really back (re-stat, never the exit code alone)
+    BEFORE narrowing the mode. On any failure -- the chown-back itself, or the
+    verification -- the mode is left WIDE (as _hand_directory_to_another_uid
+    left it) rather than narrowed onto a directory this process cannot prove
+    it owns, and the exact command and path that failed are printed to stderr
+    (a fixture's `finally` is not somewhere a caller is watching a return
+    value) and returned, so the caller can carry the failure into its own
+    printed result.
+
+    Returns None on success, or the failure message on report.
+    """
+    if owner_uid is None:
+        owner_uid = os.geteuid()
+
+    def _fail(msg):
+        full = f"_take_directory_back({str(path)!r}): {msg}"
+        print(full, file=sys.stderr)
+        return full
+
+    try:
+        current_uid = os.stat(path).st_uid
+    except OSError as e:
+        return _fail(f"could not stat it back ({e.strerror})")
+
+    if current_uid != owner_uid:
+        if os.geteuid() == 0:
+            attempted = f"os.chown({str(path)!r}, {owner_uid}, -1)"
+            try:
+                os.chown(path, owner_uid, -1)
+            except OSError as e:
+                return _fail(f"{attempted} failed ({e.strerror}); left "
+                             "foreign-owned and WORLD-WRITABLE, mode not "
+                             "narrowed")
+        else:
+            cmd = ["sudo", "-n", "chown", str(owner_uid), str(path)]
+            attempted = " ".join(cmd)
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True)
+            except OSError as e:
+                return _fail(f"`{attempted}` could not even run "
+                             f"({e.strerror}); left foreign-owned and "
+                             "WORLD-WRITABLE, mode not narrowed")
+            if r.returncode != 0:
+                said = " ".join(r.stderr.split())[:120] or "nothing on stderr"
+                return _fail(f"`{attempted}` exited {r.returncode}: {said}; "
+                             "left foreign-owned and WORLD-WRITABLE, mode not "
+                             "narrowed")
+        # The exit code is not proof by itself -- re-stat before trusting it.
+        try:
+            took = os.stat(path).st_uid == owner_uid
+        except OSError as e:
+            return _fail(f"{attempted} ran but the result could not be "
+                         f"verified ({e.strerror}); left WORLD-WRITABLE, mode "
+                         "not narrowed")
+        if not took:
+            return _fail(f"{attempted} exited 0 but did not change the "
+                         "owner; left foreign-owned and WORLD-WRITABLE, mode "
+                         "not narrowed")
+
+    try:
+        os.chmod(path, mode)
+    except OSError as e:
+        return _fail(f"the owner is back but the mode could not be restored "
+                     f"({e.strerror})")
+    return None
+
+
+def _sudo_shim(td, *, lies=False):
+    """A directory holding an executable `sudo` that intercepts `chown` and
+    refuses it, execing the real `sudo` for anything else.
+
+    `lies=True` models a sudoers policy that permits the invocation and exits
+    0 without actually changing the owner -- the exact shape the ORIGINAL
+    _take_directory_back trusted blindly, because it never looked past the
+    exit code. Otherwise the shim exits 1 with a message on stderr, modelling
+    an outright refusal (an expired sudo token, a policy that does not cover
+    this uid, ...). Either way it never really touches the filesystem, so
+    this needs no privilege to run.
+    """
+    d = pathlib.Path(td) / "sudo-shim"
+    d.mkdir()
+    real = shutil.which("sudo") or "/usr/bin/sudo"
+    if lies:
+        intercept = 'if [ "$a" = "chown" ]; then exit 0; fi\n'
+    else:
+        intercept = ('if [ "$a" = "chown" ]; then\n'
+                     '    echo "sudo: a password is required" 1>&2\n'
+                     '    exit 1\n'
+                     '  fi\n')
+    (d / "sudo").write_text(
+        "#!/bin/sh\n"
+        'for a in "$@"; do\n'
+        f'  {intercept}'
+        'done\n'
+        f'exec {shlex.quote(real)} "$@"\n')
+    (d / "sudo").chmod(0o755)
+    return d
+
+
+@case
+def case_take_directory_back_reports_a_chown_back_that_does_not_take():
+    """ISSUE #207 /review round one, finding 1. The ORIGINAL
+    _take_directory_back restored the ORIGINAL (narrow) mode unconditionally
+    after attempting the chown-back, whether or not that attempt actually gave
+    the directory back -- so a chown-back that failed left a directory this
+    process no longer owned AND could no longer write into (the opposite of
+    the world-writable leftover its own docstring promised), and reported it
+    nowhere.
+
+    Two ways the chown-back can fail to take, both manufactured here with a
+    fake `sudo` on PATH -- no real root and no second uid needed, because
+    `owner_uid=` overrides who the helper checks for, so the mismatch this
+    case is about is real without the directory's actual ownership ever
+    changing:
+
+      1. sudo refuses outright (nonzero exit) -- what a person sees when
+         their sudo token has expired or the policy does not cover this uid.
+      2. sudo exits 0 but the owner does not really change -- what a sudoers
+         policy that "permits" the command without performing it would
+         produce, and the shape the ORIGINAL code could not have caught,
+         because it trusted the exit code and never re-checked.
+
+    Both must, and this is what the fix is: (a) leave the mode UNCHANGED --
+    still wide, never narrowed onto a directory this process cannot prove it
+    owns; (b) return a message naming the path and the command that failed;
+    (c) print that same message to stderr, since a fixture's own `finally` is
+    not somewhere a caller is watching a return value.
+
+    THIS CASE FAILS ON THE ORIGINAL CODE: with the unconditional `os.chmod`
+    restored (drop the take/verify logic from _take_directory_back and go
+    back to `contextlib.suppress(OSError)` around an unchecked chown), both
+    iterations below observe the mode narrowed to 0o700 despite the chown-back
+    never taking, and the "not narrowed" assertion fails.
+    """
+    if os.geteuid() == 0:
+        raise SkipCase(
+            "this case targets the sudo branch specifically; running as root "
+            "takes _take_directory_back's os.chown branch instead, which this "
+            "fixture does not model")
+    wide, narrow = 0o777, 0o700
+    for lies, label in ((False, "sudo refuses outright"),
+                        (True, "sudo exits 0 without changing the owner")):
+        with tempfile.TemporaryDirectory() as td:
+            d = pathlib.Path(td) / "handed-away"
+            d.mkdir()
+            d.chmod(wide)
+            shim = _sudo_shim(td, lies=lies)
+            fake_owner = os.geteuid() + 1  # never real; no chown needed to prove it
+            captured = io.StringIO()
+            with _environ(PATH=f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"), \
+                 contextlib.redirect_stderr(captured):
+                result = _take_directory_back(d, narrow, owner_uid=fake_owner)
+            assert result is not None, (
+                f"{label}: a chown-back that did not take was reported as "
+                "success")
+            assert str(d) in result and "chown" in result, (
+                f"{label}: the failure message does not name the path or the "
+                f"command that failed: {result}")
+            assert stat.S_IMODE(os.stat(d).st_mode) == wide, (
+                f"{label}: the mode was narrowed even though the chown-back "
+                f"did not take -- this process may no longer own {d} and the "
+                "fix just made it unwritable too")
+            assert captured.getvalue().strip(), (
+                f"{label}: the failure was returned but never printed, so a "
+                "caller that discards the return value (a bare `finally:` "
+                "cleanup, exactly how the real fixture calls this) never "
+                "sees it")
+    return ("a chown-back that refuses outright, and one that lies with exit "
+            "0 but does not change the owner, are both reported by message "
+            "and by stderr, and neither narrows the mode onto a directory "
+            "this process can no longer prove it owns")
+
+
+@contextlib.contextmanager
+def _git_calls_it_dubiously_owned(wt, xdg):
+    """Make git refuse `wt` for OWNERSHIP, by the cheapest means this machine
+    allows, and yield which one worked -- or raise SkipCase saying what was
+    MEASURED about each one that did not.
+
+    ISSUE #207. There used to be one way, git's own test hook
+    GIT_TEST_ASSUME_DIFFERENT_OWNER, and on the CI runner the case that used it
+    skipped: the guard below ran on the maintainer's machine only, so
+    reintroducing the regression it is about would have left the build green.
+    Two ways now, tried in order, each one measured on the machine in front of
+    it rather than assumed from its name:
+
+      1. THE HOOK, which needs no privileges. It short-circuits exactly the
+         check this is about (`ensure_valid_ownership`) and nothing else, so the
+         refusal is git's real one, word for word. What it cannot do is outrank
+         the safe.directory list: an entry that already covers the path -- a `*`
+         in the machine's system configuration, say -- is consulted first and
+         the refusal never happens. That is a property of the MACHINE, so it is
+         measured here and reported, not inferred.
+      2. A REAL DIRECTORY OWNED BY ANOTHER UID, which is the thing the hook
+         stands in for. It is the FALLBACK, tried only when the hook does not
+         produce a refusal, for a git that does not honour the hook at all --
+         it needs root or passwordless sudo, available on some CI images and
+         not guaranteed on any of them. It is taken back in `finally`.
+         Measured against both implementations before it was written: with
+         `wt` handed to uid 65534 on a Linux runner's git, the module refuses
+         with git's ownership message and accepts once the operator's global
+         configuration declares the path, and stage-private-data.sh does the
+         same.
+
+    WHICH ONE RAN IS MEASURED, NEVER ASSUMED FROM A RUNNER'S NAME. On the
+    runner image this workflow uses today, git's own test hook already
+    produces the refusal (confirmed from CI's own logs, both runs of PR #291:
+    the case's printed result named the hook, not the fallback) -- so the
+    sudo/chown path exists for whichever git stops honouring the hook (a
+    future runner image, a contributor's machine), and has not been observed
+    to run in CI. Neither this docstring nor the workflow's own comment claims
+    otherwise. `yield` hands back which one worked (`.name`), and the case
+    below folds that into the string it returns, so every run's own printed
+    result -- not a comment -- says which path CI exercised that day.
+
+    `xdg` is the config home the case is about to drive its measurements
+    through, and every probe here runs with it, for the reason _raw_git's
+    docstring gives: a fixture whose potency is measured in one environment and
+    whose verdict is taken in another is measuring the wrong thing.
+    """
+    probe = ["rev-parse", "--git-common-dir"]
+    hooked = _raw_git(probe, wt, XDG_CONFIG_HOME=str(xdg),
+                      GIT_TEST_ASSUME_DIFFERENT_OWNER="1")
+    if hooked.returncode != 0 and "ownership" in hooked.stderr:
+        yield _DubiousOwnership("git's own ownership hook", True,
+                                "GIT_TEST_ASSUME_DIFFERENT_OWNER=1 makes this git "
+                                "refuse the fixture worktree")
+        return
+    hook_note = (f"GIT_TEST_ASSUME_DIFFERENT_OWNER=1 left `git rev-parse` exiting "
+                 f"{hooked.returncode} ("
+                 + _protected_safe_directories(wt, XDG_CONFIG_HOME=str(xdg)) + ")")
+
+    mode = stat.S_IMODE(os.stat(wt).st_mode)
+    why_not = _hand_directory_to_another_uid(wt)
+    if why_not is not None:
+        raise SkipCase(
+            "neither way of making git call a directory dubiously owned works on "
+            f"this machine, so the repair cannot be exercised: {hook_note}; and "
+            f"the worktree could not be given to uid {FOREIGN_UID} because "
+            f"{why_not}")
+    dubious = None
+    try:
+        owned = _raw_git(probe, wt, XDG_CONFIG_HOME=str(xdg),
+                         GIT_TEST_ASSUME_DIFFERENT_OWNER=None)
+        if owned.returncode == 0 or "ownership" not in owned.stderr:
+            raise SkipCase(
+                "neither way of making git call a directory dubiously owned works "
+                f"on this machine, so the repair cannot be exercised: {hook_note}; "
+                f"and a worktree really owned by uid {FOREIGN_UID} left `git "
+                f"rev-parse` exiting {owned.returncode} ("
+                + _protected_safe_directories(wt, XDG_CONFIG_HOME=str(xdg)) + ")")
+        dubious = _DubiousOwnership(f"a worktree really owned by uid {FOREIGN_UID}",
+                                    False,
+                                    f"{hook_note}, so the fixture gave the worktree "
+                                    f"away to uid {FOREIGN_UID} instead")
+        yield dubious
+    finally:
+        # ISSUE #207 /review round one, finding 1: a take-back that does not
+        # take must not vanish silently. _take_directory_back already prints
+        # it; fold it onto the object the case already holds (`dubious` is
+        # None only if a SkipCase fired before it was ever created, in which
+        # case there is no printed case result left to carry it into).
+        failure = _take_directory_back(wt, mode)
+        if failure is not None and dubious is not None:
+            dubious.takeback_failure = failure
 
 
 @case
@@ -2878,27 +3258,34 @@ def case_an_operators_safe_directory_is_not_taken_away_by_the_isolation():
          not_ignored. safe.directory decides whether git will read a repository,
          not what that repository ignores.
 
-    THIS CASE FAILS IF THE REPAIR IS REVERTED. Drop the retry from _git(), or
-    the `command git ... "${_GIT_AMBIENT_CONFIG[@]}"` half of the shell's
-    wrapper, and measurement 2 goes back to a refusal in that implementation
-    while every other case in this suite still passes.
+    THIS CASE FAILS IF THE REPAIR IS REVERTED. Drop the retry from _git()
+    (private_egress.py, the `if r.returncode != GIT_FATAL: return r` branch and
+    the `run(ambient)` below it), or the `command git ... "${_GIT_AMBIENT_
+    CONFIG[@]}"` half of the shell's wrapper, and measurement 2 goes back to a
+    refusal in that implementation while every other case in this suite still
+    passes.
+
+    AND IT HAS TO RUN WHERE THAT MATTERS (issue #207). The ownership refusal is
+    manufactured by _git_calls_it_dubiously_owned(), which tries git's test hook
+    and then a directory really owned by another uid, and MEASURES each on the
+    machine in front of it. The hook alone used to be the whole fixture, and on
+    the CI runner it produced no refusal and the case skipped -- so the guard ran
+    on one laptop, and the regression it is about could have shipped green. A
+    machine where neither way works still skips, but says what it measured about
+    both rather than naming a variable and leaving the reader to infer the rest.
     """
     with tempfile.TemporaryDirectory() as td:
         with _register_entries_confined_to(td), _worktree(td, "owned-elsewhere") as wt:
             root_real, wt_real = os.path.realpath(ROOT), os.path.realpath(wt)
-            # The premise: this git really does refuse here, and does not
-            # without the hook.
             plain = _raw_git(["rev-parse", "--git-common-dir"], wt)
             if plain.returncode != 0:
                 raise SkipCase("this checkout cannot answer rev-parse at all")
-            dubious = _raw_git(["rev-parse", "--git-common-dir"], wt,
-                               GIT_TEST_ASSUME_DIFFERENT_OWNER="1")
-            if dubious.returncode == 0:
-                raise SkipCase(
-                    "this git does not honour GIT_TEST_ASSUME_DIFFERENT_OWNER, so "
-                    "the ownership refusal this case is about cannot be reproduced")
-            assert "ownership" in dubious.stderr, (
-                f"the hook produced some other failure: {dubious.stderr[:200]}")
+            # The DESTINATION's own configuration file, resolved while the
+            # destination can still be asked: measurement 3 writes into it, and
+            # a git run inside a dubiously-owned worktree will not say where it
+            # is. `--local` is that file for a linked worktree too.
+            local_config = _raw_git(["rev-parse", "--git-path", "config"],
+                                    wt).stdout.strip()
 
             xdg = pathlib.Path(td) / "xdg"
             (xdg / "git").mkdir(parents=True)
@@ -2909,81 +3296,102 @@ def case_an_operators_safe_directory_is_not_taken_away_by_the_isolation():
             # worktree, and is a repository of its own to git's ownership check.
             common = PE.self_common_git_dir()
             safe = [root_real, wt_real, common, os.path.dirname(common)]
-            declared = "[safe]\n" + "".join(f"\tdirectory = {d}\n" for d in safe)
+            # A RESET first, in every spelling below. `safe.directory =` with an
+            # empty value empties the list git has read so far, which is git's
+            # own way of saying it, so an entry in the machine's system
+            # configuration -- a runner image's `*`, say -- cannot decide any of
+            # the four measurements. Written to XDG_CONFIG_HOME because that is
+            # the one route into protected configuration the module's own
+            # sanitizer leaves alone; it drops the GIT_CONFIG* family on purpose.
+            reset = "[safe]\n\tdirectory =\n"
+            declared = reset + "".join(f"\tdirectory = {d}\n" for d in safe)
             target = wt / "private" / "1-raw-data"
 
-            # 1. no entry anywhere: refused, and the refusal says why.
-            (xdg / "git" / "config").write_text("")
-            with _environ(XDG_CONFIG_HOME=str(xdg),
-                          GIT_TEST_ASSUME_DIFFERENT_OWNER="1"):
+            (xdg / "git" / "config").write_text(reset)
+            with _git_calls_it_dubiously_owned(wt, xdg) as how:
+                # 1. no entry anywhere: refused, and the refusal says why.
+                with _environ(**how.environ(XDG_CONFIG_HOME=str(xdg))):
+                    try:
+                        PE.check_destination(str(target), kind="dir")
+                    except PE.DestinationRefused as e:
+                        refusal = e
+                    else:
+                        raise AssertionError(
+                            "a repository git will not read was accepted")
+                assert "ownership" in refusal.detail, (
+                    f"the refusal [{refusal.reason}] does not name the real cause, "
+                    "so it sends the operator to the wrong remedy: "
+                    f"{refusal.detail[:300]}")
+                assert "safe.directory" in refusal.detail, (
+                    "the refusal quotes git but not the remedy git printed with "
+                    f"it: {refusal.detail[:300]}")
+
+                # 2. the operator's own declaration, in the scope git honours.
+                (xdg / "git" / "config").write_text(declared)
+                with _environ(**how.environ(XDG_CONFIG_HOME=str(xdg))):
+                    assert PE.refusal(target, kind="dir") is None, (
+                        "a worktree the operator has declared safe is still "
+                        "refused: the isolation is deleting the only scope git "
+                        "reads safe.directory from")
+                    # 4. and it moves nothing else: the ignore verdict is
+                    #    untouched.
+                    assert PE.refusal(ROOT / "data" / "leak.json", kind="file") == \
+                        "not_ignored", (
+                            "re-injecting safe.directory changed a verdict it has "
+                            "no business reaching")
+
+                # 3. the destination's OWN config must not be able to say it.
+                #    Written with `config --file`, which needs no repository:
+                #    `config --local` has to discover the destination first, and
+                #    a destination this case has just made unreadable cannot be
+                #    discovered.
+                (xdg / "git" / "config").write_text(
+                    reset + f"\tdirectory = {root_real}\n")
+                subprocess.run(["git", "config", "--file", local_config,
+                                "safe.directory", wt_real],
+                               capture_output=True, check=True)
                 try:
-                    PE.check_destination(str(target), kind="dir")
-                except PE.DestinationRefused as e:
-                    refusal = e
-                else:
-                    raise AssertionError(
-                        "a repository git will not read was accepted")
-            assert "ownership" in refusal.detail, (
-                f"the refusal [{refusal.reason}] does not name the real cause, so "
-                f"it sends the operator to the wrong remedy: {refusal.detail[:300]}")
-            assert "safe.directory" in refusal.detail, (
-                "the refusal quotes git but not the remedy git printed with it: "
-                f"{refusal.detail[:300]}")
+                    with _environ(**how.environ(XDG_CONFIG_HOME=str(xdg))):
+                        assert PE.refusal(target, kind="dir") is not None, (
+                            "a safe.directory in the DESTINATION's own .git/config "
+                            "was promoted to the command line, so a directory can "
+                            "declare itself trustworthy -- exactly what git's "
+                            "protected-scope rule for this key prevents")
+                finally:
+                    subprocess.run(["git", "config", "--file", local_config,
+                                    "--unset", "safe.directory"],
+                                   capture_output=True)
 
-            # 2. the operator's own declaration, in the scope git honours.
-            (xdg / "git" / "config").write_text(declared)
-            with _environ(XDG_CONFIG_HOME=str(xdg),
-                          GIT_TEST_ASSUME_DIFFERENT_OWNER="1"):
-                assert PE.refusal(target, kind="dir") is None, (
-                    "a worktree the operator has declared safe is still refused: "
-                    "the isolation is deleting the only scope git reads "
-                    "safe.directory from")
-                # 4. and it moves nothing else: the ignore verdict is untouched.
-                assert PE.refusal(ROOT / "data" / "leak.json", kind="file") == \
-                    "not_ignored", (
-                        "re-injecting safe.directory changed a verdict it has no "
-                        "business reaching")
+                # ... and the implementation that actually handles the archive.
+                src = _synthetic_src(td)
+                (xdg / "git" / "config").write_text(reset)
+                refused = _run_shell(src, wt, cwd=td, env=how.subprocess_env(
+                    XDG_CONFIG_HOME=str(xdg)))
+                assert refused.returncode != 0, (
+                    "stage-private-data.sh staged the archive into a repository "
+                    "its own git refuses to read")
+                assert "ownership" in refused.stderr \
+                    and "safe.directory" in refused.stderr, (
+                        "the script's refusal does not name the cause or the "
+                        f"remedy: {refused.stderr[-700:]}")
+                assert not (wt / "private" / "household.yaml").exists(), (
+                    "the guard refused and the archive was written anyway")
 
-            # 3. the destination's OWN config must not be able to say it.
-            (xdg / "git" / "config").write_text(f"[safe]\n\tdirectory = {root_real}\n")
-            subprocess.run(["git", "-C", str(wt), "config", "--local",
-                            "safe.directory", wt_real], capture_output=True, check=True)
-            with _environ(XDG_CONFIG_HOME=str(xdg),
-                          GIT_TEST_ASSUME_DIFFERENT_OWNER="1"):
-                assert PE.refusal(target, kind="dir") is not None, (
-                    "a safe.directory in the DESTINATION's own .git/config was "
-                    "promoted to the command line, so a directory can declare "
-                    "itself trustworthy -- exactly what git's protected-scope rule "
-                    "for this key prevents")
-            subprocess.run(["git", "-C", str(wt), "config", "--local",
-                            "--unset", "safe.directory"], capture_output=True)
-
-            # ... and the implementation that actually handles the archive.
-            src = _synthetic_src(td)
-            (xdg / "git" / "config").write_text("")
-            refused = _run_shell(src, wt, cwd=td, env=_dubious_ownership_env(
-                XDG_CONFIG_HOME=str(xdg)))
-            assert refused.returncode != 0, (
-                "stage-private-data.sh staged the archive into a repository its "
-                "own git refuses to read")
-            assert "ownership" in refused.stderr and "safe.directory" in refused.stderr, (
-                "the script's refusal does not name the cause or the remedy: "
-                f"{refused.stderr[-700:]}")
-            assert not (wt / "private" / "household.yaml").exists(), (
-                "the guard refused and the archive was written anyway")
-
-            (xdg / "git" / "config").write_text(declared)
-            staged = _run_shell(src, wt, cwd=td, env=_dubious_ownership_env(
-                XDG_CONFIG_HOME=str(xdg)))
-            assert staged.returncode == 0, (
-                "stage-private-data.sh refuses a worktree the operator declared "
-                f"safe: {staged.stderr[-700:]}")
-            for name in ("private/household.yaml", "private/1-raw-data/gas.csv"):
-                assert (wt / name).is_file(), f"{name} was not staged"
+                (xdg / "git" / "config").write_text(declared)
+                staged = _run_shell(src, wt, cwd=td, env=how.subprocess_env(
+                    XDG_CONFIG_HOME=str(xdg)))
+                assert staged.returncode == 0, (
+                    "stage-private-data.sh refuses a worktree the operator "
+                    f"declared safe: {staged.stderr[-700:]}")
+                for name in ("private/household.yaml", "private/1-raw-data/gas.csv"):
+                    assert (wt / name).is_file(), f"{name} was not staged"
     return ("a worktree git considers dubiously owned is refused with git's own "
             "words when the operator has not declared it safe, accepted and "
             "staged when they have, and refused again when only the destination's "
-            "own config says so -- in both implementations")
+            f"own config says so -- in both implementations, on {how.name}"
+            + (f"; WARNING -- the fixture could not give the worktree back "
+               f"afterwards: {how.takeback_failure}"
+               if how.takeback_failure else ""))
 
 
 # The MATCHING keys, and what makes each one a lever: a rule the destination
@@ -6502,6 +6910,106 @@ def _run_one_table_case(tc, td, src, dest, env, bad):
             bad.append(f"{tc.name}: the forged environment gives {py!r} when set "
                        f"in the process and {by_param!r} when passed as env=")
     return shell, py, single, kind
+
+
+# The shell's staleness refusal, quoted from stage-private-data.sh's own
+# _refuse call. Deliberately NOT in SHELL_HEADLINES: that map exists to turn a
+# shell refusal into a private_egress reason code, and this one has no code to
+# turn into -- which is the answer issue #218 settles, not a gap in the map.
+STALENESS_HEADLINE = "the destination holds staged files this source does not supply"
+
+
+@case
+def case_the_rule_does_not_ask_whether_a_destination_is_stale():
+    """ISSUE #218, answered NO and pinned here so it cannot be re-filed.
+
+    stage-private-data.sh refuses a destination holding staged files its source
+    does not supply (its DESTINATION STALENESS GUARD, issue #185). This module
+    does not, so there is one question on which the two implementations return
+    different answers on purpose -- and the table above, which asserts they
+    agree, is about the OTHER question: may private data be written here at all.
+
+    The reasoning is in private_egress.py beside the rule it scopes, because a
+    reader who finds the difference and not the reasoning files it again. The
+    short version: the shell stages one archive into a fixed layout of names and
+    its copies overlay, so a name its source does not supply is left behind and
+    read by the pipeline's globs afterwards; this module's callers write derived
+    artifacts to argument-derived destinations that legitimately hold earlier
+    output, and refusing those would refuse the ordinary correct caller.
+
+    BOTH HALVES ARE PINNED, since either alone rots. The fixture builds the
+    destination the two answer differently about and asserts each answer. The
+    docstring check asserts the recorded answer is still there, names the shell
+    it is scoped against, and names THIS case -- so deleting one leaves the
+    other failing rather than leaving a difference nobody has explained.
+    """
+    doc = PE.__doc__ or ""
+    recorded = [p for p in doc.split("\n\n") if "#218" in p]
+    assert len(recorded) == 1, (
+        f"{len(recorded)} paragraphs of private_egress.py's docstring mention "
+        "issue #218; the answer to 'should this predicate refuse a stale "
+        "destination' is recorded there, once, beside the rule it scopes")
+    answer = " ".join(recorded[0].split())
+    me = case_the_rule_does_not_ask_whether_a_destination_is_stale.__name__
+    for wanted, why in (
+            ("stale", "the recorded answer does not say what question it declines"),
+            ("stage-private-data.sh", "the recorded answer does not name the "
+                                      "implementation that DOES ask it"),
+            (me, "the recorded answer does not name the case that pins it, so a "
+                 "reader who deletes this case is not told")):
+        assert wanted in answer, f"{why}: {answer[:400]!r}"
+    stale_codes = sorted(k for k in PE.REASONS if "stale" in k)
+    assert not stale_codes, (
+        f"REASONS now defines {stale_codes}, so staleness HAS been added to the "
+        "module. Then this case is the wrong one: the answer in the docstring "
+        "and the agreement table both have to change with it (issue #218's "
+        "second acceptance criterion), rather than this fixture going on "
+        "asserting the module accepts what the shell refuses")
+
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td)
+        with _register_entries_confined_to(td), _worktree(td, "stale-dst") as wt:
+            # A destination the five rules accept in full -- a registered
+            # worktree of this checkout, which gitignores private/ -- holding
+            # two things this source does not supply: one entry in a compared
+            # subtree, and one basename under a compared glob.
+            bills = wt / "private" / "1-raw-data" / "electric-bills"
+            bills.mkdir(parents=True)
+            (bills / "2019-01-statement.pdf").write_text("an earlier stage\n")
+            (wt / "private" / "1-raw-data"
+                / "Electric_15_Minute_another_household.csv").write_text("")
+
+            res = _run_shell(src, wt, cwd=td)
+            assert res.returncode != 0, (
+                "stage-private-data.sh staged over an earlier stage's files, so "
+                "this fixture no longer builds a stale destination and the "
+                "difference this case is about is not being measured")
+            m = re.search(
+                r"stage-private-data\.sh: REFUSED -- (.*?) \(nothing was written\)",
+                res.stderr)
+            assert m and m.group(1) == STALENESS_HEADLINE, (
+                "the shell refused this destination for something other than "
+                f"staleness: {res.stderr[-500:]!r}")
+            assert STALENESS_HEADLINE not in SHELL_HEADLINES, (
+                "the staleness headline has been given a private_egress reason "
+                "code -- the agreement table would then compare the two "
+                "implementations on a question one of them does not answer")
+            assert not (wt / "private" / "household.yaml").exists(), (
+                "the shell refused and staged the archive anyway")
+
+            # ... and the same destination, over the same write set, through
+            # both of this module's public doors: accepted, because none of the
+            # five rules is about what is already there.
+            assert _python_verdict(wt, src) is None, (
+                "check_write_set() refused a destination whose only problem is "
+                "an earlier stage's files -- if that refusal is wanted, it is "
+                "issue #218's other answer and this case is not the way to add it")
+            assert PE.refusal(bills, kind="dir") is None, (
+                "check_destination() refused the subtree the leftover sits in")
+    return ("the shell refuses a stale destination and this module accepts it, "
+            "which is the recorded answer to issue #218 rather than a "
+            "disagreement -- both halves asserted, the reasoning pinned in the "
+            "module's own docstring")
 
 
 # ===========================================================================

@@ -144,6 +144,19 @@ jobs:
       # still green (measured: 33 of 48 cases pass on their own that way).
       # REQUIRED_CASES names the three that may not skip; every other skip is
       # still reported, in a banner saying what it leaves unproven.
+      # One case reaches past python for its fixture (issue #207): the
+      # safe.directory guard needs a directory git really considers dubiously
+      # owned. On the runner image this workflow uses today, git's own test
+      # hook (GIT_TEST_ASSUME_DIFFERENT_OWNER) already produces that refusal by
+      # itself -- measured from the case's own printed result each run, not
+      # assumed -- so that is the path this step actually exercises here. The
+      # fallback -- handing its own throwaway worktree to another uid with
+      # `sudo -n chown` and taking it back afterwards -- is for a git that does
+      # NOT honour the hook (a future runner image, a contributor's machine),
+      # and is why this step still asks for the runner's passwordless sudo even
+      # though the current runner has not been observed to need it. A runner
+      # with neither skips that one case, printing what it measured about both
+      # ways rather than a guess.
       - name: private-egress census and destination-guard agreement (census and agreement table must RUN, not skip)
         run: python analysis/test_private_egress.py
 

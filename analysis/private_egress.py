@@ -82,6 +82,28 @@ THE RULE, matching what stage-private-data.sh already enforces:
      is decided by the REQUIRED `kind` argument, never by a default -- see
      check_destination().
 
+AND WHAT THE RULE DOES NOT ASK (issue #218), because it was asked and answered
+rather than left open: whether what is ALREADY at the destination came from
+THIS source. stage-private-data.sh refuses a destination holding staged files
+its source does not supply -- its DESTINATION STALENESS GUARD, issue #185 --
+and this module has no equivalent. THE ANSWER IS NO, and it is a scope, not an
+omission. The five rules above decide whether private data may be written HERE,
+which is the git boundary the shell enforces too and the fixture table compares
+verdict by verdict; staleness decides whether what is here already belongs to
+somebody else, and nothing here ever claimed to answer it. The shell stages ONE
+archive into a FIXED layout of names, and its copies overlay, so a name its
+source does not supply survives the run and is read afterwards by the
+pipeline's globs -- the whole hazard #185 describes. This module's callers
+write DERIVED artifacts to argument-derived destinations: a --cache-dir whose
+purpose is to hold what an earlier run put there, a --manifest-path, a
+promote_set dest_dir. Refusing one of those for holding earlier output refuses
+the ordinary correct caller, and a guard that does that is one that gets
+switched off -- this file's own argument, applied to itself. Pinned by
+test_private_egress.case_the_rule_does_not_ask_whether_a_destination_is_stale,
+which builds the one destination the two implementations answer differently
+about and asserts BOTH answers, so the difference cannot be re-filed as a
+disagreement.
+
 WHAT IT DOES NOT DO. It does not open, create or write anything, and it does
 not wire itself into any caller: this is the predicate only. Wiring it into the
 argument-derived writers is a separate change with its own review (see
