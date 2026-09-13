@@ -433,7 +433,9 @@ committed artifact from §3.6/§3.8 results as above).
    every event ($6,757), EV-TOU-5 with the same PW3 ($3,202), TOU-DR-P with no battery and all
    events hit ($7,527). A household already on TOU-DR-P is priced the other way round — its plan
    against every other plan in the table, since nothing in the intake says which one it would
-   otherwise be on — so section 9's heading always has a rival to name. Each key names its plan
+   otherwise be on — so section 9's heading always has a rival to name: the cheapest one, the
+   same rival its adjoining standing is ranked against, off one shared minimum both readers
+   call. Each key names its plan
    and its configuration
    (`<plan> + <battery>` or `<plan> no battery`, plus an optional parenthetical note that is
    not part of the configuration; the plan is one `plan_results.csv` prices and the battery is

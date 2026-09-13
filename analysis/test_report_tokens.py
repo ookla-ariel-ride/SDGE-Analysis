@@ -5714,7 +5714,11 @@ def _wildcard_block_for(plan, event_plan, battery, priced_plans):
     """The wildcard block deep_analyses.py emits for a household on `plan`:
     every rival's battery entry, this plan's battery entry, and the event
     plan's no-battery context entry. Totals are invented and ordered so the
-    household's plan wins, which is not what this case is about."""
+    household's plan wins, which is not what this case is about; the rivals
+    are ALSO priced in ascending order (`rivals[0]` cheapest), deliberately
+    not the alphabetical one wherever `priced_plans`' own declaration order
+    differs from sorted order, so a caller that wants "the cheapest rival"
+    reads `rivals[0]`, never `sorted(rivals)[0]`."""
     rivals = ([event_plan] if plan != event_plan
               else [p for p in priced_plans if p != plan])
     totals = {}
@@ -5761,9 +5765,14 @@ def case_the_wildcard_reads_the_block_the_generator_emits_for_any_plan():
         rivals, totals = _wildcard_block_for(plan, event_plan, battery, priced_plans)
         with _stub_household({"household.plan": plan}), _wildcard_priced(totals):
             got = rt.resolve_token("WILDCARD_PLAN")
-            assert got == sorted(rivals)[0], (
+            # rivals[0] IS THE CHEAPEST (see _wildcard_block_for), and for the
+            # TOU-DR-P household this driver prices 3+ rivals whose declaration
+            # order is not alphabetical -- sorted(rivals)[0] names a different,
+            # dearer plan there. The heading names the rival the win/trail
+            # standing beside it is computed against, so it must be rivals[0].
+            assert got == rivals[0], (
                 f"a household on {plan} whose wildcard block is {sorted(totals)} got "
-                f"section 9's heading plan {got!r}, not {sorted(rivals)[0]!r}")
+                f"section 9's heading plan {got!r}, not {rivals[0]!r}, the cheapest rival")
             phrase, _standing = rt._wildcard_scenario(rt.CTX)
             named[plan] = (got, phrase)
             if plan in in_matrix:
@@ -6437,9 +6446,14 @@ def case_the_card_and_section_9s_heading_name_the_same_wildcard_plan():
                 f"{battery!r}: {heading}")
             seen[battery] = heading.strip()
 
-    # AND THE TWO READ THE SAME LIST. Both are derived from _wildcard_rivals,
-    # which is the point of the fix: the heading asks about its first entry and
-    # the card names all of them, off one parse of one artifact.
+    # AND THE HEADING NAMES THE RIVAL THE STANDING IS ABOUT, not merely one of
+    # the same list the card reads. `first` is priced MORE expensive than
+    # `last` despite sorting alphabetically first -- a workup this shape used
+    # to make WILDCARD_PLAN name `first` regardless (issue #278's review:
+    # _wildcard_plan returned `_wildcard_rivals(plan)[0]`, a bare sorted()
+    # pick with no cost in it), while _wildcard_scenario's standing was
+    # already ranked against the true cheapest, `last`. The two are unified
+    # through _wildcard_cheapest_rival now, so the heading names `last`.
     _plan, others = _wildcard_plans()
     first, last = others[0], others[-1]
     with _stub_household({"household.plan": plan}):
@@ -6447,9 +6461,18 @@ def case_the_card_and_section_9s_heading_name_the_same_wildcard_plan():
                                f"{last} + PW3": 90, f"{first} + PW3": 95}):
             rivals = rt._wildcard_rivals(plan)
             assert rivals == sorted([first, last]) and first != last, rivals
-            assert rt._wildcard_plan(rt.CTX) == rivals[0], (
-                "section 9's heading and section 0's card order the same rivals "
-                "differently")
+            assert rivals[0] == first and first != last, (
+                "this case needs the alphabetically-first rival priced dearer than "
+                f"the other so the two picks disagree: {first!r} vs {last!r}")
+            cheapest, _total = rt._wildcard_cheapest_rival(plan)
+            assert cheapest == last, (
+                f"the cheapest rival should be {last!r} (90) over {first!r} (95): "
+                f"_wildcard_cheapest_rival picked {cheapest!r}")
+            assert rt._wildcard_plan(rt.CTX) == cheapest, (
+                f"WILDCARD_PLAN names {rt._wildcard_plan(rt.CTX)!r}, the alphabetically-"
+                f"first rival, not {cheapest!r}, the cheaper rival the standing beside "
+                "it is computed against"
+            )
             phrase, _standing = rt._wildcard_scenario(rt.CTX)
             assert all(r in phrase for r in rivals), (phrase, rivals)
     return ("section 0's card and section 9's heading name the same wildcard plan for "

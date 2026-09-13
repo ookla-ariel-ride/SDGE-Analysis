@@ -2850,11 +2850,37 @@ def _wildcard_rivals(plan):
     """Every plan the wildcard workup prices OTHER than `plan`, sorted.
 
     THE SHARED FACT behind both sentences that name the wildcard: section 0's
-    card names these plans in its parenthetical and section 9's heading asks
-    whether the first of them can beat this house's plan. One list, one order,
-    so the two cannot name different plans off the same artifact.
+    card names all of these plans in its parenthetical, slash-joined in this
+    order. Section 9's heading names only one of them -- the cheapest, off
+    _wildcard_cheapest_rival, which calls this for the same list -- so the
+    card's parenthetical and the heading's single name are never built from
+    two different readings of the artifact.
     """
     return sorted(name for name in _wildcard_totals() if name != plan)
+
+
+def _wildcard_cheapest_rival(plan):
+    """(name, total) for the rival deep_results.json:wildcard prices cheapest
+    against `plan`, in the one battery configuration the block carries.
+
+    ONE MIN, taken here and nowhere else, because it used to be taken twice:
+    _wildcard_scenario's standing compared this plan's battery total against
+    `min(totals[name][battery] for name in rivals)`, and _wildcard_plan named
+    `_wildcard_rivals(plan)[0]` -- the alphabetically-first rival, from a bare
+    sorted() with no cost in it. The two agreed only when there was exactly
+    one rival to name (this household's own report). A TOU-DR-P household
+    with two or more rivals could get a heading naming a plan the standing
+    beside it was never computed against: issue #278's review built a
+    synthetic 3-rival block where the standing correctly ranked against a
+    $6,000 rival but the heading named a $9,000 one, alphabetically first and
+    nothing else. Both readers now call through here, so the heading cannot
+    name a rival other than the one the standing is a min() over.
+    """
+    totals = _wildcard_totals()
+    battery = _wildcard_battery()
+    rivals = _wildcard_rivals(plan)
+    return min(((name, totals[name][battery]) for name in rivals),
+               key=lambda pair: pair[1])
 
 
 def _wildcard_scenario(ctx):
@@ -2937,7 +2963,7 @@ def _wildcard_scenario(ctx):
     # plan was cheapest in, and those need not be the same one.
     battery = _wildcard_battery()
     mine = ours[battery]
-    theirs = min(totals[name][battery] for name in rivals)
+    _cheapest_name, theirs = _wildcard_cheapest_rival(plan)
     standing = "win" if mine < theirs else "tie" if mine == theirs else "trails"
     # SLASH-JOINED, never _join_plan_names, and this is about the CARD's
     # punctuation rather than about prose. _plan_card_label lists the scenarios
@@ -4008,9 +4034,18 @@ _tok("S4_VERDICT_SHORT", phrase=True, kind="derived", get=_s4_verdict_short,
 
 
 def _wildcard_plan(ctx):
-    """The plan section 9's wildcard heading asks about: the first of
-    _wildcard_rivals, off the same _wildcard_totals section 0's card ranks, so
-    the two read one parse of one artifact and a refusal there reaches both.
+    """The plan section 9's wildcard heading asks about: the cheapest of
+    _wildcard_rivals, off _wildcard_cheapest_rival -- the SAME min() that
+    decides _wildcard_scenario's standing, from the same _wildcard_totals
+    section 0's card ranks, so the heading cannot name a rival other than the
+    one the win/trail standing beside it was computed against.
+
+    THIS USED TO NAME _wildcard_rivals(plan)[0], the alphabetically-first
+    rival, independent of price. With exactly one rival (this household's own
+    report) that is also the cheapest one, so the two never disagreed here;
+    a TOU-DR-P household with two or more rivals could get a heading naming a
+    plan the adjoining standing was not ranked against (issue #278's review).
+    Both readers now share one min(), so they cannot diverge again.
 
     AND A DROP REACHES BOTH (issue #202). The card has an absent state -- a
     wildcard _wildcard_scenario returns None for is one scenario fewer in its
@@ -4042,7 +4077,7 @@ def _wildcard_plan(ctx):
                          "PLAN_RATES table cannot price is refused there, by name, with "
                          "the plans it does price. Otherwise a total in the block is not "
                          "a number")
-    return _wildcard_rivals(hh1("household.plan"))[0]
+    return _wildcard_cheapest_rival(hh1("household.plan"))[0]
 
 
 _tok("WILDCARD_PLAN", kind="derived", get=_wildcard_plan,
