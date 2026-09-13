@@ -1428,6 +1428,45 @@ def case_no_export_staged_is_still_the_documented_unchecked_case():
             "statement dates")
 
 
+def case_no_export_and_a_boundary_excluded_pdf_fails_closed():
+    """Issue #150's follow-on to the option-1 decision (keep the export-less publish
+    path): with NO export staged, statement_dates()'s own `outside = sorted(set(dates)
+    - seen) if seen else []` goes quiet, because `seen` is None. A PDF the committed
+    artifacts deliberately exclude under an export-DERIVED boundary — this corpus's
+    2026-08-03, recorded in data/bill_corpus_boundary.json — is then not "outside the
+    corpus on purpose" to this function; it is an unexplained `extra` against
+    data/bill_periods_electric.csv, and statement_dates() raises SystemExit.
+
+    This is not a regression #150 introduces. On main before #149 the same line read
+    `extra = sorted(set(dates) - want)` with no `outside` subtraction at all, so this
+    state failed there too. #149 fixed the case where the export IS present; this
+    case pins the export-less case exactly as it was: a committed artifact that claims
+    a boundary this run cannot check must not be read as reconciled. Requiring the
+    export (option 2) would make this state moot; keeping it (option 1, the decision
+    this issue records) means bill_decomposition.py stays fail-closed here, and the
+    remedy is to re-stage the export, not to relax the check."""
+    if not B.ELEC_DIR.exists():
+        raise SkipCase("needs the private bill PDF archive")
+    dates = {m.group(1) for m in
+             (re.search(r"(\d{4}-\d{2}-\d{2})\.pdf$", str(p))
+              for p in B.ELEC_DIR.glob("sdge_electric_*.pdf")) if m}
+    boundary = json.loads((ROOT / "data" / "bill_corpus_boundary.json").read_text())
+    excluded = {e["statement_date"] for e in boundary["excluded_statements"]}
+    on_disk_and_excluded = excluded & dates
+    if not on_disk_and_excluded:
+        raise SkipCase(
+            "fixture assumption stale: no export-excluded statement's PDF is staged "
+            "in this checkout, so removing the export cannot reproduce the "
+            "unexplained-extra SystemExit this case pins")
+    msg = _with_history_csv(None, lambda: _raises(
+        B.statement_dates,
+        "do not match the statements in", "PDFs with no artifact row",
+        sorted(on_disk_and_excluded)[0]))
+    return (f"no export staged + {sorted(on_disk_and_excluded)} on disk but excluded "
+            f"from the committed artifact -> statement_dates() fails closed instead "
+            f"of silently reconciling an unchecked corpus")
+
+
 def _printed_columns(msg):
     """The column list a corpus-boundary refusal printed, exactly as written."""
     m = re.search(r"columns \[(.*?)\]", msg)
@@ -1576,6 +1615,7 @@ CASES = [
     case_the_artifact_labels_its_confidence_and_its_limits,
     case_an_export_that_exists_but_yields_no_statement_date_fails_closed,
     case_no_export_staged_is_still_the_documented_unchecked_case,
+    case_no_export_and_a_boundary_excluded_pdf_fails_closed,
     case_the_header_only_export_diagnostic_names_the_columns_it_read,
     case_both_corpus_boundary_readers_report_the_same_columns,
     case_the_generator_reproduces_the_committed_artifact,
