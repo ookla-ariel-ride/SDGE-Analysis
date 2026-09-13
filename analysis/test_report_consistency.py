@@ -4882,6 +4882,7 @@ def case_the_s2_verdict_locator_tolerates_inline_markup():
 # or quietly passing. Nothing here is gated as a whole.
 # ---------------------------------------------------------------------------
 TEMPLATE_HTML = (ROOT / "report-template.html").read_text()
+CLAUDE_MD = (ROOT / "CLAUDE.md").read_text()
 
 _SECTION_H2_RE = re.compile(r'<h2 id="([^"]+)"[^>]*>(.*?)</h2>', re.S)
 _TEMPLATE_VERDICT_TOKEN_RE = re.compile(r"\{\{[A-Z0-9_]*VERDICT[A-Z0-9_]*\}\}")
@@ -6554,6 +6555,78 @@ def case_template_fixed_prose_lines_all_appear_in_the_published_page():
     return _fixed_prose_gate(TEMPLATE_HTML, HTML)
 
 
+# ---------------------------------------------------------------------------
+# ISSUE #199: THE TOU PALETTE'S RANKING-SCALE REUSE IS A NAMED, CLOSED LIST.
+#
+# CLAUDE.md section 10 sanctions the TOU tokens (--sop/--offpeak/--onpeak)
+# doing double duty as a good/neutral/bad ranking scale, and names the exact
+# selectors that use them that way. Naming a closed list is only worth
+# anything if nothing can drift off it silently, so this pins the list both
+# directions: every ranking-tinted selector in report-template.html must be
+# named in CLAUDE.md, and every selector CLAUDE.md names must still exist in
+# report-template.html. A new ranking-tinted component (or a retired one) now
+# has to update the rule in the same change instead of leaving the list stale.
+_CLAUDE_MD_RANKING_BLOCK_RE = re.compile(
+    r"Sanctioned second use.*?(?=\n- Signature element:)", re.S)
+
+
+def _claude_md_ranking_selectors():
+    m = _CLAUDE_MD_RANKING_BLOCK_RE.search(CLAUDE_MD)
+    assert m, (
+        "CLAUDE.md section 10 no longer has the 'Sanctioned second use -- "
+        "ranking scale' bullet issue #199 added (or its wording changed "
+        "enough that this pin's anchor regex no longer finds it) -- "
+        "re-anchor this pin, don't delete it")
+    block = m.group(0)
+    selectors = {tok.strip() for raw in re.findall(r"`([^`]+)`", block)
+                 for tok in re.split(r"[,/]", raw)
+                 if tok.strip().startswith(("tr.", ".pill."))}
+    assert selectors, (
+        "CLAUDE.md section 10's ranking-scale bullet named no tr./.pill. "
+        "selectors -- the backtick list format changed; update this pin's "
+        "parser to match")
+    return selectors
+
+
+_TR_RANKING_RULE_RE = re.compile(
+    r"([.\w,\s-]+?)\s*td\{background:color-mix\(in srgb,var\(--(?:sop|offpeak|onpeak)\)")
+_PILL_RANKING_RULE_RE = re.compile(
+    r"(\.pill\.\w+)\{color:var\(--(?:sop|offpeak|onpeak)\)")
+
+
+def _template_ranking_selectors():
+    selectors = set()
+    for sel_list in _TR_RANKING_RULE_RE.findall(TEMPLATE_HTML):
+        for sel in sel_list.split(","):
+            sel = sel.strip().split()[0] if sel.strip() else ""
+            if sel:
+                selectors.add(sel)
+    selectors.update(_PILL_RANKING_RULE_RE.findall(TEMPLATE_HTML))
+    assert selectors, (
+        "report-template.html's tr.win/tr.tie/tr.trails/.pill ranking rules "
+        "were not found by this pin's regex -- the CSS shape changed; "
+        "update the pin, don't just widen it")
+    return selectors
+
+
+def case_ranking_scale_selectors_match_claude_md():
+    claude_selectors = _claude_md_ranking_selectors()
+    template_selectors = _template_ranking_selectors()
+    missing_from_claude = template_selectors - claude_selectors
+    missing_from_template = claude_selectors - template_selectors
+    assert not missing_from_claude, (
+        f"report-template.html tints {sorted(missing_from_claude)} with a "
+        "ranking color (--sop/--offpeak/--onpeak reused as good/neutral/bad) "
+        "but CLAUDE.md section 10's sanctioned list does not name them -- "
+        "add the new component to the rule (issue #199)")
+    assert not missing_from_template, (
+        f"CLAUDE.md section 10 names {sorted(missing_from_template)} as "
+        "ranking-scale selectors but report-template.html no longer has "
+        "them -- update the rule to match the retired markup")
+    return (f"{len(claude_selectors)} ranking-scale selectors agree between "
+            "CLAUDE.md section 10 and report-template.html")
+
+
 # The section-7 one-pipeline sentence, read OUT of the template instead of
 # typed into the mutation table below.
 #
@@ -7401,6 +7474,7 @@ CASES = [
     case_every_on_peak_bracket_on_the_page_is_the_rates_one,
     case_glossary_figures_match_the_artifacts_that_derive_them,
     case_template_fixed_prose_lines_all_appear_in_the_published_page,
+    case_ranking_scale_selectors_match_claude_md,
     case_live_template_markup_never_names_a_free_fix_the_household_lacks,
     case_the_free_fix_naming_guard_rejects_the_claims_it_exists_to_catch,
     case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch,

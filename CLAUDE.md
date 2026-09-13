@@ -330,6 +330,25 @@ Mono data — with system fallbacks).
 - SEMANTIC TOU palette, used consistently everywhere (CSS tokens → chart palette via JS):
   on-peak #BF3B2B · off-peak #C98A3D · super-off-peak #2E7D6B · solar #E9B62F. A period's
   color is the same in the day-band, every chart series, tables, and the price map.
+- **Sanctioned second use — ranking scale (issue #199):** the same three tokens (excluding
+  solar) also serve as a good/neutral/bad ranking scale wherever a component ranks options
+  rather than labels a TOU period: sop-green = wins/best, off-peak-amber = tie/middle or
+  trails-in-one-column, on-peak-red = trails/worst. This is sanctioned reuse, stated once
+  here rather than forbidden, for one reason: one palette, and the reader already learned
+  from the day-band which color means expensive. Every ranking component uses it this way,
+  and a new one joins the list rather than inventing a fourth color:
+  - `tr.win`, `tr.tie-win`, `tr.tie`, `tr.s3-tie` — sop-green (wins or ties)
+  - `tr.trails-win`, `tr.trails-tie` — off-peak-amber (trails in one column only)
+  - `tr.trails`, `tr.s3-trails` — on-peak-red (trails outright)
+  - `.pill.g` / `.pill.y` / `.pill.r` — the same measured/modeled/estimated confidence scale
+    as the "Evidence pills" bullet below, not a TOU label
+  `report-template.html` carries all of the above; a given household's `index.html` renders
+  only the classes its own data triggers (a household with no tied or trailing plan emits
+  none of the tie or trails row classes above) — that is a data difference, not a drift
+  between the files.
+  Dark-theme tokens carry both meanings automatically: ranking components reference the same
+  `--sop`/`--offpeak`/`--onpeak` custom properties as the TOU day-band, so redefining a token
+  under `[data-theme="dark"]` changes both roles together with no separate dark rule needed.
 - Signature element: the DAY-BAND — pure-CSS 24-h TOU strip (segments at the tariff's TOU
   boundaries — 0-6-10-14-16-21 for this household's EV-TOU-5) with tick marks and prices,
   full-width under the header; keep it on every regeneration.
