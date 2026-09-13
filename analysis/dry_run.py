@@ -33,27 +33,76 @@ HOW A SANDBOX CAN CONTAIN A GENERATOR AT ALL
     so a malformed sandbox produces a non-zero exit -- reported here as a
     FAILURE -- instead of silently finding the real data/.
 
+    This containment is PATH DERIVATION, not an OS-enforced boundary (issue
+    #151). The generator runs as an ordinary subprocess, with the caller's own
+    filesystem permissions, so the argument above only covers the two idioms
+    this codebase actually uses -- a script that writes to an absolute path, or
+    to a path built from an environment variable, is not bound by either and
+    could write anywhere the user can write. dry_run.py hashes the real data/
+    and stat-manifests private/ before and after every run specifically to
+    DETECT that (test_dry_run.py proves the checkout's own data/ and private/
+    survive a real run byte-for-byte); it does not and cannot PREVENT it, and
+    no `sandbox-exec`/container/namespace layer stands between the generator
+    and the rest of the filesystem. dry_run.py runs this repository's own
+    generators as a development aid. It is not a sandbox for untrusted code,
+    and must never be described or relied on as one. The owner decision on
+    #151 was to document this limit rather than build the OS-enforced
+    boundary that would close it.
+
 WHAT IS NEVER TOUCHED
     The real data/ is only ever read (hashed before the run, hashed again after,
     and any difference is a loud failure). private/ is likewise only ever read:
-    the whole archive is COPIED into the sandbox (19 MB / ~800 files, about
-    0.2 s against a 1800 s timeout) and the generator sees only that disposable
-    copy, which lives under the 0700 temp dir and is removed by dispose(). The
-    copy dereferences symlinks, so nothing inside the sandbox is a path back out
-    to the real archive -- including the cwd fixtures (usage.csv, samA.csv,
-    samB.csv), which are copied in rather than linked for the same reason, and
-    including tracked symlinks, which are seeded by copying their target's
-    CONTENT rather than by recreating the link (a tracked symlink with an
-    absolute or escaping target would otherwise be a writable path out of the
-    sandbox that neither guard sees: hash_tree() skips symlinks and
-    stat_manifest() records the link instead of following it). A tracked symlink
-    that cannot be dereferenced -- dangling, or pointing at a directory -- is a
-    DryRunError, not a skip. A
+    the whole archive, MINUS any top-level `private/verify*` directory, is
+    COPIED into the sandbox and the generator sees only that disposable copy
+    (measured 2026-09-12 on this project's primary checkout: ~222 MB / ~6,135
+    files before the verify*-skip below, about 2 s against the 1800 s timeout
+    -- both figures are checkout-specific and will differ on any other clone,
+    which is why they carry the date they were taken rather than standing as a
+    promise). The copy lives under the 0700 temp dir and is removed by
+    dispose(). The copy dereferences symlinks, so nothing inside the sandbox is
+    a path back out to the real archive -- including the cwd fixtures
+    (usage.csv, samA.csv, samB.csv), which are copied in rather than linked for
+    the same reason, and including tracked symlinks, which are seeded by
+    copying their target's CONTENT rather than by recreating the link (a
+    tracked symlink with an absolute or escaping target would otherwise be a
+    writable path out of the sandbox that neither guard sees: hash_tree() skips
+    symlinks and stat_manifest() records the link instead of following it). A
+    tracked symlink that cannot be dereferenced -- dangling, or pointing at a
+    directory -- is a DryRunError, not a skip. A
     generator that writes under private/ therefore truncates a throwaway file,
     and the write is reported like any other sandbox write. private/ is still
     stat-manifested before and after the run: that check is no longer the only
     defence against a write reaching the archive, it is the proof that none
     did.
+
+    Every top-level `private/verify*` directory is skipped by this copy
+    (issue #158 AC2), never nested into the sandbox's own private/. No
+    generator reads it there: the documented workflow (CLAUDE.md's Commands)
+    runs a generator WITH ITS CWD SET TO private/verify/, reading usage.csv,
+    samA.csv and samB.csv as plain relative paths, which is exactly what
+    _copy_cwd_fixtures() reproduces by staging those three files straight into
+    the sandbox root from the real private/verify/ -- never through the nested
+    private/ copy this function makes. A private/verify/ nested three levels
+    down (sandbox/private/verify/...) is therefore dead weight: on the
+    checkout measured above it was ~13% of the archive by size (2.5 MB of 19
+    MB) in a fresh worktree, and on a long-lived checkout where old
+    `private/verify-*` scratch trees from past debugging sessions accumulate
+    at the top level of private/ -- ordinary and expected, since nothing
+    removes them -- it was over half (roughly 113 MB of 222 MB, ten such
+    directories, measured the same day). Against that: test_dry_run.py alone
+    builds dozens of sandboxes in one run, so a skip this size is a real
+    saving, not a rounding error, and skipping cannot silently mislead a
+    generator that goes looking for it -- see the next paragraph. The
+    trade-off this weighs is that saving against a generator that might
+    someday read a NESTED private/verify/ path (sandbox/private/verify/x,
+    as opposed to the CWD fixture) inside its own dry run; no generator in
+    analysis/ does today, and one that started would fail closed exactly
+    the way a generator hitting any other missing input already does: the
+    open() raises FileNotFoundError naming the missing path, the subprocess
+    exits non-zero, and dry_run.py reports that as a FAILURE, never as "no
+    changes" -- proven by
+    case_a_generator_reading_the_nested_private_verify_copy_fails_closed in
+    test_dry_run.py.
 
 SILENT NO-OPS ARE FAILURES, NOT "NO CHANGES"
     A dry-run tool that reports "nothing would change" because the generator
@@ -132,7 +181,7 @@ _LOCK_CONTENTION_ERRNOS = frozenset((errno.EWOULDBLOCK, errno.EAGAIN))
 # the OWNING sandbox's marker instead, and they are removed only alongside an
 # owner the sweep has already claimed. Kept as one constant so the creator
 # (dry_run()) and the sweep cannot drift apart.
-COMPARISON_SUFFIXES = ("-baseline", "-head")
+COMPARISON_SUFFIXES = ("-baseline", "-head", "-index")
 # Inputs the documented private/verify sandbox stages next to the scripts; the
 # generators look for them in the CWD, not under data/.
 CWD_FIXTURES = ("usage.csv", "samA.csv", "samB.csv")
@@ -223,8 +272,8 @@ def hash_tree(root):
 def stat_manifest(root):
     """{relative posix path: (size, mtime_ns)} -- a cheap tamper check.
 
-    Used on private/, where hashing 19 MB of archive on every run would be waste
-    but a write still has to be detectable. Symlinks are recorded by their
+    Used on private/, where hashing the whole copied archive on every run would
+    be waste but a write still has to be detectable. Symlinks are recorded by their
     target, not followed, so the walk cannot wander outside `root`.
     """
     root = pathlib.Path(root)
@@ -439,7 +488,8 @@ class Sandbox:
         return self
 
     def _copy_private(self):
-        """Copy the whole private/ archive into the sandbox.
+        """Copy the private/ archive into the sandbox, minus any top-level
+        `private/verify*` directory.
 
         A symlink here would be a writable path from the sandbox straight into
         the authoritative raw archive: a generator with a stray write under
@@ -448,6 +498,17 @@ class Sandbox:
         the generator gets a disposable copy instead. symlinks=False matters --
         it dereferences, so a checkout that stages bill PDFs as symlinks does not
         smuggle a route back out into the sandbox.
+
+        The verify*-skip is issue #158 AC2's decision: no generator reads a
+        NESTED private/verify/ path inside the sandbox (see the module
+        docstring's WHAT IS NEVER TOUCHED section for the measurement and the
+        trade-off), only the three CWD fixtures _copy_cwd_fixtures() already
+        stages from the real private/verify/ directly. Matched against
+        `verify*`, not just `verify`, because a checkout accumulates
+        `private/verify-<name>` scratch trees from past ad hoc runs (the
+        CLAUDE.md workflow only names plain `private/verify`, but nothing
+        removes the others), and every one of them is equally unread by any
+        generator running inside this sandbox.
         """
         real = self.root / "private"
         if not real.is_dir():
@@ -458,16 +519,30 @@ class Sandbox:
                 "failure, not as 'no changes'.")
             return
         dst = self.path / "private"
+        skipped = sorted(p.name for p in real.iterdir()
+                         if p.is_dir() and p.name.startswith("verify"))
+
+        def _ignore_verify(dirpath, names):
+            if pathlib.Path(dirpath) != real:
+                return []
+            return [n for n in names if n.startswith("verify")]
+
         t0 = time.time()
         try:
             shutil.copytree(real, dst, symlinks=False,
-                            ignore_dangling_symlinks=True)
+                            ignore_dangling_symlinks=True,
+                            ignore=_ignore_verify)
         except (OSError, shutil.Error) as e:
             # Fail closed. Falling back to a symlink would silently restore the
             # very write path this copy exists to remove.
             raise DryRunError(f"could not copy private/ into the sandbox: {e}")
-        self.notes.append(f"private/ copied (not symlinked) from {real} -- the "
-                          f"generator sees a disposable copy ({time.time() - t0:.1f}s)")
+        note = (f"private/ copied (not symlinked) from {real} -- the "
+               f"generator sees a disposable copy ({time.time() - t0:.1f}s)")
+        if skipped:
+            note += ("; skipped top-level " + ", ".join(skipped)
+                     + " (private/verify* is not read by any generator inside "
+                       "the sandbox -- see _copy_private's docstring)")
+        self.notes.append(note)
 
     def _copy_cwd_fixtures(self):
         """Stage the CWD inputs the same way, and for the same reason: a
@@ -1054,12 +1129,14 @@ def gitignored(root, relpaths):
     return {ln.strip() for ln in r.stdout.splitlines() if ln.strip()}
 
 
-def head_data_dir(root, dest):
-    """Materialise data/ as of HEAD into `dest` (used by --baseline head)."""
-    r = subprocess.run(["git", "-C", str(root), "archive", "--format=tar", "HEAD", "--", "data"],
+def _archive_treeish_data(root, treeish, dest):
+    """Materialise the `data/` subtree of `treeish` (a commit or a tree object)
+    into `dest`. Shared by head_data_dir() and index_data_dir() -- the two
+    differ only in WHICH tree they name, never in how it is extracted."""
+    r = subprocess.run(["git", "-C", str(root), "archive", "--format=tar", treeish, "--", "data"],
                        capture_output=True)
     if r.returncode != 0:
-        raise DryRunError("git archive HEAD -- data failed: "
+        raise DryRunError(f"git archive {treeish} -- data failed: "
                           + r.stderr.decode("utf-8", "replace").strip()[:300])
     dest = pathlib.Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
@@ -1074,6 +1151,31 @@ def head_data_dir(root, dest):
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(tf.extractfile(m).read())
     return dest
+
+
+def head_data_dir(root, dest):
+    """Materialise data/ as of HEAD into `dest` (used by --baseline head)."""
+    return _archive_treeish_data(root, "HEAD", dest)
+
+
+def index_data_dir(root, dest):
+    """Materialise data/ as currently STAGED into `dest` (used by --baseline
+    index).
+
+    `git write-tree` writes a tree object for the index exactly as it stands --
+    a read-only introspection query, it touches neither the working tree nor
+    the index -- and archiving that tree with a `data` pathspec extracts
+    precisely what the section 9 gate's `git diff --exit-code data/...` (no
+    ref: working tree vs the INDEX) compares the working tree against. `head`
+    is a different comparison: it is HEAD, not the index, and the two diverge
+    the moment a regenerated artifact is `git add`ed but not yet committed
+    (issue #158 AC4) -- `index` is the one that matches the gate exactly.
+    """
+    r = subprocess.run(["git", "-C", str(root), "write-tree"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise DryRunError("git write-tree failed: " + (r.stderr or "").strip()[:300])
+    return _archive_treeish_data(root, r.stdout.strip(), dest)
 
 
 # ---------------------------------------------------------------------------
@@ -1109,7 +1211,7 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
 
     Teardown is part of the result: failing to remove the sandbox sets
     rep.failure (it holds the copied private/ archive), while failing to remove
-    the -baseline/-head copy of data/ is only a warning on stderr. With
+    the -baseline/-head/-index copy of data/ is only a warning on stderr. With
     keep_sandbox the sandbox is left on purpose and neither applies.
     """
     rep = DryRunReport()
@@ -1128,13 +1230,14 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
     sb = Sandbox(root)
     try:
         # The generator itself may be untracked (a brand-new script), and under the
-        # worktree baseline so may artifacts under data/. `head` is deliberately
-        # excluded: it is defined against HEAD, where an untracked working-tree file
-        # legitimately has no counterpart, and seeding one there would put it in the
-        # sandbox but not in the HEAD baseline -- inventing an addition the generator
-        # never made (issue #152).
+        # worktree baseline so may artifacts under data/. `head` and `index` are
+        # deliberately excluded: each is defined against a committed-or-staged
+        # tree, where an untracked working-tree file legitimately has no
+        # counterpart, and seeding one there would put it in the sandbox but not
+        # in that baseline -- inventing an addition the generator never made
+        # (issue #152).
         extra = [rel]
-        if baseline != "head":
+        if baseline == "worktree":
             extra += untracked_data_files(root)
         sb.build(extra_files=extra)
         rep.sandbox_path = sb.path
@@ -1144,6 +1247,8 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
         # suffixes here and the teardown/sweep that clean them up must agree.
         if baseline == "head":
             base_dir = head_data_dir(root, sb.path.parent / (sb.path.name + "-head"))
+        elif baseline == "index":
+            base_dir = index_data_dir(root, sb.path.parent / (sb.path.name + "-index"))
         else:
             base_dir = sb.path.parent / (sb.path.name + "-baseline")
             shutil.copytree(sb.path / "data", base_dir)
@@ -1222,7 +1327,8 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
                   "error to read.", file=sys.stderr)
         else:
             # Two INDEPENDENT cleanups, deliberately asymmetric. The
-            # -baseline/-head copies hold nothing but committed data/ artifacts,
+            # -baseline/-head/-index copies hold nothing but committed or staged
+            # data/ artifacts,
             # so a leftover is untidy and gets a warning. The sandbox itself
             # holds the whole copied private/ archive -- raw bills, the Green
             # Button export, household.yaml -- so a leftover is a dry-run
@@ -1384,8 +1490,10 @@ def main(argv=None):
     ap.add_argument("generator", help="path to a generator, e.g. analysis/parse_bills.py")
     ap.add_argument("--check", action="store_true",
                     help="exit 1 if any artifact would change (for the section 9 gate)")
-    ap.add_argument("--baseline", choices=("worktree", "head"), default="worktree",
-                    help="compare against data/ as it is on disk (default) or as of HEAD")
+    ap.add_argument("--baseline", choices=("worktree", "head", "index"), default="worktree",
+                    help="compare against data/ as it is on disk (default), as of HEAD, "
+                        "or as currently staged (index -- matches the section 9 gate's "
+                        "`git diff --exit-code` exactly)")
     ap.add_argument("--keep-sandbox", action="store_true",
                     help="leave the sandbox on disk and print its path")
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
@@ -1406,8 +1514,9 @@ def main(argv=None):
         # every other failure. Letting it propagate would exit 1, which is
         # --check's "an artifact would change" -- so a tool that ran out of disk
         # copying the sandbox would be read by a gate as a stale artifact. The
-        # copies this makes (the tracked tree, 19 MB of private/, a second data/)
-        # make OSError a realistic way to get here, not a theoretical one.
+        # copies this makes (the tracked tree, the whole copied private/, a
+        # second data/) make OSError a realistic way to get here, not a
+        # theoretical one.
         traceback.print_exc()
         print(f"dry run FAILED: {e.__class__.__name__}: {e}", file=sys.stderr)
         return 2
