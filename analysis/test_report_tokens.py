@@ -5759,11 +5759,21 @@ def case_the_wildcard_reads_the_block_the_generator_emits_for_any_plan():
         f"data/plan_results.csv does not carry ({sorted(known)}); _wildcard_totals "
         "refuses those keys by name")
     in_matrix = set(rt._json("battery_plan_matrix.json")["plans"])
+    # S0_BEST_PLAN_CARD reads household.cca (through _generation_provider_short)
+    # to pick which of plan_results.csv's provider columns to rank against, and
+    # _stub_household only patches the path it is given -- household.plan here,
+    # not household.cca -- so an unpatched read falls through to the real
+    # accessor and raises "missing private/household.yaml" on a runner with no
+    # archive (this case is meant to run on exactly that runner). _stub_plan
+    # patches both, with the provider _plan_ranking_inputs already resolves the
+    # same way every other ungated case here does: the household's own when the
+    # archive is staged, the committed CSV's first provider column otherwise.
+    provider, _cheapest, _rows = _plan_ranking_inputs()
 
     named = {}
     for plan in priced_plans:
         rivals, totals = _wildcard_block_for(plan, event_plan, battery, priced_plans)
-        with _stub_household({"household.plan": plan}), _wildcard_priced(totals):
+        with _stub_plan(plan, provider), _wildcard_priced(totals):
             got = rt.resolve_token("WILDCARD_PLAN")
             # rivals[0] IS THE CHEAPEST (see _wildcard_block_for), and for the
             # TOU-DR-P household this driver prices 3+ rivals whose declaration
