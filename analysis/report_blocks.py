@@ -659,8 +659,13 @@ def _s12_control_year_rows():
         if not pre or not post:
             continue    # incomplete calendar window this control year -- skip, don't fabricate
         pre_m, post_m = _median(pre), _median(post)
+        # :.3f, not a bare round(..., 3): round() drops a trailing zero
+        # (round(0.9403, 3) == 0.94, printed "0.94"), so this column and
+        # CLEANED_RATIO's own cell above it -- both the SAME post/pre ratio
+        # statistic -- printed at two different, unstable precisions
+        # (issue #276's sweep).
         out.append(f"<tr><td>{yr} (no cleaning)</td><td>{pre_m:.1f}</td>"
-                   f"<td>{post_m:.1f}</td><td>{round(post_m / pre_m, 3)}</td></tr>")
+                   f"<td>{post_m:.1f}</td><td>{post_m / pre_m:.3f}</td></tr>")
     return "\n".join(out)
 
 

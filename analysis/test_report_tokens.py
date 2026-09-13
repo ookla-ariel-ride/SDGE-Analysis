@@ -17444,7 +17444,11 @@ def case_a_degenerate_cleaning_window_is_a_named_refusal_not_a_bare_error():
                         f"{token} rendered {rendered!r} on {label} -- a production level "
                         "a gain cannot be measured against must be refused by name")
 
-    assert healthy["CLEANED_RATIO"] == "1.10", healthy
+    # :.3f, matching CLEANED_RATIO's fmt="num3" (issue #276): the token's own
+    # value is round(post / pre, 3), and the control-year rows beside it
+    # (report_blocks._s12_control_year_rows) print the same statistic to
+    # three decimals too.
+    assert healthy["CLEANED_RATIO"] == "1.100", healthy
     for (label, token), message in refusals.items():
         assert token in message, f"{label}: the refusal does not name {token}: {message}"
         assert "cleaning_study_daily.csv" in message, (

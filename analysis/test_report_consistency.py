@@ -2755,12 +2755,192 @@ def case_cleaning_heading_and_gain_describe_the_same_event():
             f"§12's windows row rendered {rendered['CLEANED_PRE_MEDIAN']}/"
             f"{rendered['CLEANED_POST_MEDIAN']} kWh/day, but the 30-day medians around "
             f"the {measured} cleaning are {pre:,.1f}/{post:,.1f}")
-    assert rendered["CLEANED_RATIO"] == f"{round(post / pre, 3):,.2f}", (
+    # :,.3f, matching CLEANED_RATIO's own fmt="num3" (issue #276): the value is
+    # already round(post / pre, 3), and a two-decimal fmt here printed the same
+    # windows-table ratio column at a different precision than the control-year
+    # rows beside it (report_blocks._s12_control_year_rows, which prints three).
+    assert rendered["CLEANED_RATIO"] == f"{round(post / pre, 3):,.3f}", (
         f"CLEANED_RATIO rendered {rendered['CLEANED_RATIO']!r} against a hand-computed "
         f"{round(post / pre, 3)} around the measured cleaning")
     return (f"with the measured cleaning second in cleaning_history, §12's heading names "
             f"{rendered['CLEANING_DATE']} ({rendered['CLEANING_PRICE']}) and states "
             f"{rendered['CLEANING_EFFECT_PCT']} -- one event")
+
+
+def _report_blocks():
+    """report_blocks, importable with no private archive -- the same pattern
+    _report_tokens() uses one function up."""
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import report_blocks as rb
+    return rb
+
+
+# The §12 windows-table row that names THIS household's own measured cleaning
+# (as opposed to case_cleaning_heading_and_gain_describe_the_same_event's
+# synthetic history above): the one template line with four {{CLEANED_*}}/
+# {{CLEANING_*}} tokens in it, rendered against the real archive.
+_CLEANED_RATIO_ROW_RE = re.compile(
+    r"<tr class=\"win\"><td>\{\{CLEANING_YEAR\}\} — cleaned \{\{CLEANING_DATE_SHORT\}\}"
+    r"</td><td>\{\{CLEANED_PRE_MEDIAN\}\}</td><td>\{\{CLEANED_POST_MEDIAN\}\}</td>"
+    r"<td><b>\{\{CLEANED_RATIO\}\}</b></td></tr>")
+
+
+def case_cleaned_ratio_row_is_the_templates_row_rendered():
+    """issue #276: CLEANED_RATIO used to render at fmt="num2" (two decimals,
+    "1.05") while the control-year rows beside it in the SAME column
+    (report_blocks._s12_control_year_rows) print three ("0.922"), so one
+    table column carried the same statistic at two precisions and the page's
+    own "1.051" matched neither token render exactly. Fixed by giving
+    CLEANED_RATIO fmt="num3" -- this pins the whole windows-table row (all
+    four tokens) as the template renders it today, verbatim in index.html, so
+    a precision regression on any one of them fails here instead of only in
+    the synthetic-history case above. The only survivable failure is a
+    checkout without the private archive."""
+    m = _CLEANED_RATIO_ROW_RE.search(TEMPLATE_HTML)
+    assert m, ("report-template.html's §12 windows-table row for the measured "
+               "cleaning year was not found by this pin's regex -- the row's "
+               "markup changed; re-anchor the pin")
+    line = m.group(0)
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    rt = _report_tokens()
+    try:
+        rendered = re.sub(r"\{\{([A-Z0-9_]+)\}\}",
+                          lambda mo: rt.resolve_token(mo.group(1)), line)
+    except BaseException as e:                    # noqa: BLE001 - archive-gated
+        assert _missing_archive_exit(e, archive, loader), (
+            f"the §12 windows-table row could not be rendered, and NOT because this "
+            f"checkout lacks the private archive (present: {archive}): "
+            f"{type(e).__name__}: {e}")
+        return ("§12's windows-table row not rendered: this checkout has no private "
+                f"archive ({e})")
+    assert rendered in HTML, (
+        f"index.html's §12 windows-table row for the measured cleaning year is not the "
+        f"template's row rendered:\n  template renders: {rendered}\n"
+        "the row's four CLEANED_*/CLEANING_* tokens have to match the page exactly, "
+        "precision included")
+    return f"index.html's §12 measured-cleaning-year row is the template row rendered verbatim: {rendered}"
+
+
+def case_control_year_rows_render_the_generators_no_cleaning_label():
+    """issue #276: the page's control-year rows read "2021" while
+    report_blocks._s12_control_year_rows -- the "data" builder s12#2 that
+    actually fills them (a mechanical loop, not a {{TOKEN}}) -- has always
+    labelled them "2021 (no cleaning)". The table's own header ("Year") never
+    states that these rows exclude the cleaning year, so the generator's
+    label is the more informative one and the page has to adopt it verbatim,
+    rather than the generator dropping it. Also pins the ratio cell at three
+    decimals (fixed alongside CLEANED_RATIO's own precision -- round(x, 3)
+    prints a bare "0.94" for 2025's ratio unless the cell formats to :.3f).
+    Archive-gated: s12#2 reads private/household.yaml's cleaning_history."""
+    rb = _report_blocks()
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    try:
+        rows = rb.DATA_BUILDERS["s12#2"]()
+    except BaseException as e:                    # noqa: BLE001 - archive-gated
+        assert _missing_archive_exit(e, archive, loader), (
+            f"s12#2's control-year rows could not build, and NOT because this checkout "
+            f"lacks the private archive (present: {archive}): {type(e).__name__}: {e}")
+        return f"s12#2 not built: this checkout has no private archive ({e})"
+    assert rows, "s12#2 (control-year rows) built no rows against the real archive"
+    for row in rows.splitlines():
+        assert row in HTML, (
+            f"index.html is missing (or has drifted from) a §12 control-year row "
+            f"s12#2 builds today: {row!r}")
+    return f"index.html's §12 control-year rows are s12#2's builder output verbatim ({len(rows.splitlines())} rows)"
+
+
+# The §12 <summary> teaser line: {{SEC12_TEASER}} followed immediately by the
+# s12#1 TODO comment, which CLASSIFICATION marks vestigial (report_blocks.
+# DATA_BUILDERS["s12#1"] always resolves it to "") because the token already
+# states the section's full conclusion. Both holes have to be filled to get
+# the line generate_report.py actually publishes.
+_SEC12_TEASER_LINE_RE = re.compile(
+    r'<span class="teaser">\{\{SEC12_TEASER\}\}<!--.*?--></span>', re.S)
+
+
+def case_sec12_teaser_is_rendered_verbatim():
+    """issue #276: SEC12_TEASER used to render only "the {date} cleaning
+    measured a {gain}% production gain" -- half of section 12's own
+    conclusion -- while index.html's <summary> teaser stated a full verdict
+    sentence (the gain AND whether a routine cleaning still pays for itself).
+    CLAUDE.md section 10 requires a <summary> teaser to carry the section's
+    whole one-line conclusion, so the token was extended to state both halves
+    (built from the same cadence-model figures CLEANING_SINGLE_VALUE_RANGE
+    already publishes) and the page now has to carry exactly what it renders.
+    Archive-gated like the other §12 template-line pins above."""
+    m = _SEC12_TEASER_LINE_RE.search(TEMPLATE_HTML)
+    assert m, ("report-template.html's §12 <summary> teaser line was not found by "
+               "this pin's regex -- its markup changed; re-anchor the pin")
+    line = m.group(0)
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    rt = _report_tokens()
+    rb = _report_blocks()
+    try:
+        rendered = line.replace("{{SEC12_TEASER}}", rt.resolve_token("SEC12_TEASER"))
+        rendered = re.sub(r"<!--.*?-->", rb.DATA_BUILDERS["s12#1"](), rendered, flags=re.S)
+    except BaseException as e:                     # noqa: BLE001 - archive-gated
+        assert _missing_archive_exit(e, archive, loader), (
+            f"the §12 teaser line could not be rendered, and NOT because this checkout "
+            f"lacks the private archive (present: {archive}): {type(e).__name__}: {e}")
+        return f"§12's teaser line not rendered: this checkout has no private archive ({e})"
+    assert rendered in HTML, (
+        f"index.html's §12 <summary> teaser is not the template's teaser line rendered:\n"
+        f"  template renders: {rendered}\n"
+        "a <summary> teaser has to carry the section's whole conclusion, not a fragment")
+    return f"index.html's §12 teaser is SEC12_TEASER rendered verbatim: {rendered}"
+
+
+_CHART_TITLE_PERIODS_LINE_RE = re.compile(
+    r"options:\{indexAxis:'y',plugins:\{title:\{display:true,text:'\{\{CHART_TITLE_PERIODS\}\}',"
+    r"color:PAL\.ink\}\}\}\}\);")
+
+
+def case_chart_title_periods_matches_its_token():
+    """Found by a separate review of the same file family as issue #276: the
+    §5 periods chart's title read "17% of the energy causes ~42% of gross
+    import cost -- the on-peak problem in one picture" while CHART_TITLE_
+    PERIODS renders "17% of imports happen on-peak, driving 42% of gross
+    import cost" from the SAME report_data.json figures -- a paraphrase that
+    had drifted off the token's own current wording.
+
+    This line lives inside a <script> block, which
+    case_template_fixed_prose_lines_all_appear_in_the_published_page's fixed-
+    prose gate strips out entirely before it ever looks for drift (see that
+    gate's own _FIXED_PROSE_SCRIPT_STYLE_RE) -- so a chart-title token can
+    drift with nothing else in this suite catching it. This is a direct pin
+    on that one line instead."""
+    m = _CHART_TITLE_PERIODS_LINE_RE.search(TEMPLATE_HTML)
+    assert m, ("report-template.html's periods-chart title line was not found by "
+               "this pin's regex -- its markup changed; re-anchor the pin")
+    line = m.group(0)
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    rt = _report_tokens()
+    try:
+        rendered = line.replace("{{CHART_TITLE_PERIODS}}", rt.resolve_token("CHART_TITLE_PERIODS"))
+    except BaseException as e:                    # noqa: BLE001 - archive-gated
+        assert _missing_archive_exit(e, archive, loader), (
+            f"the periods-chart title could not be rendered, and NOT because this "
+            f"checkout lacks the private archive (present: {archive}): "
+            f"{type(e).__name__}: {e}")
+        return f"periods-chart title not rendered: this checkout has no private archive ({e})"
+    assert rendered in HTML, (
+        f"index.html's periods chart title is not CHART_TITLE_PERIODS rendered:\n"
+        f"  template renders: {rendered}\n"
+        "the chart title has to match the token's current render, not an old paraphrase")
+    return f"index.html's periods chart title is CHART_TITLE_PERIODS rendered verbatim: {rendered}"
 
 
 def case_cleaning_gain_is_not_determined_when_no_entry_matches():
@@ -7446,6 +7626,10 @@ CASES = [
     case_cleaning_effect_heading_matches_the_sections_own_conclusion,
     case_cleaning_heading_is_the_templates_h3_line_rendered,
     case_cleaning_heading_and_gain_describe_the_same_event,
+    case_cleaned_ratio_row_is_the_templates_row_rendered,
+    case_control_year_rows_render_the_generators_no_cleaning_label,
+    case_sec12_teaser_is_rendered_verbatim,
+    case_chart_title_periods_matches_its_token,
     case_cleaning_gain_is_not_determined_when_no_entry_matches,
     case_cleaning_gain_follows_the_artifacts_own_not_determined_status,
     case_cleaning_gain_is_not_determined_when_two_entries_share_the_date,
