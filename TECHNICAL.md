@@ -1362,8 +1362,9 @@ that charge threshold, not independently fit, so it carries no separate free par
 battery charging (Run A's own solar-charging displaces 832.2 kg/yr of exports, Run C's only
 627.2), so ranking policies on gross import CO₂ alone drops that difference and can
 invert which policy is cleaner for the atmosphere: on gross import alone Run C reads cleaner
-than Run B (4,826.4 vs 4,917.9 kg), but net accounting (import minus that policy's own
-export-avoided) reverses it. Every comparison below is therefore
+than Run B (4,941.7 vs 4,979.2 kg, `policies.C_union.import_co2_kg` against
+`policies.B_carbon_min.import_co2_kg`), but net accounting (import minus that policy's own
+export-avoided) reverses it (`net_co2_kg` 4,314.6 against 4,243.1). Every comparison below is therefore
 net; gross import and gross export-avoided are still reported per policy in the artifact as a
 breakdown.
 
@@ -2326,9 +2327,13 @@ ordinary centered difference when `h0 == h1`, and `analysis/test_battery_sizing_
 checks it against a known quadratic `f(x) = x²` on a deliberately asymmetric grid, where
 it is exact. Result: energy elasticity 0.45 current-behavior / 0.37 post-behavior vs power
 elasticity 0.0023 / ~0. Energy is far more sensitive at this reference point in both
-scenarios (the secant formula gives 0.56/0.48 vs 0.0025/−0.0001, with the same qualitative
-conclusion: capacity, not discharge rate, is what this house's load shape responds to near
-the reference configuration), and both sweeps' `save_usd` at the shared reference point
+scenarios, and a plain secant between the flanking grid points puts the two dimensions in
+the same order, so the qualitative conclusion does not depend on which formula is used:
+capacity is what this house's load shape responds to near the reference configuration. No
+secant figure is quoted here. `battery_sizing_curve.py` computes and commits only the
+unequal-spacing derivative above, so a secant value in this paragraph would have nothing
+in `data/` behind it (CLAUDE.md section 0); the published elasticities the rest of this
+paragraph cites are the artifact's own. Both sweeps' `save_usd` at the shared reference point
 are asserted equal to the float epsilon, since they describe the identical 13.5 kWh/11.5
 kW configuration.
 
