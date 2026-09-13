@@ -13907,20 +13907,32 @@ class _seam_stand_in_household:
                       for r in rt._csv_rows("cleaning_study_daily.csv"))
         # THE PRECONDITION CHECKED HERE HAS TO BE THE ONE THE SELECTION BELOW
         # DEPENDS ON (issue #161). The selection picks the series' MEDIAN
-        # INDEX; the property _cleaning_window_medians actually needs is >= 30
-        # days on EACH SIDE of that specific day. Those two agree only while
-        # the series is contiguous -- an overall-span check (what this used to
-        # assert) can pass on a series with a gap, while the median-INDEX day
-        # still sits within 30 days of one end of it. Checked against the
-        # chosen day itself, not the series' endpoints, so a future gap in
-        # data/cleaning_study_daily.csv fails HERE, by name, instead of
-        # surfacing as an unrelated resolve_token SystemExit out of one of the
-        # cleaning tokens three functions away.
+        # INDEX; report_tokens._cleaning_window_medians' own precondition is
+        # "at least one dated row in [chosen-30, chosen) AND at least one in
+        # (chosen, chosen+30]" (its `pre`/`post` filters, checked with
+        # `if not pre or not post: raise`) -- NOT a day-count margin against
+        # anything. Round 1 of this fix checked
+        # "(chosen - days[0]).days >= 30 and (days[-1] - chosen).days >= 30",
+        # which is a margin against the series' GLOBAL first/last day and is
+        # still only a PROXY for what the consumer needs: it can hold with
+        # ZERO rows actually inside either 30-day window. Counterexample (a
+        # `/review` finding on PR #297): ten rows on days 0-9, one isolated
+        # row on day 200, ten rows on days 400-409. The proxy passes (chosen =
+        # day 200 is 200 days from day 0 and 209 from day 409, both >= 30)
+        # while _cleaning_window_medians raises its own SystemExit, because
+        # neither [day170, day200) nor (day200, day230] contains a single
+        # row -- the exact misdirected failure #161 exists to prevent. So the
+        # windows are read directly here, mirroring the consumer's own filter
+        # exactly rather than approximating it with an endpoint margin.
         chosen = days[len(days) // 2]
-        assert (chosen - days[0]).days >= 30 and (days[-1] - chosen).days >= 30, (
-            f"data/cleaning_study_daily.csv's median-index day {chosen} has fewer "
-            f"than 30 days on one side of it (series runs {days[0]} to {days[-1]}), "
-            "so this stand-in cleaning date has no full 30-day window on both sides")
+        pre = [d for d in days if chosen - dt.timedelta(days=30) <= d < chosen]
+        post = [d for d in days if chosen < d <= chosen + dt.timedelta(days=30)]
+        assert pre and post, (
+            f"data/cleaning_study_daily.csv's median-index day {chosen} has no "
+            f"dated row in the 30 days before it and/or the 30 days after it "
+            f"({len(pre)} pre-row(s), {len(post)} post-row(s)) -- the exact window "
+            "report_tokens._cleaning_window_medians reads, and the same shape it "
+            "would refuse this stand-in on")
         node["cleaning_history"] = [{"date": chosen, "cost_usd": 150}]
         # The provenance answers (issue #135). household.example.yaml leaves the
         # two review fields null ON PURPOSE -- "nobody reviewed this" is the
@@ -13999,59 +14011,120 @@ class _seam_stand_in_household:
             spec["get"] = old
 
 
-@case
-def case_stand_in_cleaning_date_precondition_checks_days_either_side_not_span():
-    """ISSUE #161. _seam_stand_in_household.__enter__ SELECTS the cleaning
-    date by the series' MEDIAN INDEX, but used to VALIDATE the series' overall
-    SPAN -- two properties that agree only while the series is contiguous. A
-    two-cluster series can clear a 60-day overall span while its median-INDEX
-    day sits within 30 days of the far cluster's own end, which is exactly
-    the shape data/cleaning_study_daily.csv could take on with a gap. This
-    fixture is built to do exactly that: five days at the start, five more
-    starting on day 65, a 69-day overall span (clears the OLD >= 60 check),
-    and a median-index day (the sixth, day 65) with only 4 days to its right
-    (fails the >= 30 EITHER SIDE the cleaning tokens actually need).
-
-    Reverting the fix restores the old span-only assert, which lets this
-    fixture's __enter__ succeed instead of refusing -- and this case fails on
-    the missing AssertionError rather than merely producing a different
-    message, so it cannot pass for the wrong reason."""
-    start = dt.date(2024, 1, 1)
-    days = ([start + dt.timedelta(days=i) for i in range(5)] +
-            [start + dt.timedelta(days=65 + i) for i in range(5)])
-    assert (days[-1] - days[0]).days >= 60, (
-        "fixture no longer clears the OLD overall-span check -- adjust the gap")
-    chosen = days[len(days) // 2]
-    assert (days[-1] - chosen).days < 30, (
-        "fixture's median-index day no longer starves its own right-hand side -- "
-        "adjust the cluster sizes")
+def _seam_stand_in_household_refusal(days):
+    """Enter _seam_stand_in_household over a synthetic cleaning_study_daily.csv
+    built from `days` (a list of dates), returning the AssertionError it
+    raised (or None). Nothing on disk is touched -- the real committed rows
+    are cached and restored."""
     rows = [{"date": d.strftime("%Y%m%d")} for d in days]
     key = "cleaning_study_daily.csv"
     original = rt._csv_rows(key)   # warms the cache and gives us the real rows back
     rt._csv_cache[key] = rows
     try:
-        raised = None
         try:
             with _seam_stand_in_household():
                 pass
         except AssertionError as e:
-            raised = e
-        assert raised is not None, (
-            "_seam_stand_in_household built a household off a gapped series whose "
-            "median-index cleaning date has fewer than 30 days on one side of it, "
-            "and did not refuse")
-        msg = str(raised)
-        assert "30 days on one side" in msg, (
-            f"the precondition failure does not name the days-either-side property "
-            f"the date selection actually depends on: {msg}")
-        assert "spans fewer than 60 days" not in msg, (
-            f"the precondition still validates the series' overall SPAN rather than "
-            f"the days either side of the chosen date: {msg}")
+            return e
+        return None
     finally:
         rt._csv_cache[key] = original
-    return ("_seam_stand_in_household's cleaning-date precondition checks days "
-            "either side of the chosen date and fires, by its own named message, "
-            "on a gapped series that clears the old 60-day span check")
+
+
+@case
+def case_stand_in_cleaning_date_precondition_checks_days_either_side_not_span():
+    """ISSUE #161. _seam_stand_in_household.__enter__ SELECTS the cleaning
+    date by the series' MEDIAN INDEX, and report_tokens._cleaning_window_medians
+    -- the real consumer -- needs at least one dated row in [chosen-30, chosen)
+    AND at least one in (chosen, chosen+30] (its own `pre`/`post` filters,
+    refused with `if not pre or not post: raise`). Round 1 of this fix checked
+    a DAY-MARGIN against the series' GLOBAL first/last day instead, which is
+    only a PROXY for that: it can hold with ZERO rows inside either window.
+
+    SCENARIO 1 is a two-cluster gap round 1's own proxy already caught: five
+    days at the start, five more starting on day 65 -- a 69-day overall span
+    (clears an even older >= 60 overall-span check) and a median-index day
+    (day 65) with only 4 days to its right (fails round 1's >= 30 EITHER SIDE
+    margin, and also has an empty PRE window under the real, round-2 check --
+    see the assertion below).
+
+    SCENARIO 2 is `/review`'s counterexample against PR #297, the shape round
+    1's margin proxy could not see: ten rows on days 0-9, one ISOLATED row on
+    day 200, ten rows on days 400-409. The median-index day is that isolated
+    day 200 -- 200 days from day 0 and 209 days from day 409, so round 1's
+    margin check (reproduced inline below, not through __enter__, so this case
+    can show it passing) says fine on both sides, while NEITHER the pre-window
+    [day170, day200) nor the post-window (day200, day230] contains a single
+    row. report_tokens._cleaning_window_medians would raise its own SystemExit
+    on this household -- the exact misdirected failure #161 exists to
+    prevent -- so the precondition must catch it here, by its own name,
+    instead.
+
+    Reverting the round-2 fix (back to the round-1 margin-only assert) makes
+    scenario 2 fail on the missing AssertionError -- checked directly here by
+    hand, not only inferred from the docstring -- and reverting either
+    scenario's fix to no assert at all fails BOTH on the missing
+    AssertionError, so this case cannot pass for the wrong reason."""
+    # --- Scenario 1: the two-cluster gap round 1 already caught -----------
+    start = dt.date(2024, 1, 1)
+    days = ([start + dt.timedelta(days=i) for i in range(5)] +
+            [start + dt.timedelta(days=65 + i) for i in range(5)])
+    chosen = days[len(days) // 2]
+    assert chosen == start + dt.timedelta(days=65), (
+        f"fixture's median index no longer lands on day 65: {chosen}")
+    pre = [d for d in days if chosen - dt.timedelta(days=30) <= d < chosen]
+    assert not pre, (
+        "fixture's chosen day no longer has an empty PRE window -- adjust the gap")
+    raised = _seam_stand_in_household_refusal(days)
+    assert raised is not None, (
+        "_seam_stand_in_household built a household off a gapped series whose "
+        "median-index cleaning date has an empty 30-day window on one side, and "
+        "did not refuse")
+    msg = str(raised)
+    assert "no dated row in the 30 days" in msg, (
+        f"the precondition failure does not name the actual missing rows in the "
+        f"30-day windows _cleaning_window_medians reads: {msg}")
+    assert "spans fewer than 60 days" not in msg, (
+        f"the precondition still validates the series' overall SPAN rather than "
+        f"the rows in the windows around the chosen date: {msg}")
+
+    # --- Scenario 2: /review's counterexample (round 2, PR #297) ----------
+    # An isolated median-index day, far enough from BOTH endpoints that a
+    # day-margin check against them says fine, while neither 30-day window
+    # around it holds a single row.
+    days2 = ([start + dt.timedelta(days=i) for i in range(10)] +
+             [start + dt.timedelta(days=200)] +
+             [start + dt.timedelta(days=400 + i) for i in range(10)])
+    chosen2 = days2[len(days2) // 2]
+    assert chosen2 == start + dt.timedelta(days=200), (
+        f"fixture's median index no longer lands on the isolated day-200 row: {chosen2}")
+    # THE ROUND-1 PROXY, reproduced directly (not through __enter__) to prove
+    # it is blind to this shape before checking that the real fix is not.
+    proxy_ok = ((chosen2 - days2[0]).days >= 30 and (days2[-1] - chosen2).days >= 30)
+    assert proxy_ok, (
+        "round 1's day-margin proxy no longer passes on this fixture, so it can "
+        "no longer demonstrate the gap round 2 closes -- adjust the fixture")
+    pre2 = [d for d in days2 if chosen2 - dt.timedelta(days=30) <= d < chosen2]
+    post2 = [d for d in days2 if chosen2 < d <= chosen2 + dt.timedelta(days=30)]
+    assert not pre2 and not post2, (
+        "fixture's isolated day no longer starves BOTH its 30-day windows -- "
+        "adjust the gap sizes")
+    raised2 = _seam_stand_in_household_refusal(days2)
+    assert raised2 is not None, (
+        "_seam_stand_in_household built a household off a series whose "
+        "median-index day is isolated -- no dated row in either 30-day window "
+        "around it -- and did not refuse; a day-margin check against the series' "
+        "global endpoints cannot see this shape, only a direct read of the "
+        "windows _cleaning_window_medians reads can")
+    msg2 = str(raised2)
+    assert "no dated row in the 30 days" in msg2, (
+        f"the precondition failure does not name the actual missing rows in the "
+        f"30-day windows: {msg2}")
+    return ("_seam_stand_in_household's cleaning-date precondition reads the exact "
+            "pre/post windows report_tokens._cleaning_window_medians reads, and "
+            "refuses, by its own named message, on both a two-cluster gap (round 1) "
+            "and an isolated median-index day that a global-endpoint margin check "
+            "cannot see (round 2, /review's counterexample against PR #297)")
 
 
 def _seam_values():
