@@ -3954,13 +3954,16 @@ Prose that quotes the published spread must say the removal is partly unsupplied
 $289-323 as a range the metered load supplies repeats the error these fields exist to
 expose, and `marginal_range.note` states the same limitation on the artifact itself.
 
-The general linear-fit slope inherits the same dilution:
-`usd_per_100w_general_average.value_usd` ($303.76) fits the whole 100-1,200 W ladder and
-is pulled down hardest by the rungs above the floor, while `reachable_slope_usd` ($310.86)
-fits the 100-1,000 W rungs alone and is still pulled down by their own clamping.
-`linearity_note` carries both max deviations from the fit ($73.89, 2.03% of savings at
-1,200 W across the full ladder; $25.85, 0.83% at 1,000 W over the reachable rungs). Both
-bound curvature in the same sense as above: a bucket sign flip inside the tested range
+The general linear-fit slope inherits the same dilution, and issue #264 requires every fit
+that spans rungs the floor cannot supply to say so in its own name, not just in a shared
+note: `usd_per_100w_general_average.value_usd` ($310.86) fits the 100-1,000 W reachable
+rungs alone and is still pulled down by their own clamping, while
+`usd_per_100w_full_ladder_average.value_usd` ($303.76) fits the whole 100-1,200 W ladder
+and is pulled down hardest by the 1,100 W and 1,200 W rungs that exceed the measured
+floor. `linearity_note` carries the reachable-only max deviation ($25.85, 0.83% of savings
+at 1,000 W); `linearity_note_full_ladder` carries the same figure across the full ladder
+($73.89, 2.03% of savings at 1,200 W). Both pairs bound curvature in the same sense as
+above: a bucket sign flip inside the tested range
 would show up as nonlinearity here, but so does dropped energy, and so does the drifting
 import/export channel mix. Dividing each rung's saving by its `marginal_delivery_ratio`
 separates out the dropped energy and nothing else; the channel mix survives that division
