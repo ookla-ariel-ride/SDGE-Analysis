@@ -78,10 +78,15 @@ Methodology, acceptance-criterion by acceptance-criterion (issue #17):
 
 4. Sensitivity in $/yr per 100 W. `sensitivity_per_100w` re-bills (method b)
    at every 100 W step from 100 W to MAX_REDUCTION_W and reports both the
-   marginal $/100W AT the currently-measured floor level and the GENERAL
-   average slope across the whole tested range (a linear fit), stating which
-   is which -- the two agree closely only if the removal stays inside a TOU/
-   netting regime the buckets do not flip across (see `linearity_note`).
+   marginal $/100W AT the currently-measured floor level and a GENERAL
+   average slope (a linear fit), stating which is which -- the two agree
+   closely only if the removal stays inside a TOU/netting regime the buckets
+   do not flip across (see `linearity_note`). `usd_per_100w_general_average`
+   and `linearity_note` fit and report deviation over the REACHABLE rungs
+   only (at or below the measured floor); the identical fit over every rung,
+   including the ones that ask for more than the floor holds, is published
+   separately, under names that say so, as `usd_per_100w_full_ladder_average`
+   and `linearity_note_full_ladder` (issue #264).
    The ladder's `reduction_w` axis counts WATTS REMOVED from the measured
    floor, not a resulting floor LEVEL, so the rate AT the measured floor is
    the FIRST rung (the next 100 W this household could strip), not the rung
@@ -956,12 +961,25 @@ def sensitivity_per_100w(d, consumption, generation, floor_kw_measured):
     bracket the floor with headroom, so the fix is to MEASURE and PUBLISH the
     delivery rather than to shorten the ladder: every step carries
     `exceeds_measured_floor` plus its own `requested_kwh`/`delivered_kwh`/
-    `dropped_kwh`/`marginal_delivery_ratio`, `marginal_range` reports the
+    `dropped_kwh`/`marginal_delivery_ratio`, and `marginal_range` reports the
     reachable and full-ladder spreads separately WITH the reachable range's own
-    worst delivery ratio, and `linearity_note` gives the deviation for both
-    ranges and says which mechanism it reflects. Every delivery figure is
-    measured off `_split_floor`'s own return values: no unclamped counterfactual
-    is constructed, and no energy that was never metered is credited."""
+    worst delivery ratio.
+
+    ISSUE #264: NO PUBLISHED FIT MAY MIX REMOVAL THE FLOOR CANNOT SUPPLY INTO A
+    FIGURE THAT DOES NOT SAY SO. `usd_per_100w_general_average` and
+    `linearity_note` fit and report deviation over the REACHABLE rungs only
+    (at or below the measured floor); the identical fit and deviation over
+    every rung, including the ones that ask for more than the floor holds,
+    are published separately as `usd_per_100w_full_ladder_average` and
+    `linearity_note_full_ladder`, whose names and notes say exactly which
+    rungs they span and how many of those rungs exceed the measured floor.
+    Neither pair is a stand-in for the other; both are always present (the
+    full-ladder pair over all `STEP_W`-`MAX_REDUCTION_W` W rungs, always
+    computable; the reachable pair `null`/degraded exactly when `reachable`
+    itself is, per the same null-not-omitted contract as `marginal_range`).
+    Every delivery figure is measured off `_split_floor`'s own return values:
+    no unclamped counterfactual is constructed, and no energy that was never
+    metered is credited."""
     steps = []
     prev_savings = 0.0
     prev_delivered_kwh = 0.0
@@ -1005,6 +1023,13 @@ def sensitivity_per_100w(d, consumption, generation, floor_kw_measured):
     # naming a rung that the very same step's `exceeds_measured_floor` flag
     # declared unreachable. That self-contradiction is now emitted as an explicit
     # null instead (see the marginal_range note).
+    # Issue #264: the rungs above the measured floor, named explicitly so every
+    # full-ladder field can say in its own note exactly which rungs it spans
+    # and how many exceed the floor, rather than leaving that to a reader who
+    # has to cross-reference `steps` themselves.
+    above_floor_ws = [s["reduction_w"] for s in steps if s["exceeds_measured_floor"]]
+    above_floor_list = ", ".join(f"{w} W" for w in above_floor_ws)
+
     reachable = [s for s in steps if not s["exceeds_measured_floor"]]
     r_ws = np.array([s["reduction_w"] for s in reachable], dtype=float)
     r_savings = np.array([s["annual_savings_usd"] for s in reachable])
@@ -1014,22 +1039,55 @@ def sensitivity_per_100w(d, consumption, generation, floor_kw_measured):
         r_max_dev = float(np.max(np.abs(r_savings - r_fit)))
         r_max_dev_pct = round(100.0 * r_max_dev / r_savings[-1], 2) if r_savings[-1] else 0.0
         reachable_slope_usd = round(float(r_slope) * 100, 2)
-        reachable_linearity = (f"over the reachable {STEP_W}-{int(r_ws[-1])} W rungs alone "
-                              f"the max deviation is ${r_max_dev:.2f} ({r_max_dev_pct}% of "
-                              f"savings at {int(r_ws[-1])} W), which is predominantly the "
-                              "same clamping -- the reachable rungs are clamped too (the "
-                              "clamp is per interval, the floor is a median), so read that "
-                              "deviation as incomplete delivery, not as residual tariff "
-                              "nonlinearity")
+        general_average_note = (
+            f"linear-fit slope over the reachable {STEP_W}-{int(r_ws[-1])} W "
+            f"rungs only -- the rungs at or below the measured floor "
+            f"({measured_floor_w} W) -- a general marginal rate for removal "
+            "the floor can actually supply, not specific to the current floor "
+            "level. Lower dilution than the full ladder, NOT zero dilution: "
+            "the clamp is per interval and the measured floor is a median, so "
+            "reachable rungs drop energy too (see "
+            "marginal_range.reachable.min_marginal_delivery_ratio). See "
+            "usd_per_100w_full_ladder_average for the identical fit over "
+            f"every rung, including the {len(above_floor_ws)} ({above_floor_list}) "
+            "that exceed the measured floor.")
+        linearity_note = (
+            f"max deviation from the linear fit is ${r_max_dev:.2f} "
+            f"({r_max_dev_pct}% of savings at {int(r_ws[-1])} W) across the "
+            f"reachable {STEP_W}-{int(r_ws[-1])} W rungs alone -- " +
+            ("effectively linear over this range" if r_max_dev_pct < 2
+             else "measurably nonlinear") +
+            ". Read that as a DELIVERY effect, not curvature: the reachable "
+            "rungs are clamped too (the clamp is per interval, the floor is a "
+            "median), so read the deviation as incomplete delivery, not "
+            "residual tariff nonlinearity. See linearity_note_full_ladder for "
+            f"the same reading across every {STEP_W}-{MAX_REDUCTION_W} W rung, "
+            f"including the {len(above_floor_ws)} ({above_floor_list}) that "
+            "exceed the measured floor.")
     elif len(reachable) == 1:
         reachable_slope_usd = None
-        reachable_linearity = ("the reachable range holds a single rung, so it "
-                              "admits no linear fit and no deviation figure")
+        general_average_note = (
+            "the reachable range holds a single rung, so it admits no linear "
+            "fit; value_usd is null (present, not omitted). See "
+            "usd_per_100w_full_ladder_average for the fit over the full "
+            "ladder.")
+        linearity_note = (
+            "the reachable range holds a single rung, so it admits no linear "
+            "fit and no deviation figure; this field is null (present, not "
+            "omitted). See linearity_note_full_ladder for the deviation over "
+            "the full ladder.")
     else:
         reachable_slope_usd = None
-        reachable_linearity = (f"no rung sits at or below the measured floor "
-                              f"({measured_floor_w} W), so there is no reachable "
-                              "range to fit and marginal_range.reachable is null")
+        general_average_note = (
+            f"no rung sits at or below the measured floor ({measured_floor_w} "
+            "W), so there is no reachable range to fit; value_usd is null "
+            "(present, not omitted). See usd_per_100w_full_ladder_average for "
+            "the fit over the full ladder.")
+        linearity_note = (
+            f"no rung sits at or below the measured floor ({measured_floor_w} "
+            "W), so there is no reachable range to fit; this field is null "
+            "(present, not omitted). See linearity_note_full_ladder for the "
+            "deviation over the full ladder.")
 
     at_floor = steps[0]
     f_lo = min(steps, key=lambda s: s["marginal_usd_per_100w"])
@@ -1120,32 +1178,37 @@ def sensitivity_per_100w(d, consumption, generation, floor_kw_measured):
                     "the most diluted figure in this section."),
         },
         "usd_per_100w_general_average": {
-            "value_usd": round(float(slope) * 100, 2),
-            "reachable_slope_usd": reachable_slope_usd,
-            "note": (f"linear-fit slope across the full {STEP_W}-{MAX_REDUCTION_W} W "
-                    "range -- a general marginal rate, not specific to the "
-                    "current floor level. This fit spans rungs that exceed the "
-                    f"measured floor ({measured_floor_w} W), where _split_floor "
-                    "drops the energy the metered load cannot supply, so the "
-                    "value is pulled DOWN by rungs the household cannot reach. "
-                    "reachable_slope_usd is the same fit over the reachable "
-                    "rungs only -- lower dilution, NOT zero dilution: the "
-                    "clamp is per interval and the measured floor is a median, "
-                    "so reachable rungs drop energy too (see "
-                    "marginal_range.reachable.min_marginal_delivery_ratio)."),
+            "value_usd": reachable_slope_usd,
+            "note": general_average_note,
         },
-        "linearity_note": (
+        "usd_per_100w_full_ladder_average": {
+            "value_usd": round(float(slope) * 100, 2),
+            "note": (f"linear-fit slope across the full {STEP_W}-{MAX_REDUCTION_W} W "
+                    "ladder, all twelve rungs -- a general marginal rate, not "
+                    "specific to the current floor level. This fit spans "
+                    f"{len(above_floor_ws)} rung(s) ({above_floor_list}) that "
+                    f"exceed the measured floor ({measured_floor_w} W), where "
+                    "_split_floor drops the energy the metered load cannot "
+                    "supply, so this value is pulled DOWN by rungs the "
+                    "household cannot reach. See usd_per_100w_general_average "
+                    "for the identical fit restricted to the reachable rungs "
+                    "alone."),
+        },
+        "linearity_note": linearity_note,
+        "linearity_note_full_ladder": (
             f"max deviation from the linear fit is ${max_dev:.2f} "
             f"({max_dev_pct}% of total savings at {MAX_REDUCTION_W} W) across the "
-            f"full {STEP_W}-{MAX_REDUCTION_W} W ladder -- " +
+            f"full {STEP_W}-{MAX_REDUCTION_W} W ladder, all twelve rungs, "
+            f"including {len(above_floor_ws)} ({above_floor_list}) that exceed "
+            f"the measured floor ({measured_floor_w} W) -- " +
             ("effectively linear over this range" if max_dev_pct < 2
              else "measurably nonlinear") +
             f". Read that as a DELIVERY effect, not curvature: the full-ladder "
             f"figure includes rungs above the measured floor ({measured_floor_w} "
             "W), whose marginals are diluted by energy _split_floor drops, and "
             "the rungs below the floor are diluted the same way for the same "
-            "reason (per-interval clamp, median floor); " +
-            reachable_linearity + "."),
+            "reason (per-interval clamp, median floor). See linearity_note for "
+            "the same reading restricted to the reachable rungs alone."),
     }
 
 

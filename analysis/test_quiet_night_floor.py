@@ -544,8 +544,10 @@ def case_published_sensitivity_rate_is_pinned_to_the_step_it_is_drawn_from():
         # the reachable fit is published beside the full-ladder one, so a reader
         # is never left with only the figure the unreachable rungs pull down.
         # It is null when one rung cannot be fitted, which is a different fact
-        # from "absent", so None is allowed and a string is not.
-        slope = sens["usd_per_100w_general_average"]["reachable_slope_usd"]
+        # from "absent", so None is allowed and a string is not (issue #264:
+        # usd_per_100w_general_average IS the reachable-only fit now; the
+        # full-ladder fit moved to usd_per_100w_full_ladder_average).
+        slope = sens["usd_per_100w_general_average"]["value_usd"]
         assert slope is None or isinstance(slope, (int, float)), slope
 
     # (4) the flag is exactly the arithmetic it stands for
@@ -717,6 +719,100 @@ def case_every_rung_publishes_the_delivery_it_actually_achieved():
             f"{steps[-1]['marginal_delivery_ratio']}, {dropped_total:,.0f} kWh dropped "
             f"across the ladder), and marginal_range.reachable is "
             f"{'published for ' + str(len(reachable)) + ' reachable rungs' if reachable else 'null'}")
+
+
+@case
+def case_general_average_and_linearity_note_are_reachable_only_not_full_ladder():
+    """Issue #264: MAX_REDUCTION_W (1,200 W) deliberately overshoots the
+    measured floor (~1,030 W) with headroom, so two of the ladder's twelve
+    rungs (1,100 W, 1,200 W) ask for more removal than the floor holds.
+    Before this fix, `usd_per_100w_general_average` and `linearity_note` fit
+    and reported deviation across ALL twelve rungs under names that did not
+    say so -- a fit silently averaged in energy `_split_floor` cannot deliver.
+
+    This case pins the fix as a RECOMPUTATION, not a name or prose check: it
+    rebuilds the reachable-only fit and the full-ladder fit directly from
+    `steps` and asserts each published field matches the rung set its own
+    name promises. A regression that widens `usd_per_100w_general_average`
+    back across the floor -- refitting it over all twelve rungs even if the
+    note text is left untouched -- reproduces the full-ladder slope instead
+    of the reachable one, and this case catches the mismatch because it does
+    not trust the note's prose; it recomputes from the same `steps` the
+    generator itself fit.
+
+    Also pins that `usd_per_100w_full_ladder_average` and
+    `linearity_note_full_ladder` exist, are fit over the WHOLE ladder, and
+    that both full-ladder fields' own notes name how many rungs exceed the
+    measured floor -- "no published field fits above-floor rungs without
+    saying so in its own name or note" (issue #264 AC1)."""
+    if not ARTIFACT.exists():
+        raise SkipCase(f"{ARTIFACT} not committed in this checkout")
+    doc = json.loads(ARTIFACT.read_text())
+    sens = doc["sensitivity_per_100w"]
+    steps = sorted(sens["steps"], key=lambda s: s["reduction_w"])
+    floor_w = sens["measured_floor_w"]
+
+    reachable = [s for s in steps if not s["exceeds_measured_floor"]]
+    above = [s for s in steps if s["exceeds_measured_floor"]]
+    assert reachable and all(s["reduction_w"] <= floor_w for s in reachable), (
+        "the reachable fit's rung set must have max reduction_w <= the "
+        f"measured floor ({floor_w} W): {[s['reduction_w'] for s in reachable]}")
+    assert above, (
+        "this fixture's ladder has no rung above the measured floor; the "
+        "distinction this case exists to pin cannot be exercised on it")
+
+    def _fit_slope(rungs):
+        ws = np.array([s["reduction_w"] for s in rungs], dtype=float)
+        sv = np.array([s["annual_savings_usd"] for s in rungs], dtype=float)
+        slope, _ = np.polyfit(ws, sv, 1)
+        return round(float(slope) * 100, 2)
+
+    # (1) usd_per_100w_general_average is fit over the REACHABLE rungs only --
+    # the regression this case exists to catch: a fit that silently widens
+    # back to the full ladder reproduces f_slope below, not r_slope.
+    r_slope = _fit_slope(reachable) if len(reachable) >= 2 else None
+    f_slope = _fit_slope(steps)
+    published_general = sens["usd_per_100w_general_average"]["value_usd"]
+    assert published_general == r_slope, (
+        f"usd_per_100w_general_average.value_usd is {published_general} but "
+        f"refitting the reachable rungs alone "
+        f"({[s['reduction_w'] for s in reachable]}) gives {r_slope}; the field "
+        "has widened back across the measured floor")
+    assert published_general != f_slope, (
+        f"usd_per_100w_general_average.value_usd ({published_general}) equals "
+        f"the full-ladder slope ({f_slope}); the reachable/full split this "
+        "issue requires has collapsed back into one number")
+
+    # (2) usd_per_100w_full_ladder_average is fit over EVERY rung, published
+    # under a name that says so.
+    full = sens.get("usd_per_100w_full_ladder_average")
+    assert full is not None, (
+        "usd_per_100w_full_ladder_average is missing; the full-ladder fit "
+        "must be published under a name that says so (issue #264 AC1)")
+    assert full["value_usd"] == f_slope, (
+        f"usd_per_100w_full_ladder_average.value_usd is {full['value_usd']} but "
+        f"refitting all {len(steps)} rungs gives {f_slope}")
+
+    # (3) both full-ladder fields' own NOTES name the extent -- how many rungs
+    # exceed the measured floor -- not just the field name.
+    note = full["note"]
+    assert str(len(above)) in note and "measured floor" in note, (
+        f"usd_per_100w_full_ladder_average.note does not name the {len(above)} "
+        f"rung(s) that exceed the measured floor: {note!r}")
+    ll_full = sens.get("linearity_note_full_ladder")
+    assert ll_full is not None, (
+        "linearity_note_full_ladder is missing; the full-ladder deviation "
+        "must be published under a name that says so (issue #264 AC1)")
+    assert str(len(above)) in ll_full and "measured floor" in ll_full, (
+        f"linearity_note_full_ladder does not name the {len(above)} rung(s) "
+        f"above the measured floor: {ll_full!r}")
+
+    return (f"usd_per_100w_general_average (${published_general}) matches a "
+            f"recomputed fit over the {len(reachable)} reachable rungs alone "
+            f"and differs from usd_per_100w_full_ladder_average "
+            f"(${full['value_usd']}, all {len(steps)} rungs); both full-ladder "
+            f"fields name the {len(above)} rungs that exceed the "
+            f"{floor_w} W measured floor in their own note")
 
 
 # ---------------------------------------------------------------------------
