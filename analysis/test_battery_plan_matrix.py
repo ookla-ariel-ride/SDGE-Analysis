@@ -32,6 +32,19 @@ import sys
 import tempfile
 
 ANALYSIS = pathlib.Path(__file__).resolve().parent
+
+
+def _published_policy():
+    """The dispatch policy the report publishes, read from the COMMITTED
+    artifact rather than by importing battery_dispatch_policies (issue #240).
+
+    The module is the source of truth, and main() writes that constant into
+    the artifact's `published_policy` key -- but importing it here would pull
+    in behavior_rebuild and household.py at module scope, which fails in an
+    archive-free checkout, and this file is one of the suites CI runs there.
+    The artifact is committed, so it is available in every checkout."""
+    art = ANALYSIS.parent / "data" / "battery_dispatch_policies.json"
+    return json.loads(art.read_text())["published_policy"]
 sys.path.insert(0, str(ANALYSIS))
 import suite_runner  # noqa: E402
 import test_scripts_runnable as TSR   # the proven synthetic-fixture machinery
@@ -83,12 +96,12 @@ _DISPATCH_PROBE = """
 import json, sys
 sys.path.insert(0, {tmp!r})
 import behavior_rebuild as br, rates as R
-from battery_dispatch_policies import run_batt, CHARGE_KW
+from battery_dispatch_policies import run_batt, CHARGE_KW, PUBLISHED_POLICY
 d = br.load().copy()
 d["p"] = [R.period_at(t) for t in d.dt]
 imp_b, exp_b, served, thru = run_batt(d, d.Consumption.values.astype(float),
                                       d.Generation.values.astype(float), 13.5,
-                                      "greedy", charge_kw=CHARGE_KW)
+                                      PUBLISHED_POLICY, charge_kw=CHARGE_KW)
 print(json.dumps({{"imp_b": [float(x) for x in imp_b], "exp_b": [float(x) for x in exp_b]}}))
 """
 
@@ -96,14 +109,15 @@ _SHIFT_PROBE = """
 import json, sys
 sys.path.insert(0, {tmp!r})
 import behavior_rebuild as br, rates as R
-from battery_dispatch_policies import run_batt, free_fix_shift, CHARGE_KW
+from battery_dispatch_policies import (run_batt, free_fix_shift, CHARGE_KW,
+                                       PUBLISHED_POLICY)
 d = br.load().copy()
 d["p"] = [R.period_at(t) for t in d.dt]
 ev, sessions = br.detect_sessions(d)
 imp0 = d.Consumption.values.astype(float)
 imp_sh, moved, scenario = free_fix_shift(d, imp0)
 imp_p, exp_p, _, _ = run_batt(d, imp_sh, d.Generation.values.astype(float), 13.5,
-                              "greedy", charge_kw=CHARGE_KW)
+                              PUBLISHED_POLICY, charge_kw=CHARGE_KW)
 print(json.dumps({{"imp_p": [float(x) for x in imp_p],
                    "exp_p": [float(x) for x in exp_p],
                    "moved": float(moved), "n_sessions": len(sessions),
@@ -226,7 +240,12 @@ def _dispatch_fixture(ref, exp_battery_value, pkg_ref, offset=0,
     if free_fix_scenario is not _OMIT:
         post = dict({"free_fix_scenario": free_fix_scenario}, **post)
     return json.dumps({
-        "pw3": {"greedy": {"save": exp_battery_value + offset}},
+        # The fixture names its published policy the way a real artifact does
+        # (issue #240): battery_plan_matrix.py reads published_policy to pick
+        # the block, so an artifact that names none is refused, and a fixture
+        # that hardcoded one policy name would stop exercising that read.
+        "published_policy": _published_policy(),
+        "pw3": {_published_policy(): {"save": exp_battery_value + offset}},
         "baseline_bill_current_rates": round(ref["EV-TOU-5"]) + offset,
         "post_behavior": post,
     })

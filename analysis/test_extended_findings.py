@@ -212,7 +212,10 @@ def case_post_behavior_marginal_is_the_house_shift_when_the_household_has_no_ev(
         "working shift from the unconditional-shift_ev defect", pb)
 
     # ---- the arithmetic: G_POST really is the post-shift marginal ---------
-    G = float(bdp["pw3"]["greedy"]["save"])                 # battery on baseline
+    # The PUBLISHED policy both sides of the ratio are computed on (issue
+    # #240): post_behavior.mid is that policy's marginal, so G has to be the
+    # same policy's baseline saving, named by the artifact itself.
+    G = float(bdp["pw3"][bdp["published_policy"]]["save"])   # battery on baseline
     G_POST = float(pb["mid"]["battery_marginal"])           # battery after the fix
     assert abs(G - G_POST) > 1.5, (
         "the dispatch artifact's pre- and post-behavior marginals are equal, so "

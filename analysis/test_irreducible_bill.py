@@ -746,7 +746,7 @@ def case_package_gross_imports_sanity_check_against_historical_bills():
 @case
 def case_package_gross_imports_consistent_with_committed_dispatch_artifact():
     """Cross-check against data/battery_dispatch_policies.json: that artifact's
-    top-level pw3/pw3x greedy policies report kwh_served for the BASELINE
+    top-level pw3/pw3x published policy blocks report kwh_served for the BASELINE
     (no EV shift) import series, a different scenario than this script's
     post-EV-shift MID/HIGH -- but the same household, same battery hardware,
     same dispatch rule, so the two kwh_served figures must sit in the same
@@ -755,8 +755,9 @@ def case_package_gross_imports_consistent_with_committed_dispatch_artifact():
     _require_corpus()
     gross = irr.compute_package_gross_imports()
     committed = json.loads((irr.ROOT / "data" / "battery_dispatch_policies.json").read_text())
-    pw3_served = committed["pw3"]["greedy"]["kwh_served"]
-    pw3x_served = committed["pw3x"]["greedy"]["kwh_served"]
+    _pub = committed["published_policy"]
+    pw3_served = committed["pw3"][_pub]["kwh_served"]
+    pw3x_served = committed["pw3x"][_pub]["kwh_served"]
     mid_served = gross["MID"]["kwh_served"]
     high_served = gross["HIGH"]["kwh_served"]
     assert abs(mid_served - pw3_served) / pw3_served <= 0.15, (mid_served, pw3_served)
@@ -899,7 +900,7 @@ def case_low_package_free_fix_follows_the_has_ev_flag():
 
     Both branches run here, on the real archive. The no-EV half is checked on
     ARITHMETIC: MID and HIGH must equal an INDEPENDENT transcription of
-    "scenario c, then the greedy dispatch at each capacity", and must NOT equal
+    "scenario c, then the published dispatch at each capacity", and must NOT equal
     the same dispatch on the unshifted baseline. A shift that moved nothing
     would still report scenario "c"; it would land on the baseline figures, so
     the label alone cannot carry this case."""
@@ -939,13 +940,14 @@ def case_low_package_free_fix_follows_the_has_ev_flag():
         imp_c, moved_c = br.shift_house(d, imp0, ev, 0.25,
                                         sop_idx, sop_ts, float(np.max(imp0)))
         ref_mid_imp, _, ref_mid_served, _ = bdp.run_batt(
-            d, imp_c, gen0, 13.5, "greedy", charge_kw=bdp.CHARGE_KW)
+            d, imp_c, gen0, 13.5, bdp.PUBLISHED_POLICY, charge_kw=bdp.CHARGE_KW)
         ref_high_imp, _, ref_high_served, _ = bdp.run_batt(
-            d, imp_c, gen0, 27.0, "greedy", charge_kw=bdp.CHARGE_KW_WITH_EXPANSION)
+            d, imp_c, gen0, 27.0, bdp.PUBLISHED_POLICY,
+            charge_kw=bdp.CHARGE_KW_WITH_EXPANSION)
         # what MID would have been with NO free fix at all -- the figure the
         # unconditional-shift_ev defect actually produced here
         _, _, unshifted_served, _ = bdp.run_batt(
-            d, imp0, gen0, 13.5, "greedy", charge_kw=bdp.CHARGE_KW)
+            d, imp0, gen0, 13.5, bdp.PUBLISHED_POLICY, charge_kw=bdp.CHARGE_KW)
     finally:
         br.EV_ANALYSIS = real_flag
 

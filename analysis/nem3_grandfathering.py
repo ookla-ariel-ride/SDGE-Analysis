@@ -122,7 +122,8 @@ reconciled with extended_findings.py's nbt_2039 (issue #9 AC6):
   script adds the analogous figure priced against the REAL hourly NBT export
   schedule this file already builds (data/nbt_export_rates_2026.csv), reusing
   the SAME battery dispatch (battery_dispatch_policies.run_batt(d, imp0, gen0,
-  13.5, "greedy")) so the physical battery behavior is identical across both
+  13.5, bp.PUBLISHED_POLICY)) so the physical battery behavior is identical
+  across both
   figures -- only the export-pricing assumption differs. Both the no-battery
   and with-battery physical series are billed through THIS script's own
   bill_nbt(), for both NBT26 and NBT00 vintages, and the marginal (no-battery
@@ -531,7 +532,8 @@ def battery_marginal_under_real_nbt(d, credit_lookups):
     # charge_kw=bp.CHARGE_KW (issue #40): this household's real, cited
     # Powerwall 3 charge rating (5 kW), so this script's dispatch matches
     # the same hardware every other PW3-modeling script now uses.
-    i2, e2, served_kwh, thru_kwh = bp.run_batt(d, imp0, gen0, 13.5, "greedy",
+    i2, e2, served_kwh, thru_kwh = bp.run_batt(d, imp0, gen0, 13.5,
+                                               bp.PUBLISHED_POLICY,
                                                 charge_kw=bp.CHARGE_KW)
 
     d_batt = d.copy()
@@ -569,7 +571,7 @@ def battery_marginal_under_real_nbt(d, credit_lookups):
 
     return {
         "method": ("Same battery physical dispatch as nbt_2039 "
-                  "(bp.run_batt(d, imp0, gen0, 13.5, 'greedy', "
+                  "(bp.run_batt(d, imp0, gen0, 13.5, PUBLISHED_POLICY, "
                   "charge_kw=bp.CHARGE_KW) -- 5 kW charge / 11.5 kW discharge, "
                   "Tesla's own datasheet, issue #40); both the "
                   "no-battery and with-battery series billed through this "

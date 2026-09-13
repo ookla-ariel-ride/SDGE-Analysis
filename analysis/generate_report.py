@@ -323,9 +323,9 @@ def chart_data_replacements():
         "bat_now_S:[/* 24 hourly values — current grid import (no battery) */]":
             f"bat_now_S:{_js_array(bat_now_S)}",
         "bat_pw3_S:[/* 24 hourly values — with one battery */]":
-            f"bat_pw3_S:{_js_array(dp['pw3']['greedy_profile_S'])}",
+            f"bat_pw3_S:{_js_array(dp['pw3']['published_profile_S'])}",
         "bat_pw3x_S:[/* 24 hourly values — with expanded battery */]":
-            f"bat_pw3x_S:{_js_array(dp['pw3x']['greedy_profile_S'])}",
+            f"bat_pw3x_S:{_js_array(dp['pw3x']['published_profile_S'])}",
         "carb:[/* 24 hourly values */]":
             f"carb:{_js_array(carbon['intensity_kg_per_mwh']['annual_avg_by_hour'])}",
         'spLabels:[/* "YY-MM-DD" segment-midpoint labels, both seasons merged and sorted */]':

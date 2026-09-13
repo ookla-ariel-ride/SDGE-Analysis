@@ -105,6 +105,10 @@ def _synthetic_day(consumption_kw=0.0, generation_kw=0.0, weekday=True):
     d = pd.DataFrame({"dt": dtr})
     d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
     d["p"] = [R.period_at(ts) for ts in d.dt]
+    d["seas"] = np.where(d.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
+    # the season and month columns the published dispatch's per-bucket netting
+    # rule groups by (issue #240) -- run_batt_vpp now shares that rule
+    d["ym"] = d.dt.dt.to_period("M")
     imp0 = np.full(96, consumption_kw * 0.25)
     gen0 = np.full(96, generation_kw * 0.25)
     return d, imp0, gen0
@@ -131,26 +135,47 @@ def _synthetic_window(start_date, end_date, consumption_kw=0.0, generation_kw=0.
     return d
 
 
+
+# HOW CLOSE "IDENTICAL" IS, AND WHY IT IS NOT BIT-EXACT (issue #240). run_batt_vpp
+# and the published policy make the same decisions from the same shared charge rule
+# (battery_dispatch_policies.value_charge_gate), but the published policy meters a
+# discharge out of a LOT LEDGER -- several partial draws summed -- where run_batt_vpp
+# takes it in one min(). Summing the same energy in a different order moves the last
+# bit or two, so the series agree to float summation error, not to the bit. The bound
+# below is ~1e-9 kWh, a millionth of a watt-hour: four orders of magnitude under any
+# figure this repo publishes, and tight enough that a real behavioural divergence
+# (one interval's charge or discharge decided differently) cannot hide under it.
+DISPATCH_EPS_KWH = 1e-9
+
+
+def _same_dispatch(a, b):
+    """True when two dispatch series agree to DISPATCH_EPS_KWH at every interval."""
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    return a.shape == b.shape and bool(np.all(np.abs(a - b) <= DISPATCH_EPS_KWH))
+
+
 @case
 def case_run_batt_vpp_matches_run_batt_with_empty_event_set():
     """With no event hours at all, run_batt_vpp must behave IDENTICALLY to
-    battery_dispatch_policies.run_batt's 'greedy' policy -- byte-for-byte, not just
-    close. This is the "close variant" claim the module docstring makes; this case is
-    what makes it true rather than asserted."""
+    battery_dispatch_policies.run_batt's PUBLISHED policy -- interval by interval, to
+    DISPATCH_EPS_KWH (see that constant for why the bound is not zero). This is the
+    "close variant" claim the module docstring makes; this case is what makes it true
+    rather than asserted."""
     d, imp0, gen0 = _synthetic_day(consumption_kw=1.0)
-    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, bp.PUBLISHED_POLICY)
     imp_b, exp_b, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
         d, imp0, gen0, vb.CAP, set(), 0.20)
-    assert np.array_equal(imp_a, imp_b), "imp diverges with an empty event set"
-    assert np.array_equal(exp_a, exp_b), "exp diverges with an empty event set"
+    assert _same_dispatch(imp_a, imp_b), "imp diverges with an empty event set"
+    assert _same_dispatch(exp_a, exp_b), "exp diverges with an empty event set"
     assert event_kwh.sum() == 0.0, "an empty event set must force zero extra discharge"
-    return "run_batt_vpp(event_set=set()) is byte-identical to run_batt('greedy')"
+    return ("run_batt_vpp(event_set=set()) matches run_batt on the published policy "
+            f"to within {DISPATCH_EPS_KWH:g} kWh at every interval")
 
 
 @case
 def case_run_batt_vpp_matches_run_batt_across_a_realistic_mixed_day():
     """Same equivalence, but with a load/generation shape that exercises every branch
-    of the greedy control flow (solar surplus charging, sop grid top-up, on-peak
+    of the published control flow (solar surplus charging, sop grid top-up, on-peak
     discharge) -- not just the always-discharge shape of the constant-load fixture."""
     d, imp0, gen0 = _synthetic_day(consumption_kw=0.0)
     rng = np.random.default_rng(0)
@@ -158,11 +183,11 @@ def case_run_batt_vpp_matches_run_batt_across_a_realistic_mixed_day():
     imp0 = np.where((d.hour.values >= 16) & (d.hour.values < 21), 3.0, 0.5) * 0.25
     # solar: a midday bump (10-15h)
     gen0 = np.where((d.hour.values >= 10) & (d.hour.values < 15), 4.0, 0.0) * 0.25
-    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0.copy(), gen0.copy(), vb.CAP, "greedy")
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0.copy(), gen0.copy(), vb.CAP, bp.PUBLISHED_POLICY)
     imp_b, exp_b, _soc, event_kwh, _bau = vb.run_batt_vpp(
         d, imp0.copy(), gen0.copy(), vb.CAP, set(), 0.20)
-    assert np.array_equal(imp_a, imp_b)
-    assert np.array_equal(exp_a, exp_b)
+    assert _same_dispatch(imp_a, imp_b)
+    assert _same_dispatch(exp_a, exp_b)
     assert event_kwh.sum() == 0.0
     return "run_batt_vpp matches run_batt across solar+evening-load branches too"
 
@@ -386,12 +411,13 @@ def case_prestage_true_with_empty_event_set_still_matches_run_batt():
     Extends the existing prestage=False empty-event-set guarantee to prestage=True,
     since a future caller could plausibly pass prestage=True with no events at all."""
     d, imp0, gen0 = _synthetic_day(consumption_kw=1.0, generation_kw=0.5)
-    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, bp.PUBLISHED_POLICY)
     imp_b, exp_b, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
         d, imp0.copy(), gen0.copy(), vb.CAP, set(), 0.20, prestage=True)
     assert np.allclose(imp_a, imp_b) and np.allclose(exp_a, exp_b)
     assert (event_kwh == 0).all()
-    return "run_batt_vpp(prestage=True, event_set=set()) is still byte-identical to run_batt('greedy')"
+    return ("run_batt_vpp(prestage=True, event_set=set()) still matches run_batt on "
+            "the published policy")
 
 
 @case
@@ -480,6 +506,10 @@ def case_prestage_does_not_affect_a_date_before_any_scheduled_event():
     d = pd.DataFrame({"dt": dtr})
     d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
     d["p"] = [R.period_at(ts) for ts in d.dt]
+    d["seas"] = np.where(d.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
+    # the season and month columns the published dispatch's per-bucket netting
+    # rule groups by (issue #240) -- run_batt_vpp now shares that rule
+    d["ym"] = d.dt.dt.to_period("M")
     imp0 = np.full(192, 3.0 * 0.25)
     gen0 = np.zeros(192)
     dates = d.dt.dt.date.values
@@ -1076,7 +1106,7 @@ def case_opportunity_cost_excludes_partial_month_dispatch_effect():
 
     imp0 = d.Consumption.values.astype(float)
     gen0 = d.Generation.values.astype(float)
-    imp_bau, exp_bau, _, _ = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_bau, exp_bau, _, _ = bp.run_batt(d, imp0, gen0, vb.CAP, bp.PUBLISHED_POLICY)
     bill_bau = bp.billed(d, imp_bau, exp_bau)
 
     imp_full, exp_full, _, _, _ = vb.run_batt_vpp(d, imp0, gen0, vb.CAP, event_set, 0.20)
@@ -1148,7 +1178,8 @@ def case_2026_enrollment_eligibility_finding_is_stated_plainly():
 def case_bau_bill_matches_battery_dispatch_policies_committed_figure():
     """backtest()'s BAU (no-VPP) battery bill must agree with the ALREADY COMMITTED,
     ALREADY VALIDATED data/battery_dispatch_policies.json figure for the identical
-    scenario (13.5 kWh, greedy policy): baseline_bill_current_rates - pw3.greedy.save.
+    scenario (13.5 kWh, the published policy): baseline_bill_current_rates minus
+    that policy's own pw3 save, named by the artifact's published_policy key.
     Two independently-computed figures for the same thing silently drifting apart is
     exactly the CLAUDE.md 3 failure mode this case exists to catch."""
     _require_archive()
@@ -1157,7 +1188,8 @@ def case_bau_bill_matches_battery_dispatch_policies_committed_figure():
     if not committed.exists():
         raise SkipCase(f"needs the committed {committed}")
     ref = json.loads(committed.read_text())
-    expected_bau_bill = ref["baseline_bill_current_rates"] - ref["pw3"]["greedy"]["save"]
+    expected_bau_bill = (ref["baseline_bill_current_rates"]
+                         - ref["pw3"][ref["published_policy"]]["save"])
 
     d = br.load()
     cal = vb.load_calendar()
@@ -1170,7 +1202,8 @@ def case_bau_bill_matches_battery_dispatch_policies_committed_figure():
     assert abs(result["bau_battery_bill_usd"] - expected_bau_bill) < 1.0, (
         result["bau_battery_bill_usd"], expected_bau_bill)
     return (f"BAU battery bill ${result['bau_battery_bill_usd']:,.2f} agrees with "
-           f"battery_dispatch_policies.json's pw3/greedy figure (${expected_bau_bill:,.2f})")
+           f"battery_dispatch_policies.json's published pw3 figure "
+           f"(${expected_bau_bill:,.2f})")
 
 
 @case
@@ -1314,23 +1347,35 @@ def case_run_batt_vpp_threads_a_distinct_charge_kw():
     import inspect
     assert "charge_kw" in inspect.signature(vb.run_batt_vpp).parameters
 
-    # None default still matches run_batt('greedy') exactly, empty event set
+    # None default still matches run_batt on the published policy exactly, empty event set
     d, imp0, gen0 = _synthetic_day(consumption_kw=1.0)
-    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, bp.PUBLISHED_POLICY)
     imp_b, exp_b, _soc, event_kwh, _bau = vb.run_batt_vpp(
         d, imp0, gen0, vb.CAP, set(), 0.20, charge_kw=None)
-    assert np.array_equal(imp_a, imp_b) and np.array_equal(exp_a, exp_b), \
+    assert _same_dispatch(imp_a, imp_b) and _same_dispatch(exp_a, exp_b), \
         "charge_kw=None must not disturb the empty-event-set run_batt equivalence"
 
     # a tighter charge_kw actually reduces charging on a single-interval,
     # empty-battery, large-surplus fixture (multi-interval fixtures let
     # overnight grid top-up erase any rate difference -- see
     # test_battery_sizing_curve.py's identical technique)
-    d1 = pd.DataFrame({"dt": pd.date_range("2026-01-07 12:00", periods=1, freq="15min")})
+    # TWO intervals, not one, since issue #240: the published charge rule prices a
+    # stored kWh against the cheapest import the season's DISCHARGE window can offer,
+    # so a frame containing no discharge-window interval at all has no reference to
+    # clear and stores nothing whatever the charge cap is. The midday super-off-peak
+    # surplus interval below is the one this case measures; the 17:00 on-peak import
+    # interval beside it is what gives that surplus somewhere to go. The two are not
+    # adjacent in time, which run_batt_vpp does not require -- it walks rows in order.
+    d1 = pd.DataFrame({"dt": [pd.Timestamp("2026-01-07 12:00"),
+                              pd.Timestamp("2026-01-07 17:00")]})
     d1["hour"] = d1.dt.dt.hour + d1.dt.dt.minute / 60
     d1["p"] = [R.period_at(ts) for ts in d1.dt]
-    imp0_1 = np.array([0.0])
-    gen0_1 = np.array([5.0])
+    # the season/month columns the published per-bucket netting rule needs
+    d1["seas"] = np.where(d1.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
+    d1["ym"] = d1.dt.dt.to_period("M")
+    assert list(d1.p) == ["sop", "on"], list(d1.p)
+    imp0_1 = np.array([0.0, 1.0])
+    gen0_1 = np.array([5.0, 0.0])
     _, exp_sym, _, _, _ = vb.run_batt_vpp(d1, imp0_1, gen0_1, vb.CAP, set(), 0.20)
     _, exp_asym, _, _, _ = vb.run_batt_vpp(d1, imp0_1, gen0_1, vb.CAP, set(), 0.20, charge_kw=5.0)
     charged_sym = gen0_1[0] - exp_sym[0]
@@ -1368,11 +1413,11 @@ def _vpp_served(has_ev):
     br.EV_ANALYSIS = has_ev
     try:
         imp_v, _, _, event_kwh, _ = vb.run_batt_vpp(d, imp0.copy(), gen0.copy(), vb.CAP, set(), 0.20)
-        imp_a, _, _, _ = bp.run_batt(d, imp0.copy(), gen0.copy(), vb.CAP, "greedy")
+        imp_a, _, _, _ = bp.run_batt(d, imp0.copy(), gen0.copy(), vb.CAP, bp.PUBLISHED_POLICY)
     finally:
         br.EV_ANALYSIS = was
     assert event_kwh.sum() == 0.0
-    return float(imp0[SPIKE_IDX] - imp_v[SPIKE_IDX]), np.array_equal(imp_v, imp_a)
+    return float(imp0[SPIKE_IDX] - imp_v[SPIKE_IDX]), _same_dispatch(imp_v, imp_a)
 
 
 @case

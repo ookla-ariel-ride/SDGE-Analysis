@@ -4,7 +4,8 @@
 §6 previously only compared two shipping configs (13.5 kWh Powerwall 3, 27 kWh
 Powerwall 3 + Expansion), both at 11.5 kW. That answers "which of these two",
 never "how much storage this house actually wants". This script re-runs the
-same price-aware ("greedy") dispatch from battery_dispatch_policies.py across
+same published price-aware dispatch from battery_dispatch_policies.py
+(run_batt on its PUBLISHED_POLICY, imported rather than re-declared) across
 an ENERGY grid (5-40 kWh, holding power at 11.5 kW — the rate both shipping
 Tesla configs share) and a POWER grid (5-15 kW, holding energy at 13.5 kWh —
 the base Powerwall 3), on both current behavior and post-behavior (this
@@ -124,7 +125,7 @@ import numpy as np
 
 import behavior_rebuild as br
 from battery_dispatch_policies import (billed, run_batt, free_fix_shift, CHARGE_KW,
-                                       CHARGE_KW_WITH_EXPANSION)
+                                       CHARGE_KW_WITH_EXPANSION, PUBLISHED_POLICY)
 
 ENERGY_GRID = sorted({5, 10, 13.5, 15, 20, 25, 27, 30, 35, 40})
 POWER_GRID = sorted({5.0, 7.5, 10.0, 11.5, 12.5, 15.0})
@@ -198,10 +199,10 @@ STEADY_STATE_TOL_KWH = 0.01
 STEADY_STATE_MAX_ITERS = 8
 
 
-def _steady_state_run(d, imp0, gen0, cap, power, policy="greedy", charge_kw=None):
+def _steady_state_run(d, imp0, gen0, cap, power, policy=None, charge_kw=None):
     """run_batt always starts at soc0=cap/2 and runs the measured year once --
     a one-time year-1 boundary condition, not a steady annual cycle. On the
-    real data this house's greedy dispatch always saturates against a hard
+    real data this house's published dispatch always saturates against a hard
     boundary (0 or cap) within the year, so the STARTING soc0 has no lasting
     effect once it does -- but until it converges, larger capacities carry a
     larger absolute amount of un-costed "free" starting charge (current-
@@ -216,7 +217,13 @@ def _steady_state_run(d, imp0, gen0, cap, power, policy="greedy", charge_kw=None
     charge_kw (issue #40) is the CHARGE-direction cap, separate from `power`
     (the DISCHARGE cap this function sweeps); defaults to None, which makes
     run_batt reuse `power` for both directions, byte-for-byte unchanged from
-    before this parameter existed."""
+    before this parameter existed.
+
+    `policy` defaults to None, resolved HERE to battery_dispatch_policies.
+    PUBLISHED_POLICY rather than written into the signature, so this sweep
+    follows the published dispatch instead of pinning a policy name of its own
+    (issue #240). A caller sweeping some other policy still passes it by name."""
+    policy = PUBLISHED_POLICY if policy is None else policy
     eta = np.sqrt(0.90)
     soc0 = cap / 2
     for it in range(STEADY_STATE_MAX_ITERS):
@@ -526,7 +533,8 @@ def main():
     gen0 = d.Generation.values.astype(float)
 
     out = {
-        "method": ("price-aware ('greedy') dispatch from battery_dispatch_policies.py, "
+        "method": ("the published price-aware dispatch from battery_dispatch_"
+                   "policies.py (run_batt on its PUBLISHED_POLICY), "
                    "re-run across an energy grid (5-40 kWh) at 11.5 kW and a power grid "
                    "(5-15 kW) at 13.5 kWh, on the measured year via rates.bill_nem, with "
                    "the identical >=2.5 kW-outside-on-peak EV-spillover exclusion at "

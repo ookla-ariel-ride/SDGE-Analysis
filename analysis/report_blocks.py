@@ -673,7 +673,7 @@ def _s12_control_year_rows():
 
 
 def _s13_escalation_rows():
-    ladder = rt._json("battery_dispatch_policies.json")["escalation_greedy_pw3_post_behavior"]
+    ladder = rt._json("battery_dispatch_policies.json")["escalation_published_pw3_post_behavior"]
     order = [k for k in ("3%", "5%", "12%") if k in ladder]
     out = []
     for k in order:

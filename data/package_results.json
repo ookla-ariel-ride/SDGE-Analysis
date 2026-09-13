@@ -15,21 +15,21 @@
   },
   "MID": {
    "cost": 14500,
-   "savings_yr": 3459,
-   "battery_alone_yr": 2328,
-   "battery_alone_post_ev_fix_yr": 2238,
-   "battery_alone_payback_yr": 6.2,
-   "battery_alone_payback_post_fix_yr": 6.5,
+   "savings_yr": 3601,
+   "battery_alone_yr": 2466,
+   "battery_alone_post_ev_fix_yr": 2380,
+   "battery_alone_payback_yr": 5.9,
+   "battery_alone_payback_post_fix_yr": 6.1,
    "battery_alone_payback_evening_only_yr": 8.4,
-   "projected_bill_current_rates_yr": 1445,
+   "projected_bill_current_rates_yr": 1304,
    "note": "single integrated run: EV shift then price-aware PW3 dispatch, re-billed end-to-end"
   },
   "HIGH": {
    "cost": 20400,
-   "savings_yr": 3675,
-   "marginal_vs_mid_yr": 216,
-   "projected_bill_current_rates_yr": 1229,
-   "note": "post-behavior (EV shift) expansion marginal $216/yr (~27-yr marginal payback on $5,900) \u2014 outage endurance is the reason to buy it"
+   "savings_yr": 3819,
+   "marginal_vs_mid_yr": 218,
+   "projected_bill_current_rates_yr": 1085,
+   "note": "post-behavior (EV shift) expansion marginal $218/yr (~27-yr marginal payback on $5,900) \u2014 outage endurance is the reason to buy it"
   }
  },
  "superseded": "additive cross-model splicing (behavior + battery from different engines) replaced by the integrated pipeline; package payback framings that credit free behavior to hardware remain invalid"

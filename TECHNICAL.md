@@ -367,7 +367,7 @@ trimmed to the cap; (2) any off-peak 6–9 am interval above the cap (charging s
 assumed re-consumed overnight and billed at the plan's super-off-peak all-in rate, averaged
 across seasons. See §6.4 for the caveat.
 
-**Battery dispatch.** Same greedy logic as §4 (charge condition here is "any non-on-peak period
+**Battery dispatch.** Same unconditional-charge price-aware logic as §4 (charge condition here is "any non-on-peak period
 with exports", which is equivalent to the other scripts' sop/off condition since exports are
 zero after 4 pm in practice). Configurations: PW3 (13.5, 11.5) and PW3+Expansion (27, 11.5).
 
@@ -399,11 +399,11 @@ carrying a retired package-payback framing. Its schema:
 - `model_baseline_current_rates`: **4904** (= §3.6 output);
 - `packages.LOW`: `cost` 0, `savings_yr` 1221, `savings_range` [1009, 1700], `note`,
   `projected_bill_current_rates_yr` **3683**;
-- `packages.MID`: `cost` 14500, `savings_yr` **3459**, `battery_alone_yr` **2328**
-  (price-aware; `battery_alone_post_ev_fix_yr` **2238**), `battery_alone_payback_yr` **6.2**
+- `packages.MID`: `cost` 14500, `savings_yr` **3601**, `battery_alone_yr` **2466**
+  (price-aware; `battery_alone_post_ev_fix_yr` **2380**), `battery_alone_payback_yr` **5.9**
   (`battery_alone_payback_evening_only_yr` 8.4),
-  `projected_bill_current_rates_yr` **1445**, `note` (single integrated shift-then-battery run);
-- `packages.HIGH`: `cost` 20400, `marginal_vs_mid_yr` **216** post-behavior (~27-yr marginal payback on the
+  `projected_bill_current_rates_yr` **1304**, `note` (single integrated shift-then-battery run);
+- `packages.HIGH`: `cost` 20400, `marginal_vs_mid_yr` **218** post-behavior (~27-yr marginal payback on the
   $5,900 expansion, which it does not earn back inside the warranty; what it buys is
   outage endurance);
 - `superseded` — records that dividing hardware cost by combined behavior+battery savings is
@@ -546,12 +546,12 @@ committed artifact from §3.6/§3.8 results as above).
 5. **Monte Carlo battery ROI.** N = 5,000 draws, `numpy` RNG seed 42; annual rate escalation ~
    U(0, 10%); capacity fade ~ U(0.5%, 2.5%)/yr; installed price ~ U($12,500, $17,000); year-1
    marginal savings read from `data/battery_dispatch_policies.json`
-   (`post_behavior.mid.battery_marginal`, currently **$2,238**, the integrated
+   (`post_behavior.mid.battery_marginal`, currently **$2,380**, the integrated
    shift-then-battery marginal; it reads the artifact because a hardcoded $1,347 carried from
    the retired `package_sims.py` went stale across two pipeline reruns); 25-year horizon; payback linearly interpolated; NPV over 10 years at
-   4% discount. Results: median payback 6.0 yr (p10 5.3, p90 7.0), 100% probability of
-   payback within a 10-year warranty, median 10-yr NPV +$6,186. This distribution brackets
-   the §3.13 price-aware basis (~6.2–6.5 yr simple payback at $2,238–2,328/yr).
+   4% discount. Results: median payback 5.7 yr (p10 5.0, p90 6.6), 100% probability of
+   payback within a 10-year warranty, median 10-yr NPV +$7,516. This distribution brackets
+   the §3.13 price-aware basis (~5.9–6.1 yr simple payback at $2,380–2,466/yr).
 
 **Run:** `python3 deep_analyses.py` next to the three inputs.
 
@@ -674,7 +674,7 @@ double-counting avoided). These battery figures are the evening-only dispatch
 variant, retired as the published basis. The published battery economics come from the
 integrated pipeline in `battery_dispatch_policies.py` (§3.13), which runs the EV shift
 first and then the price-aware battery on the shifted load, re-billing end-to-end
-($2,328/yr baseline marginal; $2,238/yr post-behavior marginal), with no overlap
+($2,466/yr baseline marginal; $2,380/yr post-behavior marginal), with no overlap
 subtraction anywhere. This script's evening-only overlap figures remain only as a
 workpaper illustration of *why* behavior and hardware must be simulated in one pipeline.
 
@@ -862,9 +862,9 @@ was already committed, and copies the other six keys through unchanged):
   installed, the superseded $1,743/yr evening-only base saving from §3.8, 1%/yr capacity
   fade, 5% discount): 3%/yr → 7.8 yr payback / NPV10 +$102; 5% → 7.3 / +$1,373;
   8% → 6.8 / +$3,535; 12% → 6.2 / +$6,973. The published ladder (report §13) is
-  `data/battery_dispatch_policies.json → escalation_greedy_pw3_post_behavior`, rebased on the §3.13
-  post-behavior $2,238/yr marginal: 3% → 6.2 yr / +$4,249; 5% → 5.9 / +$5,880;
-  8% → 5.5 / +$8,656; 12% → 5.2 / +$13,072.
+  `data/battery_dispatch_policies.json → escalation_published_pw3_post_behavior`, rebased on the §3.13
+  post-behavior $2,380/yr marginal: 3% → 5.8 yr / +$5,439; 5% → 5.6 / +$7,173;
+  8% → 5.3 / +$10,126; 12% → 4.9 / +$14,821.
 - `price_map` — all-in import and export $/kWh for all six season × TOU-period cells
   from bill-validated rates (e.g. `S_on` 0.8681/0.8189, `S_sop` 0.125/0.0757, `W_on`
   0.6053/0.556).
@@ -967,24 +967,33 @@ zero-ICE status.
 
 ### 3.13 `battery_dispatch_policies.py` — dispatch-policy comparison (published battery basis)
 
-Simulates three dispatch policies per 15-minute interval for both configurations
+Simulates four dispatch policies per 15-minute interval for both configurations
 (13.5 kWh Powerwall 3 and 27 kWh PW3+Expansion, both 11.5 kW discharge but different
 continuous charge caps, 5 kW bare-unit / 8 kW with-expansion per Tesla's own datasheet,
 issue #40, see research/battery-research-notes.md; 90% RTE): **evening-only**
-(discharge 4–9pm; overnight top-up to 60%), **two-window** (+6–9am house load), and
-**price-aware** (discharge against every non-super-off-peak import; top-up toward full in
-any super-off-peak gap). Rationale, established by re-billing each policy's whole modified year rather than by a per-import threshold (the threshold fails on the shoulder-charged slice, see index.html section 6 and issue #240): stored energy costs 11.7¢/kWh in the midday cell (34.3¢ averaged over all the solar surplus the run stores, only 47.6% of which is midday) to 14.0¢
-(grid top-up) while all non-super-off-peak imports price at 51–87¢, so every such import
-is worth serving. Ordering matters: solar surplus charges first (10am–2pm is both
-super-off-peak and peak solar). EV-spillover intervals (≥2.5 kW outside on-peak) are
-excluded from service. Results (`data/battery_dispatch_policies.json`): 1×PW3
-$1,720 / $1,954 / $2,328 per year; 27 kWh $2,067 / $2,298 / $2,795; price-aware runs
-~1.01 / 0.60 cycles per day. The report's battery economics use the price-aware policy
-($2,238/yr post-EV-fix from the integrated shift-then-battery run); the §4 plan matrix is
+(discharge 4–9pm; overnight top-up to 60%), **two-window** (+6–9am house load),
+**price-aware with an unconditional charge** (`"greedy"`: discharge against every
+non-super-off-peak import; top-up toward full in any super-off-peak gap; store every kWh
+of surplus there is room for), and **`"value"`, the published policy** (`PUBLISHED_POLICY`),
+which adds the same price test to the charge side. Rationale, established by re-billing
+each policy's whole modified year rather than by a per-import threshold: stored energy
+costs 11.7¢/kWh from solar surplus (100% of which the published rule takes from the
+midday super-off-peak cell) to 14.0¢ (grid top-up) while all non-super-off-peak imports
+price at 51–87¢, so every such import is worth serving — and a kWh whose forgone export,
+divided by the round trip, costs more than the import it could serve is worth exporting
+instead, which is the half `"greedy"` cannot see (issue #240). Ordering matters: solar surplus charges before the
+grid (10am–2pm is both super-off-peak and peak solar). EV-spillover intervals (≥2.5 kW
+outside on-peak) are excluded from service. Results
+(`data/battery_dispatch_policies.json`): 1×PW3 $1,720 / $1,954 / $2,328 / **$2,466** per
+year; 27 kWh $2,067 / $2,298 / $2,795 / **$2,934**; the published policy runs
+~1.01 / 0.60 cycles per day. The report's battery economics use it
+($2,380/yr post-EV-fix from the integrated shift-then-battery run); the §4 plan matrix is
 regenerated by `battery_plan_matrix.py` (§3.16). The
-escalation ladder in report §13 is seeded from the post-behavior $2,238 marginal. In the 6.3% of
+escalation ladder in report §13 is seeded from the post-behavior $2,380 marginal. In the 6.3% of
 intervals carrying both import and export, discharge-window imports are served rather than
-banking low-value surplus. The artifact also carries an `inputs` block, the report §6
+storing the surplus — an interval carrying both flows is outside super-off-peak by
+definition, so what it gives up is an off- or on-peak export, and the margin is a few
+cents plus the round-trip loss avoided. The artifact also carries an `inputs` block, the report §6
 sentence's serviceable-load inputs on the canonical period assignment: non-super-off-peak
 import **8,521 kWh**, on-peak **4,022**, servable off-peak house load (< 2.5 kW) **1,950**,
 serviceable total **5,972**. Reconciliation: the §5 periods chart's non-SOP total reads
@@ -994,13 +1003,14 @@ so the ~40 kWh convention gap that used to separate them is closed and the 1 kWh
 independent rounding of the same quantity. `analysis/test_report_consistency.py` asserts the
 two stay within 1 kWh of each other.
 
-**The "value" policy (issue #240): the price-aware dispatch with both sides priced.**
-`stored_kwh_cost` (above, issue #189) showed that only 47.6% of the surplus the greedy run
-stores is midday surplus; 50% of it is 6-10h and 14-16h off-peak surplus whose forgone
+**The "value" policy (issue #240): the price-aware dispatch with both sides priced,
+adopted as the published basis.**
+`stored_kwh_cost` (above, issue #189) showed that only 47.6% of the surplus the `"greedy"`
+run stores is midday surplus; 50% of it is 6-10h and 14-16h off-peak surplus whose forgone
 export is worth `rates.energy(off)` in a net-import bucket, 53.5c per kWh delivered after
-the round trip, more than the 51.1-51.9c off-peak import it may then serve. Greedy cannot
-see that because it prices neither side: it stores every kWh it has room for, in time
-order. `run_batt(..., "value")` prices both sides with the one test `bill_nem_monthly()`
+the round trip, more than the 51.1-51.9c off-peak import it may then serve. `"greedy"`
+cannot see that because it prices neither side: it stores every kWh it has room for, in
+time order. `run_batt(..., "value")` prices both sides with the one test `bill_nem_monthly()`
 bills by. Each interval's (month, season, TOU period) bucket is signed on the pre-battery
 frame (`bucket_net_sign()`, `net >= 0`); a forgone export is worth `energy()` in a
 net-import bucket and `credit()` in a net-export one, a displaced or added import that
@@ -1015,7 +1025,8 @@ The reference import is a choice (`VALUE_CHARGE_REF`), taken over the season's
 discharge-window intervals whether or not an import occurs in them: "floor", the smallest
 import value among them, stores nothing that would have to wait for a better import;
 "best", the largest, stores shoulder surplus and holds it for the evening. Both read only
-the tariff and the bucket signs known from the pre-battery frame. Everything else is greedy:
+the tariff and the bucket signs known from the pre-battery frame. Everything else matches
+`"greedy"`:
 the same discharge window and EV-spillover gate, the same both-flows rule, the same
 super-off-peak top-up toward full, and super-off-peak imports still never served (a
 11.7c midday lot would clear a 12.5c import by 0.8c and the 14.0c top-up that refilled
@@ -1035,23 +1046,39 @@ exported at 10.4c while a 49c export was given up in its place. "Best" recovers 
 none of that (+$6.80) because a shoulder lot held for the evening occupies the same room,
 and a shoulder lot still in the pack at 21:00 displaces a 14.0c grid top-up rather than
 an 86.8c on-peak import. "Floor" is therefore the default, and it closes 63% of the
-$217.08/yr gap between greedy ($2,328.31) and the perfect-foresight optimum (§3.23,
+$217.08/yr gap between `"greedy"` ($2,328.31) and the perfect-foresight optimum (§3.23,
 $2,545.39/yr), leaving $79.65/yr, 3.2% of its own saving. (`perfect_foresight_dispatch.json`
-states that gap as $217.39 because it takes greedy from the artifact's whole-dollar
-$2,328.) Served energy and cycling are unchanged (4,710 kWh and 1.006 cycles/day against
-4,720 and 1.008).
+states the published gap as $79.39 because it takes the published saving from the
+artifact's whole-dollar $2,466.) Served energy and cycling are essentially unchanged
+(4,710 kWh and 1.006 cycles/day against 4,720 and 1.008).
 
-The published figures use the greedy policy. Adopting "value" moves
-`pw3`, `pw3x` and `post_behavior` in `battery_dispatch_policies.json` and, through them,
-`tou_spread.json`, `irreducible_bill.json`, `package_results.json`,
-`deep_results.json`, `uncertainty_results.json`, `battery_plan_matrix.json`, the
-sizing curve, the perfect-foresight comparison and report §6's figures and prose (which
-call greedy a heuristic with no proof that it is the optimum, and say which import a
-shoulder kWh serves is not determined); that is one regeneration of the whole chain and
-a separate change from establishing the policy. The greedy artifact regenerates
-byte-identically with the "value" code in place (`cmp`), and the three original policies
-ignore the two new `run_batt` keywords (`case_the_three_original_policies_ignore_the_
-value_arguments`).
+**Where the published policy is named, and what adopting it moved.** `PUBLISHED_POLICY`
+in `battery_dispatch_policies.py` is the single place the report's dispatch is chosen;
+every caller that models the shipping battery reads it rather than a policy literal, and
+scripts that read the artifact instead of importing the module read its
+`published_policy` key. The three `run_batt` callers that deliberately model something
+else keep their own rule and say so: `carbon_dispatch_tradeoff.py`'s Run B is
+carbon-minimizing by construction and carries no price gate (Run A and Run C do, Run C
+through the shared `value_charge_gate()`), and the policy table above still publishes
+`"greedy"` and the two window policies as labelled sensitivities. Adopting `"value"` moved
+`pw3`, `pw3x` and `post_behavior` here and, through them, `tou_spread.json`,
+`irreducible_bill.json`, `package_results.json`, `deep_results.json`,
+`uncertainty_results.json`, `battery_plan_matrix.json`, `battery_sizing_curve.json`,
+`perfect_foresight_dispatch.json`, `nem3_grandfathering.json`, `quiet_night_floor.json`,
+`tou_structure_stress.json`, `carbon_dispatch_tradeoff.json`, `dsgs_vpp_backtest.json`
+and report §6's figures and prose — one regeneration of the whole chain. Three artifact
+keys were renamed with it, because a key called `greedy_*` holding another policy's
+numbers is a silent lie: `pw3/pw3x.greedy_profile_S` → `published_profile_S`,
+`onpeak_after_greedy` → `onpeak_after_published`, and
+`escalation_greedy_pw3_post_behavior` → `escalation_published_pw3_post_behavior`;
+`perfect_foresight_dispatch.json`'s `greedy_comparison` became `published_comparison`
+(with a `published_policy` field of its own). The three original policies still ignore
+the two `run_batt` keywords `"value"` added
+(`case_the_three_original_policies_ignore_the_value_arguments`), and
+`case_the_shared_charge_gate_alone_reproduces_the_published_dispatch` checks on the
+measured year that the shared gate, without the lot ledger, reproduces this policy
+exactly — which is what lets `dsgs_vpp_backtest.run_batt_vpp` and Run C use the gate
+alone.
 
 ### 3.14 `analysis/extended_findings.py` — extended findings batch (`data/extended_results.json`)
 
@@ -1089,7 +1116,7 @@ walking up from the CWD (then from the script's location), so the documented
   module) for all three PW3 policies, plus the integrated post-behavior case (EV shift via
   `behavior_rebuild.shift_ev` first, then the price-aware battery, re-billed end-to-end),
   and asserts every result within ±$1.50 of the committed
-  `battery_dispatch_policies.json` (`pw3.{evening,twowin,greedy}.save` and
+  `battery_dispatch_policies.json` (`pw3.{evening,twowin,greedy,value}.save` and
   `post_behavior.mid.battery_marginal`). A mismatch aborts with "regenerate
   battery_dispatch_policies.json first"; the tornado and NBT sections are built only
   from those computed values.
@@ -1113,9 +1140,9 @@ spread uniformly, and both the baseline and the shifted year are re-billed with
 `rates.bill_nem`; half-shift $387/yr, full shift $772/yr),
 `representative_year`, `gas_decomposition` (364-day
 HDD regression: floor 0.376 therms/day → 137 therms/yr; slope 0.1812 therms/HDD → 206
-therms/yr), `nbt_2039` (price-aware battery marginal $2,507–2,542/yr under 3–8¢ flat
-exports vs $2,328 under NEM 2.0), and `tornado_battery` (payback swings: dispatch 2.2 yr >
-install quote 2.1 > escalation 0.9 > EV-fix interaction 0.3 around the 6.2-yr base).
+therms/yr), `nbt_2039` (price-aware battery marginal $2,500–2,534/yr under 3–8¢ flat
+exports vs $2,466 under NEM 2.0), and `tornado_battery` (payback swings: dispatch 2.5 yr >
+install quote 2.0 > escalation 0.9 > EV-fix interaction 0.2 around the 5.9-yr base).
 **DSGS is not one of these levers** (issue #10): every other lever varies an annual input,
 but the DSGS backtest is a partial-season observation (2025-07-24..2025-10-30 only), so
 `BATT_COST / (G + dsgs_dollars)` would misrepresent four months of VPP revenue as a full
@@ -1209,9 +1236,9 @@ max(rate − NBC, 0), BSC × 365, holiday-as-weekend TOU assignment) so the no-b
 ties out to the committed `data/plan_results.csv` (asserted in-script). All three plans
 share the same 2026 three-period TOU windows, so a single dispatch trace is billed under
 each plan. Results: EV-TOU-5 $4,882 → $2,564 (battery value **$2,318/yr**), EV-TOU-2
-$5,843 → $4,176 ($1,667), TOU-ELEC $6,356 → $5,349 ($1,007); the battery is worth the most
+$5,843 → $4,084 ($1,759), TOU-ELEC $6,356 → $5,308 ($1,048); the battery is worth the most
 on EV-TOU-5, so it strengthens the plan answer. The artifact also records a
-`canonical_crosscheck_ev_tou_5` block ($4,904 no-battery / $2,328 battery value from
+`canonical_crosscheck_ev_tou_5` block ($4,904 no-battery / $2,466 battery value from
 `battery_dispatch_policies.json`, asserted within $100): the small differences vs the
 table-rate column are the rate basis (published tables vs bill-derived) and the holiday
 convention (§6.5). Run from `private/verify` (repo root found by walking up); writes
@@ -1245,7 +1272,7 @@ whole-dollar cells), and `test_generate_report.py` holds a single level within $
 
 **Mid package on every plan (`mid_package_on_plans`, issue #200).** The same artifact also
 prices the report's mid package (EV shift scenario a, all sessions,
-`behavior_rebuild.shift_ev`, first, then the 13.5 kWh greedy dispatch on the shifted
+`behavior_rebuild.shift_ev`, first, then the 13.5 kWh published dispatch on the shifted
 year) under each of the three plans, so a household whose ranking favors a plan other
 than its current one can read what the package is worth on that plan. One integrated
 pipeline per plan, re-billed end-to-end (`CLAUDE.md` §9's one-pipeline rule): shift, then
@@ -1253,12 +1280,12 @@ dispatch, then bill the whole modified year under the plan's own table rates. Th
 dispatch trace is: `shift_ev` selects intervals by TOU period label only (on/off → SOP)
 and all three plans share the 2026 three-period windows. **Baseline:** deltas against the
 same plan's modeled no-package year (the `no_battery` column), published-table basis, one
-rate vintage. Results (2,618 kWh moved): EV-TOU-5 $4,882 → $1,400 (package save
-**$3,482/yr**), EV-TOU-2 $5,843 → $3,361 ($2,482), TOU-ELEC $6,356 → $4,900 ($1,456);
+rate vintage. Results (2,618 kWh moved): EV-TOU-5 $4,882 → $1,251 (package save
+**$3,631/yr**), EV-TOU-2 $5,843 → $3,264 ($2,579), TOU-ELEC $6,356 → $4,856 ($1,500);
 the package, like the bare battery, is worth the most on EV-TOU-5. A second fail-closed
 crosscheck asserts the table-rate EV-TOU-5 package save against the canonical engine's
-`post_behavior.mid.combined_save` ($3,459, bill-derived rates) within $100 (the observed
-gap is $23, the same rate-basis difference as the battery crosscheck), and a dispatch
+`post_behavior.mid.combined_save` ($3,601, bill-derived rates) within $100 (the observed
+gap is $30, the same rate-basis difference as the battery crosscheck), and a dispatch
 artifact with no `post_behavior.mid` block aborts the run. A household with no EV
 (`household.has_ev` false) degenerates cleanly rather than refusing: `detect_sessions`
 returns an EV-free year, `kwh_moved` records 0, and the package row equals the battery
@@ -1284,9 +1311,9 @@ matched utilization; see the throughput caveat below. Runs B and C carry their o
 `behavior_rebuild.EV_ANALYSIS` (the intake flag `household.has_ev`, issue #246), so a
 household with no EV has every off-peak import battery-servable in all three runs.
 
-- **Run A (cost-minimizing).** Calls `battery_dispatch_policies.run_batt(..., "greedy")`
-  directly, unmodified, the same policy `data/battery_dispatch_policies.json`'s published
-  `pw3.greedy` figure comes from. A cross-check inside the artifact asserts Run A's computed
+- **Run A (cost-minimizing).** Calls `battery_dispatch_policies.run_batt(...,
+  bp.PUBLISHED_POLICY)` directly, unmodified, the same policy
+  `data/battery_dispatch_policies.json`'s published `pw3` figure comes from. A cross-check inside the artifact asserts Run A's computed
   saving against that committed figure within $5.
 - **Run B (carbon-minimizing, new).** Mirrors Run A's control structure with the TOU-period
   decision replaced by an intensity-based one: discharge when the measured per-interval grid
@@ -1336,20 +1363,20 @@ net; gross import and gross export-avoided are still reported per policy in the 
 breakdown.
 
 **Results** (all figures against the no-battery baseline: $4,904.13/yr, 4,487.2 kg net
-CO₂/yr): Run A saves $2,328.31/yr but *raises* net CO₂ by 442.0 kg/yr above the baseline:
+CO₂/yr): Run A saves $2,465.74/yr but *raises* net CO₂ by 442.9 kg/yr above the baseline:
 grid-charging during super-off-peak means charging during the year's dirtiest hours (270.1
 kg/MWh overnight vs. 158.4 on-peak, §3.15's own window means). Run B avoids 244.1 kg/yr net
-but keeps only $145.19 of the saving. Run C recovers $1,818.69/yr (78% of Run A's saving)
-while still avoiding 181.1 kg/yr net, 63.0 kg/yr less than Run B, a small carbon
-cost for capturing roughly 12.5 times more of the dollar saving. Run C is judged a
+but keeps only $145.19 of the saving. Run C recovers $1,936.63/yr (79% of Run A's saving)
+while still avoiding 172.7 kg/yr net, 71.4 kg/yr less than Run B, a small carbon
+cost for capturing roughly 13.3 times more of the dollar saving. Run C is judged a
 distinct third outcome by requiring both
 its $ and its CO₂ to be within 2% of a policy's own figures to count as "not meaningfully
-different": its bill sits 35.2% from Run B's, so the test fails against B even though its net
-CO₂ now sits within 1.5% of Run B's own.
+different": its bill sits 37.6% from Run B's, so the test fails against B even though its net
+CO₂ now sits within 1.7% of Run B's own.
 
 **Tradeoff figures.** Cost penalty of the clean policy (Run B's bill minus Run A's bill):
-$2,183.12/yr. CO₂ penalty of the cheap policy (Run A's net CO₂ minus Run B's net CO₂): 686.1
-kg/yr. Both are also expressed per kWh cycled (59.3¢/kWh and 0.186 kg/kWh respectively),
+$2,320.55/yr. CO₂ penalty of the cheap policy (Run A's net CO₂ minus Run B's net CO₂): 687.0
+kg/yr. Both are also expressed per kWh cycled (63.1¢/kWh and 0.187 kg/kWh respectively),
 normalized by the mean of Run A's and Run B's own kWh cycled-through figures; the two
 runs are different dispatch schedules with different total throughput, so no single run's
 throughput is uniquely the right denominator. Because Run A and Run B are not throughput-matched (see
@@ -1431,15 +1458,15 @@ script).
 **Battery-marginal reconciliation vs `extended_findings.py`'s `nbt_2039` (issue #9 AC6).**
 `extended_findings.py`'s `nbt_2039` block prices the price-aware battery's marginal bill
 savings (no-battery bill minus with-battery bill, `bp.run_batt(d, imp0, gen0, 13.5,
-"greedy", charge_kw=bp.CHARGE_KW)`) under three flat export-credit assumptions: $2,542/yr at 3¢, $2,528/yr at 5¢,
-$2,507/yr at 8¢, against $2,328/yr under NEM 2.0 today. This script adds the same marginal
+bp.PUBLISHED_POLICY, charge_kw=bp.CHARGE_KW)`) under three flat export-credit assumptions:
+$2,534/yr at 3¢, $2,520/yr at 5¢, $2,500/yr at 8¢, against $2,466/yr under NEM 2.0 today. This script adds the same marginal
 priced against the real hourly NBT schedule for TARIFF_YEAR = 2026 only (a snapshot, not a
 projection to 2039 or any other future year: NBT26's
 own 9-year schedule escalates, and 2039 is 13 years beyond even that lock period), reusing
 the identical `bp.run_batt` dispatch (so only the export-pricing assumption differs) and
 billing both the no-battery and with-battery series through
-its own `bill_nbt()`. Result: **$2,522.61/yr** for both vintages (NBT26/NBT00 year-1 figures
-again coincide), **+$194.61** above the NEM 2.0 figure (consistent with the nbt_2039
+its own `bill_nbt()`. Result: **$2,517.25/yr** for both vintages (NBT26/NBT00 year-1 figures
+again coincide), **+$51.25** above the NEM 2.0 figure (consistent with the nbt_2039
 finding that the battery is worth more once exports price at NBT rather than near-retail), and
 inside the existing flat 3–8¢ bracket ($2,507–2,542/yr), within $5.39 of the 5¢
 figure (vs −$19.39 from the 3¢ figure and +$15.61 from the 8¢ figure). The
@@ -1561,15 +1588,18 @@ independently against the raw 361,008-row dataset.
   threshold, not by enrolling existing equipment in a demand-response program.
 
 **Dispatch model.** `run_batt_vpp()` mirrors `battery_dispatch_policies.run_batt()`'s
-"greedy" policy exactly for non-event intervals (asserted byte-identical against an empty
-event set in `test_dsgs_vpp_backtest.py`) and, only during a real 2025 DSGS event hour
+PUBLISHED policy for non-event intervals — it gates its own charging on that policy's own
+`value_charge_gate()` masks rather than a fourth copy of the rule (issue #240), and
+`test_dsgs_vpp_backtest.py` asserts the two series agree interval by interval to 1e-9 kWh
+against an empty event set (not to the bit: the published policy meters a discharge out of
+a lot ledger, so the same energy is summed in a different order) and, only during a real 2025 DSGS event hour
 inside this household's measured window, forces discharge up to the greater of the
 household's own load and its remaining headroom above the reserve floor and the 11.5 kW
 power cap, the behavior a revenue-maximizing VPP aggregator commands. An event
 hour where SOC is already at or below the reserve floor is a miss (SOC-constrained and
 counted). The reserve floor binds on the whole event hour, not just the
-event-forced increment: the ordinary/BAU-equivalent greedy discharge is also capped at the
-reserve floor during a declared event hour. A regression test with real,
+event-forced increment: the ordinary/BAU-equivalent arbitrage discharge is also capped at
+the reserve floor during a declared event hour. A regression test with real,
 non-zero house load covers this (the zero-load fixtures used elsewhere never exercise the
 ordinary branch during an event hour); without the cap the ordinary branch drew through
 the floor in 38 of 46 in-window event hours.
@@ -2161,7 +2191,8 @@ reason named when this checkout lacks `private/`.
 **Purpose (issue #12).** §3.13 (`battery_dispatch_policies.py`) only ever compared two
 shipping configs (13.5 kWh Powerwall 3 and 27 kWh PW3+Expansion, both at 11.5 kW), which
 answers "which of these two" but never "how much storage this house wants." This
-script re-runs the same price-aware ("greedy") dispatch across an energy grid (5–40
+script re-runs the same published price-aware dispatch (`run_batt` on
+`battery_dispatch_policies.PUBLISHED_POLICY`) across an energy grid (5–40
 kWh, holding power at 11.5 kW, the rate both shipping Tesla configs share) and a power
 grid (5–15 kW, holding energy at 13.5 kWh, the base Powerwall 3), on both current
 behavior and post-behavior (EV-shifted) load, on the measured year via the same canonical
@@ -2191,7 +2222,7 @@ instead derives the final SOC itself from the same public identity `run_batt` al
 asserts (`soc0 + thru - served / ETA`); see the steady-state paragraph below.
 
 **Steady-state dispatch.** `run_batt()` always started at `soc0 = cap/2` and ran the
-measured year exactly once. On the real data, this house's greedy dispatch always
+measured year exactly once. On the real data, this house's published dispatch always
 saturates against a hard boundary (empty or full) within the year, so the starting soc0
 has no lasting effect once it does. Until it converges, though, larger capacities carry a
 larger absolute amount of un-costed "free" starting charge (current-behavior, which drains
@@ -2204,10 +2235,10 @@ principle contaminate the reported annual savings, marginals, and knee.
 forward as the next pass's starting SOC, until the two converge to within 0.01 kWh
 (`STEADY_STATE_TOL_KWH`), which yields a steady annual charge/discharge cycle instead of a
 transient. On this house's data, every grid point converges in exactly one extra pass (the
-greedy policy's aggressive daily cycling erases any memory of the starting condition
+policy's aggressive daily cycling erases any memory of the starting condition
 almost immediately), and the corrected annual savings differ from the single-pass,
 boundary-contaminated figures by single-digit dollars per grid point (e.g. 13.5 kWh
-current-behavior: $2,328.31 → $2,327.42). The defect was worth fixing regardless
+current-behavior: $2,465.74 → $2,464.85). The defect was worth fixing regardless
 (CLAUDE.md §0/§1: a result should not depend on an arbitrary boundary condition), even
 though its numeric impact on this dataset is small; the knee's location (20 kWh, both
 scenarios) and the sensitivity conclusion (energy binds) are the same either way. One
@@ -2311,12 +2342,12 @@ under either variant). The published `energy_elasticity` stays the real-hardware
 rate); the diagnostic exists to show the confound's size is negligible next to the ~190×
 gap driving the conclusion.
 
-**Shipping products located on the curve.** At 13.5 kWh / 11.5 kW: $2,327.42/yr saved
-current-behavior (payback 6.23 yr, exactly the real $14,500 quote's own payback, since
-13.5 kWh is one of the fit's only two anchors, matching §6's cited ~6.2–6.5 yr range),
-$2,238.89/yr post-behavior (payback 6.48 yr, exactly the §6 figure). At 27 kWh / 11.5 kW:
-$2,792.85/yr current-behavior, $2,455.82/yr post-behavior (payback 8.31 yr). Both are
-cross-checked against `battery_dispatch_policies.json`'s own `pw3`/`pw3x` `greedy.save`
+**Shipping products located on the curve.** At 13.5 kWh / 11.5 kW: $2,464.85/yr saved
+current-behavior (payback 5.88 yr, exactly the real $14,500 quote's own payback, since
+13.5 kWh is one of the fit's only two anchors, matching §6's cited ~5.9–6.1 yr range),
+$2,380.51/yr post-behavior (payback 6.09 yr, exactly the §6 figure). At 27 kWh / 11.5 kW:
+$2,932.55/yr current-behavior, $2,599.94/yr post-behavior (payback 7.85 yr). Both are
+cross-checked against `battery_dispatch_policies.json`'s own published `pw3`/`pw3x` save
 and `post_behavior.mid`/`high.battery_marginal` figures, within $2.15. That canonical
 artifact is deliberately single-pass (correcting its own boundary condition is a separate
 concern outside this issue's scope), so a small, expected gap between the two remains;
@@ -2365,19 +2396,20 @@ null-handling when there is no finite power sensitivity to divide by.
 
 ### 3.23 `analysis/perfect_foresight_dispatch.py` — how much is a smarter controller worth? (`data/perfect_foresight_dispatch.json`)
 
-**Purpose (issue #13).** The "greedy" price-aware policy (§3.13) is a threshold heuristic:
-serve every import priced above the battery's stored-energy cost. Nobody had checked how
+**Purpose (issue #13).** The published price-aware policy (§3.13) is a threshold
+heuristic: store surplus only where its forgone export is cheaper than the import it can
+serve, and serve every import priced above the stored energy's own cost. Nobody had checked how
 close that gets to the best any controller could do on this house's own measured year, at
 identical hardware (13.5 kWh, 11.5 kW discharge / 5 kW charge, Tesla's own datasheet,
 issue #40; 90% round-trip) and the identical EV-spillover exclusion (≥2.5 kW outside
 on-peak never battery-served, and, like `run_batt`'s, applied only on a household whose
 intake says it has an EV: `ev_spillover_mask()` reads `behavior_rebuild.EV_ANALYSIS` and is
-all-False otherwise, issue #246; the greedy comparison it quotes from
+all-False otherwise, issue #246; the published comparison it quotes from
 `battery_dispatch_policies.json` is refused, in both directions, when that artifact's
 `post_behavior.free_fix_scenario` disagrees with the same flag, a flag match that a
 different household with the same flag passes, and dropped from the comparison, announced
 by name, when its `baseline_bill_current_rates` differs from this frame's own `billed()`
-baseline by more than the artifact's whole-dollar rounding, so a foreign frame's greedy
+baseline by more than the artifact's whole-dollar rounding, so a foreign frame's published
 saving is never quoted while the synthetic CI run keeps its optional cross-check, issue
 #247). This script
 computes the true annual-bill-minimizing
@@ -2420,7 +2452,7 @@ tied to `imp0_i`), is wrong for two compounding reasons. (1) It silently discard
 `battery_dispatch_policies.py`'s own count): collapsing them to a signed net erases that
 gross import for free, understating the NBC owed on it, with no battery action required to
 "earn" that saving. (2) It lets the optimizer manufacture brand-new export beyond what the
-house ever generated, a capability the shipping greedy policy's own discharge cap
+house ever generated, a capability the shipping policy's own discharge cap
 (`min(imp[i], soc·ETA, pwrq)`) never uses, breaking the "same hardware, same envelope"
 comparison this whole bound depends on. Both are ruled out by construction:
 `discharge_i ≤ imp0_i` and `solar_absorbed_i ≤ gen0_i` mean the battery can never move
@@ -2435,8 +2467,9 @@ could.
 figure at the time). With gross flows preserved, perfect foresight saved $2,546.24/yr, a
 $217.24/yr gap, 9.3% of greedy's own saving, at that same $2,329/yr greedy figure. (Issue
 #40 later cited the Powerwall 3's real 5 kW charge / 11.5 kW discharge split and moved
-both sides of this comparison again; see that paragraph below for the current $2,545.39/yr
-/ $217.39/yr / 9.3% figures against today's $2,328/yr greedy.) Over $1,283/yr of the
+both sides of this comparison again, and issue #240's priced charge rule moved the
+heuristic side once more; see that paragraph below for the current $2,545.39/yr /
+$79.39/yr / 3.2% figures against today's $2,466/yr published saving.) Over $1,283/yr of the
 signed-net "optimum" was non-physical: free NBC relief from collapsed simultaneous flows,
 and export the battery never had anything to back. This is the difference between "the
 shipping policy leaves most of the value on the table" and the finding this section
@@ -2484,7 +2517,7 @@ same with or without the constraint. The day-ahead case does move slightly: a si
 local LP, optimizing over a much shorter horizon with a fixed starting SOC, finds the
 combined cap binding on some days, moving day-ahead's save from $1,711.13/yr to
 **$1,711.28/yr** (a $0.15/yr correction) and the purchasing-statement's "day-ahead worse
-than greedy" gap from $617.87 to $617.72. Instrumentation of the real data shows the
+than the shipping policy" gap from $617.87 to $617.72. Instrumentation of the real data shows the
 combined throughput topping out at exactly the power cap (2.875 kWh/interval = 11.5 kW ÷
 4), never above it, in both the annual and day-ahead traces: the constraint closed a
 modeling gap without materially changing the published figures. (Issue #40 later
@@ -2527,7 +2560,7 @@ At the real 5 kW charge / 11.5 kW discharge rates (now this script's own product
 default), the effect is small, **~$4/yr, ~0.23%** on the day-ahead persistence figure,
 similar in kind to (though larger than) the symmetric combined cap's own $0.15/yr effect
 above. Annual and day-ahead-perfect-horizon figures move by under $1 (from a $1-smaller
-committed `greedy_save_usd` cross-check, not from the charge cap itself; see below). The
+committed `published_save_usd` cross-check, not from the charge cap itself; see below). The
 day-ahead persistence case is the one affected because its LP re-solves independently for
 each of 365 days, each starting from a fixed real SOC where the annual solve has a
 free-to-choose cyclic boundary: on a day whose starting SOC sits low enough that the
@@ -2535,17 +2568,19 @@ planning LP wants to recharge briskly, the real 5 kW charge cap (vs. the symmetr
 assumption) binds on some individual days, the same mechanism (a shorter, more
 power-constrained per-day optimization) the symmetric cap's own $0.15/yr effect came from.
 Current figures (this script's own production default, `charge_kw=5.0`): annual
-perfect-foresight save $2,545.39/yr (gap $217.39/yr, 9.3% of greedy's own $2,328/yr
-saving, 91.5% of theoretical maximum captured); day-ahead persistence save $1,715.29/yr
+perfect-foresight save $2,545.39/yr (gap $79.39/yr, 3.2% of the published policy's own
+$2,466/yr saving, 96.9% of theoretical maximum captured); day-ahead persistence save
+$1,715.29/yr
 (up from $1,711.28/yr, +$4.01); day-ahead perfect-horizon save $2,537.18/yr;
 myopic-horizon effect $8.21/yr; forecast-error effect $821.89/yr; leak-sensitivity bound
-$28.20/yr. `battery_dispatch_policies.json`'s own `pw3.greedy.save` also moved to
-$2,328/yr (from $2,329/yr) as part of issue #40's broader propagation (§3.13), which is
-why `greedy_save_usd` above differs from $2,329 even apart from the day-ahead effect.
+$28.20/yr. The published `pw3` saving in `battery_dispatch_policies.json` moved twice
+after that era — to $2,328/yr under issue #40's charge/discharge split, then to $2,466/yr
+when issue #240's priced charge rule became the published basis (§3.13) — which is why
+`published_save_usd` above is neither $2,329 nor $2,328.
 
-**The true optimum barely cycles more than greedy.** With gross flows preserved, the LP's
-own cycling (1.06 cycles/day, 4,966.35 kWh discharged) is close to greedy's own 1.01
-cycles/day, 4,720 kWh, a modest difference. The signed-net formulation's figure of 1.69
+**The true optimum barely cycles more than the heuristic.** With gross flows preserved,
+the LP's own cycling (1.06 cycles/day, 4,966.35 kWh discharged) is close to the published
+policy's own 1.01 cycles/day, 4,710 kWh, a modest difference. The signed-net formulation's figure of 1.69
 cycles/day, 7,922 kWh discharged was itself a symptom of the same bug: much of that
 "extra" cycling was manufactured export and free-netted import that never had to
 physically move through the battery at all.
@@ -2560,8 +2595,8 @@ not perfect knowledge" premise, and roughly half of this house's true EV-spillov
 intervals cannot be reliably anticipated by persistence). The real EV-exclusion rule and
 real SOC/power feasibility are both still enforced at execution regardless of what the
 plan assumed. Forecast error: MAE 0.6682 kWh, RMSE 1.1766 kWh per 15-minute interval (a
-sizable per-interval error). **Result: $1,715.29/yr saved, worse than the shipping greedy
-policy's $2,328/yr.**
+sizable per-interval error). **Result: $1,715.29/yr saved, worse than the shipping
+policy's $2,466/yr.**
 
 **Isolating forecast error from the myopic planning horizon.** Each day's local LP fixes
 SOC at the real start-of-day level but leaves it free at day's end; unlike the annual
@@ -2611,12 +2646,12 @@ shifts a test LP's objective by the expected ~$50
 dispatch.py`). This mechanism leaves the gross-flow correction to the headline day-ahead figure unchanged, but it is an independently tested correctness property of the
 day-ahead planning LP.
 
-**Purchasing statement.** The shipping policy already captures **91.5% of the theoretical
-maximum** at this hardware; a $217.39/yr optimality gap is small next to the $2,328/yr it
+**Purchasing statement.** The shipping policy already captures **96.9% of the theoretical
+maximum** at this hardware; a $79.39/yr optimality gap is small next to the $2,466/yr it
 already saves, so there is not much room for any controller, however smart, to add. A
 naive day-ahead pre-committed schedule based on simple persistence forecasting is not a
 reliable way to capture more of that gap and can do worse than the shipping policy
-($612.71/yr worse, in this case). That shortfall is almost entirely a forecasting problem
+($750.71/yr worse, in this case). That shortfall is almost entirely a forecasting problem
 ($821.89/yr), not a planning-horizon problem ($8.21/yr), so a longer planning horizon
 alone would not fix it either. No shipping product changes the controller, only the
 hardware, so closing the small remaining gap is a firmware/software question, but this
@@ -2652,7 +2687,7 @@ and the real EV-exclusion rule enforced at execution even when a forecast-based 
 blind to a real future spillover spike, would otherwise have discharged into it) need no
 private archive at all; cases requiring the $1 agreement with `rates.bill_nem`, the real
 annual solve's conservation and cyclic closure, the
-day-ahead-never-beats-perfect-foresight bound (day-ahead vs greedy is deliberately not
+day-ahead-never-beats-perfect-foresight bound (day-ahead vs the shipping policy is deliberately not
 asserted either way; it is a disclosed finding, not a test assumption), the
 perfect-horizon variant never beating the true optimum, the leak-sensitivity bound staying
 small on the real measured year, and byte-identical regeneration gate on
@@ -2742,7 +2777,7 @@ reports `baseline_delta_usd` (change to the no-behavior, no-battery bill),
 `behavior_save_
 delta_usd` (change to the EV-shift-only saving, 100% compliance), and
 `battery_marginal_
-delta_usd` (change to the price-aware/"greedy" battery's marginal
+delta_usd` (change to the published price-aware battery's marginal
 saving on top of the shifted load). All three are recomputed fresh for the current
 structure inside this same script (none is read from a sibling artifact), so every
 comparison is apples-to-apples on identical code and identical physical data. A combined
@@ -2755,9 +2790,9 @@ scenario, holding physical usage fixed.
 **Independent cross-check.** The current-structure figures this script recomputes from
 scratch ($4,904.13 baseline, $1,220.85 behavior save) agree with `behavior_rebuild.json`'s
 scenario (a) to the cent, an independent proof that the reused pipeline (`shift_ev`) is
-wired correctly (`test_tou_structure_stress.py`). The battery marginal ($2,238.89) is
+wired correctly (`test_tou_structure_stress.py`). The battery marginal ($2,380.51) is
 deliberately $0.80 off `battery_dispatch_policies.json`'s post-behavior MID figure
-($2,238.09); see the steady-state boundary paragraph immediately below for why.
+($2,379.71); see the steady-state boundary paragraph immediately below for why.
 
 **Steady-state battery boundary.** `run_batt` always starts at `soc0=cap/2` and runs the
 year once: a one-time year-1 boundary condition, not a steady annual cycle, the same issue
@@ -2779,7 +2814,7 @@ own `battery_marginal_
 delta_usd` and `total_package_impact_usd` are unchanged to the
 cent** (the near-identical boundary drift across scenarios cancels almost entirely in the
 differencing); only the current structure's own absolute battery marginal moved, from
-$2,238.09 (the one-shot figure) to $2,238.89 (the steady-state figure), an $0.80
+$2,379.71 (the one-shot figure) to $2,380.51 (the steady-state figure), an $0.80
 correction, confirming the boundary artifact was real but immaterial to every published
 dollar figure in this section.
 
@@ -2850,7 +2885,7 @@ byte-identical; this script never imports `deep_analyses.py`).
 | Escalation | Uniform(0%, 12%) | **Estimated.** `data/tou_spread.json`'s `battery.uniform_ladder` bounding range (3/5/8/12%); the escalation trend itself is "not determined" in that artifact, so this is a bounding scenario range, not a measured rate. Floor kept at the old model's 0%; ceiling asserted at build time to equal the ladder's own top scenario, so a future `tou_spread.json` regeneration cannot silently drift out of sync. |
 | Degradation (battery capacity fade) | Uniform(0.5%, 2.5%)/yr | Manufacturer (Powerwall 3) warranty degradation curve, unchanged from the old Monte Carlo. This is battery fade, not solar panel degradation (a separate, already-published ~0.5-1.0%/yr figure, index.html §9), which answers a different question. |
 | Install cost | Uniform($12,500, $17,000) | Quoted installer cost bound, unchanged from the old Monte Carlo. |
-| EV-behavior persistence | Beta(2,1) compliance fraction *c*, mean 0.667 | **Estimated.** Blends `battery_dispatch_policies.json`'s pre-behavior marginal (`pw3.greedy.save`, *c*=0) and post-behavior marginal (`post_behavior.mid.battery_marginal`, *c*=1), the only two compliance points the pipeline computes. This is a modeled, not-yet-implemented change (§7 recommends it as a pending action, "do it this week"; this household has not sustained it), which is why the prior is the mild Beta(2,1) and not a more confident Beta(4,1). The mild skew toward *c*=1 reflects only the indirect evidence that ~80% of this household's EV charging already lands in favorable windows unshifted (2,618 of ~13,100 kWh/yr currently mis-timed, per `behavior_rebuild.py`'s own session detection). |
+| EV-behavior persistence | Beta(2,1) compliance fraction *c*, mean 0.667 | **Estimated.** Blends `battery_dispatch_policies.json`'s pre-behavior marginal (the published `pw3` save, *c*=0) and post-behavior marginal (`post_behavior.mid.battery_marginal`, *c*=1), the only two compliance points the pipeline computes. This is a modeled, not-yet-implemented change (§7 recommends it as a pending action, "do it this week"; this household has not sustained it), which is why the prior is the mild Beta(2,1) and not a more confident Beta(4,1). The mild skew toward *c*=1 reflects only the indirect evidence that ~80% of this household's EV charging already lands in favorable windows unshifted (2,618 of ~13,100 kWh/yr currently mis-timed, per `behavior_rebuild.py`'s own session detection). |
 | Soiling / production loss | Triangular(0, 0, lossB) | `data/soiling_results.json`'s two named, different scenarios, reframed relative to the observed baseline: the Green Button `Generation` column is this year's actual, already-soiled production, and scenario A **is** "this year's evidence", so the observed data already embeds roughly scenario A's own loss, and scaling it down by scenario A's raw loss fraction would double-subtract that loss. `lossB` = the incremental further loss (as a fraction of measured annual generation) to reach `scenario_B_2024_cleaning_evidence`'s worse, dirtier rate, relative to that same observed baseline, never scenario B's raw loss applied on top of an already-reduced series. Converted into a battery-saving derate via a calibrated sensitivity (below). |
 | Round-trip efficiency (RTE) | Uniform(85%, 95%) | **Engineering estimate** around the Powerwall 3 nameplate 90% round-trip spec (`battery_dispatch_policies.py`'s `ETA = sqrt(0.90)`); no independent RTE measurement exists in this repo for this household. |
 | Production measurement spread | Normal(mean 1.0, sd ≈2.05%) | **Empirical.** `data/threeway_production_validation.csv`'s 365-day PVOutput-vs-Enphase-meter comparison. The sd used is the annual relative gap between the two full-year totals (≈2.05%), not the larger day-to-day relative std (≈2.8%): the annual gap tracks the mean daily gap instead of shrinking by 1/√365, which is evidence the two meters disagree systematically (a persistent accounting/calibration gap), so each day is not an independent noisy draw that would average out. The draw is routed through the same calibrated generation-sensitivity as soiling (`soil_slope_loss`/`soil_slope_surplus`, below), never applied as a direct 1:1 multiplier on the dollar saving: a production-measurement discrepancy and a soiling-driven generation change are uncertainty about the identical physical quantity, so an equal-fraction change from either source must move the saving identically, provided it is on the same side. A shortfall from either source routes through `soil_slope_loss`; a surplus from either source routes through `soil_slope_surplus` (issue #89; the two are separate numbers because `scale_production()`'s loss/surplus reallocation is asymmetric by physical design). A 1:1 response would overstate this lever's swing roughly 1/`soil_slope`-fold. |
@@ -2873,8 +2908,8 @@ is fit by least squares to each lever's points, kept separate per side (issue #1
 +0.552 vs +0.592 per unit RTE), but each side's own slope is applied to that side's own
 nominal value first, and the two dollar results are then blended by `c`. Soiling is
 likewise two slopes, a loss side and a steeper surplus side (issue #89):
-`soil_slope_loss_mid` +0.2176/`_pre` +0.1695, `soil_slope_surplus_mid` +0.3404/`_pre`
-+0.2807 at this household's calibration. At this household's real `lossB` (5.28%, the
+`soil_slope_loss_mid` +0.1366/`_pre` +0.1014, `soil_slope_surplus_mid` +0.2000/`_pre`
++0.1652 at this household's calibration. At this household's real `lossB` (5.28%, the
 Monte Carlo's actual 0-`lossB` range), the four slopes move the battery marginal by
 roughly 0.9-1.8% at the top of that range, `soil_slope_loss_pre` the smallest effect,
 `soil_slope_surplus_mid` the largest. Every calibration point runs `run_batt` to a
@@ -2883,9 +2918,10 @@ forward as the next pass's starting SOC until they agree within 0.01 kWh) instea
 single pass from a fixed `cap/2` start, the same boundary treatment
 `tou_structure_stress.py`'s own `_steady_state_
 battery` applies for issue #14,
-reimplemented locally here. This nominal recomputation (`pre_nominal` $2,327.42,
-`mid_nominal` $2,238.89) legitimately differs from `battery_dispatch_policies.json`'s own
-committed figures (`pw3.greedy.save` $2,328, `post_behavior.mid.battery_marginal` $2,238)
+reimplemented locally here. This nominal recomputation (`pre_nominal` $2,464.85,
+`mid_nominal` $2,380.51) legitimately differs from `battery_dispatch_policies.json`'s own
+committed figures (the published `pw3` save $2,466, `post_behavior.mid.battery_marginal`
+$2,380)
 by ~$1-2, the known, expected size of the steady-state-vs-single-pass difference and not a
 stale artifact, so the build-time cross-check instead recomputes a separate single-pass
 figure (`pre_nominal_single_pass`/ `mid_nominal_single_pass`, using
@@ -2975,8 +3011,8 @@ import (the two sum to the total lost, exactly, to a fraction of a kWh:
 was being self-consumed, invisible to export-only scaling entirely, and it increases
 import (billed near the full retail rate) instead of only reducing export (billed at the
 lower NEM credit rate), which confirms the issue's own "likely understates" hypothesis
-with a specific, quantified mechanism. `soil_slope_mid` rose from 0.0561 to 0.2176
-(`old_vs_new_soil_slope` in the artifact), an ~3.9x larger per-unit slope, with the
+with a specific, quantified mechanism. `soil_slope_mid` rose from 0.0561 to 0.1366
+(`old_vs_new_soil_slope` in the artifact), an ~2.4x larger per-unit slope, with the
 realized swing at this household's actual loss fraction staying modest (≈1.1%,
 `soil_slope_mid * lossB`). Downstream, the corrected calibration is a modest correction to
 the published Monte Carlo (soiling/production-measurement-spread remain low-swing tornado
@@ -3002,12 +3038,12 @@ not one 3-point line through all three, since the physical relationship is piece
 `save1_of()` selects `soil_slope_loss` or `soil_slope_surplus` by the sign of its input
 (`np.where`, vectorized-safe for both the Monte Carlo's array draws and
 tornado()/escalation_downside_sensitivity()'s scalar calls). At this household's own
-`lossB` (5.28%), the real surplus-side slope (`soil_slope_surplus_mid` +0.3404) came out
-steeper than the loss-side slope (`soil_slope_loss_mid` +0.2176, ratio ≈1.56, steeper than
+`lossB` (5.28%), the real surplus-side slope (`soil_slope_surplus_mid` +0.2000) came out
+steeper than the loss-side slope (`soil_slope_loss_mid` +0.1366, ratio ≈1.46, steeper than
 this issue's own filing ballpark of ~1.06, which was an estimate made before any dispatch
 rerun of the self-consumption-first surplus model). Extrapolating the loss-fit slope to
-the real surplus point would predict $2,213.17 against the real measured $2,198.66, a
-$14.51 (0.65%) one-sided-extrapolation gap that the second fit removes by construction
+the real surplus point would predict $2,363.34 against the real measured $2,355.37, a
+$7.97 (0.33%) one-sided-extrapolation gap that the second fit removes by construction
 (`calibration.production_reconstruction.surplus_slope_fix` in the artifact). That is
 specifically the extrapolation gap; a separate, smaller residual (~$3.5, ~0.16% at this
 household's real surplus point) came from averaging `soil_slope_loss`/`surplus` across
@@ -3105,7 +3141,7 @@ a fixed-seed RNG has no sampling variance left to be close about.
 
 **Tornado reconciliation against `data/extended_results.json`'s `tornado_battery` (issue
 #15's AC6).** `extended_findings.py`'s tornado sweeps four different things:
-`install_cost`, `dispatch_policy` (a discrete design choice among evening/twowin/greedy,
+`install_cost`, `dispatch_policy` (a discrete design choice among the four policies,
 not an uncertain physical input), `post_behavior` (a 2-point sensitivity: G vs G_POST),
 and `escalation_5yr_avg` (an average-uplift approximation over a narrower 0-8% band). This
 script's own ranking, most-to-least swing on the real measured year: **install_cost** and
@@ -3125,9 +3161,9 @@ the old sweep used a narrower 0-8% band with an average-uplift approximation and
 sweeps the full 0-12% ladder-bound range directly; `ev_persistence` generalizes the old
 `post_behavior` 2-point lever into a continuous Beta(2,1) blend across the same two
 endpoints and lands on a swing of the same order (0.2 yr vs 0.3 yr); `dispatch_policy`
-(the old model's largest lever, 2.2 yr) has no counterpart here because it is a design
+(the old model's largest lever, 2.5 yr) has no counterpart here because it is a design
 choice the household makes, not an uncertain input to propagate, and this Monte Carlo
-holds it fixed at greedy throughout, matching the old model's own base case; `soiling`,
+holds it fixed at the published policy throughout, matching the old model's own base case; `soiling`,
 `round_trip_efficiency` and `production_measurement_spread` are new levers this issue
 adds, never quantified anywhere else in the repo. The full numeric comparison is
 regenerated into the artifact's own
@@ -3176,7 +3212,7 @@ only.
 script's own module docstring.
 
 *Dispatch-policy adherence risk*, whether the Powerwall's own automation reliably executes
-the chosen `greedy` policy (distinct from which policy to choose, already addressed by
+the chosen dispatch policy (distinct from which policy to choose, already addressed by
 `reconcile_tornado()`'s existing note), was checked (WebSearch, 2026-08) for a citable
 adherence/no-show rate against: Tesla's own published specs; Wood Mackenzie and EnergySage
 industry reports; a Solar Insure Powerwall reliability study
@@ -4017,13 +4053,13 @@ separates out the dropped energy and nothing else; the channel mix survives that
 and carries most of what is left, per the shift-share above.
 
 **Battery interaction (issue AC5, `battery_interaction`).** Re-runs
-`battery_dispatch_policies.run_batt` (same greedy policy, same Powerwall 3 config, the
+`battery_dispatch_policies.run_batt` (same published policy, same Powerwall 3 config, the
 same steady-state SOC convergence §3.24 established) on the baseline and floor-removed
 series, isolating the floor's own effect (no EV-shift behavior model stacked on top). On
 the real measured year, removing the ~1 kW floor cuts the battery's own marginal saving by
 roughly 45%: the floor persists into the 4-9pm on-peak window the battery discharges into,
 so a smaller floor leaves less expensive import for the battery to displace. Reported with
-a noted, uncorrected confound: `run_batt`'s greedy EV-spillover gate is evaluated on each
+a noted, uncorrected confound: `run_batt`'s EV-spillover gate is evaluated on each
 series' own import values, so a small amount of energy becomes servable only in the
 counterfactual purely because the floor's removal pushed it under the gate threshold, not
 because of any real behavioral change (~$26/yr in the conservative direction on the real
@@ -4872,7 +4908,7 @@ against the committed real-year `meter_derived` column would reject any syntheti
 
 ## 4. Battery simulation methodology
 
-**Arbitrage dispatch (identical greedy policy in `battery_backup_sims.py`,
+**Arbitrage dispatch (identical unconditional-charge policy in `battery_backup_sims.py`,
 `package_sims.py` (removed; the integrated pipeline replaced it), `deep_analyses.py`).**
 State: `soc` (kWh), starts at 0. For each 15-minute interval (`step = 0.25` h), in order:
 
@@ -4918,7 +4954,7 @@ Mapping of every canvas id → `D` arrays → producing computation:
 | Canvas id | Type | `D` arrays (length) | Units | Produced by |
 |---|---|---|---|---|
 | `hourly` | line, 4 series | `hourlyS_imp`, `hourlyS_exp`, `hourlyW_imp`, `hourlyW_exp` (24 each) | average kW by hour of day, split summer/winter | `report_data.json → hourly_S / hourly_W` (from `analysis/report_data.py`; mean kWh per hour-of-day, split by season) |
-| `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average grid-import kW by hour: today, with 1× PW3, with PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series are the **§3.13 price-aware dispatch** applied to summer intervals and re-averaged by hour — committed as `data/battery_dispatch_policies.json → pw3/pw3x.greedy_profile_S` (on-peak imports fall 4,022 → 870 kWh/yr with PW3, → 329 with the expansion) |
+| `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average grid-import kW by hour: today, with 1× PW3, with PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series are the **§3.13 price-aware dispatch** applied to summer intervals and re-averaged by hour — committed as `data/battery_dispatch_policies.json → pw3/pw3x.published_profile_S` (on-peak imports fall 4,022 → 870 kWh/yr with PW3, → 329 with the expansion) |
 | `monthly` | bar ×2 + line | `mLabels` (13), `mImp`, `mExp` (kWh), `mCost` ($) | calendar months Jul 2025*–Jul 2026* (* = partial) | `mImp`/`mExp` = `monthly.csv` (from `analyze.py`), rounded; `mCost` = `report_data.json → monthly.cost`, the canonical per-month netted energy cost (bill-derived rates; excludes the non-bypassable charges and the daily BSC) |
 | `periods` | horizontal bar ×2 | inline literals: kWh `[14856, 4498, 4022]`, $ `[1875, 2316, 2998]` | annual import kWh and gross import cost (imports × all-in rate, before export credits) for super-off-peak / off-peak / on-peak | `report_data.json → periods_chart`, produced by `analysis/report_data.py`; the on-peak $2,998 matches `report_data.json → onpeak.import_cost`, and `analysis/test_report_consistency.py` asserts both arrays against the artifact |
 | `carbon` | line, 1 series | `carb` (24) | CAISO grid CO₂ intensity, kg/MWh, annual average by hour of day | `data/carbon_fullyear_results.json → intensity_kg_per_mwh.annual_avg_by_hour` (from `carbon_fullyear.py` §3.15 — 364/365 real CAISO days + one month-hour-mean interpolated day; the original 4-day `carbon_results.json` series from `carbon_timing.py` remains as the §3.10 workpaper) |
@@ -6422,7 +6458,8 @@ headline saving is even reachable, and how much of what's left is movable. Built
   gross-import kWh × `rates.NBC`, re-running the exact package definitions
   `battery_dispatch_policies.py` already committed to (LOW =
   `behavior_rebuild.shift_ev()`'s 100%-EV-shift scenario; MID/HIGH =
-  `battery_dispatch_policies.run_batt()` at 13.5/27.0 kWh usable, policy `"greedy"`),
+  `battery_dispatch_policies.run_batt()` at 13.5/27.0 kWh usable, on
+  `PUBLISHED_POLICY`),
   read-only against the raw interval export. The direction is case-by-case (LOW's imports
   are unchanged by construction; MID's and HIGH's move in either direction depending on
   dispatch, with round-trip loss only one of the influences), so a "held constant,

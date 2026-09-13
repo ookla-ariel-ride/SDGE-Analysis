@@ -1997,12 +1997,18 @@ def case_s2_verdict_refuses_windows_its_hourly_sources_cannot_key():
             "neighbouring whole hour")
 
 
-def _s6_verdict_at(greedy, evening, expanded):
-    """S6_VERDICT rendered against a substituted dispatch artifact."""
+def _s6_verdict_at(published, evening, expanded):
+    """S6_VERDICT rendered against a substituted dispatch artifact.
+
+    The two savings it ranks come from the PUBLISHED policy's blocks (issue
+    #240), named by the artifact's own published_policy key -- substituting a
+    policy this verdict no longer reads would leave the token on the real
+    figures and every grid entry below would silently test the same case."""
     dp = rt._json("battery_dispatch_policies.json")
-    with _swapped(dp["pw3"]["greedy"], "save", greedy), \
+    pub = dp["published_policy"]
+    with _swapped(dp["pw3"][pub], "save", published), \
          _swapped(dp["pw3"]["evening"], "save", evening), \
-         _swapped(dp["pw3x"]["greedy"], "save", expanded):
+         _swapped(dp["pw3x"][pub], "save", expanded):
         return rt.resolve_token("S6_VERDICT")
 
 
@@ -5025,8 +5031,9 @@ def case_s6_verdict_calls_an_exact_tie_a_tie_rather_than_a_win_for_the_pack():
     worth MORE than the dispatch settings while the artifact says the two
     marginal gains are identical."""
     real = rt._json("battery_dispatch_policies.json")
-    live_policy = real["pw3"]["greedy"]["save"] - real["pw3"]["evening"]["save"]
-    live_capacity = real["pw3x"]["greedy"]["save"] - real["pw3"]["greedy"]["save"]
+    _pub = real["published_policy"]
+    live_policy = real["pw3"][_pub]["save"] - real["pw3"]["evening"]["save"]
+    live_capacity = real["pw3x"][_pub]["save"] - real["pw3"][_pub]["save"]
     assert live_policy != live_capacity, (
         f"data/battery_dispatch_policies.json now ties the two gaps at {live_policy}; "
         "the published branch below is no longer the live one")
@@ -8045,8 +8052,13 @@ def case_no_comparison_clause_picks_a_branch_off_a_non_finite_input():
         arms = (
             ("S4_VERDICT_SHORT", plans[best], "with_battery", "with_battery_gap", best),
             ("PLAN_MARGIN_VS_RUNNER_UP", plans[best], "no_battery", "margin", best),
-            ("S6_VERDICT", dp["pw3"]["greedy"], "save", "greedy_save", None),
-            ("S6_VERDICT", dp["pw3x"]["greedy"], "save", "expanded_save", None),
+            # The PUBLISHED policy's own blocks (issue #240): poisoning a
+            # sensitivity S6_VERDICT does not read would leave the token on
+            # finite figures and this arm would pass for the wrong reason.
+            ("S6_VERDICT", dp["pw3"][dp["published_policy"]], "save",
+             "published_save", None),
+            ("S6_VERDICT", dp["pw3x"][dp["published_policy"]], "save",
+             "expanded_save", None),
             ("S7_VERDICT", pk["HIGH"], "marginal_vs_mid_yr",
              "expansion_marginal_saving", cheapest),
             ("S10_VERDICT", a, "delta_usd_per_year", "delta_usd_per_year", None),
@@ -12046,7 +12058,7 @@ def case_negative_zero_is_zero_and_a_non_finite_npv_is_not_a_zero_gain():
     # resolve_token's own numeric gate does not cover, because the formula
     # returns an already-formatted string.
     rung = rt._json("battery_dispatch_policies.json")[
-        "escalation_greedy_pw3_post_behavior"]["8%"]
+        "escalation_published_pw3_post_behavior"]["8%"]
     published = rt.resolve_token("NPV_AT_HISTORICAL_ESCALATION")
     with _swapped(rung, "npv10", float("nan")):
         try:

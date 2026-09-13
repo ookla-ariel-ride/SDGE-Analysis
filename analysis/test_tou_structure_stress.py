@@ -397,6 +397,9 @@ def case_steady_state_battery_threads_a_distinct_charge_kw_to_run_batt():
     d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
     d["p"] = [R.period_at(ts) for ts in d.dt]
     d["seas"] = "W"
+    # the month column the published dispatch's per-bucket netting groups by
+    # (issue #240), the same one the fixture above already carries
+    d["ym"] = d.dt.dt.to_period("M")
     imp0 = np.full(1, 0.0)
     gen0 = np.full(1, 5.0)
     calls = []
@@ -445,7 +448,10 @@ def case_steady_state_battery_converges_for_every_structure():
         imp_shifted, _ = br.shift_ev(frame, ev, sessions, all_mask, sop_idx, sop_ts)
         gen0 = frame.exp.values.astype(float)
         _, _, soc0 = tss._steady_state_battery(frame, imp_shifted, gen0)
-        _, _, served, thru = bdp.run_batt(frame, imp_shifted, gen0, tss.CAP_KWH, "greedy",
+        # the SAME policy _steady_state_battery converged (issue #240): re-running
+        # a different one from its converged soc0 would measure nothing
+        _, _, served, thru = bdp.run_batt(frame, imp_shifted, gen0, tss.CAP_KWH,
+                                          bdp.PUBLISHED_POLICY,
                                           power_kw=tss.POWER_KW, soc0=soc0)
         soc_final = soc0 + thru - served / tss.ETA
         return abs(soc_final - soc0)

@@ -2819,13 +2819,13 @@
   "linearity_note_full_ladder": "max deviation from the linear fit is $73.89 (2.03% of total savings at 1200 W) across the full 100-1200 W ladder, all twelve rungs, including 2 (1100 W, 1200 W) that exceed the measured floor (1030 W) -- measurably nonlinear. Read that as a DELIVERY effect, not curvature: the full-ladder figure includes rungs above the measured floor (1030 W), whose marginals are diluted by energy _split_floor drops, and the rungs below the floor are diluted the same way for the same reason (per-interval clamp, median floor). See linearity_note for the same reading restricted to the reachable rungs alone."
  },
  "battery_interaction": {
-  "config": "13.5 kWh Powerwall 3 (bare unit), greedy policy, raw measured year (no EV-shift behavior model stacked on top -- isolates the floor's own effect on the battery)",
-  "baseline_battery_marginal_usd": 2327.42,
-  "reduced_floor_battery_marginal_usd": 1286.14,
-  "delta_usd": -1041.28,
-  "delta_pct": -44.74,
+  "config": "13.5 kWh Powerwall 3 (bare unit), the published dispatch policy, raw measured year (no EV-shift behavior model stacked on top -- isolates the floor's own effect on the battery)",
+  "baseline_battery_marginal_usd": 2464.85,
+  "reduced_floor_battery_marginal_usd": 1388.43,
+  "delta_usd": -1076.42,
+  "delta_pct": -43.67,
   "direction": "removing the floor SHRINKS the battery's own marginal saving: the floor persists into the 4-9pm on-peak window the battery discharges into, so a smaller floor leaves less expensive import for the battery to displace",
-  "caveat": "small confound (PR #77 review nitpick): run_batt's greedy EV-spillover gate (kw = imp*4 >= 2.5 kW is treated as non-battery-servable house/EV load) is evaluated on EACH series' OWN import values, so some intervals become servable ONLY in the floor-removed counterfactual purely because subtracting the floor pushed their import under 2.5 kW -- not because of any real behavioral change. Freezing the gate on the baseline series instead moves this delta by roughly $26/yr in the conservative direction (a smaller magnitude reduction in the battery's marginal saving); not corrected here since the gate is run_batt's own shared, unmodified logic."
+  "caveat": "small confound (PR #77 review nitpick): run_batt's published EV-spillover gate (kw = imp*4 >= 2.5 kW is treated as non-battery-servable house/EV load) is evaluated on EACH series' OWN import values, so some intervals become servable ONLY in the floor-removed counterfactual purely because subtracting the floor pushed their import under 2.5 kW -- not because of any real behavioral change. Freezing the gate on the baseline series instead moves this delta by roughly $26/yr in the conservative direction (a smaller magnitude reduction in the battery's marginal saving); not corrected here since the gate is run_batt's own shared, unmodified logic."
  },
  "confidence_labels": {
   "load_magnitude": "measured -- night_floor is read directly from 15-minute Green Button import data (no solar to mask it); hour_of_day is read directly from the Enphase SAM 8760 whole-home consumption meter, an independent instrument that sees self-consumed solar and so is the only one that can see a daytime floor",

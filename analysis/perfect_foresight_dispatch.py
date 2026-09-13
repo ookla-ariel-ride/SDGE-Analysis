@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Perfect-foresight dispatch bound (issue #13) — how much value does the
-greedy dispatch policy leave on the table?
+shipping dispatch policy leave on the table?
 
-battery_dispatch_policies.py's "greedy" policy is a threshold heuristic: serve
-every import priced above the battery's stored-energy cost. Nobody has checked
+The policy battery_dispatch_policies.PUBLISHED_POLICY names is a threshold
+heuristic: store surplus only where its forgone export is cheaper than the
+import it can serve, and serve every import priced above the stored energy's
+own cost. Nobody has checked
 how close that gets to the best ANY controller could do on this house's own
 measured year, at the same hardware (13.5 kWh, 11.5 kW discharge / 5 kW charge --
 Tesla's own datasheet, issue #40, see research/battery-research-notes.md -- 90%
@@ -91,7 +93,7 @@ gross export simultaneously (collapsing them to a signed net erases that
 gross import for free, understating the NBC genuinely owed on it with no
 battery action required), and let the optimizer manufacture brand-new
 export beyond what the house ever generated -- a capability the shipping
-greedy policy's own discharge cap never uses, undermining the "same
+shipping policy's own discharge cap never uses, undermining the "same
 hardware, same envelope" comparison this whole bound depends on (Codex
 adversarial review, third pass). Both are now fixed by construction: an
 interval with no battery action reproduces imp0_i/gen0_i exactly, gross
@@ -226,7 +228,7 @@ _METHOD_EV = ("linear program minimizing the exact rates.bill_nem_monthly "
               "objective (36 month/season/period netting buckets + NBC on "
               "gross imports), solved via scipy.optimize.linprog (HiGHS), "
               "at identical capacity/power/efficiency/EV-exclusion "
-              "constraints as battery_dispatch_policies.run_batt's greedy "
+              "constraints as battery_dispatch_policies.run_batt's published "
               "policy, with a cyclic (steady-state) SOC boundary")
 
 
@@ -234,14 +236,14 @@ BASELINE_TOL_USD = 0.5   # the artifact rounds its baseline to whole dollars: |x
 
 
 def load_canon(path, base_bill):
-    """The committed dispatch artifact the greedy comparison quotes
-    (pw3.greedy.save, the shipping policy's own saving), or None when there is
+    """The committed dispatch artifact the published comparison quotes
+    (the published policy's own pw3 saving), or None when there is
     none to quote. An artifact that exists is first checked against this run's
     intake (issue #247): it states the EV applicability it was built under as
     post_behavior.free_fix_scenario ("a", the EV charge reschedule only an EV household
     runs; "c", the house-load shift a no-EV household gets), and that must
     agree with br.EV_ANALYSIS (household.has_ev), the authority, in both
-    directions. Otherwise greedy_save_usd and every optimality-gap figure
+    directions. Otherwise published_save_usd and every optimality-gap figure
     built on it would be another household's. An artifact that states
     neither predates the shape and is refused as well. That is a FLAG match,
     not an identity check: a different household with the same flag passes
@@ -250,9 +252,9 @@ def load_canon(path, base_bill):
     from the same billed() engine this script computes base_bill with, so
     on the same frame the two agree to the artifact's whole-dollar rounding
     (BASELINE_TOL_USD). A larger gap means the artifact was built on a
-    different frame; its greedy saving is then NOT quoted (the comparison is
-    dropped exactly as if no artifact existed: the top-level greedy_comparison
-    key is absent and purchasing_statement.greedy_save_usd is null) and the
+    different frame; its published saving is then NOT quoted (the comparison is
+    dropped exactly as if no artifact existed: the top-level published_comparison
+    key is absent and purchasing_statement.published_save_usd is null) and the
     mismatch is announced by name on stderr. Dropping rather than refusing
     keeps this generator's documented CI contract (test_scripts_runnable.py
     runs it on a synthetic frame beside the committed data/, where the
@@ -273,7 +275,7 @@ def load_canon(path, base_bill):
             f"perfect_foresight_dispatch: {path} does not state which EV applicability "
             f"it was built under: post_behavior.free_fix_scenario is {scen!r}, "
             "expected 'a' (EV household) or 'c' (no EV). Regenerate it with "
-            "battery_dispatch_policies.py before quoting its greedy saving.")
+            "battery_dispatch_policies.py before quoting its published saving.")
     ev_applies = br.EV_ANALYSIS    # read at call time; tests rebind it
     if artifact_has_ev == ev_applies:
         artifact_base = canon.get("baseline_bill_current_rates")
@@ -286,9 +288,9 @@ def load_canon(path, base_bill):
                 f"{artifact_base!r}, but this frame bills ${base_bill:,.2f} "
                 "through the same battery_dispatch_policies.billed() engine "
                 f"(tolerance ${BASELINE_TOL_USD:.2f}, the artifact's whole-dollar "
-                "rounding). Its pw3.greedy.save is another frame's saving and is "
-                "NOT quoted: the top-level greedy_comparison key is omitted and "
-                "purchasing_statement.greedy_save_usd is null. Run "
+                "rounding). Its published pw3 saving is another frame's and is "
+                "NOT quoted: the top-level published_comparison key is omitted and "
+                "purchasing_statement.published_save_usd is null. Run "
                 "battery_dispatch_policies.py on THIS frame first to "
                 "get the comparison.", file=sys.stderr)
             return None
@@ -306,12 +308,12 @@ def load_canon(path, base_bill):
     raise SystemExit(
         "EV APPLICABILITY MISMATCH between this run and its dispatch artifact: "
         f"this run's intake says {flag_says}, but {path} {artifact_says}. "
-        "Quoting its pw3.greedy.save as greedy_save_usd would publish ANOTHER "
+        "Quoting its published pw3 saving as published_save_usd would publish ANOTHER "
         "household's saving, and every optimality-gap figure built on it, as "
         "this household's (CLAUDE.md section 0: every figure must be this "
         "household's). Run battery_dispatch_policies.py for THIS household "
         "first; this script will not compare one household's optimum against "
-        "another household's greedy dispatch.")
+        "another household's published dispatch.")
 
 
 def method_note():
@@ -358,7 +360,7 @@ def _solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
     genuinely owed on it, with no battery action required to "earn" that
     saving -- and (b) let the optimizer manufacture brand-new export beyond
     what the house ever actually generated, a capability the shipping
-    greedy policy's own discharge cap (`min(imp[i], soc*ETA, pwrq)`) never
+    shipping policy's own discharge cap (`min(imp[i], soc*ETA, pwrq)`) never
     uses, undermining the "same hardware, same envelope" comparison this
     whole bound depends on. Both are fixed by construction here, not by a
     runtime check: discharge_i's own upper bound is `min(imp0_i, power_kw/4)`
@@ -618,7 +620,7 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW,
     alone, and comparing THIS run against the full annual cyclic optimum
     attributes the remaining gap to the horizon effect alone (Codex
     adversarial review, fourth pass -- an earlier version's report language
-    attributed the day-ahead persistence run's ENTIRE shortfall vs greedy to
+    attributed the day-ahead persistence run's ENTIRE shortfall vs the shipping policy to
     forecast pre-commitment, without isolating this confound first).
 
     Returns (imp, exp, charge, discharge, soc_trace, info_dict). `soc_start`
@@ -1013,13 +1015,18 @@ def main():
             f"rates.bill_nem by ${out['verification']['agreement_usd']:.2f}, "
             "more than the required $1 agreement")
     if canon is not None:
-        greedy_save = canon["pw3"]["greedy"]["save"]
-        gap_usd = save - greedy_save
-        out["greedy_comparison"] = {
-            "greedy_save_usd": greedy_save,
+        # The PUBLISHED policy, named by the artifact itself (issue #240), so
+        # the gap this script reports is always the gap against the dispatch the
+        # report actually ships -- not against whichever policy was published on
+        # the day this line was written.
+        pub_save = canon["pw3"][canon["published_policy"]]["save"]
+        gap_usd = save - pub_save
+        out["published_comparison"] = {
+            "published_policy": canon["published_policy"],
+            "published_save_usd": pub_save,
             "perfect_foresight_save_usd": round(save, 2),
             "optimality_gap_usd": round(gap_usd, 2),
-            "optimality_gap_pct_of_greedy": round(100 * gap_usd / greedy_save, 2),
+            "optimality_gap_pct_of_published": round(100 * gap_usd / pub_save, 2),
         }
 
     # -- day-ahead forecast (realistic middle case) --
@@ -1071,7 +1078,7 @@ def main():
     # -- day-ahead, PERFECT same-day information, same myopic single-day
     # horizon: isolates the "no value placed on SOC held past midnight"
     # effect from forecast quality (Codex adversarial review, fourth pass:
-    # an earlier version attributed day-ahead's ENTIRE shortfall vs greedy
+    # an earlier version attributed day-ahead's ENTIRE shortfall vs the shipping policy
     # to forecast pre-commitment without ruling out this confound first). --
     ph_imp, ph_exp, ph_charge, ph_discharge, ph_soc_trace, _, ph_info = rolling_day_ahead(
         d, imp0, gen0, soc_init, perfect=True, charge_kw=CHARGE_KW)
@@ -1103,16 +1110,18 @@ def main():
     }
 
     out["purchasing_statement"] = {
-        "greedy_save_usd": canon["pw3"]["greedy"]["save"] if canon else None,
+        "published_save_usd": (canon["pw3"][canon["published_policy"]]["save"]
+                               if canon else None),
         "day_ahead_save_usd": round(da_save, 2),
         "day_ahead_perfect_horizon_save_usd": round(ph_save, 2),
         "perfect_foresight_save_usd": round(save, 2),
-        "day_ahead_value_over_greedy_usd": (
-            round(da_save - canon["pw3"]["greedy"]["save"], 2) if canon else None),
+        "day_ahead_value_over_published_usd": (
+            round(da_save - canon["pw3"][canon["published_policy"]]["save"], 2)
+            if canon else None),
         "remaining_gap_day_ahead_to_perfect_usd": round(save - da_save, 2),
         "gap_attributed_to_forecast_error_usd": forecast_cost_usd,
         "gap_attributed_to_myopic_horizon_usd": horizon_cost_usd,
-        "note": ("the shipping greedy policy already captures the large majority "
+        "note": ("the shipping policy already captures the large majority "
                  "of the theoretical maximum at this hardware (the optimality gap "
                  "above is the full remaining upside from ANY controller, however "
                  "smart). Day-ahead's shortfall versus the true optimum splits "
@@ -1139,7 +1148,7 @@ def main():
     print("wrote data/perfect_foresight_dispatch.json")
     print("verification:", out["verification"])
     if canon is not None:
-        print("greedy_comparison:", out["greedy_comparison"])
+        print("published_comparison:", out["published_comparison"])
 
 
 if __name__ == "__main__":

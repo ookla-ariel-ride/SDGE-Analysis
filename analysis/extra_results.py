@@ -16,7 +16,7 @@ stays live and unaffected by this script.
 
 `escalation` needed real investigation, not a quick patch. Issue #34's own
 framing ("contradicts the live engine") assumed extra_results.json's ladder
-and battery_dispatch_policies.json's own escalation_greedy_pw3_post_behavior
+and battery_dispatch_policies.json's own escalation_published_pw3_post_behavior
 ladder were the SAME computation that had drifted apart. They are not:
 running battery_dispatch_policies.escalation() (reimplemented below, see
 _escalation_ladder) against each script's own base-saving figure reproduces
@@ -152,7 +152,7 @@ def build():
         f"({RETIRED_EVENING_BASE_SAVE_SOURCE}), 1%/yr capacity fade, 5% "
         f"discount. The CURRENT published ladder (report section 13) is "
         f"data/battery_dispatch_policies.json -> "
-        f"escalation_greedy_pw3_post_behavior, rebased on the post-behavior "
+        f"escalation_published_pw3_post_behavior, rebased on the post-behavior "
         f"$2,238/yr marginal -- the two ladders disagree by design, not by "
         f"drift; see TECHNICAL.md section 3.11.")
 

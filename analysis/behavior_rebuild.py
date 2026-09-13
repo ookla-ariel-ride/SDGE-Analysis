@@ -549,7 +549,7 @@ def main():
     # applies -- issue #40 sweep: this section has no downstream reader
     # (behavior_rebuild.json's own committed "battery" block is not consumed
     # by any other script or cited in the report; package_results.py reads
-    # battery_dispatch_policies.json's pw3.greedy.save instead), but it is
+    # battery_dispatch_policies.json's published pw3 save instead), but it is
     # fixed here anyway for the same reason every other bare-unit call is.
     bi, be = battery_sim(d, d.imp.values.copy(), d.exp.values.copy(), charge_kw=BATT_CHARGE_KW)
     f = d.copy(); f["imp"], f["exp"] = bi, be

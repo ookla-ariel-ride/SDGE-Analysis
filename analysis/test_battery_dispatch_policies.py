@@ -581,8 +581,8 @@ def case_the_three_original_policies_ignore_the_value_arguments():
 @case
 def case_value_policy_on_the_measured_year():
     """Acceptance criterion: the saving re-billed end to end through
-    rates.bill_nem() against the published greedy figure, and the no-import-
-    below-cost invariant on every discharge of the real year. Reports both
+    rates.bill_nem() against the unconditional-charge ("greedy") figure, and
+    the no-import-below-cost invariant on every discharge of the real year. Reports both
     charge references (VALUE_CHARGE_REF's comment says why "floor" is the
     default), both configurations, and the post-free-fix marginal the report's
     package figures are built on. These are the figures TECHNICAL.md section
@@ -614,9 +614,19 @@ def case_value_policy_on_the_measured_year():
             out[name, ref, "post"] = b_sh - B.billed(d, i3, e3)
     if ARTIFACT.is_file():
         art = json.loads(ARTIFACT.read_text())
+        # Both policies are pinned against the artifact, each against the block
+        # that is really its own (issue #240): the per-config policy blocks
+        # carry every policy run, and post_behavior carries the PUBLISHED one,
+        # named by the artifact's own published_policy key. Pinning the post-
+        # behavior marginal to "greedy" would fail the moment the published
+        # policy changed -- which is exactly how this case caught the switch.
+        pub = art["published_policy"]
+        assert pub == B.PUBLISHED_POLICY, (pub, B.PUBLISHED_POLICY)
+        ref_for_pub = {"value": "floor"}.get(pub, pub)
         for name, key in (("pw3", "mid"), ("pw3x", "high")):
             assert abs(out[name, "greedy"] - art[name]["greedy"]["save"]) < 1.0, name
-            assert abs(out[name, "greedy", "post"]
+            assert abs(out[name, ref_for_pub] - art[name][pub]["save"]) < 1.0, name
+            assert abs(out[name, ref_for_pub, "post"]
                        - art["post_behavior"][key]["battery_marginal"]) < 1.0, name
     for name in ("pw3", "pw3x"):
         assert out[name, "floor"] >= out[name, "greedy"], (name, out)
@@ -633,6 +643,89 @@ def case_value_policy_on_the_measured_year():
                          out[name, "floor", "post"] - out[name, "greedy", "post"]))
     return ("measured year, rates.bill_nem(), $/yr; no discharge below cost in any "
             "value run. " + "; ".join(lines))
+
+
+@case
+def case_the_shared_charge_gate_alone_reproduces_the_published_dispatch():
+    """The claim two OTHER scripts now rely on, checked on the real year.
+
+    dsgs_vpp_backtest.run_batt_vpp and carbon_dispatch_tradeoff's Run C carry
+    their own dispatch loops, for a VPP-event question and a carbon question
+    respectively. Since issue #240 both gate their charging on
+    value_charge_gate()'s masks -- the published policy's own priced charge
+    rule -- but neither carries its lot ledger. That is only sound if the
+    ledger's discharge filter ("serve an import only from a lot cheaper than
+    it") refuses nothing the gate admitted.
+
+    Under the default "floor" reference it cannot, by construction: the gate
+    admits a kWh only when its delivered cost is below the CHEAPEST import the
+    season's discharge window offers. This case is the behavioural proof of
+    that argument on the measured year -- the unpriced "greedy" loop with only
+    the gate's two masks bolted on must reproduce run_batt("value")'s import
+    and export series interval for interval. If a future change to the charge
+    rule, the reference, or the discharge filter broke the equivalence, the two
+    other scripts would silently diverge from the published dispatch and this
+    case is what says so. SKIPS without the private archive."""
+    files = sorted(glob.glob(USAGE_GLOB))
+    if not files or not HOUSEHOLD_YAML.is_file():
+        raise SkipCase(f"needs the private archive ({USAGE_GLOB}) and {HOUSEHOLD_YAML}")
+    br.CSV = files[0]
+    d = br.load()
+    imp0 = d.Consumption.values.astype(float); gen0 = d.Generation.values.astype(float)
+    gate = B.value_charge_gate(d, imp0, gen0)
+    assert B.VALUE_CHARGE_REF == "floor", (
+        "this equivalence is the 'floor' reference's own guarantee; under "
+        "'best' a stored kWh may cost more than some import in its season and "
+        "the lot filter stops being a no-op", B.VALUE_CHARGE_REF)
+
+    worst = 0.0
+    for cap, chg in ((13.5, B.CHARGE_KW), (27.0, B.CHARGE_KW_WITH_EXPANSION)):
+        want_imp, want_exp, _, _ = B.run_batt(d, imp0, gen0, cap, "value", charge_kw=chg)
+        got_imp, got_exp = _greedy_loop_with_gate(d, imp0, gen0, cap, chg, gate)
+        for label, a, b in (("imp", want_imp, got_imp), ("exp", want_exp, got_exp)):
+            gap = float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
+            worst = max(worst, gap)
+            assert gap < 1e-9, (
+                f"{cap} kWh: the gate alone does not reproduce the published "
+                f"dispatch's {label} series (max gap {gap:.3e} kWh) -- the lot "
+                "ledger's discharge filter is no longer a no-op, and the two "
+                "scripts that use only the gate have silently diverged", cap, label)
+    return (f"the shared charge gate alone reproduces the published dispatch at both "
+            f"configurations on the measured year (max gap {worst:.1e} kWh)")
+
+
+def _greedy_loop_with_gate(d, imp0, gen0, cap, charge_kw, gate):
+    """run_batt's unpriced loop, verbatim, with the gate's masks bolted on.
+
+    Deliberately a TRANSCRIPTION rather than a call into the module: an
+    independent loop is what makes the equivalence above evidence rather than
+    a tautology. It mirrors what dsgs_vpp_backtest.run_batt_vpp and
+    carbon_dispatch_tradeoff.run_batt_union do with the same masks.
+    """
+    eta = B.ETA
+    imp = imp0.copy(); exp = gen0.copy()
+    pwrq_dis = 11.5 / 4; pwrq_chg = charge_kw / 4
+    soc = cap / 2
+    p = d.p.values
+    disch_win = gate["disch_win"]
+    surplus_ok, topup_ok = gate["surplus_ok"], gate["topup_ok"]
+    for i in range(len(d)):
+        if exp[i] > 0 and not (disch_win[i] and imp[i] > 0):
+            if surplus_ok[i]:
+                c = min(exp[i], (cap - soc) / eta, pwrq_chg)
+                if c > 0:
+                    soc += c * eta; exp[i] -= c
+            continue
+        if p[i] == "sop":
+            take = min(max((cap - soc) / eta, 0), pwrq_chg) if topup_ok[i] else 0
+            if take > 0:
+                soc += take * eta; imp[i] += take
+            continue
+        if disch_win[i]:
+            dd = min(imp[i], soc * eta, pwrq_dis)
+            if dd > 0:
+                soc -= dd / eta; imp[i] -= dd
+    return imp, exp
 
 
 # ---------------------------------------------------------------------------

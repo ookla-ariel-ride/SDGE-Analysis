@@ -732,8 +732,8 @@ def compute_package_gross_imports():
              returned scenario key travels with the figures below, so a reader
              never has to re-derive it from an intake file.
       MID  = battery_dispatch_policies.run_batt() on the shifted series,
-             13.5 kWh usable, policy "greedy" -- battery_dispatch_policies.
-             json's post_behavior.mid.
+             13.5 kWh usable, on battery_dispatch_policies.PUBLISHED_POLICY
+             -- battery_dispatch_policies.json's post_behavior.mid.
       HIGH = the same, 27.0 kWh usable -- post_behavior.high.
     behavior_rebuild.py and battery_dispatch_policies.py are called as
     READ-ONLY libraries: neither is modified, and neither
@@ -815,11 +815,13 @@ def compute_package_gross_imports():
     # passed no charge_kw at all, silently defaulting to the OLD symmetric
     # 11.5 kW charge behavior for both -- missed entirely by issue #40's
     # original consumer audit (Codex adversarial review caught it).
-    mid_imp, _, mid_served, _ = bdp.run_batt(d, imp_sh, gen0, 13.5, "greedy",
+    mid_imp, _, mid_served, _ = bdp.run_batt(d, imp_sh, gen0, 13.5,
+                                             bdp.PUBLISHED_POLICY,
                                              charge_kw=bdp.CHARGE_KW)
     mid_gross_kwh = float(mid_imp.sum())
 
-    high_imp, _, high_served, _ = bdp.run_batt(d, imp_sh, gen0, 27.0, "greedy",
+    high_imp, _, high_served, _ = bdp.run_batt(d, imp_sh, gen0, 27.0,
+                                               bdp.PUBLISHED_POLICY,
                                                charge_kw=bdp.CHARGE_KW_WITH_EXPANSION)
     high_gross_kwh = float(high_imp.sum())
 
@@ -844,7 +846,8 @@ def compute_package_gross_imports():
                     "household.has_ev is false")
             + ", applied with behavior_rebuild.py's own shift function -- "
             "then battery_dispatch_policies.run_batt("
-            "..., 'greedy', charge_kw=...) at 13.5 kWh / 5 kW charge (MID) and "
+            "..., PUBLISHED_POLICY, charge_kw=...) at 13.5 kWh / 5 kW charge "
+            "(MID) and "
             "27.0 kWh / 8 kW charge (HIGH) usable -- the same calls and "
             "package definitions battery_dispatch_policies."
             "json's own committed post_behavior block already uses. "
