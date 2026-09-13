@@ -56,6 +56,19 @@ import suite_runner
 import tempfile
 
 ANALYSIS = pathlib.Path(__file__).resolve().parent
+
+
+def _published_policy():
+    """The dispatch policy the report publishes, read from the COMMITTED
+    artifact rather than by importing battery_dispatch_policies (issue #240).
+
+    The module is the source of truth, and main() writes that constant into
+    the artifact's `published_policy` key -- but importing it here would pull
+    in behavior_rebuild and household.py at module scope, which fails in an
+    archive-free checkout, and this file is one of the suites CI runs there.
+    The artifact is committed, so it is available in every checkout."""
+    art = ANALYSIS.parent / "data" / "battery_dispatch_policies.json"
+    return json.loads(art.read_text())["published_policy"]
 sys.path.insert(0, str(ANALYSIS))
 import test_scripts_runnable as TSR   # the proven synthetic-fixture machinery
 PACKAGE_RESULTS = ANALYSIS / "package_results.py"
@@ -83,7 +96,7 @@ existed looks like -- a different shape from a key holding the wrong value, and
 package_results.py has to refuse both."""
 
 
-def _dispatch_json(greedy_save, evening_save, mid_marginal, mid_combined,
+def _dispatch_json(published_save, evening_save, mid_marginal, mid_combined,
                     mid_bill, high_combined, high_bill, free_fix_scenario="a"):
     """battery_dispatch_policies.json as package_results.py reads it.
 
@@ -98,7 +111,9 @@ def _dispatch_json(greedy_save, evening_save, mid_marginal, mid_combined,
     if free_fix_scenario is not _OMIT:
         post = dict({"free_fix_scenario": free_fix_scenario}, **post)
     return json.dumps({
-        "pw3": {"greedy": {"save": greedy_save}, "evening": {"save": evening_save}},
+        "published_policy": _published_policy(),
+        "pw3": {_published_policy(): {"save": published_save},
+                "evening": {"save": evening_save}},
         "post_behavior": post,
     })
 
@@ -142,7 +157,7 @@ def _behavior_json_scenario_a(model_bill, a_node, b, c, d):
 # so the expected package_results.json fields are hand-computable from these
 # same numbers in every case.
 BASE_BEHAVIOR = dict(model_bill=4904, a=1221, b=1009, c=1700, d=2179)
-BASE_DISPATCH = dict(greedy_save=2328, evening_save=1720, mid_marginal=2238,
+BASE_DISPATCH = dict(published_save=2328, evening_save=1720, mid_marginal=2238,
                      mid_combined=3459, mid_bill=1445, high_combined=3675,
                      high_bill=1229)
 
@@ -193,7 +208,7 @@ Deliberately un-rounded: round(428.83) = 429, so a case that asserts
 savings_yr == 429 fails against truncation as well as against the wrong
 scenario."""
 
-BASE_NOEV_DISPATCH = dict(greedy_save=1517, evening_save=1078, mid_marginal=1304,
+BASE_NOEV_DISPATCH = dict(published_save=1517, evening_save=1078, mid_marginal=1304,
                           mid_combined=1733, mid_bill=1441, high_combined=2016,
                           high_bill=1158, free_fix_scenario="c")
 """The dispatch figures the SAME genuinely generated no-EV run produced, so a
@@ -240,7 +255,7 @@ def case_no_current_run_copy_falls_back_to_committed_with_a_notice():
         out = json.loads((tmp / "data" / "package_results.json").read_text())
         assert out["model_baseline_current_rates"] == BASE_BEHAVIOR["model_bill"], out
         assert out["packages"]["LOW"]["savings_yr"] == BASE_BEHAVIOR["a"], out
-        assert out["packages"]["MID"]["battery_alone_yr"] == BASE_DISPATCH["greedy_save"], out
+        assert out["packages"]["MID"]["battery_alone_yr"] == BASE_DISPATCH["published_save"], out
     return ("package_results.py falls back to the committed copy of both "
             "upstream artifacts when no current-run copy exists, and prints "
             "a NOTICE naming each fallback")
@@ -260,7 +275,7 @@ def case_disagreeing_current_run_copy_wins_and_is_announced_loudly():
             _dispatch_json(**BASE_DISPATCH))
         # current-run copies: a NEW run with different household inputs
         new_behavior = dict(BASE_BEHAVIOR, model_bill=5200, a=1500)
-        new_dispatch = dict(BASE_DISPATCH, greedy_save=2600, mid_combined=3800)
+        new_dispatch = dict(BASE_DISPATCH, published_save=2600, mid_combined=3800)
         (tmp / "behavior_rebuild.json").write_text(_behavior_json(**new_behavior))
         (tmp / "battery_dispatch_policies.json").write_text(_dispatch_json(**new_dispatch))
 
@@ -275,7 +290,7 @@ def case_disagreeing_current_run_copy_wins_and_is_announced_loudly():
         # the CURRENT RUN's figures win, not the stale committed ones
         assert out["model_baseline_current_rates"] == new_behavior["model_bill"], out
         assert out["packages"]["LOW"]["savings_yr"] == new_behavior["a"], out
-        assert out["packages"]["MID"]["battery_alone_yr"] == new_dispatch["greedy_save"], out
+        assert out["packages"]["MID"]["battery_alone_yr"] == new_dispatch["published_save"], out
     return ("package_results.py prefers a disagreeing current-run copy over "
             "the committed one for both artifacts, and announces each "
             "mismatch loudly rather than resolving it in silence")
@@ -340,7 +355,7 @@ def case_mixed_source_cohort_fails_closed():
             _dispatch_json(**BASE_DISPATCH))
         # only a current-run dispatch copy -- no current-run behavior copy
         (tmp / "battery_dispatch_policies.json").write_text(
-            _dispatch_json(**dict(BASE_DISPATCH, greedy_save=2600)))
+            _dispatch_json(**dict(BASE_DISPATCH, published_save=2600)))
 
         r = _run(tmp)
         assert r.returncode != 0, "package_results.py accepted a mixed-source cohort"

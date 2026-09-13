@@ -1691,7 +1691,7 @@ def _chart_title_battery(ctx):
     before, after = _figures(
         "CHART_TITLE_BATTERY", "how far a battery moves on-peak imports",
         onpeak_import_kwh=dp["inputs"]["onpeak_import_kwh"],
-        onpeak_after_greedy=dp["pw3"]["onpeak_after_greedy"])
+        onpeak_after_published=dp["pw3"]["onpeak_after_published"])
     return (f"Projected grid import with a battery — on-peak imports fall from "
             f"{before:,} to {after:,} "
             "kWh/yr with one battery")
@@ -2084,24 +2084,47 @@ _tok("EV_FIX_SAVINGS_80", kind="derived",
      sources=["data/behavior_rebuild.json:scenarios.b (saved, or the "
               "not-applicable stub's reason)"], dim="$")
 
-# BARE (issue #136): pw3.greedy.save is already a whole-dollar figure in the
+# BARE (issue #136): the published policy's pw3 save is already a whole-dollar figure in the
 # artifact, so usd0_signed's display rounding loses nothing beyond this
 # report's baseline currency precision -- see the "~" rule above
 # _usd0_tilde. index.html once hand-typed a "~" beside this token's render in
 # one prose site while every other occurrence rendered it bare; the token
 # itself was never the source of that "~" and stays bare here.
-_tok("BATTERY_SAVINGS_PRICE_AWARE", kind="data_json", file="battery_dispatch_policies.json",
-     path=("pw3", "greedy", "save"), fmt="usd0_signed")
+# DERIVED RATHER THAN LEAF READS, FOR ONE REASON: THE POLICY NAME IS DATA
+# (issue #240). battery_dispatch_policies.json carries a block per dispatch
+# policy it ran and a `published_policy` key naming the one the report's figures
+# come from. These five tokens read that key and then the block it names, so
+# adopting a different dispatch moves every one of them together, from the
+# generator's own constant, with no token here to forget. A hardcoded "greedy"
+# in each path is what this repo had before, and it is exactly the shape that
+# publishes a sensitivity as a headline the day the published policy changes.
+def _published_policy():
+    """The policy key every published battery figure is drawn from."""
+    return _dig(_json("battery_dispatch_policies.json"), ("published_policy",))
+
+
+def _published_dispatch(config, field):
+    return _dig(_json("battery_dispatch_policies.json"),
+                (config, _published_policy(), field))
+
+
+_tok("BATTERY_SAVINGS_PRICE_AWARE", kind="derived", fmt="usd0_signed",
+     get=lambda ctx: _published_dispatch("pw3", "save"),
+     sources=["data/battery_dispatch_policies.json:pw3.<published_policy>.save"])
 _tok("BATTERY_SAVINGS_EVENING_ONLY", kind="data_json", file="battery_dispatch_policies.json",
      path=("pw3", "evening", "save"), fmt="usd0_signed")
-_tok("BATTERY_EXP_SAVINGS_PRICE_AWARE", kind="data_json", file="battery_dispatch_policies.json",
-     path=("pw3x", "greedy", "save"), fmt="usd0_signed")
-_tok("KWH_SERVED_PRICE_AWARE", kind="data_json", file="battery_dispatch_policies.json",
-     path=("pw3", "greedy", "kwh_served"), fmt="num0")
-_tok("KWH_SERVED_EXP", kind="data_json", file="battery_dispatch_policies.json",
-     path=("pw3x", "greedy", "kwh_served"), fmt="num0")
-_tok("CYCLES_PER_DAY", kind="data_json", file="battery_dispatch_policies.json",
-     path=("pw3", "greedy", "cycles_per_day"), fmt="num2")
+_tok("BATTERY_EXP_SAVINGS_PRICE_AWARE", kind="derived", fmt="usd0_signed",
+     get=lambda ctx: _published_dispatch("pw3x", "save"),
+     sources=["data/battery_dispatch_policies.json:pw3x.<published_policy>.save"])
+_tok("KWH_SERVED_PRICE_AWARE", kind="derived", fmt="num0",
+     get=lambda ctx: _published_dispatch("pw3", "kwh_served"),
+     sources=["data/battery_dispatch_policies.json:pw3.<published_policy>.kwh_served"])
+_tok("KWH_SERVED_EXP", kind="derived", fmt="num0",
+     get=lambda ctx: _published_dispatch("pw3x", "kwh_served"),
+     sources=["data/battery_dispatch_policies.json:pw3x.<published_policy>.kwh_served"])
+_tok("CYCLES_PER_DAY", kind="derived", fmt="num2",
+     get=lambda ctx: _published_dispatch("pw3", "cycles_per_day"),
+     sources=["data/battery_dispatch_policies.json:pw3.<published_policy>.cycles_per_day"])
 # WHAT A STORED kWh COSTS IS MEASURED OFF THE DISPATCH, NOT CITED (issue #189).
 #
 # These three read battery_dispatch_policies.py's stored_kwh_cost block, which
@@ -2477,7 +2500,7 @@ TOKENS["DISCOUNT_RATE"]["fmt"] = "pct0_frac"
 
 _tok("ESCALATION_HISTORICAL", kind="cited_constant", value=8, fmt="pct0",
      source="one of the four escalation rungs battery_dispatch_policies.json's "
-            "escalation_greedy_pw3_post_behavior tests (3/5/8/12%); chosen as "
+            "escalation_published_pw3_post_behavior tests (3/5/8/12%); chosen as "
             "'recent SDG&E history' because it sits inside this household's own "
             "MEASURED delivery-rate escalation range in data/tou_spread.json "
             "(delivery_cell_escalation: summer on-peak 7.63%/yr, winter on-peak "
@@ -2485,23 +2508,23 @@ _tok("ESCALATION_HISTORICAL", kind="cited_constant", value=8, fmt="pct0",
 
 
 def _escalation_rung(key):
-    rungs = _json("battery_dispatch_policies.json")["escalation_greedy_pw3_post_behavior"]
+    rungs = _json("battery_dispatch_policies.json")["escalation_published_pw3_post_behavior"]
     if key not in rungs:
         raise SystemExit(f"report_tokens: escalation rung {key!r} not present in "
-                          "battery_dispatch_policies.json:escalation_greedy_pw3_post_behavior")
+                          "battery_dispatch_policies.json:escalation_published_pw3_post_behavior")
     return rungs[key]
 
 
 _tok("PAYBACK_AT_HISTORICAL_ESCALATION", kind="derived",
      get=lambda ctx: _escalation_rung("8%")["payback"],
-     sources=["data/battery_dispatch_policies.json:escalation_greedy_pw3_post_behavior['8%']"],
+     sources=["data/battery_dispatch_policies.json:escalation_published_pw3_post_behavior['8%']"],
      fmt="yr1")
 _tok("NPV_AT_HISTORICAL_ESCALATION", kind="derived",
      # usd0_plus, not an inline "+$": npv10 is a discounted net present
      # value and goes negative on any escalation rung that does not carry the
      # pack, which the hardcoded plus rendered as "+$-3,000".
      get=lambda ctx: _escalation_rung('8%')['npv10'], fmt="usd0_plus",
-     sources=["data/battery_dispatch_policies.json:escalation_greedy_pw3_post_behavior['8%']"])
+     sources=["data/battery_dispatch_policies.json:escalation_published_pw3_post_behavior['8%']"])
 
 
 def _spread_observation_count(ctx):
@@ -5131,14 +5154,14 @@ def _metric_target(ctx):
     tot = _json("report_data.json")["totals"]["imp"]
     _refuse_if_zero(
         "METRIC_TARGET", "what on-peak import share a battery leaves after "
-        "its greedy dispatch", "data/report_data.json:totals.imp", tot,
+        "its published dispatch", "data/report_data.json:totals.imp", tot,
         "there is no imported energy to divide the after-dispatch on-peak "
         "import by")
-    return f"~{round(dp['pw3']['onpeak_after_greedy'] / tot * 100)}%"
+    return f"~{round(dp['pw3']['onpeak_after_published'] / tot * 100)}%"
 
 
 _tok("METRIC_TARGET", kind="derived", dim="%", get=_metric_target,
-     sources=["data/battery_dispatch_policies.json:pw3.onpeak_after_greedy",
+     sources=["data/battery_dispatch_policies.json:pw3.onpeak_after_published",
               "data/report_data.json:totals.imp"])
 
 
@@ -5490,7 +5513,7 @@ _tok("FREE_FIX_SHORT_NAME", kind="derived", get=_free_fix_short_name,
 # The MID package's two battery-alone scenarios, in the order section 0's
 # payback range reads them: (saving field, payback field, the phrase naming
 # the scenario). analysis/package_results.py sources the first from
-# battery_dispatch_policies.json's pw3.greedy.save -- the price-aware battery
+# battery_dispatch_policies.json's published pw3 policy block -- the battery
 # billed against the UNSHIFTED baseline -- and the second from that artifact's
 # post_behavior.mid.battery_marginal, the same battery billed against the year
 # AFTER the EV shift.
@@ -6552,12 +6575,17 @@ _tok("S5_VERDICT", phrase=True, kind="derived", get=_s5_verdict,
 
 def _s6_verdict(ctx):
     dp = _json("battery_dispatch_policies.json")
-    greedy, evening = dp["pw3"]["greedy"]["save"], dp["pw3"]["evening"]["save"]
-    expanded = dp["pw3x"]["greedy"]["save"]
+    # The published dispatch, whichever it is (issue #240): the comparison this
+    # verdict makes is "the published policy against the evening-only one", not
+    # "one named policy against another".
+    pub = _published_policy()
+    published, evening = dp["pw3"][pub]["save"], dp["pw3"]["evening"]["save"]
+    expanded = dp["pw3x"][pub]["save"]
     _require_finite("S6_VERDICT", "which of the two upgrades is worth more",
-                    greedy_save=greedy, evening_save=evening, expanded_save=expanded)
-    policy_gap = greedy - evening
-    capacity_gap = expanded - greedy
+                    published_save=published, evening_save=evening,
+                    expanded_save=expanded)
+    policy_gap = published - evening
+    capacity_gap = expanded - published
     # The closing clause is a comparison, not a conclusion pasted in: on
     # another household's artifacts the second pack could well win. But a
     # bare > splits three cases into two and mislabels the other two.
@@ -6585,14 +6613,14 @@ def _s6_verdict(ctx):
     # would print as "$-120/yr" (issue #131 review round 2, finding 5's
     # sweep). Identical output at every non-negative value.
     return (f"{VERDICT_STEM}one {_battery_model_short()} on price-aware dispatch models "
-            f"{_usd0_signed(greedy)}/yr against {_usd0_signed(evening)} on an "
+            f"{_usd0_signed(published)}/yr against {_usd0_signed(evening)} on an "
             f"evening-only schedule, {tail}.")
 
 
 _tok("S6_VERDICT", phrase=True, kind="derived", get=_s6_verdict,
-     sources=["data/battery_dispatch_policies.json:pw3.greedy.save",
+     sources=["data/battery_dispatch_policies.json:pw3.<published_policy>.save",
               "data/battery_dispatch_policies.json:pw3.evening.save",
-              "data/battery_dispatch_policies.json:pw3x.greedy.save"])
+              "data/battery_dispatch_policies.json:pw3x.<published_policy>.save"])
 
 
 def _s7_verdict(ctx):

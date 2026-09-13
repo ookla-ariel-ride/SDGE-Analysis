@@ -261,8 +261,8 @@ def case_battery_chart_series_match_their_artifacts():
     dispatch artifact's greedy profiles."""
     _close(_array("bat_now_S"), [round(v, 2) for v in RD["hourly_S"]["imp"]],
            0.01, "bat_now_S")
-    _close(_array("bat_pw3_S"), DISPATCH["pw3"]["greedy_profile_S"], 0.01, "bat_pw3_S")
-    _close(_array("bat_pw3x_S"), DISPATCH["pw3x"]["greedy_profile_S"], 0.01, "bat_pw3x_S")
+    _close(_array("bat_pw3_S"), DISPATCH["pw3"]["published_profile_S"], 0.01, "bat_pw3_S")
+    _close(_array("bat_pw3x_S"), DISPATCH["pw3x"]["published_profile_S"], 0.01, "bat_pw3x_S")
     return "all three battery chart series match their committed artifacts"
 
 
@@ -333,6 +333,47 @@ def case_every_lazy_chart_id_resolves_to_a_unique_canvas():
             assert re.search(r'<canvas id="' + re.escape(cid) + r'"', body), (
                 f"{name}: lazyChart('{cid}') has no matching <canvas id=\"{cid}\">")
     return "every lazyChart id is unique and resolves to a canvas in both files"
+
+
+def case_the_policy_table_marks_the_published_row_and_prints_its_figures():
+    """Section 6's policy table lists every dispatch the artifact ran, so exactly
+    one row has to be marked as the published one AND carry that policy's own
+    figures (issue #240).
+
+    Both halves matter. If PUBLISHED_POLICY were changed without regenerating,
+    the marked row would keep its label while the figures under it belonged to a
+    sensitivity; if the table were re-based without moving the marker, the
+    numbers would be right and the reader would be pointed at the wrong row. This
+    checks the marked row against `pw3`/`pw3x`[`published_policy`] directly, and
+    that no unmarked row carries those same figures."""
+    art = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
+    pub = art["published_policy"]
+    start = HTML.index("Dispatch policy: price-aware beats evening-only")
+    end = HTML.index("Electrical caveat", start)
+    rows = re.findall(r"<tr([^>]*)>(.*?)</tr>", HTML[start:end], re.S)
+    marked = [(attrs, body) for attrs, body in rows if "published" in body.lower()]
+    assert len(marked) == 1, (
+        f"section 6's policy table marks {len(marked)} rows as the published dispatch; "
+        "exactly one row must carry that marker")
+    attrs, body = marked[0]
+    assert 'class="win"' in attrs, (
+        "the row marked as the published dispatch is not the table's win row, so the "
+        "page's own emphasis points somewhere else")
+    for cfg in ("pw3", "pw3x"):
+        want = f"${art[cfg][pub]['save']:,}/yr"
+        assert want in body, (
+            f"section 6's published row does not print {cfg}'s published save {want}: "
+            f"{re.sub(r'<[^>]+>', '', body).strip()!r}")
+    # and no OTHER row may print the published figures, which is what a stale
+    # marker after a policy change would look like
+    others = [b for a, b in rows if b is not body]
+    pub_pw3 = f"${art['pw3'][pub]['save']:,}/yr"
+    for b in others:
+        assert pub_pw3 not in b, (
+            f"an unmarked policy row also prints the published saving {pub_pw3}; the "
+            "marker and the figures have come apart")
+    return (f"section 6's policy table marks exactly one row as published ({pub}) and it "
+            f"prints ${art['pw3'][pub]['save']:,}/${art['pw3x'][pub]['save']:,}/yr")
 
 
 def case_headline_figures_present_and_stale_ones_absent():
@@ -605,17 +646,17 @@ def case_optimality_gap_table_matches_the_artifact():
     pfd_path = ROOT / "data" / "perfect_foresight_dispatch.json"
     assert pfd_path.exists(), f"{pfd_path} is committed public data and must exist"
     pfd = json.loads(pfd_path.read_text())
-    assert "greedy_comparison" in pfd, (
-        "perfect_foresight_dispatch.json has no greedy_comparison: perfect_foresight_dispatch dropped the greedy comparison (see its NOTICE); run battery_dispatch_policies.py on this frame, then regenerate perfect_foresight_dispatch.py")
-    gc = pfd["greedy_comparison"]
+    assert "published_comparison" in pfd, (
+        "perfect_foresight_dispatch.json has no published_comparison: perfect_foresight_dispatch dropped the greedy comparison (see its NOTICE); run battery_dispatch_policies.py on this frame, then regenerate perfect_foresight_dispatch.py")
+    gc = pfd["published_comparison"]
     da = pfd["day_ahead_forecast"]
     ps = pfd["purchasing_statement"]
 
     checks = [
-        f"${gc['greedy_save_usd']:,}",
+        f"${gc['published_save_usd']:,}",
         f"${gc['perfect_foresight_save_usd']:,.2f}",
         f"${gc['optimality_gap_usd']:,.2f}",
-        f"{gc['optimality_gap_pct_of_greedy']:.1f}%",
+        f"{gc['optimality_gap_pct_of_published']:.1f}%",
         f"${da['save_usd']:,.2f}",
         f"${ps['remaining_gap_day_ahead_to_perfect_usd']:,.2f}",
         f"${ps['gap_attributed_to_forecast_error_usd']:,.2f}",
@@ -629,7 +670,7 @@ def case_optimality_gap_table_matches_the_artifact():
             f"§6 controller-quality subsection: {value!r} not found in it "
             "(present elsewhere in the report doesn't count)")
 
-    assert gc["perfect_foresight_save_usd"] >= gc["greedy_save_usd"], (
+    assert gc["perfect_foresight_save_usd"] >= gc["published_save_usd"], (
         "the true optimum must never save less than the greedy policy")
     assert da["save_usd"] <= gc["perfect_foresight_save_usd"], (
         "the day-ahead case must never beat the true optimum")
@@ -6512,9 +6553,9 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
     soil = json.loads((ROOT / "data" / "soiling_results.json").read_text())
     carbon = json.loads((ROOT / "data" / "carbon_fullyear_results.json").read_text())
     disp = DISPATCH
-    assert "greedy_comparison" in pfd, (
-        "perfect_foresight_dispatch.json has no greedy_comparison: perfect_foresight_dispatch dropped the greedy comparison (see its NOTICE); run battery_dispatch_policies.py on this frame, then regenerate perfect_foresight_dispatch.py")
-    gap = pfd["greedy_comparison"]
+    assert "published_comparison" in pfd, (
+        "perfect_foresight_dispatch.json has no published_comparison: perfect_foresight_dispatch dropped the greedy comparison (see its NOTICE); run battery_dispatch_policies.py on this frame, then regenerate perfect_foresight_dispatch.py")
+    gap = pfd["published_comparison"]
     div = ext["electrification_dividend"]
     nbt_cents = sorted(int(k.rstrip("c")) for k in
                        ext["nbt_2039"]["battery_marginal_under_nbt"])
@@ -6566,9 +6607,13 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
          f"${nem3['grandfathering_value_range_usd_per_yr']['high']:,.2f} per year",
          "nem3_grandfathering.json:grandfathering_value_range_usd_per_yr"),
         ("Therm", f"~{therms:,.0f} therms/yr", "data/gas_monthly_therms.csv, summed"),
+        # The PUBLISHED policy against the evening-only one, named by the
+        # artifact's own published_policy key (issue #240) -- the glossary
+        # entry is about what the dispatch settings are worth, so it has to
+        # follow whichever policy the report actually publishes.
         ("Dispatch policy",
-         f"~${round(disp['pw3']['greedy']['save'] - disp['pw3']['evening']['save']):,}/yr more",
-         "battery_dispatch_policies.json: greedy.save − evening.save"),
+         f"~${round(disp['pw3'][disp['published_policy']]['save'] - disp['pw3']['evening']['save']):,}/yr more",
+         "battery_dispatch_policies.json: <published_policy>.save − evening.save"),
         ("DSGS",
          f"**${dsgs['per_aggregation_sensitivity']['net_usd_min']:,.0f}–"
          f"${dsgs['per_aggregation_sensitivity']['net_usd_max']:,.0f}**",
@@ -6578,9 +6623,9 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
         ("Knee (sizing curve)", f"lands at {curve['current_behavior']['knee']['kwh']:,.0f} kWh",
          "battery_sizing_curve.json:current_behavior.knee.kwh"),
         ("Optimality gap", f"${gap['optimality_gap_usd']:,.2f}/yr gap",
-         "perfect_foresight_dispatch.json:greedy_comparison.optimality_gap_usd"),
-        ("Optimality gap", f"({gap['optimality_gap_pct_of_greedy']:,.1f}% of the shipping",
-         "perfect_foresight_dispatch.json:greedy_comparison.optimality_gap_pct_of_greedy"),
+         "perfect_foresight_dispatch.json:published_comparison.optimality_gap_usd"),
+        ("Optimality gap", f"({gap['optimality_gap_pct_of_published']:,.1f}% of the shipping",
+         "perfect_foresight_dispatch.json:published_comparison.optimality_gap_pct_of_published"),
         ("Electrification dividend", f"about ${div['dividend_yr']:,}/yr here today",
          "extended_results.json:electrification_dividend.dividend_yr"),
         ("Electrification dividend", f"~${div['dividend_yr_post_fix']:,}/yr",
@@ -6610,8 +6655,9 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
          f"displacing {round(cents(R.allin('S', 'off')))}–{round(cents(R.allin('S', 'on')))}¢ "
          "grid imports", "rates.py:allin('S', 'off') and allin('S', 'on')"),
         ("Dispatch policy",
-         f"(${disp['pw3']['greedy']['save']:,} against ${disp['pw3']['evening']['save']:,},",
-         "battery_dispatch_policies.json:pw3.greedy.save and pw3.evening.save"),
+         f"(${disp['pw3'][disp['published_policy']]['save']:,} against "
+         f"${disp['pw3']['evening']['save']:,},",
+         "battery_dispatch_policies.json:pw3.<published_policy>.save and pw3.evening.save"),
         ("DSGS", f"~{agg['n_aggregations']} anonymized VPP aggregations",
          "dsgs_vpp_backtest.json:per_aggregation_sensitivity.n_aggregations"),
         ("DSGS", f"the {agg['n_aggregations']} individual aggregation schedules",
@@ -6633,9 +6679,9 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
          f"{curve['current_behavior']['knee']['threshold_years']}-year warranty term",
          "battery_sizing_curve.json:current_behavior.knee.threshold_years"),
         ("Optimality gap",
-         f"captures {gap['greedy_save_usd'] / gap['perfect_foresight_save_usd'] * 100:.1f}% "
+         f"captures {gap['published_save_usd'] / gap['perfect_foresight_save_usd'] * 100:.1f}% "
          "of the theoretical maximum",
-         "perfect_foresight_dispatch.json:greedy_comparison, greedy ÷ perfect-foresight"),
+         "perfect_foresight_dispatch.json:published_comparison, greedy ÷ perfect-foresight"),
         ("Powerwall 3", f"({pw3['capacity_kwh']:g} kWh storage, {pw3['power_kw']:g} kW output",
          "battery_dispatch_policies.json:stored_kwh_cost.config"),
         ("Round-trip efficiency", f"modeled here at {pw3['round_trip'] * 100:.0f}%",
@@ -7659,10 +7705,6 @@ def case_stored_kwh_costs_match_the_dispatch_artifact():
         (cost["grid_topup"]["cost_per_kwh_delivered"],
          r"or <b>([\d.]+)¢</b> from a super-off-peak grid top-up",
          "grid top-up stored-kWh cost (section 6 lead)"),
-        (cost["solar_surplus"]["cost_per_kwh_delivered"],
-         r"averaged over everything the dispatch stores from the sun, a stored kWh "
-         r"costs <b>([\d.]+)¢</b>",
-         "blended solar stored-kWh cost (section 6 caveat)"),
     ):
         m = re.search(pattern, HTML)
         assert m, (
@@ -7687,15 +7729,53 @@ def case_stored_kwh_costs_match_the_dispatch_artifact():
             "also covers. Either say super-off-peak, or compute the figure from the "
             "10:00-14:00 mask")
 
+    # WHERE THE SURPLUS-WEIGHTED AVERAGE LIVES, AND WHY IT HAS TWO SHAPES.
+    # This case used to pin a separate "averaged over everything the dispatch
+    # stores from the sun" sentence beside the midday cell, because the two
+    # were different numbers: the unpriced charge rule stored half its surplus
+    # from the off-peak shoulders. The published rule prices the charge side
+    # (issue #240) and declines those, so on this household the two figures are
+    # ONE figure and section 6 publishes it once. Both shapes are checked, and
+    # the branch is taken from the artifact, not from what the prose happens to
+    # say -- a household whose battery does store shoulder surplus still gets
+    # the two-figure check its own artifact earns.
+    blended = cost["solar_surplus"]["cost_per_kwh_delivered"]
     share = sop["share_of_surplus_kwh"]
+    total_kwh = cost["solar_surplus"]["kwh"]
+    if share >= 0.999:
+        assert abs(blended - sop["cost_per_kwh_delivered"]) < 5e-5, (
+            f"the artifact says {share * 100:.1f}% of stored surplus is super-off-peak, "
+            f"but its blended cost {blended} and its midday cell "
+            f"{sop['cost_per_kwh_delivered']} disagree -- one of the two is wrong")
+        pattern = (r"all ([\d,.]+) kWh of it, ([\d.]+)% of what it stores from the sun, "
+                   r"at ([\d.]+)¢ delivered")
+        m = re.search(pattern, HTML)
+        assert m, (
+            "the sentence publishing the stored-surplus quantity, share and cost "
+            f"(section 6 caveat) is not in index.html in the form this case pins "
+            f"({pattern!r}) -- either the prose was reworded or a figure was dropped; "
+            "re-anchor this case rather than deleting it")
+        got = (m.group(1), m.group(2) + "%", m.group(3) + "¢")
+        want = (f"{total_kwh:,.1f}", f"{share * 100:.1f}%", f"{blended * 100:.1f}¢")
+        assert got == want, (
+            f"section 6's stored-surplus sentence reads {got} but "
+            f"data/battery_dispatch_policies.json derives {want}")
+        return ("section 6's stored-kWh costs match data/battery_dispatch_policies.json, "
+                f"and its one solar figure covers {share * 100:.1f}% of stored surplus")
+
+    m = re.search(r"averaged over everything the dispatch stores from the sun, a stored "
+                  r"kWh costs <b>([\d.]+)¢</b>", HTML)
+    assert m, (
+        "the dispatch stores surplus outside super-off-peak, so section 6 must publish "
+        "the surplus-weighted average separately from the midday cell; the sentence "
+        "carrying it is not in index.html")
+    assert m.group(1) + "¢" == f"{blended * 100:.1f}¢", (
+        f"the blended solar stored-kWh cost reads {m.group(1)}¢ in index.html but "
+        f"data/battery_dispatch_policies.json derives {blended * 100:.1f}¢")
     assert f"{share * 100:.1f}%" in HTML, (
         f"the midday share of stored surplus is {share * 100:.1f}% in the artifact but "
         "index.html does not print it -- section 6 quotes the midday cost, so it must "
         "also say how much of the stored surplus that cost covers")
-    assert share < 0.9, (
-        f"midday is {share * 100:.1f}% of stored surplus; if it ever approaches all of "
-        "it, section 6's separate blended figure stops being worth publishing and this "
-        "case should be revisited rather than silenced")
     return ("section 6's three stored-kWh costs and the midday share all match "
             "data/battery_dispatch_policies.json")
 
@@ -7950,6 +8030,7 @@ CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
     case_hourly_profiles_match_their_artifact,
+    case_the_policy_table_marks_the_published_row_and_prints_its_figures,
     case_battery_chart_series_match_their_artifacts,
     case_carb_chart_matches_its_artifact,
     case_spread_chart_series_match_their_artifact,

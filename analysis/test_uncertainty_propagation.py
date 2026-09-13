@@ -931,7 +931,8 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     _require_archive()
     calib = _in_sandbox(up.dispatch_calibration)
     dispatch = _committed("battery_dispatch_policies.json")
-    committed_pre = float(dispatch["pw3"]["greedy"]["save"])
+    # the PUBLISHED policy's own block, named by the artifact (issue #240)
+    committed_pre = float(dispatch["pw3"][dispatch["published_policy"]]["save"])
     committed_mid = float(dispatch["post_behavior"]["mid"]["battery_marginal"])
     # The tie-out against the committed artifact compares the SINGLE-PASS
     # recomputation (matching battery_dispatch_policies.py's own method
@@ -942,7 +943,7 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     # calibration()'s _single_pass_marginal docstring).
     assert abs(calib["pre_nominal_single_pass"] - committed_pre) < 1.0, (
         f"recomputed pre-behavior marginal {calib['pre_nominal_single_pass']:.2f} "
-        f"disagrees with committed pw3.greedy.save {committed_pre} by >$1")
+        f"disagrees with the committed published pw3 save {committed_pre} by >$1")
     assert abs(calib["mid_nominal_single_pass"] - committed_mid) < 1.0, (
         f"recomputed post-behavior marginal {calib['mid_nominal_single_pass']:.2f} "
         f"disagrees with committed post_behavior.mid.battery_marginal {committed_mid} by >$1")
@@ -1072,7 +1073,7 @@ def case_dispatch_calibration_free_fix_follows_the_has_ev_flag():
             # together.
             imp_c, moved_c = br.shift_house(d, imp0, ev, 0.25,
                                             sop_idx, sop_ts, float(np.max(imp0)))
-            i2, e2, _, _ = bp.run_batt(d, imp_c, gen0, up.CAP_KWH, "greedy",
+            i2, e2, _, _ = bp.run_batt(d, imp_c, gen0, up.CAP_KWH, bp.PUBLISHED_POLICY,
                                        charge_kw=bp.CHARGE_KW)
             return (float(bp.billed(d, imp_c, gen0) - bp.billed(d, i2, e2)),
                     float(moved_c))

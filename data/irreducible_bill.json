@@ -266,15 +266,15 @@
  "package_floor_fractions": {
   "HIGH": {
    "annual_days": 365,
-   "combined_fraction_of_projected_bill": 0.6318,
-   "combined_usd": 776.5,
-   "gross_import_kwh": 23185.6,
-   "gross_import_kwh_vs_baseline": -190.9,
+   "combined_fraction_of_projected_bill": 0.7162,
+   "combined_usd": 777.13,
+   "gross_import_kwh": 23215.7,
+   "gross_import_kwh_vs_baseline": -160.8,
    "method": "strictly_irreducible_usd = annual_days x rates.BSC (current per-day Base Services Charge; invariant across packages, a per-day charge does not depend on how much energy is imported) -- the ONLY figure here that is a genuine floor. non_bypassable_usd = this package's own modeled gross-import kWh (compute_package_gross_imports()) x rates.NBC (current-vintage combined NBC + Wildfire Fund Charge rate, $/kWh) -- real money at this package's own usage, NOT held constant across packages, and NOT itself irreducible (a different purchase would move it further). combined_usd sums both for reference only; it is not itself a floor.",
-   "non_bypassable_fraction_of_projected_bill": 0.3962,
-   "non_bypassable_usd": 486.9,
-   "projected_bill_current_rates_yr": 1229,
-   "strictly_irreducible_fraction_of_projected_bill": 0.2356,
+   "non_bypassable_fraction_of_projected_bill": 0.4493,
+   "non_bypassable_usd": 487.53,
+   "projected_bill_current_rates_yr": 1085,
+   "strictly_irreducible_fraction_of_projected_bill": 0.2669,
    "strictly_irreducible_usd": 289.6
   },
   "LOW": {
@@ -292,15 +292,15 @@
   },
   "MID": {
    "annual_days": 365,
-   "combined_fraction_of_projected_bill": 0.5364,
-   "combined_usd": 775.04,
-   "gross_import_kwh": 23116.0,
-   "gross_import_kwh_vs_baseline": -260.5,
+   "combined_fraction_of_projected_bill": 0.5948,
+   "combined_usd": 775.67,
+   "gross_import_kwh": 23146.3,
+   "gross_import_kwh_vs_baseline": -230.2,
    "method": "strictly_irreducible_usd = annual_days x rates.BSC (current per-day Base Services Charge; invariant across packages, a per-day charge does not depend on how much energy is imported) -- the ONLY figure here that is a genuine floor. non_bypassable_usd = this package's own modeled gross-import kWh (compute_package_gross_imports()) x rates.NBC (current-vintage combined NBC + Wildfire Fund Charge rate, $/kWh) -- real money at this package's own usage, NOT held constant across packages, and NOT itself irreducible (a different purchase would move it further). combined_usd sums both for reference only; it is not itself a floor.",
-   "non_bypassable_fraction_of_projected_bill": 0.3359,
-   "non_bypassable_usd": 485.44,
-   "projected_bill_current_rates_yr": 1445,
-   "strictly_irreducible_fraction_of_projected_bill": 0.2004,
+   "non_bypassable_fraction_of_projected_bill": 0.3728,
+   "non_bypassable_usd": 486.07,
+   "projected_bill_current_rates_yr": 1304,
+   "strictly_irreducible_fraction_of_projected_bill": 0.2221,
    "strictly_irreducible_usd": 289.6
   }
  },

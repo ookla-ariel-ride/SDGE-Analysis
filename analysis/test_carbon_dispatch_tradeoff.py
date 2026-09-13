@@ -163,9 +163,9 @@ def case_run_a_matches_committed_battery_dispatch_policies_json():
     result, _ = _result()
     cc = result["cross_check"]
     assert abs(cc["run_a_computed_save_usd"]
-               - cc["battery_dispatch_policies_json_pw3_greedy_save_usd"]) <= cc["tolerance_usd"], cc
+               - cc["battery_dispatch_policies_json_pw3_published_save_usd"]) <= cc["tolerance_usd"], cc
     return (f"Run A save ${cc['run_a_computed_save_usd']} matches committed "
-           f"pw3.greedy.save ${cc['battery_dispatch_policies_json_pw3_greedy_save_usd']} "
+           f"the published pw3 save ${cc['battery_dispatch_policies_json_pw3_published_save_usd']} "
            f"within ${cc['tolerance_usd']}")
 
 
@@ -246,6 +246,11 @@ def case_ev_spillover_excluded_in_run_b_the_same_way_as_run_a():
     d = pd.DataFrame({
         "p": ["off", "off", "sop", "on"],
         "hour": [7.0, 7.25, 2.0, 17.0],
+        # the season and month the published charge rule nets each bucket over
+        # (issue #240): Run A and Run C both price their charge decisions with
+        # battery_dispatch_policies.value_charge_gate, which groups by these.
+        "seas": ["W"] * 4,
+        "ym": ["2026-01"] * 4,
     })
     imp0 = np.array([3.0, 0.4, 1.0, 5.0])
     gen0 = np.zeros(4)
@@ -253,7 +258,7 @@ def case_ev_spillover_excluded_in_run_b_the_same_way_as_run_a():
     threshold = 100.0
     cap = 100.0
 
-    iA, eA, servedA, thruA = CDT.bp.run_batt(d, imp0, gen0, cap, "greedy")
+    iA, eA, servedA, thruA = CDT.bp.run_batt(d, imp0, gen0, cap, CDT.bp.PUBLISHED_POLICY)
     iB, eB, servedB, thruB = CDT.run_batt_carbon(d, imp0, gen0, cap, inten, threshold)
 
     # row0: excluded by both (off-peak/dirty, high kW)
@@ -290,6 +295,11 @@ def case_run_c_discharges_on_either_condition_and_charges_only_on_both():
     d = pd.DataFrame({
         "p": ["off", "off", "sop", "on"],
         "hour": [7.0, 7.25, 2.0, 17.0],
+        # the season and month the published charge rule nets each bucket over
+        # (issue #240): Run A and Run C both price their charge decisions with
+        # battery_dispatch_policies.value_charge_gate, which groups by these.
+        "seas": ["W"] * 4,
+        "ym": ["2026-01"] * 4,
     })
     imp0 = np.array([3.0, 0.4, 1.0, 5.0])
     gen0 = np.zeros(4)
@@ -297,7 +307,7 @@ def case_run_c_discharges_on_either_condition_and_charges_only_on_both():
     threshold = 100.0
     cap = 100.0
 
-    iA, _, _, _ = CDT.bp.run_batt(d, imp0, gen0, cap, "greedy")
+    iA, _, _, _ = CDT.bp.run_batt(d, imp0, gen0, cap, CDT.bp.PUBLISHED_POLICY)
     iC, _, servedC, thruC = CDT.run_batt_union(d, imp0, gen0, cap, inten, threshold)
 
     assert iC[0] == imp0[0], "Run C served the row excluded by both A and B"
@@ -539,10 +549,12 @@ def case_compute_runs_end_to_end_on_a_synthetic_house():
             imp0 = d.Consumption.values.astype(float)
             gen0 = d.Generation.values.astype(float)
             base = bp.billed(d, imp0, gen0)
-            iA, eA, _, _ = bp.run_batt(d, imp0, gen0, CDT.CAP, "greedy", charge_kw=CDT.CHARGE_KW)
+            iA, eA, _, _ = bp.run_batt(d, imp0, gen0, CDT.CAP, bp.PUBLISHED_POLICY,
+                                       charge_kw=CDT.CHARGE_KW)
             billA = bp.billed(d, iA, eA)
             (tmp / "data" / "battery_dispatch_policies.json").write_text(json.dumps({
-                "pw3": {"greedy": {"save": round(base - billA)}}}))
+                "published_policy": bp.PUBLISHED_POLICY,
+                "pw3": {bp.PUBLISHED_POLICY: {"save": round(base - billA)}}}))
 
             # independent baseline-CO2 check: reuse household_intensity() as a
             # trusted building block (covered by this file's OTHER, already
@@ -607,10 +619,18 @@ def case_run_batt_carbon_and_union_thread_a_distinct_charge_kw():
     assert "charge_kw" in inspect.signature(CDT.run_batt_carbon).parameters
     assert "charge_kw" in inspect.signature(CDT.run_batt_union).parameters
 
-    d = pd.DataFrame({"p": ["off"], "hour": [12.0]})
-    imp0 = np.array([0.0])
-    gen0 = np.array([5.0])
-    inten = np.array([50.0])
+    # TWO intervals since issue #240: Run C prices a stored kWh against the
+    # cheapest import its season's DISCHARGE window offers, so a frame with no
+    # discharge-window interval has no reference to clear and Run C stores
+    # nothing at any charge cap. Row 0 is the midday surplus this case measures;
+    # row 1 is the on-peak import that gives it somewhere to go. (Run B is
+    # deliberately exempt from that rule -- it prices in carbon -- so it reads
+    # this frame exactly as it read the one-row version.)
+    d = pd.DataFrame({"p": ["sop", "on"], "hour": [12.0, 17.0],
+                      "seas": ["W"] * 2, "ym": ["2026-01"] * 2})
+    imp0 = np.array([0.0, 1.0])
+    gen0 = np.array([5.0, 0.0])
+    inten = np.array([50.0, 50.0])
     threshold = 100.0  # this hour reads as chargeable (clean) for both functions
     cap = 13.5
 
@@ -636,7 +656,8 @@ def _one_dirty_offpeak_spike():
     """One off-peak, dirty-hour interval importing 12 kW (3.0 kWh) and nothing
     else. cap huge so SOC never binds: the only cap on service is PWRQ, so the
     served energy is exactly PWRQ (2.875 kWh) when the rule lets it through."""
-    d = pd.DataFrame({"p": ["off"], "hour": [7.0]})
+    d = pd.DataFrame({"p": ["off"], "hour": [7.0],
+                      "seas": ["W"], "ym": ["2026-01"]})
     return d, np.array([3.0]), np.zeros(1), np.array([300.0]), 100.0, 100.0
 
 

@@ -1021,7 +1021,7 @@ def case_exclusion_mask_is_keyed_off_the_intake_flag_not_the_detector():
 # free_fix_scenario ("a": EV household, "c": no EV) and refuses, both ways,
 # when it disagrees with the intake flag br.EV_ANALYSIS; a household with no
 # EV must not publish the committed EV household's pw3.greedy.save as
-# greedy_save_usd. That is a flag match (a different household with the same
+# published_save_usd. That is a flag match (a different household with the same
 # flag passes it); the one identity check available, the artifact's
 # baseline_bill_current_rates against the frame's own base_bill, is tested
 # separately below. A foreign frame's artifact is dropped from the comparison
@@ -1060,7 +1060,7 @@ def _load_canon_under(has_ev, path, base_bill=_COMMITTED_BASE):
 
 
 @case
-def case_greedy_comparison_refuses_an_ev_artifact_on_a_no_ev_household():
+def case_published_comparison_refuses_an_ev_artifact_on_a_no_ev_household():
     path, _ = _canon_copy("a")
     outcome, msg = _load_canon_under(False, path)
     assert outcome == "refused", f"an EV household's artifact was accepted on a no-EV intake"
@@ -1071,7 +1071,7 @@ def case_greedy_comparison_refuses_an_ev_artifact_on_a_no_ev_household():
 
 
 @case
-def case_greedy_comparison_refuses_a_no_ev_artifact_on_an_ev_household():
+def case_published_comparison_refuses_a_no_ev_artifact_on_an_ev_household():
     """The mirror. A one-directional guard passes this; it must not."""
     path, _ = _canon_copy("c")
     outcome, msg = _load_canon_under(True, path)
@@ -1083,7 +1083,7 @@ def case_greedy_comparison_refuses_a_no_ev_artifact_on_an_ev_household():
 
 
 @case
-def case_greedy_comparison_accepts_a_matching_household_both_ways():
+def case_published_comparison_accepts_a_matching_household_both_ways():
     """Positive control: matching households return the artifact, so a build
     that refuses everything cannot pass the two cases above. A missing
     artifact stays the documented None (the comparison is optional)."""
@@ -1096,7 +1096,7 @@ def case_greedy_comparison_accepts_a_matching_household_both_ways():
 
 
 @case
-def case_greedy_comparison_drops_an_artifact_built_on_a_different_frame():
+def case_published_comparison_drops_an_artifact_built_on_a_different_frame():
     """The flag match passes any household with the same flag. The identity
     check that exists at zero cost: the artifact's baseline_bill_current_rates
     is round(billed()) of its frame, and this script bills its own frame with
@@ -1140,7 +1140,7 @@ def case_greedy_comparison_drops_an_artifact_built_on_a_different_frame():
 
 
 @case
-def case_greedy_comparison_refuses_an_artifact_that_does_not_state_its_household():
+def case_published_comparison_refuses_an_artifact_that_does_not_state_its_household():
     path, _ = _canon_copy(None, drop=True)
     outcome, msg = _load_canon_under(True, path)
     assert outcome == "refused", "an artifact with no applicability was accepted"

@@ -272,10 +272,13 @@ base_bill = bp.billed(d, imp0, gen0)
 # ---- battery dispatch savings: COMPUTED, never hard-coded -------------------
 ev, _sessions = br.detect_sessions(d)
 POL_SAVE = {}
-for _pol in ("evening", "twowin", "greedy"):
+# Every policy the artifact publishes, so the tie-out below covers the
+# published one and the three sensitivities alike; G is the PUBLISHED one
+# (issue #240), read from the constant rather than named here.
+for _pol in ("evening", "twowin", "greedy", "value"):
     _i, _e, _, _ = bp.run_batt(d, imp0, gen0, 13.5, _pol, charge_kw=bp.CHARGE_KW)
     POL_SAVE[_pol] = base_bill - bp.billed(d, _i, _e)
-G = POL_SAVE["greedy"]
+G = POL_SAVE[bp.PUBLISHED_POLICY]
 # post-behavior marginal: THIS household's free behavior fix first, then the
 # battery on the shifted year — battery_dispatch_policies.py's own integrated
 # pipeline, reached through its own free_fix_shift() so the branch has ONE
@@ -288,12 +291,13 @@ G = POL_SAVE["greedy"]
 # below fired on a correctly regenerated chain (issue #147).
 _imp_sh, _, _ = bp.free_fix_shift(d, imp0)
 _b_sh = bp.billed(d, _imp_sh, gen0)
-_i3, _e3, _, _ = bp.run_batt(d, _imp_sh, gen0, 13.5, "greedy", charge_kw=bp.CHARGE_KW)
+_i3, _e3, _, _ = bp.run_batt(d, _imp_sh, gen0, 13.5, bp.PUBLISHED_POLICY,
+                             charge_kw=bp.CHARGE_KW)
 G_POST = _b_sh - bp.billed(d, _i3, _e3)
 # consistency gate: computed values must match the committed dispatch artifact;
 # a mismatch means battery_dispatch_policies.json is stale — regenerate it FIRST.
 _bdp = json.load(open(DATA / "battery_dispatch_policies.json"))
-for _pol in ("evening", "twowin", "greedy"):
+for _pol in ("evening", "twowin", "greedy", "value"):
     assert abs(POL_SAVE[_pol] - _bdp["pw3"][_pol]["save"]) <= 1.5, (
         f"{_pol} save {POL_SAVE[_pol]:.0f} != committed "
         f"{_bdp['pw3'][_pol]['save']} — regenerate battery_dispatch_policies.json first")
@@ -508,7 +512,8 @@ def bill_flat_export(dd, imp, exp, credit):
 nbt = {}
 for credit in (0.03, 0.05, 0.08):
     b0 = bill_flat_export(d, imp0, gen0, credit)
-    i2, e2, _, _ = bp.run_batt(d, imp0, gen0, 13.5, "greedy", charge_kw=bp.CHARGE_KW)
+    i2, e2, _, _ = bp.run_batt(d, imp0, gen0, 13.5, bp.PUBLISHED_POLICY,
+                               charge_kw=bp.CHARGE_KW)
     b1 = bill_flat_export(d, i2, e2, credit)
     nbt[f"{int(credit*100)}c"] = {"battery_marginal_yr": round(b0 - b1)}
 _MON = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",

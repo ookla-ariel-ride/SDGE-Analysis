@@ -87,7 +87,7 @@ is apples-to-apples on identical code and identical physical data):
     free_fix_shift() -- the same MID-package convention every other
     consumer of that function uses, not a locally re-derived branch
   battery_marginal_delta_usd  -- change to the battery's own marginal saving
-    (price-aware/"greedy" policy, on top of the shifted load -- the same
+    (the published price-aware policy, on top of the shifted load -- the same
     integrated, decision-relevant convention battery_dispatch_policies.py and
     the report's MID package use)
 and a combined `total_package_impact_usd` = baseline_delta_usd -
@@ -267,7 +267,7 @@ def _steady_state_battery(d, imp_shifted, gen0, charge_kw=None):
     soc0 = CAP_KWH / 2
     for it in range(STEADY_STATE_MAX_ITERS):
         imp2, exp2, served, thru = bdp.run_batt(
-            d, imp_shifted, gen0, CAP_KWH, "greedy", power_kw=POWER_KW,
+            d, imp_shifted, gen0, CAP_KWH, bdp.PUBLISHED_POLICY, power_kw=POWER_KW,
             charge_kw=charge_kw, soc0=soc0)
         soc_final = soc0 + thru - served / ETA
         if abs(soc_final - soc0) < STEADY_STATE_TOL_KWH:
@@ -305,7 +305,7 @@ def _pipeline(d):
     battery_dispatch_policies.free_fix_shift() (scenario a, the EV charge
     reschedule at 100% compliance, when household.has_ev is true; scenario
     c, 25% of flexible on-peak house load, when it is false), then the
-    price-aware ("greedy") battery marginal on top of the shifted load --
+    published price-aware battery marginal on top of the shifted load --
     the SAME MID-package convention every other consumer of free_fix_shift()
     uses (battery_dispatch_policies.py, battery_plan_matrix.py,
     battery_sizing_curve.py, extended_findings.py, irreducible_bill.py,
@@ -376,7 +376,7 @@ def _build_output(d):
             "super-off-peak window, summer-season months), re-running "
             f"{_FIX_METHOD_PHRASE[cur_scenario]} and "
             "price-aware battery dispatch (battery_dispatch_policies."
-            "run_batt, greedy policy) pipelines against each scenario's own "
+            "run_batt, the published policy) pipelines against each scenario's own "
             "p/seas assignment -- both already read p/hour/seas off the "
             "frame they are given, so no changes to either module were "
             "needed."),

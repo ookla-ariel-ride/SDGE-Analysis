@@ -1,67 +1,67 @@
 {
- "method": "integrated: bill the year with and without the price-aware PW3 dispatch (run_batt 'greedy', 13.5 kWh, 11.5 kW discharge / 5 kW charge (Tesla's own datasheet, see research/battery-research-notes.md), 90% RTE, EV-spillover exclusion) under each plan's own rate structure",
+ "method": "integrated: bill the year with and without the price-aware PW3 dispatch (run_batt on battery_dispatch_policies.PUBLISHED_POLICY, 13.5 kWh, 11.5 kW discharge / 5 kW charge (Tesla's own datasheet, see research/battery-research-notes.md), 90% RTE, EV-spillover exclusion) under each plan's own rate structure",
  "rates_basis": "published rate tables, CEA generation without relief credit (ranking-only; ties out to data/plan_results.csv, asserted). Canonical TOU assignment via rates.period_at, holidays included.",
  "plans_selection": "EV-TOU-5 + the two nearest competitors in data/plan_results.csv",
  "cells_note": "each modeled total is stored twice: the bare field is the whole-dollar value for display, its _cents twin the same total in integer cents. Rank and difference the cents; a tie is two totals equal to the cent. battery_value_cents and package_save_cents are exact differences of the cents fields they come from",
- "dispatch_note": "all three plans share the same 2026 three-period TOU windows, so one dispatch trace is billed under each plan; kWh served 4720, cycles/day 1.01",
+ "dispatch_note": "all three plans share the same 2026 three-period TOU windows, so one dispatch trace is billed under each plan; kWh served 4710, cycles/day 1.01",
  "plans": {
   "EV-TOU-5": {
    "no_battery": 4882,
-   "with_battery": 2564,
-   "battery_value": 2318,
+   "with_battery": 2424,
+   "battery_value": 2458,
    "no_battery_cents": 488173,
-   "with_battery_cents": 256417,
-   "battery_value_cents": 231756
+   "with_battery_cents": 242419,
+   "battery_value_cents": 245754
   },
   "EV-TOU-2": {
    "no_battery": 5843,
-   "with_battery": 4176,
-   "battery_value": 1667,
+   "with_battery": 4084,
+   "battery_value": 1759,
    "no_battery_cents": 584296,
-   "with_battery_cents": 417564,
-   "battery_value_cents": 166732
+   "with_battery_cents": 408404,
+   "battery_value_cents": 175892
   },
   "TOU-ELEC": {
    "no_battery": 6356,
-   "with_battery": 5349,
-   "battery_value": 1007,
+   "with_battery": 5308,
+   "battery_value": 1048,
    "no_battery_cents": 635622,
-   "with_battery_cents": 534897,
-   "battery_value_cents": 100725
+   "with_battery_cents": 530793,
+   "battery_value_cents": 104829
   }
  },
  "canonical_crosscheck_ev_tou_5": {
   "no_battery": 4904,
-  "battery_value": 2328,
+  "battery_value": 2466,
   "basis": "battery_dispatch_policies.json (this run's copy, agrees with data/battery_dispatch_policies.json) \u2014 bill-derived rates, rates.bill_nem monthly NEM netting, canonical holiday rule; the published EV-TOU-5 battery economics"
  },
  "mid_package_on_plans": {
-  "method": "integrated mid package: EV shift scenario a (all sessions, behavior_rebuild.shift_ev) FIRST, then the price-aware PW3 greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) on the shifted year, and the WHOLE modified year re-billed end-to-end under each plan's own published-table rates \u2014 one pipeline, never a sum of separately modeled deltas. Baseline = the same plan's modeled no-package year (the no_battery column), same published-table rate basis, one rate vintage.",
+  "method": "integrated mid package: EV shift scenario a (all sessions, behavior_rebuild.shift_ev) FIRST, then the price-aware PW3 dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) on the shifted year, and the WHOLE modified year re-billed end-to-end under each plan's own published-table rates \u2014 one pipeline, never a sum of separately modeled deltas. Baseline = the same plan's modeled no-package year (the no_battery column), same published-table rate basis, one rate vintage.",
   "kwh_moved": 2618,
   "free_fix_scenario": "a",
   "plans": {
    "EV-TOU-5": {
-    "package_bill": 1400,
-    "package_save": 3482,
-    "package_bill_cents": 139967,
-    "package_save_cents": 348206
+    "package_bill": 1251,
+    "package_save": 3631,
+    "package_bill_cents": 125107,
+    "package_save_cents": 363066
    },
    "EV-TOU-2": {
-    "package_bill": 3361,
-    "package_save": 2482,
-    "package_bill_cents": 336133,
-    "package_save_cents": 248163
+    "package_bill": 3264,
+    "package_save": 2579,
+    "package_bill_cents": 326407,
+    "package_save_cents": 257889
    },
    "TOU-ELEC": {
-    "package_bill": 4900,
-    "package_save": 1456,
-    "package_bill_cents": 489989,
-    "package_save_cents": 145633
+    "package_bill": 4856,
+    "package_save": 1500,
+    "package_bill_cents": 485629,
+    "package_save_cents": 149993
    }
   },
   "canonical_crosscheck_ev_tou_5": {
-   "combined_save": 3459,
-   "bill": 1445,
+   "combined_save": 3601,
+   "bill": 1304,
    "basis": "battery_dispatch_policies.json (this run's copy, agrees with data/battery_dispatch_policies.json) post_behavior.mid \u2014 bill-derived rates, rates.bill_nem monthly NEM netting, the same integrated shift-then-battery pipeline; the table-rate EV-TOU-5 package save is asserted against combined_save within $100 (rate-basis gap)"
   }
  }

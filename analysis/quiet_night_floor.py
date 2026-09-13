@@ -105,7 +105,7 @@ Methodology, acceptance-criterion by acceptance-criterion (issue #17):
    slice DELIVERS less, not because deeper removal is worth less per kWh.
 
 5. Battery interaction, quantified. Re-runs battery_dispatch_policies.run_batt
-   (same greedy policy, same Powerwall 3 config, same steady-state convergence
+   (same published policy, same Powerwall 3 config, same steady-state convergence
    pattern tou_structure_stress.py established for exactly this reason: a
    one-time year-1 SOC boundary condition would fold an uncosted charge/discharge
    asymmetry into the very delta this script reports) on the baseline import/
@@ -1225,7 +1225,7 @@ def _steady_state_battery(d, imp0, gen0):
     soc0 = CAP_KWH / 2
     for _ in range(STEADY_STATE_MAX_ITERS):
         imp2, exp2, served, thru = bdp.run_batt(
-            d, imp0, gen0, CAP_KWH, "greedy", power_kw=POWER_KW,
+            d, imp0, gen0, CAP_KWH, bdp.PUBLISHED_POLICY, power_kw=POWER_KW,
             charge_kw=CHARGE_KW, soc0=soc0)
         soc_final = soc0 + thru - served / ETA
         if abs(soc_final - soc0) < STEADY_STATE_TOL_KWH:
@@ -1265,7 +1265,7 @@ def battery_interaction(d, consumption, generation, new_consumption, new_generat
         direction = "removing the floor leaves the battery's marginal saving essentially unchanged"
 
     return {
-        "config": "13.5 kWh Powerwall 3 (bare unit), greedy policy, raw measured "
+        "config": "13.5 kWh Powerwall 3 (bare unit), the published dispatch policy, raw measured "
                   "year (no EV-shift behavior model stacked on top -- isolates "
                   "the floor's own effect on the battery)",
         "baseline_battery_marginal_usd": round(baseline_marginal, 2),
@@ -1283,7 +1283,7 @@ def battery_interaction(d, consumption, generation, new_consumption, new_generat
 # no-EV household the confound it describes cannot arise and a caveat that
 # still described it would be about a filter the dispatch never applied.
 _BATTERY_CAVEAT_EV = (
-    "small confound (PR #77 review nitpick): run_batt's greedy "
+    "small confound (PR #77 review nitpick): run_batt's published "
     "EV-spillover gate (kw = imp*4 >= 2.5 kW is treated as "
     "non-battery-servable house/EV load) is evaluated on EACH "
     "series' OWN import values, so some intervals become "

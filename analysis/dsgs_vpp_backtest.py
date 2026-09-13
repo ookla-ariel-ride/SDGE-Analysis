@@ -118,25 +118,27 @@ Powerwall, would apply at all times, including in the hours leading up to an eve
 so would leave LESS reserve actually available by the time a declared event starts than
 this event-hour-only floor implies). This is a deliberate scoping decision, not an
 oversight: it matches the issue's own framing ("a backup reserve reduces dispatchable
-capacity DURING events") and keeps the tested empty-event_set byte-identity guarantee to
+capacity DURING events") and keeps the tested empty-event_set equivalence guarantee to
 battery_dispatch_policies.run_batt intact (a standing floor would also constrain the
 household's own everyday no-VPP arbitrage, which needs its own separate justification and
 is out of scope here). Every mention of this parameter in this artifact, the report, and
 TECHNICAL.md is labeled "event-hour-only" for this reason -- it is NOT the same claim as
 "this household holds a 20% reserve on its Powerwall at all times."
 
-DISPATCH MODEL. battery_dispatch_policies.run_batt()'s "greedy" policy (imported, not
+DISPATCH MODEL. battery_dispatch_policies.run_batt()'s published policy (imported, not
 reimplemented) gives the business-as-usual (BAU) hypothetical-battery bill: normal
 price-aware dispatch, no VPP participation. run_batt_vpp() below is a close variant that
-mirrors run_batt's greedy control flow EXACTLY for non-event intervals (verified in
-analysis/test_dsgs_vpp_backtest.py: with an empty event set, its imp/exp output is
-byte-identical to run_batt's), and additionally, ONLY during a real 2025 DSGS event hour
+mirrors run_batt's published control flow for non-event intervals (verified in
+analysis/test_dsgs_vpp_backtest.py: with an empty event set, its imp/exp output matches
+run_batt's interval by interval to 1e-9 kWh -- not to the bit, because the published
+policy meters a discharge out of a lot ledger and so sums the same energy in a different
+order), and additionally, ONLY during a real 2025 DSGS event hour
 that falls inside this household's measured window, forces the battery to discharge (and
 export any surplus beyond what the household's own load needs at that moment) up to its
 remaining headroom above BACKUP_RESERVE_FRAC * capacity and the 11.5 kW power cap -- the
 behavior a revenue-maximizing VPP aggregator actually commands, not just
 business-as-usual arbitrage. The reserve floor binds on the WHOLE event hour, not just
-this event-forced increment: the ordinary/BAU-equivalent greedy discharge is also capped
+this event-forced increment: the ordinary/BAU-equivalent arbitrage discharge is also capped
 at the reserve floor during an event hour (see run_batt_vpp()'s docstring), so combined
 ordinary-plus-event discharge cannot push SOC below BACKUP_RESERVE_FRAC * capacity. An
 event hour where SOC is already at or below the reserve floor cannot be served further:
@@ -601,6 +603,16 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
     pre_min_agg = min(pre_nets, key=pre_nets.get)
     pre_max_agg = max(pre_nets, key=pre_nets.get)
     return {
+        # WHICH DISPATCH THIS RANGE WAS COMPUTED UNDER, stamped by the run that
+        # computed it (issue #240). This block is the one field in the artifact
+        # that can be CARRIED FORWARD from a previous run instead of recomputed
+        # -- it needs the private raw CEC event archive, and an archive-less
+        # checkout preserves it rather than destroying it. A carried-forward
+        # range beside freshly-computed union figures is two dispatches in one
+        # artifact, and a reader cannot see that unless the artifact says so.
+        # per_aggregation_sensitivity_or_preserved() below writes the matching
+        # recomputed/reason fields on both paths.
+        "dispatch_policy": bp.PUBLISHED_POLICY,
         "n_aggregations": len(per_agg),
         "net_usd_min": nets[min_agg],
         "net_usd_min_aggregation": min_agg,
@@ -706,30 +718,39 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
 # battery for it), holding SOC in reserve for the day's known test rather than
 # spending it on arbitrage first. disch_win_active == disch_win whenever
 # prestage=False (the default) or the current interval's date has no event hour in
-# event_set, which is what keeps the tested empty-event_set byte-identity guarantee
+# event_set, which is what keeps the tested empty-event_set equivalence guarantee
 # to run_batt intact for every EXISTING call site (none of which pass prestage=True).
 def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, prestage=False):
-    """A close variant of battery_dispatch_policies.run_batt's "greedy" policy.
+    """A close variant of battery_dispatch_policies.run_batt's published policy.
 
-    For any interval NOT in event_set, the control flow is IDENTICAL to run_batt's
-    greedy branch (verified byte-for-byte in test_dsgs_vpp_backtest.py with an empty
-    event_set). For an interval inside event_set (a real 2025 DSGS event hour that
+    For any interval NOT in event_set, the control flow follows run_batt on
+    battery_dispatch_policies.PUBLISHED_POLICY (checked in
+    test_dsgs_vpp_backtest.py with an empty event_set, interval by interval to
+    1e-9 kWh). Its PRICED CHARGE RULE is not restated here:
+    battery_dispatch_policies.value_charge_gate() supplies the two per-interval
+    masks (issue #240), so there is one implementation of the rule that declines
+    to store surplus worth more than the import it could serve. This loop needs no
+    lot ledger for that to be exact -- see that function's own note on why the
+    "floor" reference makes the ledger's discharge filter a no-op, and why the two
+    series therefore agree to float summation error rather than to the bit.
+
+    For an interval inside event_set (a real 2025 DSGS event hour that
     falls inside the household's measured window), the battery ADDITIONALLY discharges
     (exporting any surplus beyond what the household's own load needs right then) up to
-    its remaining headroom this interval (PWRQ minus whatever the ordinary greedy step
-    already discharged) and its remaining energy above reserve_frac * cap -- the
+    its remaining headroom this interval (PWRQ minus whatever the ordinary arbitrage
+    step already discharged) and its remaining energy above reserve_frac * cap -- the
     behavior a revenue-maximizing VPP aggregator commands, not just business-as-usual
     arbitrage. event_set is a set of (date, floor_hour) tuples, floor_hour = Hour End - 1
     (Hour End 1-24 is CAISO hour-ending; the interval from HH:00 to HH:59 has floor_hour
     HH and belongs to Hour End HH+1).
 
     The reserve floor is honored for the WHOLE event hour, not just the incremental
-    event-forced portion: the ordinary/BAU-equivalent greedy discharge branch (disch_win)
+    event-forced portion: the ordinary/BAU-equivalent arbitrage discharge branch (disch_win)
     is ALSO capped at reserve_frac * cap during an event hour (soc_cap = max(soc -
     reserve_kwh, 0) instead of the unconstrained soc), so ordinary dispatch cannot push
     soc below the floor before the event-forcing block below even runs. Outside an event
     hour this cap is a no-op (soc_cap == soc), which is what keeps the empty-event_set
-    byte-identity guarantee to run_batt intact.
+    equivalence guarantee to run_batt intact.
 
     NO CHARGING FROM SOLAR SURPLUS DURING A DECLARED EVENT HOUR (issue #10 second
     adversarial review, Finding 2). The export-charging branch is skipped whenever
@@ -754,15 +775,15 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, pr
     Returns (imp, exp, soc_start, event_discharge_kwh, bau_discharge_kwh):
       soc_start          -- SOC at the START of each interval (before this step's action)
       event_discharge_kwh -- the INCREMENTAL discharge forced by event participation
-                             beyond what the ordinary greedy step already did
-      bau_discharge_kwh  -- the ordinary greedy discharge each interval (the `dd` run_batt
+                             beyond what the ordinary arbitrage step already did
+      bau_discharge_kwh  -- the ordinary arbitrage discharge each interval (the `dd` run_batt
                              would have produced with no VPP participation at all)
 
     charge_kw (issue #40) is the CHARGE-direction power cap (both the solar-
     surplus and grid-top-up branches below use it), separate from PWRQ's
     discharge-direction cap; defaults to None, which reuses PWRQ for both
     directions -- byte-for-byte the prior symmetric behavior, preserving the
-    empty-event_set byte-identity guarantee to run_batt.
+    empty-event_set equivalence guarantee to run_batt.
 
     prestage (issue #53, default False) turns on the EVENT-AWARE SOC PRE-STAGING
     variant -- see the module-level "DECISION RECORD" comment immediately above
@@ -785,6 +806,12 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, pr
         ((dates[i], int(floor_h[i])) in event_set for i in range(n)), dtype=bool, count=n)
     reserve_kwh = reserve_frac * cap
     pwrq_chg = PWRQ if charge_kw is None else charge_kw / 4
+    # The published policy's priced charge rule, from its own implementation
+    # (issue #240). This function used to carry a verbatim copy of the UNPRICED
+    # rule -- store every kWh of surplus there is room for -- which stored
+    # shoulder surplus worth more than the off-peak import it could later serve.
+    gate = bp.value_charge_gate(d, imp0, gen0)
+    surplus_ok, topup_ok = gate["surplus_ok"], gate["topup_ok"]
     soc_start = np.empty(n)
     event_discharge = np.zeros(n)
     bau_discharge = np.zeros(n)
@@ -793,7 +820,7 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, pr
     # event_set itself -- no new data source, just this same event_set's own
     # (date, floor_hour) tuples regrouped by date. Empty when prestage is False
     # (never consulted below) or when event_set is empty, either of which keeps
-    # this a no-op and preserves the empty-event_set byte-identity guarantee.
+    # this a no-op and preserves the empty-event_set equivalence guarantee.
     first_event_hour = {}
     if prestage:
         for ev_date, ev_hour in event_set:
@@ -803,7 +830,7 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, pr
     # The >= 2.5 kW EV-spillover exclusion runs only on a household whose
     # intake says it has an EV (issue #246), keyed off br.EV_ANALYSIS exactly
     # as battery_dispatch_policies.run_batt gates its own copy of the rule --
-    # which is what keeps the empty-event_set byte-identity guarantee to
+    # which is what keeps the empty-event_set equivalence guarantee to
     # run_batt true on both kinds of household. With household.has_ev false
     # there is no spillover, and the test would withhold ordinary house load
     # from the battery. The flag, never the detector.
@@ -820,7 +847,7 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, pr
         # event-forcing block further down is untouched. disch_win_active ==
         # disch_win (a no-op) whenever prestage is False or i's date has no entry
         # in first_event_hour, which is what keeps the empty-event_set/
-        # prestage=False byte-identity guarantee to run_batt intact.
+        # prestage=False equivalence guarantee to run_batt intact.
         disch_win_active = disch_win and not (
             prestage and dates[i] in first_event_hour
             and floor_h[i] < first_event_hour[dates[i]])
@@ -829,13 +856,14 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, pr
         # through to export instead of round-tripping it for the event-forcing
         # block below to discharge again in this same interval. Outside an event
         # hour (is_event[i] is False) this clause is a no-op, preserving the
-        # empty-event_set byte-identity guarantee to run_batt.
+        # empty-event_set equivalence guarantee to run_batt.
         if exp[i] > 0 and not (disch_win and imp[i] > 0) and not is_event[i]:
-            c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
-            if c > 0:
-                soc += c * ETA; exp[i] -= c
+            if surplus_ok[i]:
+                c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
+                if c > 0:
+                    soc += c * ETA; exp[i] -= c
         elif p[i] == "sop":
-            take = min(max((cap - soc) / ETA, 0), pwrq_chg)
+            take = min(max((cap - soc) / ETA, 0), pwrq_chg) if topup_ok[i] else 0
             if take > 0:
                 soc += take * ETA; imp[i] += take
         elif disch_win_active:
@@ -844,8 +872,8 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, pr
             # reserve_kwh before the event-forcing block below ever runs, and the
             # reserve is only honored in isolation, not in combination with ordinary
             # dispatch. Outside an event hour (or with reserve_kwh == 0), soc_cap ==
-            # soc, so this is a no-op and matches run_batt's own greedy branch exactly
-            # (needed for the empty-event_set byte-identity guarantee).
+            # soc, so this is a no-op and matches run_batt's own discharge branch exactly
+            # (needed for the empty-event_set equivalence guarantee).
             soc_cap = max(soc - reserve_kwh, 0.0) if is_event[i] else soc
             dd = min(imp[i], soc_cap * ETA, PWRQ)
             if dd > 0:
@@ -907,9 +935,9 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
     event_set_priced = {(dt_, h) for (dt_, h) in event_set if dt_.month not in partial_months}
 
     # BAU (no VPP participation) -- must match battery_dispatch_policies.py's own
-    # "greedy" pw3 figures exactly (cross-checked in the test suite).
+    # published pw3 figures exactly (cross-checked in the test suite).
     imp_bau, exp_bau, _served_bau, _thru_bau = bp.run_batt(
-        d, imp0, gen0, CAP, "greedy", charge_kw=charge_kw)
+        d, imp0, gen0, CAP, bp.PUBLISHED_POLICY, charge_kw=charge_kw)
     bill_bau = bp.billed(d, imp_bau, exp_bau)
 
     # With VPP event dispatch -- the FULL in-window event set, including partial months.
@@ -1085,6 +1113,13 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
     result = {
         "hypothetical": True,
         "household_has_battery_today": False,
+        # WHICH DISPATCH EVERY FIGURE BELOW IS ON (issue #240): the BAU run and
+        # every union-calendar revenue figure come from
+        # battery_dispatch_policies.PUBLISHED_POLICY, recomputed on this run.
+        # per_aggregation_sensitivity carries its own stamp, because it is the
+        # one block an archive-less run cannot recompute -- compare the two
+        # before reading the range and the union figures as one result.
+        "dispatch_policy": bp.PUBLISHED_POLICY,
         "battery_config": {"usable_kwh": CAP, "power_kw": BATT_KW,
                             "charge_kw": BATT_KW if charge_kw is None else charge_kw,
                             "round_trip_eta": 0.90},
@@ -1392,7 +1427,13 @@ def per_aggregation_sensitivity_or_preserved(d):
     committed yet (e.g. a from-scratch bootstrap with no archive ever available,
     which should not happen in practice but must not crash)."""
     if RAW_XLSX.exists():
-        return per_aggregation_sensitivity(d, charge_kw=CHARGE_KW)
+        fresh = per_aggregation_sensitivity(d, charge_kw=CHARGE_KW)
+        fresh["recomputed"] = True
+        fresh["recomputed_reason"] = (
+            f"the private raw CEC event archive ({RAW_XLSX.name}) was present, so "
+            "this range was recomputed on this run, on the same dispatch as every "
+            "other figure in this artifact")
+        return fresh
     if RESULTS_JSON.exists():
         existing = json.loads(RESULTS_JSON.read_text())
         preserved = existing.get(
@@ -1424,7 +1465,7 @@ def per_aggregation_sensitivity_or_preserved(d):
                 "net_usd/delta_vs_reactive as a ceiling on realizable benefit "
                 "until a future run with the private raw CEC archive present "
                 "recomputes this field.")
-        return preserved
+        return _stamp_preserved(preserved)
     return (
         "NOT COMPUTED: needs the private raw CEC archive "
         f"({RAW_XLSX}), which this checkout does not have, and there is no "
@@ -1433,6 +1474,57 @@ def per_aggregation_sensitivity_or_preserved(d):
         "above -- the union-calendar figures elsewhere in this artifact are an "
         "inclusive upper bound, not this household's actual single-aggregation "
         "revenue.")
+
+
+def _stamp_preserved(preserved):
+    """Mark a CARRIED-FORWARD per-aggregation block as what it is (issue #240).
+
+    Everything else in this artifact is recomputed on every run, on whatever
+    battery_dispatch_policies.PUBLISHED_POLICY currently is. This one block
+    cannot be, without the private raw CEC event archive, so an archive-less run
+    carries the committed one forward. That is the right call -- overwriting real
+    evidence with a placeholder is worse -- but it means the artifact can hold a
+    range computed under ONE dispatch beside union figures computed under
+    ANOTHER, and CLAUDE.md section 0 does not allow a block to read as fresh when
+    it is not. These fields say so in the artifact itself, where every consumer
+    of the range can see them.
+
+    `dispatch_policy` is the preserved block's OWN stamp, carried through
+    untouched: this function cannot know which dispatch produced a block it did
+    not compute, and will not guess. A block written before the stamp existed
+    says so instead. Every derived field is rebuilt from scratch on each pass and
+    never carried forward, so the output is identical whether the input came from
+    a stamped run or an unstamped one -- which is what keeps the archive-less
+    path idempotent and the committed artifact byte-reproducible.
+    """
+    if not isinstance(preserved, dict):
+        return preserved
+    derived = ("recomputed", "recomputed_reason", "published_dispatch_policy",
+               "dispatch_policy_matches_published", "dispatch_policy_warning")
+    out = {k: v for k, v in preserved.items() if k not in derived}
+    stamped = out.get("dispatch_policy")
+    out["recomputed"] = False
+    out["recomputed_reason"] = (
+        "NOT recomputed on this run: the private raw CEC event archive "
+        f"({RAW_XLSX.name}) is absent from this checkout, so this block was "
+        "carried forward verbatim from the committed artifact. Every OTHER figure "
+        "here was recomputed. Re-stage that archive and re-run this script to "
+        "bring the range onto the same dispatch as the rest of the artifact.")
+    out["published_dispatch_policy"] = bp.PUBLISHED_POLICY
+    out["dispatch_policy_matches_published"] = (stamped == bp.PUBLISHED_POLICY)
+    if stamped is None:
+        out["dispatch_policy"] = (
+            "not recorded: this block was committed before the provenance stamp "
+            "existed, so which dispatch produced it is not readable from the "
+            "artifact")
+    elif stamped != bp.PUBLISHED_POLICY:
+        out["dispatch_policy_warning"] = (
+            f"This range was computed on the {stamped!r} dispatch, while every "
+            f"other figure in this artifact is on {bp.PUBLISHED_POLICY!r}, the "
+            "published one. Do not read the two side by side as one result: the "
+            "union figures moved with the dispatch and this range did not, and "
+            "cannot until the raw event archive is available again.")
+    return out
 
 
 def main():

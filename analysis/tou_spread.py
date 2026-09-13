@@ -661,7 +661,7 @@ def _battery_seed():
     _check_ev_applicability(d, path)
     try:
         seed = d["post_behavior"]["mid"]["battery_marginal"]
-        published = d["escalation_greedy_pw3_post_behavior"]
+        published = d["escalation_published_pw3_post_behavior"]
     except KeyError as exc:
         raise SystemExit(f"tou_spread.py: dispatch artifact missing {exc}")
     # Reproduce the published ladder from the seed. If this fails the two models

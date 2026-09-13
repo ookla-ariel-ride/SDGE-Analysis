@@ -82,6 +82,11 @@ def _synthetic_day(consumption_kw=0.0, generation_kw=0.0, weekday=True):
     d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
     d["p"] = [R.period_at(ts) for ts in d.dt]
     d["seas"] = "W"
+    # The published dispatch nets per (month, season, TOU period) bucket, so a
+    # frame handed to run_batt needs the month column behavior_rebuild.load()
+    # always carries (issue #240); without it bucket_net_sign() has nothing to
+    # group by.
+    d["ym"] = d.dt.dt.to_period("M")
     imp0 = np.full(96, consumption_kw * 0.25)
     gen0 = np.full(96, generation_kw * 0.25)
     return d, imp0, gen0
@@ -422,13 +427,17 @@ def case_steady_state_shipping_saves_stay_close_to_the_canonical_single_pass_art
         raise SkipCase("data/battery_dispatch_policies.json not present")
     art = json.loads(ARTIFACT.read_text())
     canon = json.loads(canon_path.read_text())
+    # The sweep follows battery_dispatch_policies.PUBLISHED_POLICY, so the
+    # canonical figures it is compared against are that same policy's blocks,
+    # read from the artifact's own published_policy key (issue #240).
+    pub = canon["published_policy"]
     pairs = [
         ("current 13.5kWh", art["current_behavior"]["shipping_products_on_curve"][0]["save_usd"],
-         canon["pw3"]["greedy"]["save"]),
+         canon["pw3"][pub]["save"]),
         ("post 13.5kWh", art["post_behavior"]["shipping_products_on_curve"][0]["save_usd"],
          canon["post_behavior"]["mid"]["battery_marginal"]),
         ("current 27kWh", art["current_behavior"]["shipping_products_on_curve"][1]["save_usd"],
-         canon["pw3x"]["greedy"]["save"]),
+         canon["pw3x"][pub]["save"]),
         ("post 27kWh", art["post_behavior"]["shipping_products_on_curve"][1]["save_usd"],
          canon["post_behavior"]["high"]["battery_marginal"]),
     ]
@@ -728,13 +737,18 @@ def case_committed_sizing_curve_artifact_27kwh_point_matches_the_expansion_rate_
     """Regression guard against issue #40 Finding 1 recurring silently: this
     pins the committed artifact's 27 kWh shipping-product save/served figures
     to the values this household's data produces under the correct
-    CHARGE_KW_WITH_EXPANSION (8 kW) rate, which happen to be DIFFERENT from
-    (and, on this data, slightly higher than) what the wrong uniform-5 kW-
-    everywhere bug produced (save_usd 2792.51, the pre-fix committed value).
-    A future regeneration that silently reverts to applying the bare-unit
-    rate above 13.5 kWh would reproduce the old 2792.51 figure and fail this
-    exact-match check, even though nothing else about the artifact's shape
-    would look wrong."""
+    CHARGE_KW_WITH_EXPANSION (8 kW) rate, which are DIFFERENT from what the
+    wrong uniform-5 kW-everywhere bug produces. A future regeneration that
+    silently reverts to applying the bare-unit rate above 13.5 kWh would
+    reproduce the bug's own figure and fail this exact-match check, even
+    though nothing else about the artifact's shape would look wrong.
+
+    BOTH PINS AND THE SENTINEL MOVE WITH THE PUBLISHED DISPATCH (issue #240):
+    they are this household's figures under battery_dispatch_policies.
+    PUBLISHED_POLICY, re-derived when that policy changed, not constants with
+    a life of their own. The two rates separate the 27 kWh point by only
+    $0.18 here (the expansion rate buys little at a capacity this house
+    rarely fills), so the margin below is deliberately tight."""
     if not ARTIFACT.is_file():
         raise SkipCase(f"{ARTIFACT} not present")
     data = json.loads(ARTIFACT.read_text())
@@ -743,21 +757,21 @@ def case_committed_sizing_curve_artifact_27kwh_point_matches_the_expansion_rate_
     bare_row = next((r for r in ship if abs(r["kwh"] - 13.5) < EPS), None)
     assert exp_row is not None and bare_row is not None, \
         "committed artifact must list both shipping products"
-    WRONG_UNIFORM_5KW_SAVE = 2792.51   # the pre-Finding-1-fix committed value
+    WRONG_UNIFORM_5KW_SAVE = 2932.73   # the same sweep with CHARGE_KW everywhere
     assert abs(exp_row["save_usd"] - WRONG_UNIFORM_5KW_SAVE) > 0.10, (
         f"27 kWh shipping product's save_usd ({exp_row['save_usd']}) matches the "
         f"OLD uniform-bare-unit-charge-rate figure ({WRONG_UNIFORM_5KW_SAVE}) -- "
         "this is the exact signature of Finding 1 (CHARGE_KW applied above the "
         "bare-unit reference instead of CHARGE_KW_WITH_EXPANSION) recurring")
-    assert exp_row["save_usd"] == 2792.85, \
+    assert exp_row["save_usd"] == 2932.55, \
         f"27 kWh shipping product's save_usd drifted from the known-correct " \
-        f"value (2792.85): {exp_row['save_usd']}"
-    assert bare_row["save_usd"] == 2327.42, \
+        f"value (2932.55): {exp_row['save_usd']}"
+    assert bare_row["save_usd"] == 2464.85, \
         "13.5 kWh (bare-unit) shipping product's save_usd should be unaffected " \
         f"by the expansion-rate fix: {bare_row['save_usd']}"
-    return ("committed sizing-curve artifact's 27 kWh point (save_usd=2792.85) "
-            "reflects CHARGE_KW_WITH_EXPANSION, not the old uniform bare-unit "
-            "figure (2792.51)")
+    return ("committed sizing-curve artifact's 27 kWh point (save_usd=2932.55) "
+            "reflects CHARGE_KW_WITH_EXPANSION, not the uniform bare-unit "
+            "figure (2932.73)")
 
 
 @case
@@ -765,7 +779,7 @@ def case_committed_artifact_power_sweep_confound_fix_is_reflected():
     """Regression guard on the committed artifact for the power sweep's own
     charge-power confound fix (Codex adversarial review, fourth pass): pins
     power_elasticity to the value produced once charge_kw is held fixed at
-    every power-sweep point (0.0025 current-behavior; ~0, not the old
+    every power-sweep point (0.0023 current-behavior; ~0, not the old
     0.0004, post-behavior -- floating-point noise around a true zero once
     the confound is removed), the ratio fields' correct null-handling when
     power_elasticity has nothing meaningful to divide by, and that the
@@ -781,7 +795,7 @@ def case_committed_artifact_power_sweep_confound_fix_is_reflected():
     assert cur["power_elasticity"] != OLD_SYMMETRIC_POWER_ELASTICITY_CUR, (
         "current-behavior power_elasticity still matches the OLD symmetric-"
         "charge-power figure -- the fourth-pass confound fix may have reverted")
-    assert cur["power_elasticity"] == 0.0025, cur["power_elasticity"]
+    assert cur["power_elasticity"] == 0.0023, cur["power_elasticity"]
     assert post["power_elasticity"] != OLD_SYMMETRIC_POWER_ELASTICITY_POST
     assert abs(post["power_elasticity"]) < 1e-6, post["power_elasticity"]
 
@@ -800,7 +814,7 @@ def case_committed_artifact_power_sweep_confound_fix_is_reflected():
         rel = abs(diag - pub) / abs(pub)
         assert rel < 0.02, (diag, pub, rel)
     return ("committed artifact reflects the power-sweep charge-fixed fix "
-            "(power_elasticity 0.0025 current / ~0 post, correct null-ratio "
+            "(power_elasticity 0.0023 current / ~0 post, correct null-ratio "
             "handling) and the energy-elasticity diagnostic is within 2% of "
             "published in both scenarios")
 

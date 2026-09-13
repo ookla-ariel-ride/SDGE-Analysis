@@ -448,7 +448,10 @@ if _dispatch_scenario != low_scenario:
 FREE_FIX_PHRASE = {EV_FREE_FIX: "EV shift",
                    NO_EV_FREE_FIX: "flexible house-load shift"}[low_scenario]
 
-batt_alone = bp["pw3"]["greedy"]["save"]             # baseline battery marginal (see battery_dispatch_policies.json)
+# The PUBLISHED dispatch, named by the artifact itself rather than by a literal
+# here (issue #240): battery_dispatch_policies.json carries every policy it ran,
+# and published_policy says which of them the report's figures come from.
+batt_alone = bp["pw3"][bp["published_policy"]]["save"]   # baseline battery marginal
 batt_post = pb["mid"]["battery_marginal"]            # battery marginal after the free fix
 evening = bp["pw3"]["evening"]["save"]               # evening-only variant
 

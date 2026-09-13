@@ -36,7 +36,7 @@
    "a": 2.0,
    "b": 1.0,
    "mean": 0.6666666666666666,
-   "evidential_basis": "estimated blend between battery_dispatch_policies.json's pw3.greedy.save (no behavior, c=0) and post_behavior.mid.battery_marginal (full behavior, c=1) -- the only two compliance points the pipeline computes. This is a MODELED, not-yet-implemented change (the report recommends it as pending, not observed as sustained); the mild skew toward c=1 reflects only the indirect evidence that ~80% of this household's EV charging already lands in favorable windows unshifted (Codex review pass 3 finding: an earlier draft wrongly called this an already-observed, completed behavior to justify a more confident prior)"
+   "evidential_basis": "estimated blend between battery_dispatch_policies.json's published pw3 save (no behavior, c=0) and post_behavior.mid.battery_marginal (full behavior, c=1) -- the only two compliance points the pipeline computes. This is a MODELED, not-yet-implemented change (the report recommends it as pending, not observed as sustained); the mild skew toward c=1 reflects only the indirect evidence that ~80% of this household's EV charging already lands in favorable windows unshifted (Codex review pass 3 finding: an earlier draft wrongly called this an already-observed, completed behavior to justify a more confident prior)"
   },
   "soiling_loss_fraction": {
    "dist": "Triangular",
@@ -67,44 +67,44 @@
   }
  },
  "correlation_assumption": "All seven inputs are drawn independently. No correlation between them is measured anywhere in this repo. Two plausible real correlations both point the SAME direction: (a) escalation and soiling could positively correlate (a warmer/drier pattern raising both wildfire-driven rate escalation and soiling accumulation); (b) round-trip efficiency and capacity fade both trend with cell aging/heat, so a hard-cycled or hot-climate pack would tend to show both together. Modeling all seven as independent therefore likely UNDERSTATES the true probability of the worst-of-both-worlds tail (e.g. high escalation with high soiling, or low RTE with high fade) relative to reality -- independent sampling under-represents scenarios where multiple bad draws share a common root cause. No numeric correction is applied; no data in this repo quantifies either correlation.",
- "dispatch_policy_adherence_note": "Issue #59: whether the Powerwall's own automation reliably EXECUTES the chosen greedy dispatch policy (distinct from WHICH policy to choose, already addressed above) is NOT modeled here. Checked for a citable adherence/no-show rate from Tesla, an industry report, or an independent monitoring study; none exists -- the one quantitative Powerwall reliability figure found (a warranty-claims hardware failure rate, not a software/automation adherence rate) answers a different question, and CPUC ELRP load-impact evaluations aggregate across technologies without isolating residential battery storage. CLAUDE.md's no-guessing rule means this is left 'not determined' rather than modeled from an invented number -- see this module's own docstring, section 'ISSUE #59', part (a) for the full check.",
+ "dispatch_policy_adherence_note": "Issue #59: whether the Powerwall's own automation reliably EXECUTES the chosen dispatch policy (distinct from WHICH policy to choose, already addressed above) is NOT modeled here. Checked for a citable adherence/no-show rate from Tesla, an industry report, or an independent monitoring study; none exists -- the one quantitative Powerwall reliability figure found (a warranty-claims hardware failure rate, not a software/automation adherence rate) answers a different question, and CPUC ELRP load-impact evaluations aggregate across technologies without isolating residential battery storage. CLAUDE.md's no-guessing rule means this is left 'not determined' rather than modeled from an invented number -- see this module's own docstring, section 'ISSUE #59', part (a) for the full check.",
  "escalation_two_sided_evidence_note": "Issue #59: the 0% floor on the escalation input above was checked against a two-sided alternative, not assumed. `esc` scales the battery's SAVING (proportional to the TOU SPREAD it arbitrages) uniformly, so the decision-relevant question is the SPREAD trend, not any one period's own absolute level -- and data/tou_spread.json's dedicated, structural-break-tested spread analysis reports that as 'not determined' in BOTH seasons, genuinely unknown rather than evidence for a positive or a zero-floored range. An earlier draft of this note wrongly cited per-TOU-cell absolute-level trends (on-peak rates rising) as evidence the floor was itself proven correct -- RETRACTED (Codex adversarial review, issue #59, first pass): winter on-peak and winter off-peak moved on nearly identical trajectories over the same window, which is exactly a case where both periods rising together leaves the spread roughly flat, not evidence it widened. What remains true, stated honestly: no cell or spread-level figure in this repo, at any rigor, shows a statistically significant NEGATIVE trend for this household's own tariff (super-off-peak's negative point estimate has a 95% CI crossing zero). Externally, a real CA IOU electric-rate decline has happened (PG&E, 2024-2025, driven by AB 1054 wildfire-capex cost roll-off, a real citable magnitude) but that mechanism is not shown to apply to SDG&E specifically -- SDG&E's own electric delivery rate rose over a comparable window in the same research -- so PG&E's number isn't validly transferable into an SDG&E-specific negative bound without fabricating one. DECISION: the 0% floor is kept, but re-labeled honestly as an INHERITED assumption from deep_analyses.py's original design, not one this repo's evidence proves correct -- a real, stated LIMITATION of this model, not a resolved question. Replacing it with a different unevidenced negative number (self-invented or borrowed from PG&E) would trade one unproven assumption for another. See this module's own docstring, section 'ISSUE #59', part (b) for the full check, and section 'ISSUE #87 RESOLUTION' for why a real per-TOU-period dispatch-rerun escalation model was investigated and deferred (not built): on-peak resolves to a confident positive trend but super-off-peak's own trend is unresolved (a large negative point estimate, wide-crossing-zero CI), so a per-period model would inherit at least as much uncertainty as the direct spread test already found inadequate, not less; guarded by test_uncertainty_propagation.py's case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar, which fails once that changes. Because documenting this limitation is not the same as showing its consequence (Codex adversarial review, issue #59, third pass), see escalation_downside_sensitivity below for what a range of negative escalation rates would actually cost, as a labeled what-if, not a probability-weighted claim.",
  "escalation_downside_sensitivity": {
   "not_a_probability_distribution": "This grid holds no evidence-backed weight for any point -- it exists because a reader cannot judge a downside risk that is described but never shown. See dispatch_policy_adherence_note and escalation_two_sided_evidence_note for why no probability-weighted negative-escalation input is modeled instead.",
   "base_case": "the exact same nominal save1/fade/price tornado()'s escalation lever sweeps (Beta(2,1)-blended EV persistence, nominal RTE/soiling/production) -- this grid's +0% point equals tornado()'s escalation lever's ESC_LO payback endpoint by construction, not tornado()'s overall nominal_payback_yr (which uses esc=6%, not 0%, for the escalation dimension)",
   "grid": {
    "+0%": {
-    "payback_yr": 6.8,
+    "payback_yr": 6.4,
     "within_10yr_warranty": true
    },
    "-3%": {
-    "payback_yr": 7.5,
+    "payback_yr": 7.0,
     "within_10yr_warranty": true
    },
    "-6%": {
-    "payback_yr": 8.5,
+    "payback_yr": 7.8,
     "within_10yr_warranty": true
    },
    "-9%": {
-    "payback_yr": 10.2,
-    "within_10yr_warranty": false
+    "payback_yr": 9.2,
+    "within_10yr_warranty": true
    },
    "-12%": {
-    "payback_yr": 13.9,
+    "payback_yr": 11.8,
     "within_10yr_warranty": false
    }
   },
-  "save1_nom_precise": 2276.4314683843495
+  "save1_nom_precise": 2413.904286530364
  },
  "calibration": {
-  "pre_nominal": 2327.42,
-  "mid_nominal": 2238.89,
-  "pre_nominal_single_pass": 2328.31,
-  "mid_nominal_single_pass": 2238.09,
+  "pre_nominal": 2464.85,
+  "mid_nominal": 2380.51,
+  "pre_nominal_single_pass": 2465.74,
+  "mid_nominal_single_pass": 2379.71,
   "steady_state_vs_single_pass_note": "pre_nominal/mid_nominal use a steady-state-converged SOC boundary (Codex review pass 1, finding 2); pre_nominal_single_pass/mid_nominal_single_pass use the same single-pass method as the committed battery_dispatch_policies.json (which this issue does not modify) and are what the $1 tie-out below checks against -- the ~$1-2 gap between the two conventions is the known, expected size of this SOC-boundary effect, not a discrepancy to resolve further.",
-  "committed_pre": 2328.0,
-  "committed_mid": 2238.0,
-  "generation_proxy_limitation_resolved": "Issue #60 (previously a stated limitation here, filed from Codex review pass 1 finding 1 on issue #15): the soiling and production-measurement-spread calibrations previously scaled the Green Button 'Generation' column (net grid EXPORT, not gross PV production) directly, understating the true impact -- FIXED. See production_reconstruction below for the resolved method, an energy-conservation check, and the old-vs-new comparison confirming the 'likely understates' hypothesis with a quantified mechanism (soil_slope_mid [loss-side] rose from 0.05605402062021063 to 0.2176).",
+  "committed_pre": 2466.0,
+  "committed_mid": 2380.0,
+  "generation_proxy_limitation_resolved": "Issue #60 (previously a stated limitation here, filed from Codex review pass 1 finding 1 on issue #15): the soiling and production-measurement-spread calibrations previously scaled the Green Button 'Generation' column (net grid EXPORT, not gross PV production) directly, understating the true impact -- FIXED. See production_reconstruction below for the resolved method, an energy-conservation check, and the old-vs-new comparison confirming the 'likely understates' hypothesis with a quantified mechanism (soil_slope_mid [loss-side] rose from 0.05605402062021063 to 0.1366).",
   "production_reconstruction": {
    "method": "issue #60: gross production (P) reconstructed per hour from the SAM 8760 hourly series via P_hour = max(sam_load_hour - import_hour + export_hour, 0), the same identity threeway_production_validation.py's own derive_daily() uses (SAM's own hourly files are whole-home GROSS LOAD, not production directly) -- allocated within each hour so every net-exporting interval gets at least its own net export (keeping the diagnostic implied-household-load figure non-negative everywhere, not a flat per-quarter split); the two DST transition dates take a conservative fallback instead of a misaligned SAM join (SAM's export is a flat 24-hour clock, Green Button is true wall clock). A gen_scale (soiling/production-measurement) scenario reduces the MEASURED export (gen0) directly by the production shortfall (loss = P*(1-gen_scale)), floored at 0, spilling any remainder into import only once export is fully exhausted -- export is tied to production and absorbs a shortfall first; import is load-driven and only ever grows, never shrinks, from a production loss -- instead of scaling the Green Button Generation/export column proportionally, which could never spill into import at all.",
    "gross_production_kwh": 16521.4,
@@ -123,109 +123,109 @@
      "as_of": "frozen historical constant: this repo's committed data/uncertainty_results.json value immediately before issue #60's fix, NOT re-derived at runtime -- see this field's own docstring note"
     },
     "new_gross_production_reallocation": {
-     "soil_slope_mid": 0.2176162131897935,
-     "soil_slope_pre": 0.16951981803374996
+     "soil_slope_mid": 0.13661549459400488,
+     "soil_slope_pre": 0.10142830343742137
     },
     "note": "Confirms the issue's own 'likely understates' hypothesis, with a quantified mechanism: at this household's lossB (0.0528), 82 of 872 lost kWh/yr (~9%) was being SELF-CONSUMED (invisible to the old export-only scaling), not exported -- losing it mostly increases IMPORT, billed near the full retail rate, not just export, billed at the lower NEM credit rate. The old approach both undercounted the lost energy's magnitude (it only ever saw the smaller export column) AND mispriced what it did count (attributing it all to the export-credit rate). soil_slope_mid/pre here are the LOSS-side slope specifically -- the analogous quantity to the old, single loss-fit figure -- not the surplus-side slope issue #89 adds (see surplus_slope_fix below)."
    },
    "surplus_slope_fix": {
     "method": "Before this fix, save1_of() applied ONE slope (fit only from a loss-side dispatch rerun) linearly to both directions, extrapolating it to the surplus side rather than measuring the surplus side directly. This fix adds a real third dispatch rerun at the mirrored surplus scenario (gen_scale=1+lossB) and fits a genuinely separate soil_slope_surplus from it. old_extrapolated_estimate below is what the retired one-sided approach would have predicted at that same surplus point -- mid_nominal * (1 + soil_slope_loss_mid * (-lossB)) -- compared against real_surplus_marginal, the REAL measured value now used directly instead.",
-    "soil_slope_loss_mid": 0.2176162131897935,
-    "soil_slope_surplus_mid": 0.3403634388877598,
-    "old_extrapolated_estimate": 2213.17,
-    "real_surplus_marginal": 2198.66,
-    "discrepancy_usd": 14.51,
-    "discrepancy_pct_of_mid_nominal": 0.648,
+    "soil_slope_loss_mid": 0.13661549459400488,
+    "soil_slope_surplus_mid": 0.20002673291440648,
+    "old_extrapolated_estimate": 2363.34,
+    "real_surplus_marginal": 2355.37,
+    "discrepancy_usd": 7.97,
+    "discrepancy_pct_of_mid_nominal": 0.3348,
     "resolution": "The ONE-SIDED EXTRAPOLATION discrepancy quantified above is eliminated by construction: save1_of() now uses soil_slope_surplus, fit directly from this real surplus dispatch rerun, for every surplus-like draw (prod_noise > 1, i.e. (1 - prod_noise) < 0) instead of linearly extrapolating the loss-side slope, for any draw magnitude -- not just at this particular lossB point. A SEPARATE, smaller residual from averaging soil_slope_loss/surplus across mid/pre before applying them to the c-blended base_marginal (the same convention rte_slope used to follow) is now ALSO fixed -- see mid_pre_slope_unaveraging_fix below (issue #107)."
    }
   },
-  "soil_slope_two_sided_fix": "Issue #89 (previously a stated limitation here, filed from Codex review pass 2 on issue #60): soil_slope_mid/pre used to be fit from a real dispatch rerun at ONE production LOSS point and applied linearly to both losses and surpluses (roughly half of production_measurement_spread's own Monte Carlo draws, prod_noise>1) -- FIXED. dispatch_calibration() now runs a real THIRD dispatch rerun at the mirrored surplus scenario (gen_scale=1+lossB) every time it regenerates, and fits soil_slope_surplus_mid/pre from it directly instead of extrapolating the loss-side slope: soil_slope_loss_mid=0.2176 vs soil_slope_surplus_mid=0.3404 (the surplus-side slope is genuinely steeper in magnitude, not a rounding artifact of the same underlying number). See production_reconstruction.surplus_slope_fix for the quantified before/after: extrapolating the old loss-side slope to the real surplus point would have predicted $2,213.17 against the real measured $2,198.66 -- a $14.51 (0.65%) gap that save1_of()'s new piecewise soil_slope_loss/soil_slope_surplus routing eliminates by construction, for every surplus-like draw at any magnitude, not just at this particular lossB point -- specifically the ONE-SIDED EXTRAPOLATION gap, not every discrepancy save1_of() has: a separate, smaller residual (Codex review, issue #89, pass 2-3: ~$3.5, ~0.16%) that USED TO remain from averaging soil_slope_loss/surplus across mid/pre before applying them to the c-blended base_marginal (the same convention rte_slope used to follow) is now RESOLVED -- see mid_pre_slope_unaveraging_fix below (issue #107).",
+  "soil_slope_two_sided_fix": "Issue #89 (previously a stated limitation here, filed from Codex review pass 2 on issue #60): soil_slope_mid/pre used to be fit from a real dispatch rerun at ONE production LOSS point and applied linearly to both losses and surpluses (roughly half of production_measurement_spread's own Monte Carlo draws, prod_noise>1) -- FIXED. dispatch_calibration() now runs a real THIRD dispatch rerun at the mirrored surplus scenario (gen_scale=1+lossB) every time it regenerates, and fits soil_slope_surplus_mid/pre from it directly instead of extrapolating the loss-side slope: soil_slope_loss_mid=0.1366 vs soil_slope_surplus_mid=0.2000 (the surplus-side slope is genuinely steeper in magnitude, not a rounding artifact of the same underlying number). See production_reconstruction.surplus_slope_fix for the quantified before/after: extrapolating the old loss-side slope to the real surplus point would have predicted $2,363.34 against the real measured $2,355.37 -- a $7.97 (0.33%) gap that save1_of()'s new piecewise soil_slope_loss/soil_slope_surplus routing eliminates by construction, for every surplus-like draw at any magnitude, not just at this particular lossB point -- specifically the ONE-SIDED EXTRAPOLATION gap, not every discrepancy save1_of() has: a separate, smaller residual (Codex review, issue #89, pass 2-3: ~$3.5, ~0.16%) that USED TO remain from averaging soil_slope_loss/surplus across mid/pre before applying them to the c-blended base_marginal (the same convention rte_slope used to follow) is now RESOLVED -- see mid_pre_slope_unaveraging_fix below (issue #107).",
   "mid_pre_slope_unaveraging_fix": {
    "method": "Before this fix, save1_of() computed ONE slope per lever (rte_slope, soil_slope_loss, soil_slope_surplus), each averaged across the mid- and pre-behavior calibration runs, and applied it to the ALREADY c-blended base_marginal = c*mid + (1-c)*pre. At c=1 (pure post-behavior) this used a slope that was HALF pre-behavior; the real mid-only calibration point was never exactly reproduced. Fixed by applying each side's OWN slope to that side's OWN nominal value FIRST, then blending the two resulting dollar figures by c: c*(mid*factor_mid) + (1-c)*(pre*factor_pre).",
    "soil_surplus_point_mid": {
-    "real": 2198.66,
-    "old_averaged_slope_prediction": 2202.19,
-    "new_own_side_slope_prediction": 2198.66,
+    "real": 2355.37,
+    "old_averaged_slope_prediction": 2357.56,
+    "new_own_side_slope_prediction": 2355.37,
     "note": "the new prediction matches 'real' exactly (both sides of a 2-point fit, {nominal, surplus}, pass through both points by construction) -- the old averaged-slope prediction does not, since it used a slope that was half pre-behavior at a pure-mid (c=1) scenario."
    },
    "soil_surplus_point_pre": {
-    "real": 2292.93,
-    "old_averaged_slope_prediction": 2289.26,
-    "new_own_side_slope_prediction": 2292.93,
+    "real": 2443.35,
+    "old_averaged_slope_prediction": 2441.08,
+    "new_own_side_slope_prediction": 2443.35,
     "note": "the pre-side mirror of soil_surplus_point_mid above, at c=0 (pure pre-behavior) instead of c=1: the new prediction matches 'real' exactly for the identical exact-2-point-fit reason."
    },
    "rte_points_mid": {
     "0.85": {
-     "real": 2174.05,
-     "old_averaged_slope_prediction": 2174.8,
-     "new_own_side_slope_prediction": 2177.04
+     "real": 2318.51,
+     "old_averaged_slope_prediction": 2319.15,
+     "new_own_side_slope_prediction": 2321.46
     },
     "0.9": {
-     "real": 2238.89,
-     "old_averaged_slope_prediction": 2238.89,
-     "new_own_side_slope_prediction": 2238.89
+     "real": 2380.51,
+     "old_averaged_slope_prediction": 2380.51,
+     "new_own_side_slope_prediction": 2380.51
     },
     "0.95": {
-     "real": 2297.75,
-     "old_averaged_slope_prediction": 2302.98,
-     "new_own_side_slope_prediction": 2300.74
+     "real": 2436.6,
+     "old_averaged_slope_prediction": 2441.87,
+     "new_own_side_slope_prediction": 2439.55
     }
    },
    "rte_points_pre": {
     "0.85": {
-     "real": 2255.48,
-     "old_averaged_slope_prediction": 2260.8,
-     "new_own_side_slope_prediction": 2258.47
+     "real": 2395.99,
+     "old_averaged_slope_prediction": 2401.32,
+     "new_own_side_slope_prediction": 2398.92
     },
     "0.9": {
-     "real": 2327.42,
-     "old_averaged_slope_prediction": 2327.42,
-     "new_own_side_slope_prediction": 2327.42
+     "real": 2464.85,
+     "old_averaged_slope_prediction": 2464.85,
+     "new_own_side_slope_prediction": 2464.85
     },
     "0.95": {
-     "real": 2393.38,
-     "old_averaged_slope_prediction": 2394.04,
-     "new_own_side_slope_prediction": 2396.37
+     "real": 2527.86,
+     "old_averaged_slope_prediction": 2528.38,
+     "new_own_side_slope_prediction": 2530.78
     }
    },
    "rte_residual_note": "Unlike the soil slopes, RTE_LO/RTE_NOM/RTE_HI are fit together by LEAST SQUARES across all THREE points (not two separate 2-point fits), so even the new own-side slope does not exactly reproduce RTE_LO/RTE_HI -- a real dispatch relationship is not perfectly linear across all three RTE draws, and a single best-fit line cannot pass through three non-collinear points exactly. This fix removes the mid/pre-AVERAGING contribution to that gap (what issue #107 targets) but does not and cannot remove the separate least-squares-fit residual itself. That residual does NOT shrink uniformly, and the direction is NOT even consistent between the mid and pre sides (Codex review, issue #107, pass 1 -- round 1's own claim was checked only on the mid side and was WRONG for pre, the exact class of error this project's own review process exists to catch): at this household's real calibration, the mid side gets WORSE at RTE_LO and BETTER at RTE_HI, while the pre side is the OPPOSITE -- BETTER at RTE_LO and WORSE at RTE_HI (the old averaged-slope error happens to partially cancel the independent 3-point-fit residual on whichever side/point it coincidentally lines up with, with no consistent pattern across sides). Both sides remain well under 0.2% either way regardless of direction -- see rte_points_mid/rte_points_pre above for the exact old/new numbers, live, not summarized as uniformly anything. The symmetric soil_surplus_point_pre/rte_points_pre blocks (issue #107 review, round 2) confirm the c=0 side is exact for soil_slope_surplus the same way c=1 is, not just asserted in prose without a matching quantification."
   },
-  "rte_slope_mid": 0.5525170732494493,
-  "rte_slope_pre": 0.5924853723365193,
-  "soil_slope_loss_mid": 0.2176162131897935,
-  "soil_slope_loss_pre": 0.16951981803374996,
-  "soil_slope_surplus_mid": 0.3403634388877598,
-  "soil_slope_surplus_pre": 0.2806992183344717,
+  "rte_slope_mid": 0.496062518134423,
+  "rte_slope_pre": 0.5349639165154967,
+  "soil_slope_loss_mid": 0.13661549459400488,
+  "soil_slope_loss_pre": 0.10142830343742137,
+  "soil_slope_surplus_mid": 0.20002673291440648,
+  "soil_slope_surplus_pre": 0.1652269094282071,
   "lossA": 0.0,
   "lossB": 0.05279410891383099,
   "rte_calibration_points_mid": {
-   "0.85": 2174.048805092456,
-   "0.9": 2238.892300422283,
-   "0.95": 2297.7514272074604
+   "0.85": 2318.5142165831394,
+   "0.9": 2380.5084832124576,
+   "0.95": 2436.6023198454122
   },
   "rte_calibration_points_pre": {
-   "0.85": 2255.4836060167145,
-   "0.9": 2327.418408081455,
-   "0.95": 2393.3797422262155
+   "0.85": 2395.994534723977,
+   "0.9": 2464.850018663385,
+   "0.95": 2527.855116684723
   },
   "soil_calibration_points_mid": {
-   "-0.05279410891383099": 2198.6612316833694,
-   "0.0": 2238.892300422283,
-   "0.05279410891383099": 2264.6146073191403
+   "-0.05279410891383099": 2355.369758678072,
+   "0.0": 2380.5084832124576,
+   "0.05279410891383099": 2397.6778847003934
   },
   "soil_calibration_points_pre": {
-   "-0.05279410891383099": 2292.927777682357,
-   "0.0": 2327.418408081455,
-   "0.05279410891383099": 2348.247982968826
+   "-0.05279410891383099": 2443.349113582896,
+   "0.0": 2464.850018663385,
+   "0.05279410891383099": 2478.0488391958884
   },
   "method": "linear factor(x) = 1 + slope*(x - nominal) fit by least squares to 3 REAL dispatch reruns per lever per behavior state (battery_dispatch_policies.run_batt/.billed, ETA temporarily overridden for RTE draws, generation scaled for soiling/production draws). Issue #107: each side's (mid/pre) own slope is kept separate and applied to that side's own nominal value, then the two resulting dollar figures are blended by c -- no longer averaged into one slope before being applied to an already c-blended base_marginal (see save1_of()'s own docstring and mid_pre_slope_unaveraging_fix above). RTE's 3 points (RTE_LO/RTE_NOM/RTE_HI) fit ONE slope across the full range per side (RTE's response is expected to be one continuous relationship) -- this fit is not exact through all 3 points (see mid_pre_slope_unaveraging_fix.rte_residual_note), unrelated to the mid/pre-averaging issue #107 fixes. Issue #89: soiling/production's 3 points (surplus at -lossB, nominal at 0, loss at +lossB) fit TWO separate 2-point slopes per side instead -- soil_slope_loss from {nominal, loss} and soil_slope_surplus from {surplus, nominal}, each exact by construction -- because scale_production()'s own reallocation is genuinely piecewise (a loss reduces export first; a surplus reduces import first), not one straight line through all three points."
  },
  "battery_marginal_only_full_model": {
   "N": 5000,
   "seed": 43,
-  "payback_median": 5.8,
-  "payback_p10": 5.1,
-  "payback_p90": 6.8,
+  "payback_median": 5.5,
+  "payback_p10": 4.8,
+  "payback_p90": 6.5,
   "prob_within_warranty_10yr": 1.0,
   "prob_within_15yr": 1.0,
   "prob_never_within_25yr": 0.0,
@@ -240,98 +240,98 @@
   "npv": {
    "4pct": {
     "10yr": {
-     "median": 7497,
-     "p10": 3007,
-     "p90": 12865
+     "median": 8873,
+     "p10": 4144,
+     "p90": 14513
     },
     "15yr": {
-     "median": 18954,
-     "p10": 9725,
-     "p90": 32322
+     "median": 20971,
+     "p10": 11227,
+     "p90": 35118
     }
    },
    "7pct": {
     "10yr": {
-     "median": 4360,
-     "p10": 528,
-     "p90": 8793
+     "median": 5509,
+     "p10": 1490,
+     "p90": 10188
     },
     "15yr": {
-     "median": 12297,
-     "p10": 5294,
-     "p90": 22068
+     "median": 13902,
+     "p10": 6512,
+     "p90": 24303
     }
    }
   },
-  "save1_median": 2273,
-  "save1_p10": 2217,
-  "save1_p90": 2333
+  "save1_median": 2412,
+  "save1_p10": 2358,
+  "save1_p90": 2467
  },
  "tornado": {
-  "nominal_payback_yr": 5.8,
+  "nominal_payback_yr": 5.5,
   "levers": {
    "install_cost": {
     "payback_range_yr": [
-     5.0,
-     6.6
+     4.8,
+     6.3
     ],
-    "swing_yr": 1.6,
-    "swing_yr_precise": 1.567037586443666
+    "swing_yr": 1.5,
+    "swing_yr_precise": 1.5008279277127894
    },
    "escalation": {
     "payback_range_yr": [
-     5.2,
-     6.8
+     5.0,
+     6.4
     ],
-    "swing_yr": 1.6,
-    "swing_yr_precise": 1.5612231577628988
+    "swing_yr": 1.4,
+    "swing_yr_precise": 1.3851374119433366
    },
    "degradation": {
     "payback_range_yr": [
-     5.7,
-     6.0
+     5.4,
+     5.6
     ],
-    "swing_yr": 0.3,
-    "swing_yr_precise": 0.2700252667146037
+    "swing_yr": 0.2,
+    "swing_yr_precise": 0.23981177914365226
    },
    "ev_persistence": {
     "payback_range_yr": [
-     5.7,
-     5.9
+     5.4,
+     5.6
     ],
     "swing_yr": 0.2,
-    "swing_yr_precise": 0.1968865164236666
+    "swing_yr_precise": 0.1674851320551447
    },
    "soiling": {
     "payback_range_yr": [
-     5.8,
-     5.8
+     5.5,
+     5.5
     ],
-    "swing_yr": 0.1,
-    "swing_yr_precise": 0.05507008881279418
+    "swing_yr": 0.0,
+    "swing_yr_precise": 0.03225615169565543
    },
    "round_trip_efficiency": {
     "payback_range_yr": [
-     5.7,
-     6.0
+     5.4,
+     5.7
     ],
     "swing_yr": 0.3,
-    "swing_yr_precise": 0.2958889885513303
+    "swing_yr_precise": 0.2509804567423455
    },
    "production_measurement_spread": {
     "payback_range_yr": [
-     5.8,
-     5.9
+     5.5,
+     5.5
     ],
-    "swing_yr": 0.1,
-    "swing_yr_precise": 0.07888787266554864
+    "swing_yr": 0.0,
+    "swing_yr_precise": 0.04534196923868006
    }
   },
   "ranked_by_swing": [
    "install_cost",
    "escalation",
-   "degradation",
    "round_trip_efficiency",
+   "degradation",
    "ev_persistence",
    "soiling",
    "production_measurement_spread"
@@ -346,35 +346,35 @@
    "new_ranked_by_swing": [
     "install_cost",
     "escalation",
-    "degradation",
     "round_trip_efficiency",
+    "degradation",
     "ev_persistence",
     "soiling",
     "production_measurement_spread"
    ],
    "notes": [
-    "install_cost: old swing 2.1 yr (range [5.2, 7.3]) vs new swing 1.6 yr (range [5.0, 6.6]) -- same lever (install price), same band, so a close match is expected; both models read savings from the same post_behavior.mid.battery_marginal-rooted base case.",
-    "escalation: old model's 'escalation_5yr_avg' swept 0-8% with an average-uplift approximation (swing 0.9 yr); this model sweeps the full 0-12% ladder-bound range directly (swing 1.6 yr) -- a wider band on the same lever, so a larger swing here is an expected reordering, not a disagreement.",
-    "ev_persistence generalizes the old model's 2-point 'post_behavior' lever (swing 0.3 yr, G vs G_POST) into a continuous Beta(2,1) blend across the SAME two endpoints; this model's swing (0.2 yr) should be of the same order since it is rooted in the identical pair of measured marginals.",
-    "dispatch_policy (old model's largest lever, swing 2.2 yr) has no counterpart here: it is a discrete DESIGN CHOICE the household makes (evening/twowin/greedy dispatch), not an uncertain physical input to propagate, so this Monte Carlo holds it fixed at greedy (the recommended policy) throughout, matching the old model's own base case.",
+    "install_cost: old swing 2.0 yr (range [4.9, 6.9]) vs new swing 1.5 yr (range [4.8, 6.3]) -- same lever (install price), same band, so a close match is expected; both models read savings from the same post_behavior.mid.battery_marginal-rooted base case.",
+    "escalation: old model's 'escalation_5yr_avg' swept 0-8% with an average-uplift approximation (swing 0.9 yr); this model sweeps the full 0-12% ladder-bound range directly (swing 1.4 yr) -- a wider band on the same lever, so a larger swing here is an expected reordering, not a disagreement.",
+    "ev_persistence generalizes the old model's 2-point 'post_behavior' lever (swing 0.2 yr, G vs G_POST) into a continuous Beta(2,1) blend across the SAME two endpoints; this model's swing (0.2 yr) should be of the same order since it is rooted in the identical pair of measured marginals.",
+    "dispatch_policy (old model's largest lever, swing 2.5 yr) has no counterpart here: it is a discrete DESIGN CHOICE the household makes (one of the four dispatch policies), not an uncertain physical input to propagate, so this Monte Carlo holds it fixed at the published policy (the recommended one) throughout, matching the old model's own base case.",
     "soiling, round_trip_efficiency and production_measurement_spread have no counterpart in the old tornado at all -- they are new levers this issue adds, not previously quantified anywhere in the repo."
    ]
   }
  },
  "legacy_reproduction": {
   "new_model_restricted_to_3_inputs": {
-   "payback_median": 6.0,
-   "payback_p10": 5.3,
-   "payback_p90": 7.0,
+   "payback_median": 5.7,
+   "payback_p10": 5.0,
+   "payback_p90": 6.6,
    "prob_payback_within_warranty10yr": 1.0,
-   "npv10_at_4pct_median": 6186
+   "npv10_at_4pct_median": 7516
   },
   "committed_deep_results_monte_carlo": {
-   "payback_median": 6.0,
-   "payback_p10": 5.3,
-   "payback_p90": 7.0,
+   "payback_median": 5.7,
+   "payback_p10": 5.0,
+   "payback_p90": 6.6,
    "prob_payback_within_warranty10yr": 1.0,
-   "npv10_at_4pct_median": 6186
+   "npv10_at_4pct_median": 7516
   },
   "diffs": {
    "payback_median": 0.0,

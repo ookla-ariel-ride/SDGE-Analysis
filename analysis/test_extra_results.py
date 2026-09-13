@@ -208,7 +208,7 @@ def case_real_archive_escalation_still_disagrees_with_battery_dispatch_policies_
         raise SkipCase(f"needs {er.OUT} and {dispatch_path}, which this "
                        "checkout does not have")
     published = json.loads(er.OUT.read_text())["escalation"]
-    ladder = json.loads(dispatch_path.read_text())["escalation_greedy_pw3_post_behavior"]
+    ladder = json.loads(dispatch_path.read_text())["escalation_published_pw3_post_behavior"]
     assert published["3%"]["payback_yr"] != ladder["3%"]["payback"], (
         "the retired variant and the published ladder are different scenarios "
         "and should not coincidentally show the same payback")

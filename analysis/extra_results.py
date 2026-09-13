@@ -16,18 +16,21 @@ stays live and unaffected by this script.
 
 `escalation` needed real investigation, not a quick patch. Issue #34's own
 framing ("contradicts the live engine") assumed extra_results.json's ladder
-and battery_dispatch_policies.json's own escalation_greedy_pw3_post_behavior
+and battery_dispatch_policies.json's own escalation_published_pw3_post_behavior
 ladder were the SAME computation that had drifted apart. They are not:
 running battery_dispatch_policies.escalation() (reimplemented below, see
 _escalation_ladder) against each script's own base-saving figure reproduces
 BOTH numbers exactly --
   escalation(1743) == extra_results.json's committed 7.8/7.3/6.8/6.2 yr
-  escalation(2238) == battery_dispatch_policies.json's committed 6.2/5.9/5.5/5.2 yr
+  escalation(2380) == battery_dispatch_policies.json's committed 5.8/5.6/5.3/4.9 yr
+(the second seed is whatever post_behavior.mid.battery_marginal currently is --
+_published_post_behavior_marginal() reads it rather than repeating it, so this
+sentence cannot go stale the way it did when the published dispatch changed)
 TECHNICAL.md section 3.11 already documents this precisely: extra_results.json's
 ladder is a "RETIRED variant" seeded from the superseded $1,743/yr evening-only
 base saving (section 3.8), while "the published ladder (report section 13)" is
-battery_dispatch_policies.json's, rebased on the current $2,238/yr post-behavior
-marginal. These are two different dispatch scenarios' escalation curves, not
+battery_dispatch_policies.json's, rebased on the current post-behavior
+marginal (read from that artifact, not restated here). These are two different dispatch scenarios' escalation curves, not
 one figure that drifted -- overwriting the retired figure with the published
 one would erase a real historical comparison point and make the two files
 redundant, which is a worse outcome than the orphaned-generator problem this
@@ -124,6 +127,31 @@ def _escalation_ladder(save1, cost=14500, fade=0.01, disc=0.05):
     return out
 
 
+def _published_post_behavior_marginal():
+    """battery_dispatch_policies.json's own post_behavior.mid.battery_marginal.
+
+    Read from the artifact rather than imported from the module: this script is
+    CI_RUNNABLE against committed data alone, and importing the generator would
+    pull in behavior_rebuild and the raw interval export with it. Fails closed
+    and by name -- a basis sentence that silently fell back to a default would be
+    the same defect in a new costume.
+    """
+    path = DATA / "battery_dispatch_policies.json"
+    if not path.exists():
+        raise SystemExit(
+            f"extra_results.py: {path} is missing, so the published ladder's own "
+            "post-behavior marginal cannot be read and the escalation basis "
+            "sentence cannot be written truthfully. Run "
+            "battery_dispatch_policies.py first.")
+    try:
+        return int(json.loads(path.read_text())["post_behavior"]["mid"]["battery_marginal"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(
+            f"extra_results.py: {path} has no usable "
+            f"post_behavior.mid.battery_marginal ({exc!r}); regenerate it with "
+            "battery_dispatch_policies.py before this script.")
+
+
 def build():
     if not OUT.exists():
         raise SystemExit(f"extra_results.py: {OUT} does not exist -- this "
@@ -145,6 +173,14 @@ def build():
             f"or given its own real generator -- it cannot be silently passed "
             f"through unvalidated (Codex review, issue #34, pass 2).")
 
+    # THE CURRENT LADDER'S SEED IS READ, NOT TYPED (issue #240). This sentence
+    # exists to tell a reader that the retired ladder below and the published one
+    # differ BY DESIGN, which it can only do if it names the published ladder's
+    # actual basis. A literal here went stale the moment the published dispatch
+    # changed, and published a retired marginal as the current one from inside a
+    # committed artifact -- exactly the drift the sentence claims there is none
+    # of. The generator that owns that figure is the one asked for it.
+    published_marginal = _published_post_behavior_marginal()
     escalation = _escalation_ladder(RETIRED_EVENING_BASE_SAVE_USD)
     escalation["basis"] = (
         f"RETIRED variant: $14,500 installed, the superseded "
@@ -152,9 +188,9 @@ def build():
         f"({RETIRED_EVENING_BASE_SAVE_SOURCE}), 1%/yr capacity fade, 5% "
         f"discount. The CURRENT published ladder (report section 13) is "
         f"data/battery_dispatch_policies.json -> "
-        f"escalation_greedy_pw3_post_behavior, rebased on the post-behavior "
-        f"$2,238/yr marginal -- the two ladders disagree by design, not by "
-        f"drift; see TECHNICAL.md section 3.11.")
+        f"escalation_published_pw3_post_behavior, rebased on the post-behavior "
+        f"${published_marginal:,}/yr marginal -- the two ladders disagree by "
+        f"design, not by drift; see TECHNICAL.md section 3.11.")
 
     out = {}
     for key in existing:

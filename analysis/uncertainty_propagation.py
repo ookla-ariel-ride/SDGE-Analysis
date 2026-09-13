@@ -50,7 +50,8 @@ INPUT DISTRIBUTIONS AND THEIR EVIDENTIAL BASIS
    Evidential basis: quoted installer cost bound; no better evidence exists.
 4. EV behavior persistence   Beta(2, 1) compliance fraction c in [0, 1],
    blending the battery_dispatch_policies.json PRE-behavior marginal saving
-   (pw3.greedy.save, the battery serving the UNSHIFTED load, c=0) and the
+   (the published pw3 policy's save, the battery serving the UNSHIFTED load,
+   c=0) and the
    POST-behavior marginal saving (post_behavior.mid.battery_marginal, the
    battery serving the load AFTER the free behavior fix holds, c=1) — the
    ONLY two compliance points the pipeline actually computes; no continuum of
@@ -136,9 +137,9 @@ rather than leaving the gap undocumented.
 
 (a) DISPATCH-POLICY ADHERENCE RISK. This is a DIFFERENT question from the
 "dispatch_policy" already addressed in reconcile_tornado()'s notes above (the
-household's CHOICE among evening/twowin/greedy, correctly held fixed at
-greedy as a decision, not an uncertain input) — this is whether, having
-CHOSEN greedy, the Powerwall's own automation actually EXECUTES it reliably.
+household's CHOICE among the four dispatch policies, correctly held fixed at
+the published one as a decision, not an uncertain input) — this is whether,
+having CHOSEN it, the Powerwall's own automation actually EXECUTES it reliably.
 Real-world software/automation can fail to follow its configured schedule
 (app settings not saving, a unit needing a manual reboot, etc.). Checked
 (WebSearch, 2026-08) for a citable number to build a distribution from
@@ -344,7 +345,7 @@ directly against the committed artifact — not "close", checked.
 TORNADO RECONCILIATION AGAINST data/extended_results.json's tornado_battery
 -----------------------------------------------------------------------------
 extended_findings.py's tornado sweeps four DIFFERENT things: install_cost,
-dispatch_policy (a discrete design CHOICE among evening/twowin/greedy, not an
+dispatch_policy (a discrete design CHOICE among the four policies, not an
 uncertain physical input), post_behavior (a 2-point sensitivity: G vs
 G_POST), and escalation_5yr_avg (an average-uplift approximation over a
 narrower 0-8% band). This script's tornado only overlaps that ranking on
@@ -848,7 +849,8 @@ def dispatch_calibration():
         SOC, until they converge to within STEADY_STATE_TOL_KWH kWh."""
         soc0 = CAP_KWH / 2
         for _ in range(STEADY_STATE_MAX_ITERS):
-            i2, e2, served, thru = bp.run_batt(d, imp_base, gen, CAP_KWH, "greedy", soc0=soc0,
+            i2, e2, served, thru = bp.run_batt(d, imp_base, gen, CAP_KWH,
+                                               bp.PUBLISHED_POLICY, soc0=soc0,
                                                charge_kw=bp.CHARGE_KW)
             soc_final = soc0 + thru - served / eta
             if abs(soc_final - soc0) < STEADY_STATE_TOL_KWH:
@@ -902,7 +904,7 @@ def dispatch_calibration():
 
     def _single_pass_marginal(imp_base):
         """The EXACT method battery_dispatch_policies.py's own top-level driver
-        uses for the committed pw3.greedy.save/post_behavior.mid.battery_
+        uses for the committed published pw3 save/post_behavior.mid.battery_
         marginal figures (run_batt called with no soc0 -- a single pass from
         cap/2, never converged to a steady annual cycle). Used ONLY for the
         tie-out check below: comparing a steady-state-converged recomputation
@@ -914,7 +916,8 @@ def dispatch_calibration():
         below) uses the steady-state method throughout for internal
         consistency across every calibration point, matching Codex review
         pass 1 finding 2's fix."""
-        i2, e2, _, _ = bp.run_batt(d, imp_base, gen0, CAP_KWH, "greedy", charge_kw=bp.CHARGE_KW)
+        i2, e2, _, _ = bp.run_batt(d, imp_base, gen0, CAP_KWH, bp.PUBLISHED_POLICY,
+                                   charge_kw=bp.CHARGE_KW)
         return float(bp.billed(d, imp_base, gen0) - bp.billed(d, i2, e2))
 
     pre_nominal_single_pass = _single_pass_marginal(imp0)
@@ -1392,12 +1395,12 @@ def save1_of(c, rte, loss, prod_noise, pre, mid,
     dispatch rerun on their own side (gen_scale=1-lossB and gen_scale=
     1+lossB respectively, both against the SAME nominal point) -- not one
     slope extrapolated across both. This household's own most recently
-    regenerated calibration fit soil_slope_loss_mid=+0.2176/
-    soil_slope_loss_pre=+0.1695 and soil_slope_surplus_mid=+0.3404/
-    soil_slope_surplus_pre=+0.2807 -- see data/uncertainty_results.json's
+    regenerated calibration fit soil_slope_loss_mid=+0.1366/
+    soil_slope_loss_pre=+0.1014 and soil_slope_surplus_mid=+0.2000/
+    soil_slope_surplus_pre=+0.1652 -- see data/uncertainty_results.json's
     calibration section for the current values (the surplus-side slope
     came out genuinely steeper in magnitude than the loss-side one here,
-    roughly 1.56x -- confirmed against this module's own real dispatch
+    roughly 1.46x -- confirmed against this module's own real dispatch
     reruns, not assumed from issue #89's own illustrative filing numbers,
     which used a smaller ~1.06x ballpark before this fix's real third
     rerun existed to check it against); dispatch_calibration()'s new
@@ -1756,9 +1759,9 @@ def reconcile_tornado(new_tornado, old_tornado_battery):
         "dispatch_policy (old model's largest lever, "
         f"swing {old_levers.get('dispatch_policy', {}).get('swing_yr')} yr) has no "
         "counterpart here: it is a discrete DESIGN CHOICE the household "
-        "makes (evening/twowin/greedy dispatch), not an uncertain physical "
-        "input to propagate, so this Monte Carlo holds it fixed at greedy "
-        "(the recommended policy) throughout, matching the old model's own "
+        "makes (one of the four dispatch policies), not an uncertain physical "
+        "input to propagate, so this Monte Carlo holds it fixed at the "
+        "published policy (the recommended one) throughout, matching the old model's own "
         "base case.")
     notes.append(
         "soiling, round_trip_efficiency and production_measurement_spread "
@@ -1795,7 +1798,8 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
     # spurious ~$1 gap that is really just the two methods' known SOC-
     # boundary difference, not a stale artifact.
     committed_dispatch = _committed("battery_dispatch_policies.json")
-    committed_pre = float(committed_dispatch["pw3"]["greedy"]["save"])
+    committed_pre = float(
+        committed_dispatch["pw3"][committed_dispatch["published_policy"]]["save"])
     committed_mid = float(committed_dispatch["post_behavior"]["mid"]["battery_marginal"])
     pre_sp = calib["pre_nominal_single_pass"]
     mid_sp = calib["mid_nominal_single_pass"]
@@ -1892,7 +1896,7 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
             "ev_behavior_persistence": {"dist": "Beta", "a": EV_PERSIST_A,
                                         "b": EV_PERSIST_B, "mean": EV_PERSIST_A / (EV_PERSIST_A + EV_PERSIST_B),
                                         "evidential_basis": "estimated blend between "
-                                        "battery_dispatch_policies.json's pw3.greedy.save "
+                                        "battery_dispatch_policies.json's published pw3 save "
                                         "(no behavior, c=0) and post_behavior.mid."
                                         "battery_marginal (full behavior, c=1) -- the only "
                                         "two compliance points the pipeline computes. This is "
@@ -1937,7 +1941,7 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
         ),
         "dispatch_policy_adherence_note": (
             "Issue #59: whether the Powerwall's own automation reliably "
-            "EXECUTES the chosen greedy dispatch policy (distinct from WHICH "
+            "EXECUTES the chosen dispatch policy (distinct from WHICH "
             "policy to choose, already addressed above) is NOT modeled here. "
             "Checked for a citable adherence/no-show rate from Tesla, an "
             "industry report, or an independent monitoring study; none "

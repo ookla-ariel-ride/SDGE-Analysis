@@ -14,14 +14,15 @@ direction -- the exact constants battery_dispatch_policies.py already uses,
 imported from there rather than re-declared:
 
   Run A -- cost-minimizing. battery_dispatch_policies.run_batt(d, imp0, gen0,
-    13.5, "greedy") is called DIRECTLY, unmodified: this is the existing,
-    already-tested, price-aware policy (discharge whenever the TOU period is
-    not super-off-peak and house load is under the 2.5 kW EV-spillover gate;
-    grid-charge only during super-off-peak, up to full capacity; always charge
-    from solar surplus first).
+    13.5, bp.PUBLISHED_POLICY) is called DIRECTLY, unmodified: this is the
+    existing, already-tested, price-aware policy (discharge whenever the TOU
+    period is not super-off-peak and house load is under the 2.5 kW EV-
+    spillover gate; grid-charge only during super-off-peak; charge from solar
+    surplus only where the export that surplus forgoes is worth less than the
+    import the stored kWh can serve -- issue #240's priced charge rule).
 
   Run B -- carbon-minimizing (new). Same control structure as run_batt's
-    "greedy" branch, but the TOU-period-based decision is replaced by an
+    published branch, but EVERY price-based decision is replaced by an
     intensity-based one: discharge when the measured per-interval grid
     intensity is ABOVE a threshold ("dirty"), grid-charge only when it is
     BELOW that threshold ("clean"). The EV-spillover exclusion (>=2.5 kW never
@@ -29,7 +30,7 @@ imported from there rather than re-declared:
     same way run_batt gates its non-sop discharge clause.
 
     One deliberate simplification vs. run_batt, stated here rather than left
-    implicit: run_batt's "greedy" disch_win is actually the OR of two clauses
+    implicit: run_batt's published disch_win is actually the OR of two clauses
     -- an unconditional 16-21h on-peak window (no kW gate at all) and a
     non-sop-with-low-kW clause. That on-peak carve-out has no analogue in a
     pure two-way "dirty vs. clean" intensity split (there is no third,
@@ -38,11 +39,25 @@ imported from there rather than re-declared:
     Run B is not a mechanical find-and-replace of Run A; it is called out
     explicitly rather than silently narrowed.
 
+    RUN B DOES NOT CARRY ISSUE #240's PRICED CHARGE GATE, and that is the
+    policy, not an oversight. Run B answers "what would a battery do if it
+    minimized CO2 and nothing else"; a rule that declines a charge because the
+    kWh is worth more as an EXPORT IN DOLLARS would make it a hybrid and
+    destroy the very comparison this script exists to draw. Run B's charge
+    decision is already priced -- in carbon, the currency it optimizes: it
+    stores only clean-hour surplus, and the "unless the hour is itself dirty"
+    gate below is the carbon-side analogue of the priced gate. Run C, which
+    has a price axis by construction, DOES carry it.
+
   Run C -- the union/efficient policy (new). Discharges whenever EITHER Run
     A's actual condition (its full disch_win: on-peak-unconditional OR
-    non-sop-with-low-kW) OR Run B's condition (dirty AND low-kW) holds; grid-
-    charges only when BOTH cheap and clean hold (sop AND intensity <=
-    threshold). This isolates the genuinely conflicting hours (cheap-but-dirty,
+    non-sop-with-low-kW) OR Run B's condition (dirty AND low-kW) holds; and it
+    CHARGES only where both axes agree -- grid-charge when BOTH cheap and clean
+    hold (sop AND intensity <= threshold), solar-surplus charge when the hour is
+    clean AND the priced charge gate Run A now applies (issue #240) admits the
+    kWh. Both charge rules are intersections, for the same reason: a policy
+    claiming to serve both objectives cannot take a charge that one of them
+    refuses. This isolates the genuinely conflicting hours (cheap-but-dirty,
     clean-but-expensive) from the win-win hours served either way.
 
 THRESHOLD DERIVATION (not an invented kg/MWh cutoff): Run B's CHARGE window
@@ -277,7 +292,8 @@ def carbon_threshold(d, inten):
 # --------------------------------------------------------------- dispatch runs
 def run_batt_carbon(d, imp0, gen0, cap, inten, threshold, charge_kw=None):
     """Carbon-minimizing dispatch -- see module docstring "Run B" for the full
-    reasoning. Mirrors battery_dispatch_policies.run_batt's "greedy" control
+    reasoning, including why this run deliberately carries NO price-based
+    charge gate. Mirrors battery_dispatch_policies.run_batt's published control
     structure (charge from solar surplus first unless this interval both wants
     to discharge AND has import, AND unless the hour is itself dirty; otherwise
     grid-charge in clean hours, up to full capacity; otherwise discharge in
@@ -357,8 +373,9 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold, charge_kw=None):
     """The union/efficient policy -- see module docstring "Run C". Discharges
     whenever EITHER Run A's actual disch_win (on-peak-unconditional OR
     non-sop-with-low-kW, exactly as battery_dispatch_policies.run_batt computes
-    it for "greedy") OR Run B's condition (dirty AND low-kW) holds; grid-
-    charges only when BOTH cheap (sop) and clean (intensity <= threshold) hold.
+    it for its published policy) OR Run B's condition (dirty AND low-kW) holds;
+    grid-charges only when BOTH cheap (sop) and clean (intensity <= threshold)
+    hold.
 
     Same "unless the hour is itself dirty" surplus-charging gate as Run B, for
     the identical reason (see run_batt_carbon's docstring): storing a dirty-
@@ -367,6 +384,14 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold, charge_kw=None):
     also be true for a NON-dirty reason (cond_a, Run A's price-based window),
     so this gate is a genuinely separate condition here, not implied by
     disch_win the way it is in run_batt_carbon.
+
+    AND, since issue #240, the PRICED charge gate too, on BOTH charge branches:
+    battery_dispatch_policies.value_charge_gate() -- the published policy's own
+    rule, called rather than copied -- supplies `surplus_ok` for the solar branch
+    and `topup_ok` for the super-off-peak grid branch, so neither takes a charge
+    the price axis refuses. Run A applies both; a Run C that applied only one
+    would be charging on hours Run A refuses and could not be called the
+    efficient union of the two. Run B is exempt and says why.
 
     cond_b (the carbon-driven discharge trigger, as opposed to cond_a's
     price-driven one) uses the SAME higher discharge threshold as Run B
@@ -391,19 +416,38 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold, charge_kw=None):
     # above and battery_dispatch_policies.run_batt (issue #246); both of this
     # policy's discharge conditions carry the rule, so both read the gate.
     ev_spillover_excluded = br.EV_ANALYSIS
+    # Run A's priced charge rule, from its own implementation rather than a
+    # fourth copy of it (issue #240). Run C charges only where BOTH axes agree,
+    # so BOTH charge branches below read it alongside their carbon gate: the
+    # surplus branch takes `surplus_ok`, the grid top-up takes `topup_ok`. An
+    # earlier version read only `surplus_ok`, which left the grid branch able to
+    # take a top-up the price axis refuses -- a real gap in the "both axes agree"
+    # claim even though `topup_ok` is true on every super-off-peak interval of
+    # this household's year, so no published figure moved when it was closed.
+    _gate = bp.value_charge_gate(d, imp0, gen0)
+    priced_surplus_ok, priced_topup_ok = _gate["surplus_ok"], _gate["topup_ok"]
     for i in range(len(d)):
         chargeable = inten[i] <= threshold
         serve_ok = (kw[i] < 2.5) if ev_spillover_excluded else True
         cond_a = (16 <= h[i] < 21) or (p[i] != "sop" and serve_ok)
         cond_b = (inten[i] > disch_threshold) and serve_ok
         disch_win = cond_a or cond_b
-        cheap_clean = (p[i] == "sop") and chargeable
+        cheap_clean = (p[i] == "sop") and chargeable and priced_topup_ok[i]
+        # THE PRICE MASK SITS INSIDE THE BRANCH, NOT IN ITS CONDITION, matching
+        # _run_batt_value() and run_batt_vpp() exactly. With it in the condition,
+        # a surplus interval the price axis DECLINED fell through to the grid
+        # top-up below and imported while it was exporting; every other
+        # adaptation of this rule stops for the interval instead. Unreachable on
+        # this household (no super-off-peak interval has surplus_ok false), but
+        # the three adaptations have to be the same shape or the equivalence
+        # test in test_battery_dispatch_policies.py is certifying something else.
         if exp[i] > 0 and chargeable and not (disch_win and imp[i] > 0):
-            c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
-            if c > 0:
-                soc += c * ETA
-                exp[i] -= c
-                thru += c * ETA
+            if priced_surplus_ok[i]:
+                c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
+                if c > 0:
+                    soc += c * ETA
+                    exp[i] -= c
+                    thru += c * ETA
             continue
         if cheap_clean:
             take = min(max((cap - soc) / ETA, 0), pwrq_chg)
@@ -449,19 +493,20 @@ def compute():
         raise SystemExit(f"baseline CO2 footprint {base_co2} kg is not positive")
 
     # ---------------- Run A: cost-minimizing (reuse, do not reimplement) ----
-    iA, eA, servedA, thruA = bp.run_batt(d, imp0, gen0, CAP, "greedy", charge_kw=CHARGE_KW)
+    iA, eA, servedA, thruA = bp.run_batt(d, imp0, gen0, CAP, bp.PUBLISHED_POLICY,
+                                         charge_kw=CHARGE_KW)
     billA = bp.billed(d, iA, eA)
     co2A = float((iA * inten).sum() * KG)
     expA = float((eA * inten).sum() * KG)
 
     committed_path = DATA / "battery_dispatch_policies.json"
     committed = json.loads(committed_path.read_text())
-    committed_save_a = committed["pw3"]["greedy"]["save"]
+    committed_save_a = committed["pw3"][committed["published_policy"]]["save"]
     computed_save_a = round(base - billA)
     if abs(computed_save_a - committed_save_a) > 5:
         raise SystemExit(
             f"Run A's computed saving ${computed_save_a} does not match the "
-            f"committed {committed_path.name}'s pw3.greedy.save "
+            f"committed {committed_path.name}'s published pw3 save "
             f"${committed_save_a} (tolerance $5) -- battery_dispatch_policies.py "
             "and this script have diverged; regenerate/investigate before "
             "trusting either")
@@ -574,12 +619,13 @@ def compute():
             "net_co2_kg": round(base_net_co2, 1),
         },
         "cross_check": {
-            "battery_dispatch_policies_json_pw3_greedy_save_usd": committed_save_a,
+            "battery_dispatch_policies_json_pw3_published_save_usd": committed_save_a,
             "run_a_computed_save_usd": computed_save_a,
             "tolerance_usd": 5,
             "note": ("Run A calls battery_dispatch_policies.run_batt() directly "
                      "(the same function/policy/capacity the committed "
-                     "battery_dispatch_policies.json's pw3.greedy figure comes "
+                     "battery_dispatch_policies.json's published pw3 figure "
+                     "comes "
                      "from), so the two savings figures must agree within "
                      "rounding -- a real cross-check, not a coincidence."),
         },
@@ -613,6 +659,24 @@ def compute():
             "credit would likely differ in the same direction."),
         "caveat": [
             "Grid-AVERAGE intensity, not marginal (see average_vs_marginal_basis).",
+            # WHICH RUNS PRICE THE CHARGE SIDE, in the artifact rather than only
+            # in the module docstring (issue #240 review). A consumer reading
+            # this file alone could not otherwise tell that Run B's charge
+            # decision is deliberately blind to price -- the same gap the DSGS
+            # dispatch_policy stamp closed for its carried-forward block.
+            f"Runs A and C price the CHARGE side as well as the discharge side: "
+                f"both gate charging on battery_dispatch_policies."
+                f"value_charge_gate() (Run A through run_batt's "
+                f"{bp.PUBLISHED_POLICY!r} policy, Run C through both of its own "
+                "charge branches), so neither stores a kWh whose forgone export "
+                "is worth more than the import it could serve. RUN B DOES NOT, "
+                "AND THAT IS THE POLICY: it answers what a battery would do if "
+                "it minimized CO2 and nothing else, so a rule that declined a "
+                "charge on DOLLAR grounds would make it a hybrid and destroy "
+                "the comparison this artifact exists to draw. Run B's charge "
+                "decision is priced in the currency it optimizes instead -- it "
+                "charges only in clean hours, and declines dirty-hour surplus "
+                "for the carbon-side version of the same reason.",
             "Run B's threshold is sized to match Run A's measured non-sop TOU "
                 "fraction of the year, not an invented kg/MWh cutoff; ties at "
                 "0.1 kg/MWh resolution mean the achieved split is close to, not "

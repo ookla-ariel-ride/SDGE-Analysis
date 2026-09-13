@@ -5,7 +5,8 @@ Question: does a battery change which rate plan is best? For the top-3 plans in
 data/plan_results.csv (EV-TOU-5 and its two nearest competitors, EV-TOU-2 and
 TOU-ELEC, CEA generation, no relief credit), bill the same 365-day year WITHOUT
 a battery and WITH the price-aware 13.5 kWh / 11.5 kW Powerwall 3 dispatch
-(run_batt "greedy" imported from battery_dispatch_policies.py), under each
+(run_batt on battery_dispatch_policies.PUBLISHED_POLICY, imported from that
+module), under each
 plan's own rate structure.
 
 Rates basis: PUBLISHED RATE-TABLE values (research/rates-reference.md; the same
@@ -28,7 +29,7 @@ destination intervals by TOU period LABEL only (on/off -> sop), so one shifted
 import series serves all three plans exactly as the one dispatch trace does.
 
 MID PACKAGE (issue #200): the artifact also prices the report's mid package —
-this household's free behavior fix FIRST, then the same 13.5 kWh greedy
+this household's free behavior fix FIRST, then the same 13.5 kWh published
 dispatch on the shifted year — under EACH plan, so a household whose ranking
 favors a different plan can read what the package is worth on that plan. This
 is ONE integrated pipeline re-billed end-to-end per plan (shift, then dispatch,
@@ -98,6 +99,7 @@ import pandas as pd
 import rates as R                 # canonical TOU assignment
 import behavior_rebuild as br
 from battery_dispatch_policies import (run_batt, free_fix_shift, CHARGE_KW,
+                                       PUBLISHED_POLICY,
                                        FREE_FIX_SCENARIO_EV, FREE_FIX_SCENARIO_NO_EV)
 
 # What the mid-package row actually did, per free-fix scenario. The row is one
@@ -108,7 +110,7 @@ _MID_PACKAGE_METHOD = {
     FREE_FIX_SCENARIO_EV:
         ("integrated mid package: EV shift scenario a (all sessions, "
          "behavior_rebuild.shift_ev) FIRST, then the price-aware PW3 "
-         "greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
+         "dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
          "on the shifted year, and the WHOLE modified year re-billed "
          "end-to-end under each plan's own published-table rates — one "
          "pipeline, never a sum of separately modeled deltas. Baseline "
@@ -119,7 +121,7 @@ _MID_PACKAGE_METHOD = {
          "(behavior_rebuild.shift_house — household.has_ev is false, so the "
          "free fix that precedes the battery is the flexible on-peak house "
          "load, not the EV charge reschedule) FIRST, then the price-aware PW3 "
-         "greedy dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
+         "dispatch (13.5 kWh, 11.5 kW discharge / 5 kW charge) "
          "on the shifted year, and the WHOLE modified year re-billed "
          "end-to-end under each plan's own published-table rates — one "
          "pipeline, never a sum of separately modeled deltas. Baseline "
@@ -385,7 +387,7 @@ if __name__ == "__main__":
     # (issue #40) is this household's real, cited Powerwall 3 charge rating
     # (5 kW, vs. 11.5 kW discharge) -- imported from battery_dispatch_
     # policies.py so the two scripts cannot drift onto different figures.
-    imp_b, exp_b, served, thru = run_batt(d, imp0, gen0, 13.5, "greedy", charge_kw=CHARGE_KW)
+    imp_b, exp_b, served, thru = run_batt(d, imp0, gen0, 13.5, PUBLISHED_POLICY, charge_kw=CHARGE_KW)
 
     ref = pd.read_csv(os.path.join(root, "data", "plan_results.csv"))
     ref = ref[ref.provider == "CEA"].set_index("plan").total.to_dict()
@@ -428,7 +430,7 @@ if __name__ == "__main__":
     # battery on every household, and mid_package_on_plans.free_fix_scenario
     # records which fix it was.
     imp_sh, moved, fix_scenario = free_fix_shift(d, imp0)
-    imp_p, exp_p, _, _ = run_batt(d, imp_sh, gen0, 13.5, "greedy", charge_kw=CHARGE_KW)
+    imp_p, exp_p, _, _ = run_batt(d, imp_sh, gen0, 13.5, PUBLISHED_POLICY, charge_kw=CHARGE_KW)
     pkg = {}
     for plan in PLANS:
         pkg_bill = bill_plan(plan, seas, per, imp_p, exp_p)
@@ -442,7 +444,7 @@ if __name__ == "__main__":
     # cross-check the EV-TOU-5 column against the canonical-engine artifact: the
     # table-rate battery value must agree with the published canonical figure to ~$100
     canon, canon_source = _resolve_dispatch_artifact(root)
-    assert abs(plans["EV-TOU-5"]["battery_value"] - canon["pw3"]["greedy"]["save"]) < 100, \
+    assert abs(plans["EV-TOU-5"]["battery_value"] - canon["pw3"][canon["published_policy"]]["save"]) < 100, \
         "EV-TOU-5 battery value diverged from the canonical dispatch artifact"
     # same crosscheck for the mid package: the table-rate EV-TOU-5 package save
     # must agree with the canonical engine's post_behavior.mid figure to ~$100
@@ -463,7 +465,8 @@ if __name__ == "__main__":
          "(tolerance $100)")
     out = {
         "method": ("integrated: bill the year with and without the price-aware PW3 "
-                   "dispatch (run_batt 'greedy', 13.5 kWh, 11.5 kW discharge / 5 kW charge "
+                   "dispatch (run_batt on battery_dispatch_policies.PUBLISHED_POLICY, 13.5 kWh, "
+                   "11.5 kW discharge / 5 kW charge "
                    "(Tesla's own datasheet, see research/battery-research-notes.md), 90% RTE, "
                    "EV-spillover exclusion) under each plan's own rate structure"),
         "rates_basis": ("published rate tables, CEA generation without relief credit "
@@ -482,7 +485,7 @@ if __name__ == "__main__":
         "plans": plans,
         "canonical_crosscheck_ev_tou_5": {
             "no_battery": canon["baseline_bill_current_rates"],
-            "battery_value": canon["pw3"]["greedy"]["save"],
+            "battery_value": canon["pw3"][canon["published_policy"]]["save"],
             "basis": (f"{canon_source} — bill-derived rates, rates.bill_nem monthly "
                       "NEM netting, canonical holiday rule; the published EV-TOU-5 "
                       "battery economics")},

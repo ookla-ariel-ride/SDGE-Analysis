@@ -1,5 +1,5 @@
 {
- "method": "linear program minimizing the exact rates.bill_nem_monthly objective (36 month/season/period netting buckets + NBC on gross imports), solved via scipy.optimize.linprog (HiGHS), at identical capacity/power/efficiency/EV-exclusion constraints as battery_dispatch_policies.run_batt's greedy policy, with a cyclic (steady-state) SOC boundary",
+ "method": "linear program minimizing the exact rates.bill_nem_monthly objective (36 month/season/period netting buckets + NBC on gross imports), solved via scipy.optimize.linprog (HiGHS), at identical capacity/power/efficiency/EV-exclusion constraints as battery_dispatch_policies.run_batt's published policy, with a cyclic (steady-state) SOC boundary",
  "cap_kwh": 13.5,
  "power_kw": 11.5,
  "charge_kw": 5.0,
@@ -25,11 +25,12 @@
   "rebilled_via_rates_bill_nem_usd": 2358.73,
   "agreement_usd": 0.0017
  },
- "greedy_comparison": {
-  "greedy_save_usd": 2328,
+ "published_comparison": {
+  "published_policy": "value",
+  "published_save_usd": 2466,
   "perfect_foresight_save_usd": 2545.39,
-  "optimality_gap_usd": 217.39,
-  "optimality_gap_pct_of_greedy": 9.34
+  "optimality_gap_usd": 79.39,
+  "optimality_gap_pct_of_published": 3.22
  },
  "day_ahead_forecast": {
   "perfect": false,
@@ -63,14 +64,14 @@
   "note": "same day-by-day architecture as day_ahead_forecast (SOC fixed at the real start-of-day level, free at day's end, real bucket offsets carried forward) but with PERFECT same-day information instead of a persistence forecast -- isolates the myopic single-day horizon effect (no value placed on SOC held past midnight) from forecast quality"
  },
  "purchasing_statement": {
-  "greedy_save_usd": 2328,
+  "published_save_usd": 2466,
   "day_ahead_save_usd": 1715.29,
   "day_ahead_perfect_horizon_save_usd": 2537.18,
   "perfect_foresight_save_usd": 2545.39,
-  "day_ahead_value_over_greedy_usd": -612.71,
+  "day_ahead_value_over_published_usd": -750.71,
   "remaining_gap_day_ahead_to_perfect_usd": 830.11,
   "gap_attributed_to_forecast_error_usd": 821.89,
   "gap_attributed_to_myopic_horizon_usd": 8.21,
-  "note": "the shipping greedy policy already captures the large majority of the theoretical maximum at this hardware (the optimality gap above is the full remaining upside from ANY controller, however smart). Day-ahead's shortfall versus the true optimum splits into two isolated effects: $821.89/yr from imperfect (persistence) forecasting, holding the single-day planning horizon fixed, and $8.21/yr from that single-day horizon itself (each day's local plan places no value on SOC held past midnight, so it has no incentive to preserve charge for tomorrow morning), holding forecast quality fixed at perfect -- neither a better forecast alone nor a longer planning horizon alone would close the whole gap to the true optimum; no shipping product changes the controller, only the hardware, so closing the remaining gap is a software/firmware question, not a purchasing one, and this data does not show day-ahead forecasting alone is the answer"
+  "note": "the shipping policy already captures the large majority of the theoretical maximum at this hardware (the optimality gap above is the full remaining upside from ANY controller, however smart). Day-ahead's shortfall versus the true optimum splits into two isolated effects: $821.89/yr from imperfect (persistence) forecasting, holding the single-day planning horizon fixed, and $8.21/yr from that single-day horizon itself (each day's local plan places no value on SOC held past midnight, so it has no incentive to preserve charge for tomorrow morning), holding forecast quality fixed at perfect -- neither a better forecast alone nor a longer planning horizon alone would close the whole gap to the true optimum; no shipping product changes the controller, only the hardware, so closing the remaining gap is a software/firmware question, not a purchasing one, and this data does not show day-ahead forecasting alone is the answer"
  }
 }

@@ -1,5 +1,6 @@
 {
  "baseline_bill_current_rates": 4904,
+ "published_policy": "value",
  "inputs": {
   "nonsop_import_kwh": 8521,
   "onpeak_import_kwh": 4022,
@@ -23,10 +24,15 @@
    "kwh_served": 4720,
    "cycles_per_day": 1.01
   },
-  "greedy_profile_S": [
+  "value": {
+   "save": 2466,
+   "kwh_served": 4710,
+   "cycles_per_day": 1.01
+  },
+  "published_profile_S": [
    15.75,
-   14.37,
-   10.29,
+   14.38,
+   10.31,
    3.35,
    2.83,
    5.1,
@@ -35,21 +41,21 @@
    1.81,
    1.02,
    0.7,
-   0.76,
+   0.77,
    0.55,
    0.39,
    0.06,
    0.32,
    0.03,
    0.22,
-   0.42,
+   0.43,
    1.24,
-   1.7,
+   1.71,
    2.0,
    1.92,
-   1.82
+   1.83
   ],
-  "onpeak_after_greedy": 870,
+  "onpeak_after_published": 874,
   "charge_kw": 5.0
  },
  "pw3x": {
@@ -68,19 +74,24 @@
    "kwh_served": 5580,
    "cycles_per_day": 0.6
   },
-  "greedy_profile_S": [
+  "value": {
+   "save": 2934,
+   "kwh_served": 5579,
+   "cycles_per_day": 0.6
+  },
+  "published_profile_S": [
    18.63,
-   15.97,
-   9.47,
-   4.05,
+   16.01,
+   9.49,
+   4.06,
    2.83,
    5.1,
    2.56,
    2.74,
    1.81,
    1.02,
-   0.71,
-   0.77,
+   0.72,
+   0.78,
    0.56,
    0.39,
    0.06,
@@ -89,12 +100,12 @@
    0.06,
    0.16,
    0.31,
-   0.52,
+   0.53,
    1.55,
    1.47,
    1.3
   ],
-  "onpeak_after_greedy": 329,
+  "onpeak_after_published": 330,
   "charge_kw": 8.0
  },
  "post_behavior": {
@@ -102,34 +113,34 @@
   "kwh_moved": 2618,
   "free_fix_scenario": "a",
   "mid": {
-   "battery_marginal": 2238,
-   "combined_save": 3459,
-   "bill": 1445,
+   "battery_marginal": 2380,
+   "combined_save": 3601,
+   "bill": 1304,
    "charge_kw": 5.0
   },
   "high": {
-   "battery_marginal": 2454,
-   "combined_save": 3675,
-   "bill": 1229,
+   "battery_marginal": 2598,
+   "combined_save": 3819,
+   "bill": 1085,
    "charge_kw": 8.0
   }
  },
- "escalation_greedy_pw3_post_behavior": {
+ "escalation_published_pw3_post_behavior": {
   "3%": {
-   "payback": 6.2,
-   "npv10": 4249
+   "payback": 5.8,
+   "npv10": 5439
   },
   "5%": {
-   "payback": 5.9,
-   "npv10": 5880
+   "payback": 5.6,
+   "npv10": 7173
   },
   "8%": {
-   "payback": 5.5,
-   "npv10": 8656
+   "payback": 5.3,
+   "npv10": 10126
   },
   "12%": {
-   "payback": 5.2,
-   "npv10": 13072
+   "payback": 4.9,
+   "npv10": 14821
   }
  },
  "escalation_note": "seeded from the post-EV-fix battery marginal (the decision-relevant figure)",
@@ -147,57 +158,27 @@
   "config": {
    "name": "pw3",
    "capacity_kwh": 13.5,
-   "policy": "greedy",
+   "policy": "value",
    "charge_kw": 5.0,
    "power_kw": 11.5,
    "round_trip": 0.9
   },
   "solar_surplus": {
-   "kwh": 704.51,
-   "value_usd": 217.19,
-   "cost_per_kwh_ac_input": 0.30828,
-   "cost_per_kwh_delivered": 0.34253,
+   "kwh": 674.2,
+   "value_usd": 70.99,
+   "cost_per_kwh_ac_input": 0.10529,
+   "cost_per_kwh_delivered": 0.11699,
    "by_period": {
-    "on": {
-     "kwh": 17.04,
-     "value_usd": 12.19,
-     "cost_per_kwh_ac_input": 0.71575,
-     "cost_per_kwh_delivered": 0.79528,
-     "share_of_surplus_kwh": 0.0242,
-     "share_inside_midday_window": 0.0,
-     "reconciliation": {
-      "priced_usd": 12.19,
-      "counterfactual_rebill_usd": 12.19,
-      "residual_usd": 0.0,
-      "counterfactual": "rates.bill_nem() with only this period's forgone exports put back (imp2, exp2 + surplus where p == 'on'), minus the dispatch's own bill",
-      "residual_pct": 0.0
-     }
-    },
-    "off": {
-     "kwh": 352.26,
-     "value_usd": 169.73,
-     "cost_per_kwh_ac_input": 0.48183,
-     "cost_per_kwh_delivered": 0.53537,
-     "share_of_surplus_kwh": 0.5,
-     "share_inside_midday_window": 0.0,
-     "reconciliation": {
-      "priced_usd": 169.73,
-      "counterfactual_rebill_usd": 169.73,
-      "residual_usd": 0.0,
-      "counterfactual": "rates.bill_nem() with only this period's forgone exports put back (imp2, exp2 + surplus where p == 'off'), minus the dispatch's own bill",
-      "residual_pct": 0.0
-     }
-    },
     "sop": {
-     "kwh": 335.21,
-     "value_usd": 35.26,
-     "cost_per_kwh_ac_input": 0.10519,
-     "cost_per_kwh_delivered": 0.11688,
-     "share_of_surplus_kwh": 0.4758,
+     "kwh": 674.2,
+     "value_usd": 70.99,
+     "cost_per_kwh_ac_input": 0.10529,
+     "cost_per_kwh_delivered": 0.11699,
+     "share_of_surplus_kwh": 1.0,
      "share_inside_midday_window": 1.0,
      "reconciliation": {
-      "priced_usd": 35.26,
-      "counterfactual_rebill_usd": 35.26,
+      "priced_usd": 70.99,
+      "counterfactual_rebill_usd": 70.99,
       "residual_usd": 0.0,
       "counterfactual": "rates.bill_nem() with only this period's forgone exports put back (imp2, exp2 + surplus where p == 'sop'), minus the dispatch's own bill",
       "residual_pct": 0.0
@@ -206,32 +187,32 @@
    },
    "census": {
     "netting_energy": {
-     "buckets": 26,
-     "kwh": 531.66
+     "buckets": 13,
+     "kwh": 674.2
     },
     "surplus_credit": {
-     "buckets": 12,
-     "kwh": 172.85
+     "buckets": 0,
+     "kwh": 0.0
     },
-    "buckets_split_across_zero": 2
+    "buckets_split_across_zero": 0
    },
    "reconciliation": {
-    "priced_usd": 217.19,
-    "counterfactual_rebill_usd": 217.19,
+    "priced_usd": 70.99,
+    "counterfactual_rebill_usd": 70.99,
     "residual_usd": 0.0,
     "counterfactual": "rates.bill_nem() on this dispatch's imports with the export series left un-consumed (imp2, gen0), minus the dispatch's own bill",
     "residual_pct": 0.0
    }
   },
   "grid_topup": {
-   "kwh": 4532.64,
-   "value_usd": 572.05,
+   "kwh": 4551.91,
+   "value_usd": 574.49,
    "cost_per_kwh_ac_input": 0.12621,
    "cost_per_kwh_delivered": 0.14023,
    "census": {
     "netting_energy": {
      "buckets": 13,
-     "kwh": 4532.64
+     "kwh": 4551.91
     },
     "surplus_credit": {
      "buckets": 0,
@@ -241,22 +222,22 @@
    },
    "every_bucket_priced_at_allin": true,
    "reconciliation": {
-    "priced_usd": 572.05,
-    "counterfactual_rebill_usd": 572.05,
+    "priced_usd": 574.49,
+    "counterfactual_rebill_usd": 574.49,
     "residual_usd": 0.0,
     "counterfactual": "rates.bill_nem() on this dispatch with the grid top-up removed from the import series (imp2 - grid, exp2), minus the dispatch's own bill",
     "residual_pct": 0.0
    }
   },
-  "buckets_whose_sign_the_battery_flipped": 9,
+  "buckets_whose_sign_the_battery_flipped": 11,
   "reconciliation": {
-   "discharge_value_usd": 3122.42,
-   "charge_cost_usd": 789.24,
-   "saving_from_marginal_prices_usd": 2333.18,
-   "saving_billed_by_rates_bill_nem_usd": 2328.31,
-   "residual_usd": 4.88,
-   "note": "what is left here is NOT block mispricing -- each stream's own reconciliation above is exact against its counterfactual re-bill. It is the interaction between three modifications made to the same buckets at once: each is valued at the margin of the full dispatch, so a zero crossing inside a bucket is credited to every stream that crosses it and the three do not re-sum to the billed saving. Read a per-stream residual to bound a per-stream price; this bounds only the three-way sum",
-   "residual_pct": 0.21
+   "discharge_value_usd": 3111.22,
+   "charge_cost_usd": 645.48,
+   "saving_from_marginal_prices_usd": 2465.74,
+   "saving_billed_by_rates_bill_nem_usd": 2465.74,
+   "residual_usd": 0.0,
+   "note": "what is left here is NOT block mispricing -- each stream's own reconciliation above is exact against its counterfactual re-bill. It is the interaction between three modifications made to the same buckets at once: each is valued at the margin of the full dispatch, so a zero crossing inside a bucket is credited to every stream that crosses it and the three need not re-sum to the billed saving. Read a per-stream residual to bound a per-stream price; this bounds only the three-way sum",
+   "residual_pct": 0.0
   },
   "method": "charging intervals of the price-aware run itself: solar surplus is the reduction in the export series against the same run's pre-battery baseline, grid top-up the rise in the import series. Each block is priced across the zero boundary rather than at one rate: storing a kWh instead of exporting it raises its (month, season, TOU period) bucket's net, and the span that move travels settles at rates.credit() below zero and rates.energy() at or above it -- the same test bill_nem_monthly() applies, so a bucket the block carries across zero splits between the two. Each grid-charged kWh additionally pays NBC, because it is a gross import and an avoided export is not. Each stream is priced from the bucket net it would have WITHOUT that stream, the rest of the dispatch in place, and every figure is checked against an exact rates.bill_nem() re-bill of that counterfactual (see each block's reconciliation). Divided by the round trip to give the cost of a kWh DELIVERED, which is what section 6 quotes."
  }

@@ -991,8 +991,8 @@ def case_reconciliation_gap_is_small_on_the_real_measured_year():
 @case
 def case_battery_interaction_baseline_matches_battery_dispatch_policies():
     """Cross-checks the artifact's baseline battery marginal (steady-state,
-    raw year, pw3/greedy) against the independently-generated committed
-    battery_dispatch_policies.json's pw3.greedy.save -- built by a DIFFERENT
+    raw year, pw3 on the published policy) against the independently-generated committed
+    battery_dispatch_policies.json's published pw3 save -- built by a DIFFERENT
     script (battery_dispatch_policies.py, one-shot soc0=cap/2, no steady-state
     iteration), so a tight but nonzero tolerance is expected."""
     _require_archive()
@@ -1001,12 +1001,13 @@ def case_battery_interaction_baseline_matches_battery_dispatch_policies():
         raise SkipCase("both data/quiet_night_floor.json and "
                        "data/battery_dispatch_policies.json must be committed")
     ours = json.loads(ARTIFACT.read_text())["battery_interaction"]["baseline_battery_marginal_usd"]
-    theirs = json.loads(dispatch_path.read_text())["pw3"]["greedy"]["save"]
+    _canon = json.loads(dispatch_path.read_text())
+    theirs = _canon["pw3"][_canon["published_policy"]]["save"]
     assert abs(ours - theirs) < 10, (
         f"baseline battery marginal ${ours} should be close to the independently "
-        f"published pw3.greedy.save ${theirs} (same config, different boundary "
+        f"published pw3 save ${theirs} (same config, different boundary "
         "condition handling) -- gap too large")
-    return f"our baseline battery marginal ${ours} vs published pw3.greedy.save ${theirs}"
+    return f"our baseline battery marginal ${ours} vs the published pw3 save ${theirs}"
 
 
 @case

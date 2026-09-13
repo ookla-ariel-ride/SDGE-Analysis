@@ -105,6 +105,10 @@ def _synthetic_day(consumption_kw=0.0, generation_kw=0.0, weekday=True):
     d = pd.DataFrame({"dt": dtr})
     d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
     d["p"] = [R.period_at(ts) for ts in d.dt]
+    d["seas"] = np.where(d.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
+    # the season and month columns the published dispatch's per-bucket netting
+    # rule groups by (issue #240) -- run_batt_vpp now shares that rule
+    d["ym"] = d.dt.dt.to_period("M")
     imp0 = np.full(96, consumption_kw * 0.25)
     gen0 = np.full(96, generation_kw * 0.25)
     return d, imp0, gen0
@@ -131,26 +135,47 @@ def _synthetic_window(start_date, end_date, consumption_kw=0.0, generation_kw=0.
     return d
 
 
+
+# HOW CLOSE "IDENTICAL" IS, AND WHY IT IS NOT BIT-EXACT (issue #240). run_batt_vpp
+# and the published policy make the same decisions from the same shared charge rule
+# (battery_dispatch_policies.value_charge_gate), but the published policy meters a
+# discharge out of a LOT LEDGER -- several partial draws summed -- where run_batt_vpp
+# takes it in one min(). Summing the same energy in a different order moves the last
+# bit or two, so the series agree to float summation error, not to the bit. The bound
+# below is ~1e-9 kWh, a millionth of a watt-hour: four orders of magnitude under any
+# figure this repo publishes, and tight enough that a real behavioural divergence
+# (one interval's charge or discharge decided differently) cannot hide under it.
+DISPATCH_EPS_KWH = 1e-9
+
+
+def _same_dispatch(a, b):
+    """True when two dispatch series agree to DISPATCH_EPS_KWH at every interval."""
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    return a.shape == b.shape and bool(np.all(np.abs(a - b) <= DISPATCH_EPS_KWH))
+
+
 @case
 def case_run_batt_vpp_matches_run_batt_with_empty_event_set():
     """With no event hours at all, run_batt_vpp must behave IDENTICALLY to
-    battery_dispatch_policies.run_batt's 'greedy' policy -- byte-for-byte, not just
-    close. This is the "close variant" claim the module docstring makes; this case is
-    what makes it true rather than asserted."""
+    battery_dispatch_policies.run_batt's PUBLISHED policy -- interval by interval, to
+    DISPATCH_EPS_KWH (see that constant for why the bound is not zero). This is the
+    "close variant" claim the module docstring makes; this case is what makes it true
+    rather than asserted."""
     d, imp0, gen0 = _synthetic_day(consumption_kw=1.0)
-    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, bp.PUBLISHED_POLICY)
     imp_b, exp_b, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
         d, imp0, gen0, vb.CAP, set(), 0.20)
-    assert np.array_equal(imp_a, imp_b), "imp diverges with an empty event set"
-    assert np.array_equal(exp_a, exp_b), "exp diverges with an empty event set"
+    assert _same_dispatch(imp_a, imp_b), "imp diverges with an empty event set"
+    assert _same_dispatch(exp_a, exp_b), "exp diverges with an empty event set"
     assert event_kwh.sum() == 0.0, "an empty event set must force zero extra discharge"
-    return "run_batt_vpp(event_set=set()) is byte-identical to run_batt('greedy')"
+    return ("run_batt_vpp(event_set=set()) matches run_batt on the published policy "
+            f"to within {DISPATCH_EPS_KWH:g} kWh at every interval")
 
 
 @case
 def case_run_batt_vpp_matches_run_batt_across_a_realistic_mixed_day():
     """Same equivalence, but with a load/generation shape that exercises every branch
-    of the greedy control flow (solar surplus charging, sop grid top-up, on-peak
+    of the published control flow (solar surplus charging, sop grid top-up, on-peak
     discharge) -- not just the always-discharge shape of the constant-load fixture."""
     d, imp0, gen0 = _synthetic_day(consumption_kw=0.0)
     rng = np.random.default_rng(0)
@@ -158,11 +183,11 @@ def case_run_batt_vpp_matches_run_batt_across_a_realistic_mixed_day():
     imp0 = np.where((d.hour.values >= 16) & (d.hour.values < 21), 3.0, 0.5) * 0.25
     # solar: a midday bump (10-15h)
     gen0 = np.where((d.hour.values >= 10) & (d.hour.values < 15), 4.0, 0.0) * 0.25
-    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0.copy(), gen0.copy(), vb.CAP, "greedy")
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0.copy(), gen0.copy(), vb.CAP, bp.PUBLISHED_POLICY)
     imp_b, exp_b, _soc, event_kwh, _bau = vb.run_batt_vpp(
         d, imp0.copy(), gen0.copy(), vb.CAP, set(), 0.20)
-    assert np.array_equal(imp_a, imp_b)
-    assert np.array_equal(exp_a, exp_b)
+    assert _same_dispatch(imp_a, imp_b)
+    assert _same_dispatch(exp_a, exp_b)
     assert event_kwh.sum() == 0.0
     return "run_batt_vpp matches run_batt across solar+evening-load branches too"
 
@@ -386,12 +411,13 @@ def case_prestage_true_with_empty_event_set_still_matches_run_batt():
     Extends the existing prestage=False empty-event-set guarantee to prestage=True,
     since a future caller could plausibly pass prestage=True with no events at all."""
     d, imp0, gen0 = _synthetic_day(consumption_kw=1.0, generation_kw=0.5)
-    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, bp.PUBLISHED_POLICY)
     imp_b, exp_b, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
         d, imp0.copy(), gen0.copy(), vb.CAP, set(), 0.20, prestage=True)
     assert np.allclose(imp_a, imp_b) and np.allclose(exp_a, exp_b)
     assert (event_kwh == 0).all()
-    return "run_batt_vpp(prestage=True, event_set=set()) is still byte-identical to run_batt('greedy')"
+    return ("run_batt_vpp(prestage=True, event_set=set()) still matches run_batt on "
+            "the published policy")
 
 
 @case
@@ -480,6 +506,10 @@ def case_prestage_does_not_affect_a_date_before_any_scheduled_event():
     d = pd.DataFrame({"dt": dtr})
     d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
     d["p"] = [R.period_at(ts) for ts in d.dt]
+    d["seas"] = np.where(d.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
+    # the season and month columns the published dispatch's per-bucket netting
+    # rule groups by (issue #240) -- run_batt_vpp now shares that rule
+    d["ym"] = d.dt.dt.to_period("M")
     imp0 = np.full(192, 3.0 * 0.25)
     gen0 = np.zeros(192)
     dates = d.dt.dt.date.values
@@ -743,10 +773,26 @@ def case_main_preserves_committed_per_aggregation_sensitivity_without_the_archiv
         # Calls the REAL function main() uses, not a reimplementation of its logic --
         # `d` is unused on this branch (RAW_XLSX absent) so None is fine here.
         value = vb.per_aggregation_sensitivity_or_preserved(None)
-        assert value == preserved_marker, (
-            "the committed per_aggregation_sensitivity must be preserved, not "
-            f"overwritten with a placeholder -- got {value}")
-        return "an archive-less run preserves the existing committed per_aggregation_sensitivity"
+        # EVERY committed key survives with its committed value. Since issue
+        # #240 the archive-less path also STAMPS the block with its provenance
+        # (see _stamp_preserved and its own cases below), so the return is the
+        # preserved dict PLUS those fields -- never fewer fields, never a changed
+        # value, and never a placeholder, which is what this case has always been
+        # about. Spelling the additions out here rather than loosening the
+        # comparison keeps an unexpected fifth key from slipping in unnoticed.
+        provenance = {"recomputed", "recomputed_reason", "published_dispatch_policy",
+                      "dispatch_policy_matches_published", "dispatch_policy"}
+        for k, v in preserved_marker.items():
+            assert value[k] == v, (
+                "the committed per_aggregation_sensitivity must be preserved, not "
+                f"overwritten with a placeholder -- {k} came back {value[k]!r}, "
+                f"not {v!r}")
+        assert set(value) - set(preserved_marker) == provenance, (
+            "the archive-less path added or dropped something other than the "
+            f"provenance stamp: {sorted(set(value) ^ set(preserved_marker))}")
+        assert value["recomputed"] is False, value["recomputed"]
+        return ("an archive-less run preserves the existing committed "
+                "per_aggregation_sensitivity, stamped with its provenance")
     finally:
         vb.RAW_XLSX = real_raw_xlsx
         vb.RESULTS_JSON = real_results_json
@@ -1076,7 +1122,7 @@ def case_opportunity_cost_excludes_partial_month_dispatch_effect():
 
     imp0 = d.Consumption.values.astype(float)
     gen0 = d.Generation.values.astype(float)
-    imp_bau, exp_bau, _, _ = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_bau, exp_bau, _, _ = bp.run_batt(d, imp0, gen0, vb.CAP, bp.PUBLISHED_POLICY)
     bill_bau = bp.billed(d, imp_bau, exp_bau)
 
     imp_full, exp_full, _, _, _ = vb.run_batt_vpp(d, imp0, gen0, vb.CAP, event_set, 0.20)
@@ -1148,7 +1194,8 @@ def case_2026_enrollment_eligibility_finding_is_stated_plainly():
 def case_bau_bill_matches_battery_dispatch_policies_committed_figure():
     """backtest()'s BAU (no-VPP) battery bill must agree with the ALREADY COMMITTED,
     ALREADY VALIDATED data/battery_dispatch_policies.json figure for the identical
-    scenario (13.5 kWh, greedy policy): baseline_bill_current_rates - pw3.greedy.save.
+    scenario (13.5 kWh, the published policy): baseline_bill_current_rates minus
+    that policy's own pw3 save, named by the artifact's published_policy key.
     Two independently-computed figures for the same thing silently drifting apart is
     exactly the CLAUDE.md 3 failure mode this case exists to catch."""
     _require_archive()
@@ -1157,7 +1204,8 @@ def case_bau_bill_matches_battery_dispatch_policies_committed_figure():
     if not committed.exists():
         raise SkipCase(f"needs the committed {committed}")
     ref = json.loads(committed.read_text())
-    expected_bau_bill = ref["baseline_bill_current_rates"] - ref["pw3"]["greedy"]["save"]
+    expected_bau_bill = (ref["baseline_bill_current_rates"]
+                         - ref["pw3"][ref["published_policy"]]["save"])
 
     d = br.load()
     cal = vb.load_calendar()
@@ -1170,7 +1218,8 @@ def case_bau_bill_matches_battery_dispatch_policies_committed_figure():
     assert abs(result["bau_battery_bill_usd"] - expected_bau_bill) < 1.0, (
         result["bau_battery_bill_usd"], expected_bau_bill)
     return (f"BAU battery bill ${result['bau_battery_bill_usd']:,.2f} agrees with "
-           f"battery_dispatch_policies.json's pw3/greedy figure (${expected_bau_bill:,.2f})")
+           f"battery_dispatch_policies.json's published pw3 figure "
+           f"(${expected_bau_bill:,.2f})")
 
 
 @case
@@ -1314,23 +1363,35 @@ def case_run_batt_vpp_threads_a_distinct_charge_kw():
     import inspect
     assert "charge_kw" in inspect.signature(vb.run_batt_vpp).parameters
 
-    # None default still matches run_batt('greedy') exactly, empty event set
+    # None default still matches run_batt on the published policy exactly, empty event set
     d, imp0, gen0 = _synthetic_day(consumption_kw=1.0)
-    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, bp.PUBLISHED_POLICY)
     imp_b, exp_b, _soc, event_kwh, _bau = vb.run_batt_vpp(
         d, imp0, gen0, vb.CAP, set(), 0.20, charge_kw=None)
-    assert np.array_equal(imp_a, imp_b) and np.array_equal(exp_a, exp_b), \
+    assert _same_dispatch(imp_a, imp_b) and _same_dispatch(exp_a, exp_b), \
         "charge_kw=None must not disturb the empty-event-set run_batt equivalence"
 
     # a tighter charge_kw actually reduces charging on a single-interval,
     # empty-battery, large-surplus fixture (multi-interval fixtures let
     # overnight grid top-up erase any rate difference -- see
     # test_battery_sizing_curve.py's identical technique)
-    d1 = pd.DataFrame({"dt": pd.date_range("2026-01-07 12:00", periods=1, freq="15min")})
+    # TWO intervals, not one, since issue #240: the published charge rule prices a
+    # stored kWh against the cheapest import the season's DISCHARGE window can offer,
+    # so a frame containing no discharge-window interval at all has no reference to
+    # clear and stores nothing whatever the charge cap is. The midday super-off-peak
+    # surplus interval below is the one this case measures; the 17:00 on-peak import
+    # interval beside it is what gives that surplus somewhere to go. The two are not
+    # adjacent in time, which run_batt_vpp does not require -- it walks rows in order.
+    d1 = pd.DataFrame({"dt": [pd.Timestamp("2026-01-07 12:00"),
+                              pd.Timestamp("2026-01-07 17:00")]})
     d1["hour"] = d1.dt.dt.hour + d1.dt.dt.minute / 60
     d1["p"] = [R.period_at(ts) for ts in d1.dt]
-    imp0_1 = np.array([0.0])
-    gen0_1 = np.array([5.0])
+    # the season/month columns the published per-bucket netting rule needs
+    d1["seas"] = np.where(d1.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
+    d1["ym"] = d1.dt.dt.to_period("M")
+    assert list(d1.p) == ["sop", "on"], list(d1.p)
+    imp0_1 = np.array([0.0, 1.0])
+    gen0_1 = np.array([5.0, 0.0])
     _, exp_sym, _, _, _ = vb.run_batt_vpp(d1, imp0_1, gen0_1, vb.CAP, set(), 0.20)
     _, exp_asym, _, _, _ = vb.run_batt_vpp(d1, imp0_1, gen0_1, vb.CAP, set(), 0.20, charge_kw=5.0)
     charged_sym = gen0_1[0] - exp_sym[0]
@@ -1368,11 +1429,11 @@ def _vpp_served(has_ev):
     br.EV_ANALYSIS = has_ev
     try:
         imp_v, _, _, event_kwh, _ = vb.run_batt_vpp(d, imp0.copy(), gen0.copy(), vb.CAP, set(), 0.20)
-        imp_a, _, _, _ = bp.run_batt(d, imp0.copy(), gen0.copy(), vb.CAP, "greedy")
+        imp_a, _, _, _ = bp.run_batt(d, imp0.copy(), gen0.copy(), vb.CAP, bp.PUBLISHED_POLICY)
     finally:
         br.EV_ANALYSIS = was
     assert event_kwh.sum() == 0.0
-    return float(imp0[SPIKE_IDX] - imp_v[SPIKE_IDX]), np.array_equal(imp_v, imp_a)
+    return float(imp0[SPIKE_IDX] - imp_v[SPIKE_IDX]), _same_dispatch(imp_v, imp_a)
 
 
 @case
@@ -1407,6 +1468,184 @@ def case_vpp_dispatch_gates_on_the_intake_flag_not_the_detector():
     assert "br.EV_ANALYSIS" in code, "run_batt_vpp no longer gates on br.EV_ANALYSIS"
     assert "detect_sessions" not in code, "run_batt_vpp reads the EV detector"
     return "run_batt_vpp reads br.EV_ANALYSIS and never the detector"
+
+
+# ---------------------------------------------------------------------------
+# ONE BLOCK IN THIS ARTIFACT CANNOT BE RECOMPUTED WITHOUT THE PRIVATE RAW CEC
+# EVENT ARCHIVE (issue #240). per_aggregation_sensitivity_or_preserved() carries
+# the committed one forward instead of destroying it, which is right -- and it
+# means the artifact can carry a range computed under one dispatch beside union
+# figures computed under another. The stamp is what makes that visible. These
+# cases are what keep the stamp from being dropped in a later edit: each one is
+# verified to FAIL against the un-stamped return the function used to make.
+# ---------------------------------------------------------------------------
+def _preserved_via(tmp, preserved, raw_present=False):
+    """per_aggregation_sensitivity_or_preserved() against a throwaway artifact.
+
+    RAW_XLSX and RESULTS_JSON are module constants, so both are rebound for the
+    call and restored after; `d` is never touched on the archive-less path.
+    """
+    results = tmp / "dsgs_vpp_backtest.json"
+    results.write_text(json.dumps({"per_aggregation_sensitivity": preserved}))
+    raw = tmp / "dsgs_2025_performance.xlsx"
+    if raw_present:
+        raw.write_text("not a real xlsx")
+    real_raw, real_results = vb.RAW_XLSX, vb.RESULTS_JSON
+    vb.RAW_XLSX, vb.RESULTS_JSON = raw, results
+    try:
+        return vb.per_aggregation_sensitivity_or_preserved(None)
+    finally:
+        vb.RAW_XLSX, vb.RESULTS_JSON = real_raw, real_results
+
+
+_PRESERVED_FIXTURE = {"n_aggregations": 14, "net_usd_min": 96.99, "net_usd_max": 213.19,
+                      "prestaged_net_usd_min": 100.0, "prestaged_net_usd_max": 200.0}
+
+
+@case
+def case_archive_less_path_stamps_the_carried_forward_block():
+    """The archive-less path must say the block was not recomputed, name the
+    dispatch it WAS computed under, name the published one, and warn when the
+    two disagree. Driven at all three shapes a preserved block can have."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+
+        # 1. a block stamped with a DIFFERENT dispatch than the published one
+        other = "greedy" if bp.PUBLISHED_POLICY != "greedy" else "evening"
+        out = _preserved_via(tmp, dict(_PRESERVED_FIXTURE, dispatch_policy=other))
+        assert out["recomputed"] is False, out
+        assert out["dispatch_policy"] == other, out["dispatch_policy"]
+        assert out["published_dispatch_policy"] == bp.PUBLISHED_POLICY, out
+        assert out["dispatch_policy_matches_published"] is False, out
+        assert other in out["dispatch_policy_warning"] and \
+            bp.PUBLISHED_POLICY in out["dispatch_policy_warning"], \
+            "the warning must name BOTH dispatches, or a reader cannot tell what " \
+            "is being compared with what"
+        assert vb.RAW_XLSX.name in out["recomputed_reason"], \
+            "the reason must name the missing input, or nobody knows how to fix it"
+        assert out["net_usd_min"] == 96.99 and out["net_usd_max"] == 213.19, \
+            "the stamp must not disturb the evidence it is stamping"
+
+        # 2. a block on the SAME dispatch: stamped, no warning
+        same = _preserved_via(tmp, dict(_PRESERVED_FIXTURE,
+                                        dispatch_policy=bp.PUBLISHED_POLICY))
+        assert same["recomputed"] is False and \
+            same["dispatch_policy_matches_published"] is True, same
+        assert "dispatch_policy_warning" not in same, \
+            "a preserved block already on the published dispatch has nothing to warn about"
+
+        # 3. a block from before the stamp existed: says so, never guesses
+        old = _preserved_via(tmp, dict(_PRESERVED_FIXTURE))
+        assert old["dispatch_policy"].startswith("not recorded"), old["dispatch_policy"]
+        assert old["dispatch_policy_matches_published"] is False, old
+        for policy in ("greedy", "value", "evening", "twowin"):
+            assert not old["dispatch_policy"].startswith(policy), (
+                "the stamp invented a dispatch for a block it did not compute: "
+                f"{old['dispatch_policy']!r}")
+
+        # 4. IDEMPOTENT: re-stamping an already-stamped block changes nothing,
+        #    which is what keeps the committed artifact byte-reproducible on
+        #    every archive-less regeneration.
+        again = _preserved_via(tmp, out)
+        assert again == out, "the stamp is not idempotent; the artifact would drift"
+    return ("the archive-less path stamps the carried-forward per-aggregation block "
+            "(recomputed false, both dispatches named, warning only on a mismatch, "
+            "no guess when the block predates the stamp) and is idempotent")
+
+
+@case
+def case_archive_present_path_stamps_the_freshly_computed_block():
+    """The OTHER half of the provenance mechanism, which no checkout here can
+    reach end to end (issue #240 review, finding 9).
+
+    Every case that would exercise the `RAW_XLSX.exists()` branch SKIPS for want
+    of the private raw CEC event file, so the stamp that says a block WAS
+    recomputed -- the half that would finally bring the carried-forward range
+    onto the published dispatch -- was covered by nothing. `per_aggregation_
+    sensitivity()` itself needs the archive, but the stamping it does is
+    separable: this drives `_stamp_preserved`'s counterpart directly on a
+    synthetic block of the archive-present shape and checks the two halves say
+    opposite things about the same question, which is the property a consumer
+    reads them for."""
+    fresh = dict(_PRESERVED_FIXTURE, dispatch_policy=bp.PUBLISHED_POLICY)
+    fresh["recomputed"] = True
+    fresh["recomputed_reason"] = (
+        f"the private raw CEC event archive ({vb.RAW_XLSX.name}) was present, so "
+        "this range was recomputed on this run, on the same dispatch as every "
+        "other figure in this artifact")
+    with tempfile.TemporaryDirectory() as td:
+        stale = _preserved_via(pathlib.Path(td),
+                               dict(_PRESERVED_FIXTURE, dispatch_policy="greedy"))
+    assert fresh["recomputed"] is True and stale["recomputed"] is False, (fresh, stale)
+    assert fresh["dispatch_policy"] == bp.PUBLISHED_POLICY, fresh
+    assert "dispatch_policy_warning" not in fresh, (
+        "a freshly recomputed block is on the published dispatch by construction "
+        "and has nothing to warn about")
+    assert vb.RAW_XLSX.name in fresh["recomputed_reason"], fresh["recomputed_reason"]
+    # the two reasons must not be interchangeable: a reader has to be able to
+    # tell which run produced the block from the text alone
+    assert "NOT recomputed" in stale["recomputed_reason"], stale["recomputed_reason"]
+    assert "NOT recomputed" not in fresh["recomputed_reason"], fresh["recomputed_reason"]
+    # and the source of that shape is the generator, not this fixture: the
+    # archive-present branch must still be the thing that sets recomputed True
+    import inspect
+    src = inspect.getsource(vb.per_aggregation_sensitivity_or_preserved)
+    assert 'fresh["recomputed"] = True' in src, (
+        "the archive-present branch no longer stamps recomputed True; this case's "
+        "fixture would then be asserting a shape the generator does not produce")
+    assert "_stamp_preserved(preserved)" in src, (
+        "the archive-less branch no longer routes through _stamp_preserved")
+    return ("the archive-present stamp (recomputed true, published dispatch, no warning) "
+            "and the archive-less stamp say opposite things about the same block, and the "
+            "generator still produces both shapes")
+
+
+@case
+def case_the_stamp_guard_fails_on_the_unstamped_return_it_replaced():
+    """The guard above is only worth having if it catches the code it replaced.
+
+    `per_aggregation_sensitivity_or_preserved()` used to `return preserved`
+    unchanged on the archive-less path. Driven here directly: every assertion the
+    case above makes must fail against that return."""
+    raw = dict(_PRESERVED_FIXTURE)            # what the old code returned verbatim
+    for field in ("recomputed", "recomputed_reason", "published_dispatch_policy",
+                  "dispatch_policy_matches_published"):
+        assert field not in raw, field
+    stamped = vb._stamp_preserved(dict(_PRESERVED_FIXTURE, dispatch_policy="greedy"))
+    assert stamped != raw, "the stamp is a no-op; the guard above proves nothing"
+    assert set(stamped) - set(raw) >= {"recomputed", "recomputed_reason",
+                                       "published_dispatch_policy",
+                                       "dispatch_policy_matches_published"}, stamped
+    return ("the un-stamped return the archive-less path used to make carries none of "
+            "the four provenance fields, so dropping the stamp fails the case above")
+
+
+@case
+def case_committed_artifact_carries_the_dispatch_provenance():
+    """The committed artifact itself, not just the function. A regeneration that
+    dropped either stamp would leave the published range readable as fresh."""
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"{vb.RESULTS_JSON} not present")
+    art = json.loads(vb.RESULTS_JSON.read_text())
+    assert art.get("dispatch_policy") == bp.PUBLISHED_POLICY, (
+        "the committed artifact does not name the dispatch its union figures are "
+        f"on: {art.get('dispatch_policy')!r} vs {bp.PUBLISHED_POLICY!r}")
+    pa = art.get("per_aggregation_sensitivity")
+    if not isinstance(pa, dict):
+        raise SkipCase("no per-aggregation block committed yet")
+    for field in ("dispatch_policy", "recomputed", "published_dispatch_policy",
+                  "dispatch_policy_matches_published"):
+        assert field in pa, (
+            f"the committed per-aggregation block has no {field!r}: a consumer "
+            "cannot tell whether that range is on the published dispatch")
+    assert pa["published_dispatch_policy"] == bp.PUBLISHED_POLICY, pa
+    if not pa["dispatch_policy_matches_published"]:
+        assert "dispatch_policy_warning" in pa, (
+            "the committed range is on a different dispatch than the union figures "
+            "beside it and the artifact does not warn about it")
+    return (f"the committed artifact names its union dispatch ({art['dispatch_policy']}) "
+            f"and stamps the carried-forward range (recomputed={pa['recomputed']}, "
+            f"dispatch_policy={str(pa['dispatch_policy'])[:24]!r})")
 
 
 # ---------------------------------------------------------------------------
