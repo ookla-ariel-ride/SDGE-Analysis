@@ -68,26 +68,34 @@ tariff). Instead `period_variant()` here is a parametrized generalization
 only to build a scenario's OWN `p`/`seas` columns on a COPY of the real
 measured year -- the physical Consumption/Generation never change, only
 which TOU bucket each interval falls into. `behavior_rebuild.build_sop_index/
-shift_ev/shift_house` and `battery_dispatch_policies.run_batt` all read
-`p`/`hour`/`seas` off the frame they are given, not off `rates.py` directly,
-so re-running them against a scenario frame naturally re-derives the EV shift
-target and the battery's discharge windows under that scenario's own
-structure, with zero changes to either module.
+shift_ev/shift_house` and `battery_dispatch_policies.run_batt/free_fix_shift`
+all read `p`/`hour`/`seas` off the frame they are given, not off `rates.py`
+directly, so re-running them against a scenario frame naturally re-derives
+the household's own free-fix shift target (scenario a's EV shift or
+scenario c's house-load shift, whichever `battery_dispatch_policies.
+free_fix_shift` selects for this household -- see `_pipeline()` below) and
+the battery's discharge windows under that scenario's own structure, with
+zero changes to either module.
 
 Each scenario reports three deltas against the CURRENT-structure figures
 (recomputed fresh here, not read from a sibling artifact, so the comparison
 is apples-to-apples on identical code and identical physical data):
   baseline_delta_usd          -- change to the no-behavior, no-battery bill
-  behavior_save_delta_usd     -- change to the EV-shift-only saving
+  behavior_save_delta_usd     -- change to the household's own free-fix
+    saving (scenario a's EV shift, or scenario c's house-load shift when
+    household.has_ev is false), selected by battery_dispatch_policies.
+    free_fix_shift() -- the same MID-package convention every other
+    consumer of that function uses, not a locally re-derived branch
   battery_marginal_delta_usd  -- change to the battery's own marginal saving
     (price-aware/"greedy" policy, on top of the shifted load -- the same
     integrated, decision-relevant convention battery_dispatch_policies.py and
     the report's MID package use)
 and a combined `total_package_impact_usd` = baseline_delta_usd -
 behavior_save_delta_usd - battery_marginal_delta_usd: how much MORE (or
-less) a fully-optimized household (EV shift + price-aware battery) would pay
-per year under that scenario, holding physical usage fixed -- the single
-number that answers "which structural change hurts most, and by how much."
+less) a fully-optimized household (free-fix shift + price-aware battery)
+would pay per year under that scenario, holding physical usage fixed -- the
+single number that answers "which structural change hurts most, and by how
+much."
 
 Output: tou_structure_stress.json. This script fully regenerates the
 committed artifact.
@@ -271,20 +279,46 @@ def _steady_state_battery(d, imp_shifted, gen0, charge_kw=None):
         f"{soc_final - soc0:.4f} kWh")
 
 
+def _free_fix(d):
+    """Frame adapter for battery_dispatch_policies.free_fix_shift(d, imp0).
+
+    free_fix_shift() -- and behavior_rebuild.detect_sessions/shift_ev/
+    shift_house underneath it -- read d.Consumption/d.Generation directly.
+    Every frame this script builds (main()'s `d` and every
+    assign_structure() scenario copy of it) already carries those columns
+    UNCHANGED alongside imp/exp: assign_structure()'s own contract is that
+    physical Consumption/Generation never change, only p/seas do, so
+    d.imp.values is always numerically identical to d.Consumption.values
+    here. This wrapper makes that an explicit, local contract instead of an
+    implicit fact _pipeline() would otherwise have to already know, and is
+    the one place this script calls the shared function rather than
+    re-deriving household.has_ev itself (issue #245).
+
+    Returns (imp_shifted, kwh_moved, scenario), exactly as free_fix_shift."""
+    imp0 = d.imp.values.astype(float)
+    return bdp.free_fix_shift(d, imp0)
+
+
 def _pipeline(d):
-    """(baseline_bill, behavior_save, battery_marginal_save) for one
-    structure's frame -- EV-shift-only behavior saving (scenario a: 100%
-    compliance), then the price-aware ("greedy") battery marginal on top of
-    the shifted load, matching the report's own MID-package convention."""
+    """(baseline_bill, behavior_save, battery_marginal_save, scenario) for
+    one structure's frame -- THIS household's own free behavior fix, via
+    battery_dispatch_policies.free_fix_shift() (scenario a, the EV charge
+    reschedule at 100% compliance, when household.has_ev is true; scenario
+    c, 25% of flexible on-peak house load, when it is false), then the
+    price-aware ("greedy") battery marginal on top of the shifted load --
+    the SAME MID-package convention every other consumer of free_fix_shift()
+    uses (battery_dispatch_policies.py, battery_plan_matrix.py,
+    battery_sizing_curve.py, extended_findings.py, irreducible_bill.py,
+    uncertainty_propagation.py), via the one shared implementation rather
+    than a locally re-derived branch (issue #245).
+
+    `scenario` (free_fix_shift's own "a"/"c" letter) is returned, not just
+    the dollar figures, so main() can describe which fix actually ran
+    (issue #245 fix round 1) by reading THIS return value -- never by
+    re-deriving household.has_ev a second time."""
     baseline_bill = br.bill(d, "imp", "exp")
 
-    ev, sessions = br.detect_sessions(d)
-    sop_idx, sop_ts = br.build_sop_index(d)
-    if br.EV_ANALYSIS and sessions:
-        all_mask = [True] * len(sessions)
-        imp_shifted, _moved = br.shift_ev(d, ev, sessions, all_mask, sop_idx, sop_ts)
-    else:
-        imp_shifted = d.imp.values.astype(float).copy()
+    imp_shifted, _moved, scenario = _free_fix(d)
 
     f = d.copy(); f["imp"] = imp_shifted
     behavior_bill = br.bill(f, "imp", "exp")
@@ -295,7 +329,25 @@ def _pipeline(d):
     battery_bill = bdp.billed(d, imp_batt, exp_batt)
     battery_marginal = behavior_bill - battery_bill
 
-    return baseline_bill, behavior_save, battery_marginal
+    return baseline_bill, behavior_save, battery_marginal, scenario
+
+
+# Text describing THIS household's own free fix, keyed by the scenario
+# _pipeline()/free_fix_shift() actually selected -- read from that return
+# value in main(), never re-derived from household.has_ev a second time
+# (issue #245 fix round 1: that re-derivation is exactly the eighth-site
+# shape the original fix removed). Scenario a's two phrases are the exact
+# words main() always published before this dict existed, so an EV
+# household's data/tou_structure_stress.json stays byte-identical.
+_FIX_METHOD_PHRASE = {
+    bdp.FREE_FIX_SCENARIO_EV: "the same EV-shift (behavior_rebuild.shift_ev, 100% compliance)",
+    bdp.FREE_FIX_SCENARIO_NO_EV: ("the same house-load shift (behavior_rebuild.shift_house, "
+                                  "25% of flexible on-peak house load)"),
+}
+_FIX_SENTENCE_PHRASE = {
+    bdp.FREE_FIX_SCENARIO_EV: "the EV shift",
+    bdp.FREE_FIX_SCENARIO_NO_EV: "the house-load shift",
+}
 
 
 def _jsonify_structure(params):
@@ -309,19 +361,20 @@ def _jsonify_structure(params):
     }
 
 
-def main():
-    d = br.load()
-    d["imp"] = d.Consumption.astype(float)
-    d["exp"] = d.Generation.astype(float)
-
-    cur_baseline, cur_behavior_save, cur_battery_marginal = _pipeline(d)
+def _build_output(d):
+    """Pure, in-memory build of the artifact dict from an already-loaded
+    frame `d` -- everything main() does EXCEPT reading usage.csv and
+    writing to disk, split out so a test can exercise the method/sentence
+    text (issue #245 fix round 1) against a synthetic no-EV frame without
+    ever touching the real committed data/tou_structure_stress.json."""
+    cur_baseline, cur_behavior_save, cur_battery_marginal, cur_scenario = _pipeline(d)
 
     out = {
         "method": (
             "holds today's $/kWh rates fixed and varies the TOU WINDOW "
             "SHAPES instead (on-peak start/end, weekday midday "
-            "super-off-peak window, summer-season months), re-running the "
-            "same EV-shift (behavior_rebuild.shift_ev, 100% compliance) and "
+            "super-off-peak window, summer-season months), re-running "
+            f"{_FIX_METHOD_PHRASE[cur_scenario]} and "
             "price-aware battery dispatch (battery_dispatch_policies."
             "run_batt, greedy policy) pipelines against each scenario's own "
             "p/seas assignment -- both already read p/hour/seas off the "
@@ -338,7 +391,7 @@ def main():
 
     for key, spec in SCENARIOS.items():
         d_scen = assign_structure(d, **spec["params"])
-        base, beh, batt = _pipeline(d_scen)
+        base, beh, batt, _scen = _pipeline(d_scen)
         baseline_delta = base - cur_baseline
         behavior_delta = beh - cur_behavior_save
         battery_delta = batt - cur_battery_marginal
@@ -366,9 +419,18 @@ def main():
         "sentence": (
             f"{worst['label']} hurts most: it would cost this household an "
             f"extra ${worst['total_package_impact_usd']:.2f}/yr even after "
-            "the EV shift and the price-aware battery, holding physical "
-            "usage fixed at the measured year."),
+            f"{_FIX_SENTENCE_PHRASE[cur_scenario]} and the price-aware "
+            "battery, holding physical usage fixed at the measured year."),
     }
+    return out
+
+
+def main():
+    d = br.load()
+    d["imp"] = d.Consumption.astype(float)
+    d["exp"] = d.Generation.astype(float)
+
+    out = _build_output(d)
 
     root = repo_root()
     tmp = os.path.join(root, "data", "tou_structure_stress.json.tmp")
