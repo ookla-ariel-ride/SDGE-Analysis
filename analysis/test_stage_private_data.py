@@ -227,14 +227,26 @@ class SkipCase(Exception):
 
 _CP_ARG = re.compile(r'^\s*cp\s+(?:-R\s+)?"?\$SRC"?/private/1-raw-data/([^\s"\\]+)', re.M)
 
+# issue #213, round 2: electric-bills/, gas-bills/ and caiso_raw/ are no
+# longer copied by a literal `cp -R "$SRC/.../<name>" ...` line -- they go
+# through _copy_subtree_skipping_os_metadata "<name>" instead, which decides
+# file-by-file what to copy so it can skip OS metadata at copy time rather
+# than deleting it afterward. This is the second, ADDITIONAL shape that
+# counts as staging a subtree; a literal `cp -R` line is still the only
+# shape recognized for anything this function does not wrap.
+_SKIP_METADATA_CALL_ARG = re.compile(
+    r'^\s*_copy_subtree_skipping_os_metadata\s+"([^"]+)"', re.M)
+
 
 def _staged_basenames(script_text):
     """Every source basename (or glob pattern) an actual cp/cp -R INVOCATION
-    line copies out of private/1-raw-data/ -- e.g. "Electric_15_Minute_*.csv",
+    line, or a _copy_subtree_skipping_os_metadata call, copies out of
+    private/1-raw-data/ -- e.g. "Electric_15_Minute_*.csv",
     "enphase_sam8760_2025.csv", "electric-bills". Anchored to a leading `cp`
-    so the script's own unrelated caiso_raw existence-check `ls` line is
-    never mistaken for a real copy."""
-    return {pathlib.PurePosixPath(m.group(1)).name for m in _CP_ARG.finditer(script_text)}
+    (or the wrapper call) so the script's own unrelated caiso_raw
+    existence-check `ls` line is never mistaken for a real copy."""
+    return ({pathlib.PurePosixPath(m.group(1)).name for m in _CP_ARG.finditer(script_text)}
+            | {m.group(1) for m in _SKIP_METADATA_CALL_ARG.finditer(script_text)})
 
 
 def _is_staged(name, script_text):
@@ -3489,17 +3501,23 @@ def case_os_metadata_in_the_source_is_never_copied_into_the_destination():
     """issue #213, round 1 /review finding 1(a): claim -- 'OS metadata is
     never household data' (the comment beside _is_os_metadata()) -- but the
     exclusion used to reach only the staleness SCAN. The COPY phase's
-    `cp -R` calls staged a source's own .DS_Store / ._foo unfiltered, and
-    once staged it becomes permanently invisible to every future run of the
-    very scan that excuses it -- worse than never excusing it at all, and an
-    AppleDouble sidecar can carry a cached preview of the file it shadows.
+    `cp -R` calls staged a source's own .DS_Store / a shadowed AppleDouble
+    sidecar unfiltered, and once staged it becomes permanently invisible to
+    every future run of the very scan that excuses it -- worse than never
+    excusing it at all.
 
-    REPRODUCED FIRST, before the fix existed: planting `.DS_Store` and
-    `._foo` in a synthetic source's electric-bills/, gas-bills/ and
-    caiso_raw/, then running the real script end to end, landed all six at
-    the matching destination paths (script exit 0) -- confirmed by re-running
-    this case's own assertions against the pre-fix script, which failed with
-    both names present under electric-bills/.
+    REPRODUCED FIRST, before this fix existed (round 1's `_strip_os_metadata`
+    did not exist yet): planting `.DS_Store` and a shadowed `._foo` (with
+    `foo` present beside it) in a synthetic source's electric-bills/,
+    gas-bills/ and caiso_raw/, then running the real script end to end,
+    landed all six at the matching destination paths (script exit 0).
+
+    The sidecar here has a SHADOW (`foo` sits beside `._foo`) so this case
+    tests the skip-when-legitimate half; an ORPHAN sidecar -- no shadow, an
+    ordinary file that must be COPIED, not skipped -- is the separate
+    critical fix in round 2, proven below. Skipping this pair is announced,
+    checked here too, on top of case_a_source_file_literally_named_os_
+    metadata_is_skipped_and_announced's more targeted check.
 
     Covers all three `cp -R` subtrees (electric-bills/, gas-bills/,
     caiso_raw/) -- the only three copies this fix touches -- not just the
@@ -3515,7 +3533,8 @@ def case_os_metadata_in_the_source_is_never_copied_into_the_destination():
         (raw / "caiso_raw" / "caiso_co2_2025-01-01.csv").write_text("real\n")
         for sub in ("electric-bills", "gas-bills", "caiso_raw"):
             (raw / sub / ".DS_Store").write_text("finder chrome\n")
-            (raw / sub / "._foo").write_text("appledouble sidecar\n")
+            (raw / sub / "foo").write_text("the shadowed file\n")
+            (raw / sub / "._foo").write_text("appledouble sidecar for foo\n")
         with _linked_worktree(td) as dst:
             result = _run_script(src, dst, cwd=src, timeout=120)
             assert result.returncode == 0, (
@@ -3527,15 +3546,98 @@ def case_os_metadata_in_the_source_is_never_copied_into_the_destination():
                     assert not (subdir / name).exists(), (
                         f"{sub}/{name} from the source was staged into the "
                         f"destination -- OS metadata must never be copied")
+                    assert f"private/1-raw-data/{sub}/{name}" in result.stdout, (
+                        f"skipping {sub}/{name} was not announced: "
+                        f"{result.stdout}")
+                assert (subdir / "foo").is_file(), (
+                    f"{sub}'s shadowed file did not survive skipping the "
+                    f"sidecar beside it")
                 assert (subdir / (
                     "real-bill.pdf" if sub == "electric-bills" else
                     "real-gas-bill.pdf" if sub == "gas-bills" else
                     "caiso_co2_2025-01-01.csv")).is_file(), (
-                    f"{sub}'s real file did not survive stripping its "
+                    f"{sub}'s real file did not survive skipping its "
                     f"OS metadata siblings out of the staged copy")
-    return ("a source's own .DS_Store and AppleDouble sidecar are never "
-            "copied into the destination, in all three recursive subtrees, "
-            "while the real files beside them stage normally")
+    return ("a source's own .DS_Store and a shadowed AppleDouble sidecar are "
+            "never copied into the destination, announced when skipped, in "
+            "all three recursive subtrees, while the real files beside them "
+            "stage normally")
+
+
+@case
+def case_an_orphan_appledouble_sidecar_in_the_source_is_copied_not_stripped():
+    """issue #213, round 2 /review -- the CRITICAL finding, reproduced
+    directly first: round 1's `_strip_os_metadata` ran AFTER the `cp -R` and
+    deleted every `._*`-shaped name from the staged copy unconditionally,
+    with no shadow check at all. A genuine household file that merely
+    happens to be named like a sidecar -- the exact shape a botched zip
+    extraction or a mail client's MIME handling can leave as the only
+    surviving copy of an attachment -- vanished from the staged copy with
+    exit 0 and no message of any kind.
+
+    An ORPHAN `._X` (no `X` beside it in the source) is not metadata by this
+    fix's own rule: it is an ordinary file, and must be copied like any
+    other name, exactly as this case's `._realbill.pdf` -- holding real bill
+    content, no `realbill.pdf` anywhere in the source -- is here."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                             has_gas_bills_dir=False)
+        raw = src / "private" / "1-raw-data"
+        (raw / "electric-bills" / "._realbill.pdf").write_text(
+            "THIS IS THE ACTUAL BILL CONTENT, not a sidecar\n")
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode == 0, (
+                f"the stage must succeed or this case proves nothing: "
+                f"{result.stderr}")
+            staged = dst / "private" / "1-raw-data" / "electric-bills" / "._realbill.pdf"
+            assert staged.is_file(), (
+                "an orphan AppleDouble-shaped file with real content and no "
+                "shadow was not copied -- a genuine household file was "
+                "silently dropped")
+            assert staged.read_text() == "THIS IS THE ACTUAL BILL CONTENT, not a sidecar\n", (
+                "the orphan file staged with the wrong content")
+            assert "skipped OS metadata" not in result.stdout, (
+                f"an orphan (no shadow) must not be reported as skipped: "
+                f"{result.stdout}")
+    return ("an orphan AppleDouble-shaped file with real content and no "
+            "shadow in the source is copied like any ordinary file, never "
+            "silently dropped")
+
+
+@case
+def case_a_source_file_literally_named_os_metadata_is_skipped_and_announced():
+    """issue #213, round 2 /review's other reproduction: a source file
+    literally named `Thumbs.db` -- real bill content, not chrome -- also
+    vanished silently under round 1's post-copy deletion. The three literal
+    names have no shadow question to ask (stated as the accepted cost beside
+    _is_os_metadata), so a file that happens to be named exactly one of them
+    is still skipped -- but NEVER in silence: the skip must be announced, on
+    stdout, naming the exact path, so the collision is visible in the run's
+    own output instead of discovered later by the file's absence."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                             has_gas_bills_dir=False)
+        raw = src / "private" / "1-raw-data"
+        (raw / "electric-bills" / "Thumbs.db").write_text(
+            "THIS IS ACTUALLY A REAL BILL FILE NAMED Thumbs.db\n")
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode == 0, (
+                f"the stage must succeed or this case proves nothing: "
+                f"{result.stderr}")
+            assert not (dst / "private" / "1-raw-data" / "electric-bills"
+                        / "Thumbs.db").exists(), (
+                "a file literally named Thumbs.db must still be skipped -- "
+                "the three literal names have no shadow to check")
+            announced = result.stdout + result.stderr
+            assert "private/1-raw-data/electric-bills/Thumbs.db" in announced, (
+                f"the skip was not announced anywhere: stdout={result.stdout!r} "
+                f"stderr={result.stderr!r}")
+            assert "skipped OS metadata" in announced, (
+                f"the announcement does not say what happened: {announced!r}")
+    return ("a source file literally named Thumbs.db is still skipped, and "
+            "the skip is announced by exact path on stdout")
 
 
 @case

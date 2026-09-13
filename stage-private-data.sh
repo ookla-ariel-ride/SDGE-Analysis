@@ -2901,17 +2901,31 @@ _note_stale() { _stale_paths[${#_stale_paths[@]}]="$1"; }
 # sidecar (a `._` prefix on the original's name) when a file is copied to a
 # volume that cannot hold Finder's extended attributes any other way; Windows
 # Explorer writes Thumbs.db and desktop.ini the same way -- present because
-# the directory was looked at, never because a household staged it. Every
-# OTHER name -- including every other dotfile -- is still compared to the
-# source and still refuses: this list is exhaustive, not a pattern.
+# the directory was looked at, never because a household staged it.
 #
-# THE COPY AND THE SCAN SHARE THIS ONE LIST, so they cannot drift apart
-# (round 1 /review, issue #213): the copy phase below (THE COPY PHASE) never
-# stages any of these four shapes from the source at all -- OS metadata is
-# never household data, so it must not reach the destination in the first
-# place, not merely be excused once it is already there. Staged and then
-# excused would be worse than staged and refused: excused metadata is
-# invisible to every future run of this very scan.
+# THE LIST IS THREE LITERAL NAMES PLUS ONE SHADOW-GUARDED PREFIX, not four
+# equally-exhaustive names (round 2 /review, issue #213 -- the comment here
+# used to claim "exhaustive, not a pattern" for all four, which was false for
+# `._*`: that arm is a two-character prefix, matching any name that happens
+# to start with it). A `._X` is a sidecar ONLY when `X` sits beside it --
+# checked fresh at both call sites below, since "beside it" means the SOURCE
+# during the copy and the DESTINATION during the scan, and the two questions
+# use the same rule applied to different trees. `_is_os_metadata` alone
+# answers only "does this name have one of the four SHAPES"; a caller with a
+# `._`-prefixed name must still ask whether the shadow is actually there
+# before treating it as metadata.
+#
+# THE ACCEPTED COST, stated rather than left implicit: a genuine household
+# file named exactly `.DS_Store`, `Thumbs.db`, or `desktop.ini` is skipped
+# by the copy and refused as a leftover by the scan, indistinguishably from
+# real Finder/Explorer chrome -- these three are literal names with no
+# shadow question to ask, so there is no way to tell the two apart short of
+# reading file content, which this script does not do. A downloaded bill
+# PDF colliding with one of these three exact names is implausible and
+# accepted as a cost. An orphan `._X`, by contrast, is NOT assumed to be
+# metadata -- see both call sites below -- precisely because that shape is a
+# real, not-rare collision (a botched zip extraction or a mail client's MIME
+# handling can leave `._<name>` as the only surviving copy of an attachment).
 _is_os_metadata() {   # $1 = a basename under a copied or scanned subtree
   case "$1" in
     .DS_Store|._*|Thumbs.db|desktop.ini) return 0 ;;
@@ -2996,31 +3010,6 @@ _collect_stale_under() {   # $1 = a subtree name under private/1-raw-data/
       _note_stale "private/1-raw-data/$sub/$rel"
     fi
   done <<< "$listing"
-}
-
-# OS METADATA IS NEVER COPIED (issue #213, round 1 /review): a source's own
-# .DS_Store, AppleDouble sidecar, Thumbs.db or desktop.ini must never reach
-# the destination, unconditionally -- unlike the scan's per-file exemption
-# above, the copy has no "shadowed file present" question to ask, because
-# nothing here is a LEFTOVER yet; it is what the source itself would hand the
-# destination on an ordinary run, and OS metadata is never household data
-# regardless of what else is beside it.
-#
-# Run on this run's OWN staging copy (STAGED COPY below), never on the
-# source and never on an existing destination: `$1` is always a directory
-# this run's own `cp -R` just finished writing, so pruning it is pruning a
-# copy this run may freely discard, before the rename phase ever moves it
-# into place. `-depth` so a directory is only tested after everything under
-# it has been, which matters not at all here (nothing removed is a
-# directory) but keeps this the same walk order `_collect_stale_under` uses.
-_strip_os_metadata() {   # $1 = a staged directory this run just cp -R'd into
-  local _entry
-  find "$1" -depth -print0 2>/dev/null | while IFS= read -r -d '' _entry; do
-    [ "$_entry" = "$1" ] && continue
-    if _is_os_metadata "$(basename -- "$_entry")"; then
-      rm -rf -- "$_entry"
-    fi
-  done
 }
 
 _collect_stale_glob() {   # $1 = a glob the copies write into private/1-raw-data/
@@ -3474,6 +3463,93 @@ for _d in "$_STAGE_HH" "$_STAGE_RAW" "$_STAGE_VERIFY"; do
   _create_staging_dir "$_d"
 done
 
+# OS METADATA IS SKIPPED AT COPY TIME, never deleted after (issue #213,
+# round 2 /review): round 1's remedy for "the copy stages a source's own OS
+# metadata unfiltered" was to `cp -R` the whole subtree and then `rm -rf`
+# every matching name out of the staged copy. That is strictly more
+# dangerous than the gap it closed: a genuine household file whose NAME
+# merely matches one of these shapes -- reproduced directly with a source
+# `._realbill.pdf` holding real bill content and no `realbill.pdf` beside
+# it, and with a source file literally named `Thumbs.db` -- vanished from
+# the staged copy with exit 0 and no message of any kind. Deleting after
+# copying cannot tell a real collision from real metadata; the decision has
+# to be made BEFORE anything is written, on the SOURCE, which is what this
+# function does instead -- nothing it declines to copy is ever written to
+# the staging directory in the first place, so there is nothing here to
+# delete.
+#
+# THE SAME SHADOW RULE THE SCAN USES (`_collect_stale_under`), asked of the
+# SOURCE instead of the destination, because at copy time there is no
+# destination leftover to ask about yet: `._X` is treated as a sidecar only
+# when `X` sits beside it in the SAME source directory. An ORPHAN `._X`, with
+# no such `X` in the source, is treated as an ordinary file and copied --
+# the working assumption is that a file only a sidecar's NAME accidentally
+# matches is far likelier to be real data than a genuine sidecar with
+# nothing left to shadow. The three literal names (.DS_Store, Thumbs.db,
+# desktop.ini) have no shadow question to ask and are always skipped; the
+# accepted cost of that -- a household file that happens to be named one of
+# them, exactly, is skipped too -- is stated beside `_is_os_metadata` above.
+#
+# NOTHING is skipped in silence: every name this walk declines to copy is
+# printed, on stdout beside this run's other informational lines, so a real
+# collision is visible in the run's own output rather than discovered later
+# by its absence.
+#
+# `find` lists a directory before its contents (no `-depth`), so a
+# directory's own `mkdir -p` below always lands before anything is copied
+# into it; a symbolic link is tested first because `[ -d ]` is true for a
+# link to a directory, and `find` itself does not descend into one, matching
+# what a plain `cp -R` (no -L/-H) would have done with it. Defined here,
+# immediately before its own call sites in THE COPY PHASE below, rather than
+# up beside the scan it mirrors: every guard and path check above it has
+# already run by the time anything calls it (issue #206's own line-ordering
+# case, case_the_guard_is_what_refuses_and_it_runs_before_any_write, checks
+# exactly this).
+_copy_subtree_skipping_os_metadata() {   # $1 = subtree name under private/1-raw-data/
+  local sub="$1" src_dir dst_dir entry rel base shadow
+  src_dir="$SRC/private/1-raw-data/$sub"
+  dst_dir="$_STAGE_RAW/$sub"
+  # `cp -R` on a missing or symlinked source fails loudly; this walk's own
+  # `find` would otherwise just find nothing and leave an empty staged
+  # directory in silence, which is the same shape of defect this whole
+  # rewrite exists to remove. Kept explicit rather than assumed from a
+  # caller's own guard, so this function is safe to call on its own.
+  if [ ! -e "$src_dir" ] || [ -L "$src_dir" ]; then
+    _copy_failed "private/1-raw-data/$sub"
+  fi
+  mkdir -- "$dst_dir" || _copy_failed "private/1-raw-data/$sub"
+  while IFS= read -r -d '' entry; do
+    rel=${entry#"$src_dir/"}
+    if [ -L "$entry" ]; then
+      cp -P -- "$entry" "$dst_dir/$rel" || _copy_failed "private/1-raw-data/$sub/$rel"
+      continue
+    fi
+    if [ -d "$entry" ]; then
+      mkdir -p -- "$dst_dir/$rel" || _copy_failed "private/1-raw-data/$sub/$rel"
+      continue
+    fi
+    base=$(basename -- "$entry")
+    if _is_os_metadata "$base"; then
+      case "$base" in
+        ._*)
+          shadow="$(dirname -- "$entry")/${base#._}"
+          if [ -e "$shadow" ] || [ -L "$shadow" ]; then
+            echo "stage-private-data.sh: skipped OS metadata: private/1-raw-data/$sub/$rel"
+            continue
+          fi
+          # else: an orphan -- an ordinary file, falls through to the copy below
+          ;;
+        *)
+          echo "stage-private-data.sh: skipped OS metadata: private/1-raw-data/$sub/$rel"
+          continue
+          ;;
+      esac
+    fi
+    mkdir -p -- "$(dirname -- "$dst_dir/$rel")" || _copy_failed "private/1-raw-data/$sub/$rel"
+    cp -P -- "$entry" "$dst_dir/$rel" || _copy_failed "private/1-raw-data/$sub/$rel"
+  done < <(find "$src_dir" -mindepth 1 -print0)
+}
+
 # THE COPY PHASE. `|| _copy_failed` rather than `set -e`'s silent abort: the
 # handler removes the staging copy and says what the archive holds, which is
 # what it held.
@@ -3485,18 +3561,14 @@ cp "$SRC"/private/1-raw-data/enphase_sam8760_*.csv    "$_STAGE_RAW/" \
   || _copy_failed "private/1-raw-data/enphase_sam8760_*.csv"
 cp "$SRC/private/1-raw-data/gas.csv"                  "$_STAGE_RAW/" \
   || _copy_failed "private/1-raw-data/gas.csv"
-cp -R "$SRC/private/1-raw-data/electric-bills"        "$_STAGE_RAW/" \
-  || _copy_failed "private/1-raw-data/electric-bills"
-_strip_os_metadata "$_STAGE_RAW/electric-bills"
+_copy_subtree_skipping_os_metadata "electric-bills"
 cp "$SRC/private/1-raw-data/electric_billing_history_2024-2026.csv" "$_STAGE_RAW/" \
   || _copy_failed "private/1-raw-data/electric_billing_history_2024-2026.csv"
 
 # The gas statements, on the flag the SOURCE GUARD above already validated --
 # both directions of it, so by here this is a copy and not a decision.
 if [ "$HAS_GAS" = True ]; then
-  cp -R "$SRC/private/1-raw-data/gas-bills" "$_STAGE_RAW/" \
-    || _copy_failed "private/1-raw-data/gas-bills"
-  _strip_os_metadata "$_STAGE_RAW/gas-bills"
+  _copy_subtree_skipping_os_metadata "gas-bills"
 fi
 
 cp "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv "$_STAGE_VERIFY/usage.csv" \
@@ -3507,9 +3579,7 @@ cp "$SRC/private/1-raw-data/enphase_sam8760_2025.csv" "$_STAGE_VERIFY/samB.csv" 
   || _copy_failed "private/1-raw-data/enphase_sam8760_2025.csv -> private/verify/samB.csv"
 
 if [ "$STAGE_CAISO" = 1 ]; then
-  cp -R "$SRC/private/1-raw-data/caiso_raw" "$_STAGE_RAW/" \
-    || _copy_failed "private/1-raw-data/caiso_raw"
-  _strip_os_metadata "$_STAGE_RAW/caiso_raw"
+  _copy_subtree_skipping_os_metadata "caiso_raw"
 fi
 
 # THE RENAME PHASE. Every copy has landed; from here each step moves a whole
