@@ -2703,6 +2703,182 @@ def case_cleaning_heading_is_the_templates_h3_line_rendered():
             f"({len(names)} tokens: {', '.join(names)})")
 
 
+# The card's label starts with one of three fixed prefixes _free_win_card_label
+# can return (Free win / No modeled saving / Costs money here -- see
+# report_tokens.py's S0_FREE_WIN_CARD_LABEL); the rest of the line is the
+# free-fix noun, which varies by household and is not pinned here.
+_S0_FREE_WIN_CARD_RE = re.compile(
+    r'<div class="card"><div class="big">[^<]*</div><div class="lbl">'
+    r'(?:Free win|No modeled saving|Costs money here):[^<]*</div></div>')
+
+
+def case_s0_free_win_card_is_the_templates_card_line_rendered():
+    """issue #136 (fix round 1): index.html's committed §0 free-win card read
+    "~$1,220/yr" against two separate defects, neither caught by any existing
+    case -- this card had NO consistency pin at all before this one.
+
+    First, the sigil: S0_FREE_WIN_CARD_FIGURE hedged with usd0_tilde_signed
+    while EV_FIX_SAVINGS_100 and EV_FIX_SAVINGS_80, reading the very same
+    behavior_rebuild.json scenario field at the same cents precision, were
+    bare -- report_tokens.py's own "~" rule (above _usd0_tilde) says all
+    three take the same sigil, and the token now renders bare.
+
+    Second, and independently of the sigil, the DIGITS were stale: on the
+    committed archive the token resolves to $1,221 (behavior_rebuild.json's
+    scenarios.a.saved is 1220.85, and usd0's whole-dollar rounding is
+    :,.0f, which rounds .85 up), not the $1,220 index.html carried. That
+    one-dollar drift is the same class issue #276 pinned elsewhere: a live
+    template token with no test reading its rendered card, so a stale
+    figure or a stale sigil can sit in the shipped page indefinitely.
+
+    Renders the template's own card line, token by token, and requires it
+    verbatim in index.html -- both halves at once, the same way the §12
+    heading case above does it, so a future edit to either token or to this
+    card's markup is checked without a new case."""
+    lines = [ln for ln in TEMPLATE_HTML.splitlines()
+             if "{{S0_FREE_WIN_CARD_FIGURE}}" in ln and '<div class="card">' in ln]
+    assert len(lines) == 1, (
+        f"report-template.html carries {{{{S0_FREE_WIN_CARD_FIGURE}}}} inside "
+        f'\'<div class="card">\' markup on {len(lines)} lines (the item-2 TODO '
+        "comment also names the token, by design, and is excluded here); this case "
+        "renders the one live §0 card line")
+    line, = lines
+    assert "{{S0_FREE_WIN_CARD_LABEL}}" in line, (
+        f"the §0 free-win card line no longer pairs the figure with its label: {line!r}")
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    rt = _report_tokens()
+    names = sorted(set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", line)))
+    try:
+        rendered = re.sub(r"\{\{([A-Z0-9_]+)\}\}",
+                          lambda m: rt.resolve_token(m.group(1)), line)
+    except BaseException as e:                    # noqa: BLE001 - archive-gated
+        assert _missing_archive_exit(e, archive, loader), (
+            f"the §0 free-win card line could not be rendered, and NOT because this "
+            f"checkout lacks the private archive (present: {archive}): "
+            f"{type(e).__name__}: {e}")
+        return (f"§0 free-win card line ({len(names)} tokens) not rendered: this "
+                f"checkout has no private archive ({e})")
+    assert rendered in HTML, (
+        f"index.html's §0 free-win card is not the template's card line rendered:\n"
+        f"  template renders: {rendered}\n"
+        f"  page carries:     {(_S0_FREE_WIN_CARD_RE.search(HTML) or [''])[0]!r}\n"
+        "the card states the free fix's own annual saving and its label from tokens; "
+        "the page has to carry exactly what they render, sigil and digits both")
+    return (f"index.html's §0 free-win card is the template's card line rendered "
+            f"verbatim ({len(names)} tokens: {', '.join(names)})")
+
+
+# The three prose sites carrying both EV_FIX_SAVINGS_100 and EV_FIX_SAVINGS_80
+# together, as FIXED SURROUNDING PROSE with the two token renders substituted
+# in -- report-template.html never carries this as one live {{TOKEN}} line
+# (both figures are cited from an LLM-authored paragraph, per report-
+# template.html:282/518's TODO instructions), so there is no template line to
+# render the way the §0 card and §12 heading cases above do it. The fixed
+# text is pinned by hand instead; a future rewording of any of these three
+# sentences is expected to update its own entry here, the same way
+# _EV_HOUSEHOLD_LITERALS documents its own fixed prose.
+_EV_FIX_SAVINGS_PROSE_SITES = (
+    ("§0's 'Fix EV charging timing' bullet",
+     "Moving all of it to super-off-peak saves {ev100}/yr at 100% compliance, "
+     "{ev80} at 80% (§9)."),
+    ("§7's 'EV charging discipline' bullet",
+     "<b>EV charging discipline: {ev100}/yr at 100% compliance, {ev80} at 80%</b>:"),
+    ("§9's session-detection paragraph",
+     "recovers <b>{ev100}/yr at 100% compliance ({ev80} at 80%)</b>."),
+)
+
+
+def case_ev_fix_savings_100_and_80_render_bare_in_every_prose_site():
+    """issue #136, fix round 2 (reviewer finding 1b). The #136 sigil fix
+    itself had no page-level regression test: reintroducing index.html:212's
+    hand-typed "~" left test_report_consistency.py fully green, verified
+    directly by the round-2 review. This closes that gap for
+    EV_FIX_SAVINGS_100/EV_FIX_SAVINGS_80's three prose sites (index.html's §0
+    bullet, §7 bullet and §9 paragraph, all three stating both figures
+    together), the same way case_s0_free_win_card_is_the_templates_card_line_
+    rendered closes it for the §0 card.
+
+    Renders both tokens LIVE and requires each site's fixed prose, with the
+    live renders substituted in, verbatim in index.html. A tilde reintroduced
+    at either token, or a digit drifting away from either artifact, breaks
+    the substituted string and this fails at the specific site."""
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    rt = _report_tokens()
+    try:
+        ev100 = rt.resolve_token("EV_FIX_SAVINGS_100")
+        ev80 = rt.resolve_token("EV_FIX_SAVINGS_80")
+    except BaseException as e:                    # noqa: BLE001 - archive-gated
+        assert _missing_archive_exit(e, archive, loader), (
+            f"EV_FIX_SAVINGS_100/80 could not be rendered, and NOT because this "
+            f"checkout lacks the private archive (present: {archive}): "
+            f"{type(e).__name__}: {e}")
+        return f"EV fix savings prose sites not checked: this checkout has no private archive ({e})"
+    missing = []
+    for label, template in _EV_FIX_SAVINGS_PROSE_SITES:
+        expected = template.format(ev100=ev100, ev80=ev80)
+        if expected not in HTML:
+            missing.append((label, expected))
+    assert not missing, (
+        "index.html does not carry EV_FIX_SAVINGS_100/80's current render "
+        f"({ev100!r}/{ev80!r}) verbatim at: "
+        + "; ".join(f"{label} (expected {expected!r})" for label, expected in missing)
+        + ". A hand-typed sigil or a stale digit at any of these sites is not caught "
+          "by any other case")
+    return (f"index.html carries EV_FIX_SAVINGS_100 ({ev100!r}) and EV_FIX_SAVINGS_80 "
+            f"({ev80!r}) verbatim at all {len(_EV_FIX_SAVINGS_PROSE_SITES)} prose sites")
+
+
+# The §0 bullet naming the battery's price-aware and post-EV-fix savings
+# together -- fixed prose, not a literal {{TOKEN}} template line, for the
+# same reason as the EV-fix sites above (report-template.html's item-4 and
+# rec-box examples are TODO-comment prose, never live markup).
+_S0_BATTERY_CLAUSE_TEMPLATE = (
+    "one Powerwall 3 earns <b>{price_aware}/yr at current rates ({marginal} after "
+    "the EV fix, from a single integrated run of shift-then-battery)</b>:")
+
+
+def case_s0_battery_clause_renders_both_battery_savings_bare():
+    """issue #136, fix round 2 (reviewer finding 1b). Reintroducing
+    index.html:212's hand-typed "~" in front of $2,328 (BATTERY_SAVINGS_
+    PRICE_AWARE) left test_report_consistency.py fully green, verified
+    directly by the round-2 review -- the BATTERY_MARGINAL_SAVINGS /
+    BATTERY_SAVINGS_PRICE_AWARE pair named in issue #136's own table had no
+    page-level pin at all.
+
+    Renders both tokens LIVE and requires the §0 sentence naming them
+    together, with both live renders substituted in, verbatim in index.html.
+    A tilde reintroduced at either token breaks the substituted string."""
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    rt = _report_tokens()
+    try:
+        price_aware = rt.resolve_token("BATTERY_SAVINGS_PRICE_AWARE")
+        marginal = rt.resolve_token("BATTERY_MARGINAL_SAVINGS")
+    except BaseException as e:                    # noqa: BLE001 - archive-gated
+        assert _missing_archive_exit(e, archive, loader), (
+            f"BATTERY_SAVINGS_PRICE_AWARE/BATTERY_MARGINAL_SAVINGS could not be "
+            f"rendered, and NOT because this checkout lacks the private archive "
+            f"(present: {archive}): {type(e).__name__}: {e}")
+        return ("§0 battery clause not checked: this checkout has no private "
+                f"archive ({e})")
+    expected = _S0_BATTERY_CLAUSE_TEMPLATE.format(price_aware=price_aware, marginal=marginal)
+    assert expected in HTML, (
+        "index.html's §0 battery clause does not carry BATTERY_SAVINGS_PRICE_AWARE "
+        f"({price_aware!r}) and BATTERY_MARGINAL_SAVINGS ({marginal!r})'s current "
+        f"renders verbatim: expected {expected!r} somewhere in the page. A hand-typed "
+        "sigil in front of either figure is not caught by any other case")
+    return (f"index.html's §0 battery clause carries BATTERY_SAVINGS_PRICE_AWARE "
+            f"({price_aware!r}) and BATTERY_MARGINAL_SAVINGS ({marginal!r}) verbatim")
+
+
 def case_cleaning_heading_and_gain_describe_the_same_event():
     """issue #138: the §12 h3 names a cleaning ({{CLEANING_DATE}},
     {{CLEANING_PRICE}}) and states a measured gain ({{CLEANING_EFFECT_PCT}}) in
@@ -7625,6 +7801,9 @@ CASES = [
     case_soiling_rate_bracket_matches_the_token_that_renders_it,
     case_cleaning_effect_heading_matches_the_sections_own_conclusion,
     case_cleaning_heading_is_the_templates_h3_line_rendered,
+    case_s0_free_win_card_is_the_templates_card_line_rendered,
+    case_ev_fix_savings_100_and_80_render_bare_in_every_prose_site,
+    case_s0_battery_clause_renders_both_battery_savings_bare,
     case_cleaning_heading_and_gain_describe_the_same_event,
     case_cleaned_ratio_row_is_the_templates_row_rendered,
     case_control_year_rows_render_the_generators_no_cleaning_label,

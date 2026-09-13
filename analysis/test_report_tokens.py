@@ -10732,9 +10732,18 @@ _EV_VOCABULARY = re.compile(r"\bEVs?\b(?!-TOU)|\bcharger\b|\bcharging\b|"
 # character. These four strings are report-template.html's own fixed prose as
 # it read before issue #147 tokenized any of it, so the change that makes a
 # no-EV report true is proved not to have moved this one.
+#
+# THE FIRST LITERAL WAS RE-PINNED BY ISSUE #136 (fix round 1): its "~" was
+# S0_FREE_WIN_CARD_FIGURE hedging a rounding no coarser than this report's
+# whole-dollar baseline, the exact shape #136's "~" rule (report_tokens.py,
+# above _usd0_tilde) exists to catch -- EV_FIX_SAVINGS_100 and
+# EV_FIX_SAVINGS_80 read the same behavior_rebuild.json scenario field at the
+# same precision and were already bare. The token now renders bare too, so
+# this control literal is bare to match -- an intentional presentation
+# change, not a figure drift (the digits, 1,221, are unchanged).
 _EV_HOUSEHOLD_LITERALS = (
     ("section 0's free-win card",
-     '<div class="card"><div class="big">~$1,221/yr</div><div class="lbl">Free win: '
+     '<div class="card"><div class="big">$1,221/yr</div><div class="lbl">Free win: '
      'fully super-off-peak EV charging (session-level, 100% compliance)</div></div>'),
     ("the Monday appendix's first instruction",
      "<h3>1 · Reprogram charging (this week, $0)</h3>"),
@@ -12101,6 +12110,37 @@ def case_the_two_figures_for_the_batterys_own_saving_quote_one_scenario():
         seen.append(f"2328/-50 -> {token}")
     return ("BATTERY_MARGINAL_SAVINGS and section 7's battery clause quote the same "
             f"post-EV-fix scenario on every pair ({'; '.join(seen)})")
+
+
+@case
+def case_ev_fix_savings_and_free_win_card_share_one_sigil():
+    """ISSUE #136, fix round 2 (reviewer finding 1a). #136's fix itself had no
+    regression test: reverting EV_FIX_SAVINGS_100's formatter back to
+    _usd0_tilde_signed -- the exact pre-#136 code -- left both full suites
+    green, verified directly by the round-2 review.
+
+    All three of these tokens read behavior_rebuild.json's
+    `scenarios.<key>.saved` at the same cents precision --
+    S0_FREE_WIN_CARD_FIGURE's key varies by household (packages.LOW.
+    free_fix_scenario names it), but on THIS household it is "a", the exact
+    same cell EV_FIX_SAVINGS_100 reads -- so the "~" rule above _usd0_tilde
+    puts all three in one class: bare. `fmt` cannot see a revert here, because
+    none of the three declares one (all three are dim="$" and format
+    themselves), so this reads the RENDERED STRING's leading character
+    instead, which is exactly what reverting the formatter changes."""
+    values = {name: rt.resolve_token(name)
+              for name in ("EV_FIX_SAVINGS_100", "EV_FIX_SAVINGS_80",
+                           "S0_FREE_WIN_CARD_FIGURE")}
+    leading = {name: v.lstrip()[:1] for name, v in values.items()}
+    offenders = {name: ch for name, ch in leading.items() if ch != "$"}
+    assert not offenders, (
+        "EV_FIX_SAVINGS_100, EV_FIX_SAVINGS_80 and S0_FREE_WIN_CARD_FIGURE read the "
+        "same behavior_rebuild.json scenario `saved` field at the same precision and "
+        f"must all render bare ('$'), not hedged with '~': {offenders} "
+        f"(full values: {values})")
+    return (f"EV_FIX_SAVINGS_100 {values['EV_FIX_SAVINGS_100']!r}, EV_FIX_SAVINGS_80 "
+            f"{values['EV_FIX_SAVINGS_80']!r} and S0_FREE_WIN_CARD_FIGURE "
+            f"{values['S0_FREE_WIN_CARD_FIGURE']!r} all render bare, one sigil")
 
 
 # --- the round-6 findings, one regression case each -------------------------
@@ -17265,6 +17305,39 @@ def _resolution_failures():
         except BaseException as e:                # noqa: BLE001 - that is the assertion
             out[name] = f"{type(e).__name__}: {e}"
     return out
+
+
+@case
+def case_a_or_an_picks_the_vowel_sound_boundaries():
+    """_a_or_an(n) precedes n's ENGLISH WORD, not its digit, with "a" or "an":
+    "an" only before the four ranges whose leading number-word opens on a
+    vowel SOUND -- eight, eleven, eighteen, eighty through eighty-nine -- and
+    "a" everywhere else, including compounds like twenty-eight where the
+    leading word ("twenty") is a consonant sound. Table-driven across every
+    boundary (7/8, 8/9, 10/11, 11/12, 17/18, 18/19, 79/80, 89/90) so a future
+    off-by-one at any of them fails by name instead of by chance (deferred
+    minor from #276's review of this file family).
+
+    Also covers the two argument shapes callers actually pass: a float
+    percentage (int(abs(n)) truncates 11.8 to 11, still "an") and a signed
+    delta (abs() runs before the range test, so -8 is "an" like 8)."""
+    cases = [
+        (0, "a"), (1, "a"), (7, "a"), (8, "an"), (9, "a"),
+        (10, "a"), (11, "an"), (12, "a"),
+        (17, "a"), (18, "an"), (19, "a"),
+        (28, "a"),
+        (79, "a"), (80, "an"), (81, "an"), (85, "an"), (89, "an"), (90, "a"),
+        (99, "a"),
+        (11.8, "an"),
+        (-8, "an"),
+    ]
+    offences = [(n, want, got) for n, want in cases
+                if (got := rt._a_or_an(n)) != want]
+    assert not offences, (
+        "_a_or_an disagrees with the vowel-sound table at: "
+        + "; ".join(f"{n} -> {got!r}, want {want!r}" for n, want, got in offences))
+    return (f"_a_or_an holds all {len(cases)} vowel-sound boundary cases "
+            "(8/9, 10/11, 17/18, 18/19, 79/80, 89/90, plus a float and a signed input)")
 
 
 class _example_household:

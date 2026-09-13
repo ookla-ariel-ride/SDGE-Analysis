@@ -298,6 +298,70 @@ def _usd0(v):
     return f"${_unsigned_currency('usd0', v):,.0f}"
 
 
+# WHAT "~" MEANS, STATED ONCE SO THE NEXT TOKEN ADDED FOLLOWS IT (issue #136).
+#
+# "~" signals that THIS FIGURE'S OWN DISPLAY ROUNDS IT TO A COARSER PRECISION
+# THAN THE MODEL BEHIND IT CARRIES -- a real information loss at the point of
+# formatting, not a comment on where the number came from. It is NEVER a
+# marker for "this dollar figure is modeled": every dollar figure in this
+# report is modeled, the evidence pill already says so, and a sigil that
+# meant "modeled" would belong on all of them or none, not on some.
+#
+# Rounding a cents-precision artifact value to the nearest whole dollar --
+# what plain usd0/usd0_signed does to every currency figure in this report,
+# EV_FIX_SAVINGS_100, EV_FIX_SAVINGS_80 and S0_FREE_WIN_CARD_FIGURE included
+# -- is NOT that coarser rounding. Whole-dollar is the report's baseline
+# currency precision, applied uniformly; it carries no more information loss
+# for one figure than for its neighbor, so it earns no hedge.
+#
+# TWO CASES ARE GENUINE, and both are coarser than that baseline -- they
+# differ only in WHERE the coarser rounding happens:
+#
+#   1. IN THE TOKEN'S OWN CODE, rounding PAST the baseline on purpose.
+#      FIRST_YEAR_VALUE and SOLAR_ANNUAL_VALUE both do this: each rounds an
+#      exact-to-the-cent artifact value (value_usd; nosolar_bill_usd minus
+#      model_baseline_current_rates) to the nearest HUNDRED, in Python,
+#      before usd0_tilde ever sees it -- `round(x / 100) * 100`. That second
+#      rounding is real information loss past what usd0 alone would have
+#      lost, and "~" is what discloses it.
+#   2. IN THE CONSTANT'S OWN PROVENANCE, before it ever reached this file.
+#      BATTERY_COST and BATTERY_EXPANDED_COST format
+#      package_results.json:packages.{MID,HIGH}.cost, which are
+#      analysis/package_results.py's PW3_COST=14500 and
+#      HIGH_COST=PW3_COST+EXPANSION_COST -- hardcoded, cited to research/
+#      battery-research-notes.md's own pre-quote MARKET table ("Tesla
+#      Powerwall 3 | ... | Est. installed: ~$13,000-16,500 (unit
+#      ~$9.3-10.5k)", a range explicitly labeled "typical installed prices
+#      (2026, pre-quote estimates)"), not a modeled computation. The
+#      formatter performs no additional rounding on 14500 -- it is already
+#      whole-hundreds -- so case 1's test does not fit them. What "~" marks
+#      here is that the NUMBER ITSELF is a rounded point estimate pulled
+#      from a market range, something a real installer quote would not
+#      reproduce to the dollar; the coarseness lives one step upstream of
+#      the formatter, in the constant, and is disclosed at the point where
+#      that constant is finally printed. See the comment beside those two
+#      tokens for the citation.
+#
+# THE TEST: two tokens rendering the SAME artifact quantity at the SAME
+# precision, in the same sentence or not, carry the SAME sigil -- one cannot
+# be hedged while the other is bare with no rounding difference (of either
+# case above) between them. EV_FIX_SAVINGS_100, EV_FIX_SAVINGS_80 and
+# S0_FREE_WIN_CARD_FIGURE are all this shape: all three read
+# behavior_rebuild.json's `scenarios.<key>.saved` at the same cents precision
+# (S0_FREE_WIN_CARD_FIGURE's key varies by household, but is always one of
+# that same artifact's scenario `saved` fields), so all three are bare (#136
+# -- S0_FREE_WIN_CARD_FIGURE used to hedge alone, justified in its own
+# docstring as "the underlying figure is modeled", the exact reasoning this
+# rule rejects). Two DIFFERENT quantities that merely happen to share a value
+# on one household's data (BATTERY_MARGINAL_SAVINGS vs
+# BATTERY_SAVINGS_PRICE_AWARE) are judged on this same rule independently,
+# since a coincidence in the numbers is not a reason to render them alike.
+#
+# THE FULL POPULATION, so the next token added has nowhere to hide: every
+# live usd0_tilde/usd0_tilde_signed user in this file, as of fix round 2, is
+# FIRST_YEAR_VALUE and SOLAR_ANNUAL_VALUE (case 1) and BATTERY_COST and
+# BATTERY_EXPANDED_COST (case 2). Every other dollar token in this report is
+# bare.
 def _usd0_tilde(v):
     return f"~${_unsigned_currency('usd0_tilde', v):,.0f}"
 
@@ -2005,8 +2069,14 @@ def _shift_scenario_saving(key, fmt):
     return _does_not_apply(reason) if node is None else fmt(node["saved"])
 
 
+# BARE, NOT TILDE (issue #136): both scenarios read behavior_rebuild.json's
+# `saved` at the same cents precision and round to the same whole-dollar
+# baseline every other currency figure in this report uses -- see the "~"
+# rule above _usd0_tilde. EV_FIX_SAVINGS_100 used to carry usd0_tilde_signed
+# while its sibling below carried plain usd0_signed, hedging one half of one
+# sentence ("(~$1,221 / $1,009)") with no rounding difference behind it.
 _tok("EV_FIX_SAVINGS_100", kind="derived",
-     get=lambda ctx: _shift_scenario_saving("a", _usd0_tilde_signed),
+     get=lambda ctx: _shift_scenario_saving("a", _usd0_signed),
      sources=["data/behavior_rebuild.json:scenarios.a (saved, or the "
               "not-applicable stub's reason)"], dim="$")
 _tok("EV_FIX_SAVINGS_80", kind="derived",
@@ -2014,6 +2084,12 @@ _tok("EV_FIX_SAVINGS_80", kind="derived",
      sources=["data/behavior_rebuild.json:scenarios.b (saved, or the "
               "not-applicable stub's reason)"], dim="$")
 
+# BARE (issue #136): pw3.greedy.save is already a whole-dollar figure in the
+# artifact, so usd0_signed's display rounding loses nothing beyond this
+# report's baseline currency precision -- see the "~" rule above
+# _usd0_tilde. index.html once hand-typed a "~" beside this token's render in
+# one prose site while every other occurrence rendered it bare; the token
+# itself was never the source of that "~" and stays bare here.
 _tok("BATTERY_SAVINGS_PRICE_AWARE", kind="data_json", file="battery_dispatch_policies.json",
      path=("pw3", "greedy", "save"), fmt="usd0_signed")
 _tok("BATTERY_SAVINGS_EVENING_ONLY", kind="data_json", file="battery_dispatch_policies.json",
@@ -2079,6 +2155,21 @@ _tok("STORED_KWH_MIDDAY_SHARE", kind="derived", fmt="pct1",
      sources=["data/battery_dispatch_policies.json:stored_kwh_cost.solar_surplus."
               "by_period.sop.share_of_surplus_kwh (a fraction; rendered as percent)"])
 
+# TILDE KEPT, DECIDED UNDER THE #136 RULE (fix round 2, reviewer finding 2):
+# packages.MID/HIGH.cost are analysis/package_results.py's PW3_COST=14500 and
+# HIGH_COST=PW3_COST+EXPANSION_COST, both cited to research/battery-research-
+# notes.md's own pre-quote market table -- "Tesla Powerwall 3 | ... | Est.
+# installed: ~$13,000-16,500 (unit ~$9.3-10.5k)", explicitly labeled "typical
+# installed prices (2026, pre-quote estimates)", not this repo's own
+# computation. usd0_tilde performs no ADDITIONAL rounding here (14500 is
+# already whole-hundreds; formatting it loses nothing past the report's
+# baseline) -- unlike FIRST_YEAR_VALUE/SOLAR_ANNUAL_VALUE, whose rounding
+# happens in the token's own code. The coarseness these two tokens disclose
+# lives one step further upstream, in the CONSTANT'S OWN PROVENANCE: a
+# quoted-price estimate research pulled from a market range and rounded to a
+# round number before it ever reached this file, not something a real quote
+# would reproduce to the dollar. The "~" rule above _usd0_tilde covers this
+# as a second legitimate case for exactly that reason -- see its own text.
 _tok("BATTERY_COST", kind="data_json", file="package_results.json",
      path=("packages", "MID", "cost"), fmt="usd0_tilde")
 _tok("BATTERY_EXPANDED_COST", kind="data_json", file="package_results.json",
@@ -2270,6 +2361,16 @@ def _battery_marginal_savings(ctx):
 # figure and takes the same formatter -- a modeled saving, a value, an NPV, an
 # overlap deduction: quantities whose sign the artifact decides, not the
 # schema.
+#
+# BARE, NOT TILDE (issue #136): no rounding here goes past this report's
+# whole-dollar baseline -- see the "~" rule above _usd0_tilde. Its value
+# coincides with BATTERY_SAVINGS_PRICE_AWARE's on this household's data, but
+# the two price DIFFERENT scenarios (this one is post-EV-fix, that one is
+# not) and are judged on the rule independently rather than made to match
+# because their numbers happen to agree here. report-template.html's item-4
+# reference-voice example once hand-typed a "~" in front of this token; moved
+# out (dropped, since bare is what the rule calls for) rather than into the
+# token.
 _tok("BATTERY_MARGINAL_SAVINGS", kind="derived", get=_battery_marginal_savings,
      sources=["data/package_results.json:packages.MID.battery_alone_post_ev_fix_yr"],
      fmt="usd0_signed")
@@ -5304,13 +5405,18 @@ def _free_fix_clause(saving, saves, move_noun, sell):
 # Monday appendix are four renderings of one reading.
 def _free_win_card_figure(ctx):
     """The card's headline cell: the free fix's own annual saving, with its
-    unit. `~` because the underlying scenario figure is a modeled saving the
-    section quotes to the dollar, and signed because the shift comes back
-    negative on a household it costs money -- _usd0_tilde_signed renders
-    every non-negative value exactly as the unsigned formatter does, so the
-    EV household's cell is unchanged to the character."""
+    unit. BARE, NOT TILDE (issue #136): `saved` is behavior_rebuild.json's
+    same cents-precision `scenarios.<key>.saved` field EV_FIX_SAVINGS_100 and
+    EV_FIX_SAVINGS_80 read, rounded to the same whole-dollar baseline every
+    currency figure in this report uses -- see the "~" rule above
+    _usd0_tilde. This token used to hedge that rounding while its two
+    siblings did not, on the same artifact at the same precision. Signed
+    because the shift comes back negative on a household it costs money --
+    _usd0_signed renders every non-negative value exactly as the unsigned
+    formatter does, so the EV household's cell is unchanged to the
+    character."""
     saved, _low, _saves, _move = _free_fix_saving("S0_FREE_WIN_CARD_FIGURE")
-    return f"{_usd0_tilde_signed(saved)}/yr"
+    return f"{_usd0_signed(saved)}/yr"
 
 
 _tok("S0_FREE_WIN_CARD_FIGURE", dim="$", kind="derived", get=_free_win_card_figure,
