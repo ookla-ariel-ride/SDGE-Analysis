@@ -6367,6 +6367,84 @@ _tok("S2_VERDICT", phrase=True, kind="derived", get=_s2_verdict,
               "private/household.yaml:solar.kw_dc", "private/household.yaml:household.pto_date"])
 
 
+def _s2_export_timing_note(ctx):
+    """§2's closing .small paragraph (issue #180): the export share, the
+    midday export share, and the overnight-charging night count it states in
+    prose are the SAME THREE FIGURES S2_VERDICT already renders, called here
+    rather than retyped so the paragraph cannot drift from the verdict line
+    the way #143's hand-written copy did -- that copy passed a referent-error
+    rewrite ("During peak solar production, 60% ...") the blocklist guard in
+    test_report_consistency.py could not see, because the guard can only
+    screen wording it has been told to look for. A hand edit to this
+    paragraph now fails the exact-value pin
+    (test_report_consistency.case_s2_key_architectural_fact_is_token_rendered)
+    on ANY wording, not just a listed one -- see that case's docstring, and
+    _referent_guard_rejects's, for what the blocklist guard is kept for now
+    that this paragraph no longer needs it.
+
+    RELATIONSHIP, this paragraph against S2_VERDICT: not just "same
+    quantity, independently checked" -- literally the same function calls,
+    so the two cannot even round differently. EXPORTED_SHARE's own helper
+    supplies the first figure rather than a second read of report_data.json,
+    for the same reason.
+
+    The overnight window's start is named "midnight" here, not the
+    12am/6am clock-range wording _cheap_window() prints for the daytime
+    window -- that is this paragraph's own wording, reproduced exactly, not
+    a fact _overnight_cheap_run() states. A tariff whose overnight
+    super-off-peak run does not start at hour 0 has no "midnight" to print;
+    fail closed rather than mislabel a different start hour.
+
+    NO-EV HOUSEHOLDS get every non-EV sentence: like S2_VERDICT's own
+    overnight-charging clause, only the clause that names the EV drops
+    (issue #147's shape -- a household whose intake says it has no EV must
+    still get a full report, and case_every_token_in_the_report_resolves_
+    on_a_complete_no_ev_artifact_set in test_report_tokens.py holds every
+    non-gap token, this one included, to that). The export-share and
+    midday-timing sentences are measured for every house and stand on
+    their own without it."""
+    export_pct = _exported_share(ctx)
+    midday_pct = round(_midday_export_share(ctx, "S2_EXPORT_TIMING_NOTE") * 100)
+    det, _reason = _ev_detection()
+    if det is None:
+        ev_clause = ""
+    else:
+        lo, hi, _lab = _overnight_cheap_run()
+        if lo != 0:
+            raise SystemExit(
+                f"report_tokens: S2_EXPORT_TIMING_NOTE cannot call the overnight "
+                f"super-off-peak window's start 'midnight' -- it runs from {lo}h, "
+                "not hour 0, on this tariff")
+        charging, absent, observed = _overnight_ev_night_counts(ctx)
+        if (not _finite(charging, absent, observed)
+                or observed <= 0 or absent < 0 or charging < 0):
+            raise SystemExit(
+                f"report_tokens: S2_EXPORT_TIMING_NOTE cannot say when the EV "
+                f"charges -- data/quiet_night_floor.json's ev_absence_by_window "
+                f"counted {charging} charging and {absent} absent night(s) across "
+                f"{observed} eligible night(s), which is not a real census")
+        overnight_end = _hour_label(hi)
+        ev_clause = (f", while the EV charged between midnight and {overnight_end} "
+                     f"on {charging} of the year's {observed} nights")
+    return (
+        "That last split is the fact behind every recommendation in this report: "
+        f"{export_pct}% of what the array makes leaves as exports. The exports "
+        f"concentrate in the middle of the day: {midday_pct}% of those exported kWh "
+        f"go out in the {_cheap_window()} window{ev_clause}. Plan, behavior, "
+        "battery, and the §8 expansion verdict all follow from that timing "
+        "mismatch.")
+
+
+_tok("S2_EXPORT_TIMING_NOTE", phrase=True, kind="derived", get=_s2_export_timing_note,
+     sources=["data/report_data.json:totals", "data/enphase_daily_production.csv "
+              "(Total footer row)", "data/report_data.json:hourly_S.exp / hourly_W.exp",
+              "data/report_data.json:totals.exp (rebuild check)",
+              "data/quiet_night_floor.json:night_floor.issue_114_investigation."
+              "ev_absence_by_window", "data/behavior_rebuild.json:detection (the "
+              "not-applicable stub that refuses this paragraph)",
+              "analysis/rates.py:period() (sampled)"])
+
+
 def _s3_verdict(ctx):
     # Computed, never asserted, and INVERTED rather than refused: a household
     # whose plan no longer wins is the one this section is written for, and

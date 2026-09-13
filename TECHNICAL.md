@@ -5498,7 +5498,7 @@ into a finished report with a paid LLM API key and no agentic coding tool at all
   any adapter could plausibly be called, so a payload can be inspected, and its cost
   estimated, before a single API call is spent.
 - **The classification map (`analysis/report_blocks.py`).** Parses every actionable
-  `<!-- TODO ... -->` block out of `report-template.html` (105 of them; the top-of-file
+  `<!-- TODO ... -->` block out of `report-template.html` (104 of them; the top-of-file
   authoring-instructions comment is excluded, and `test_report_blocks.py` re-parses the
   template fresh on every run to prove the map still covers it exactly) and classifies
   each one `prose` (an LLM writes it, tokens only), `data` (filled mechanically: one table
@@ -5519,6 +5519,25 @@ into a finished report with a paid LLM API key and no agentic coding tool at all
   promotional adjectives, and §9's literal process-narrative ban strings) earns exactly
   one corrective retry, then hard-fails that block by name. A failed block is reported; it
   is never spliced in partially or silently dropped.
+- **Retiring a `TODO` block into a literal token (issue #180).** Not every fill-in site
+  stays free-hand prose forever. Section 2's closing "key architectural fact" paragraph
+  (`s2#5` in the old classification map) restated, in hand-written words, two figures
+  `report_tokens.py` already derives and already renders elsewhere on the page: the
+  export share and the 10am–2pm midday share that feed `S2_VERDICT`. A guard that
+  screened that hand-written prose for referent errors (`test_report_consistency.py`'s
+  `_assert_the_two_shares_stay_apart`, a blocklist over named time-of-day phrases) caught
+  the shape of error it was told about and missed every paraphrase it wasn't — "During
+  peak solar production, 60% …", "… when the sun is highest", "… at lunchtime" all read
+  clean. The fix was not a bigger blocklist: the paragraph is now the literal token
+  `{{S2_EXPORT_TIMING_NOTE}}`, and `report_tokens._s2_export_timing_note` builds it from
+  the exact same `_exported_share` / `_midday_export_share` calls `S2_VERDICT` reads, so
+  the verdict line and the paragraph cannot drift apart, and a referent error can only
+  enter through the token's own formula, not through an edit to `index.html`'s prose.
+  `report_blocks.py`'s `CLASSIFICATION` map lost the `s2#5` entry accordingly, since
+  `report_blocks.parse_todo_blocks()` no longer finds a `<!-- TODO -->` comment there to
+  classify. The blocklist guard stays in the test suite: it is the only protection left
+  for every OTHER hand-written restatement of a token-backed figure (§8's "more panels"
+  paragraph states the same two shares in prose today), and its own docstring says so.
 - **Caching and determinism.** Every prose block's accepted fragment is cached under
   `private/report_cache/`, keyed by a hash of the block id, a prompt-version constant, its
   exact scoped token values, its own TODO text, the provider, and the model id. Re-running

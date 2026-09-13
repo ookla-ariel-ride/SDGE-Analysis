@@ -3864,7 +3864,25 @@ def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
     cuts the way it should: "The exports concentrate in the 10am-2pm window:
     63% ..." names the measured window as squarely as the same words trailing
     the figure, and a time of day written ahead of the export share is the
-    referent error written backwards."""
+    referent error written backwards.
+
+    WHAT THIS GUARD CANNOT DO (issue #180). It is a blocklist over
+    _TIME_OF_DAY_WORDS, not a structural test: a paraphrase built from words
+    the list does not carry sails through untouched -- "During peak solar
+    production, 60% ...", "... and it goes out when the sun is highest", "...
+    and nearly all of it at lunchtime" all measured clean against the live
+    guard when #180 was filed, each a referent error in different words.
+    Widening the vocabulary only moves the boundary to the next unlisted
+    phrase; it does not close it. For §2's own paragraph this is no longer
+    the operative protection -- since #180, that paragraph is
+    report_tokens.S2_EXPORT_TIMING_NOTE rendered verbatim
+    (case_s2_key_architectural_fact_is_token_rendered pins the exact string),
+    so a referent error can only enter it by editing the token's own formula,
+    which every other case in this file that reads report_tokens continues to
+    guard directly. This guard remains what stands between a referent error
+    and every OTHER hand-written restatement of these two figures -- §8's
+    'more panels' paragraph today -- and for those, an unlisted paraphrase
+    still gets through undetected."""
     assert export_pct != midday_pct, (
         f"{where}: the export share and the 10am-2pm share of exports both round "
         f"to {export_pct}%, so this guard cannot tell which figure a percentage "
@@ -3917,10 +3935,14 @@ def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
 
 
 def case_s2_key_architectural_fact_matches_the_artifacts():
-    """issue #143: §2's closing .small line is hand-written, not templated
-    (report-template.html carries only a TODO there) -- lock its export share,
-    its 10am-2pm export share and its EV-charging night count to the artifacts
-    that measure them, and hold each percentage to its own referent."""
+    """issue #143 (and #180's independent leg): §2's closing .small line is
+    now report_tokens.S2_EXPORT_TIMING_NOTE rendered verbatim
+    (case_s2_key_architectural_fact_is_token_rendered pins that), but this
+    case still recomputes its three figures straight from the artifacts,
+    NOT by calling report_tokens (the same convention _expected_month_labels
+    and _midday_export_share_from_report_data already follow), so a bug
+    inside report_tokens.py's own formula fails here instead of being
+    reproduced by the pin that now checks against it."""
     m = re.search(r'<p class="small">That last split is the fact behind every recommendation'
                   r'.*?</p>', HTML, re.S)
     assert m, "§2's 'fact behind every recommendation' paragraph not found in index.html"
@@ -3944,6 +3966,82 @@ def case_s2_key_architectural_fact_matches_the_artifacts():
             f"{midday_pct}% of those exports in the 10am–2pm window (hourly_profile.csv, "
             f"report_data.json's seasonal hours and §2's own verdict line all agree), "
             f"and charging on {nights} of {eligible} nights (quiet_night_floor.json)")
+
+
+def case_s2_key_architectural_fact_is_token_rendered():
+    """issue #180: the referent-error rewrite an earlier draft of #143
+    introduced ("During peak solar production, 60% of what the array makes
+    leaves as exports.") passed every substring check in the case above AND
+    _referent_guard_rejects, because the guard only screens wording drawn
+    from _TIME_OF_DAY_WORDS and that sentence used none of it. Widening the
+    vocabulary only moves the boundary to the next unlisted phrase -- so
+    report-template.html's paragraph is no longer free-hand prose at all:
+    it is the literal token {{S2_EXPORT_TIMING_NOTE}}, and
+    report_tokens._s2_export_timing_note builds it from the exact same
+    _exported_share / _midday_export_share calls S2_VERDICT itself reads
+    (same function, same ctx -- not a second computation that happens to
+    agree), so the paragraph and the verdict line cannot drift apart and
+    a hand edit to index.html's WORDING, of any shape, breaks this
+    exact-string pin. That is a structural difference from the blocklist
+    below: _assert_the_two_shares_stay_apart only rejects a KNOWN shape of
+    referent error, while this pin rejects ANY change to the sentence,
+    known shape or not.
+
+    Proven against three paraphrases #180 filed and the blocklist accepts
+    (verified in the loop below by asserting _referent_guard_rejects is
+    None on each, i.e. the guard alone would have republished the defect):
+    the review's own example, and the issue's own two measured misses."""
+    rt = _report_tokens_module()
+    m = re.search(r'<p class="small">That last split is the fact behind every recommendation'
+                  r'.*?</p>', HTML, re.S)
+    assert m, "§2's 'fact behind every recommendation' paragraph not found in index.html"
+    para = m.group(0)
+    token_value = rt.resolve_token("S2_EXPORT_TIMING_NOTE")
+    expected = f'<p class="small">{token_value}</p>'
+    assert para == expected, (
+        f"§2's published paragraph no longer equals report_tokens.S2_EXPORT_TIMING_NOTE "
+        f"rendered verbatim -- published {para!r}, token says {expected!r}. If the "
+        "wording needs to change, change the token's formula in report_tokens.py and "
+        "let index.html follow it -- do not hand-edit the HTML")
+
+    export_pct = _export_share_pct()
+    lead = f"{export_pct}% of what the array makes leaves as exports."
+    assert lead in para, (
+        f"the probe below rewrites {lead!r}, which is no longer in the published "
+        "paragraph -- update the probe to the current lead sentence")
+    unlisted_paraphrases = (
+        ("the review's #143 example (prefixed referent error)",
+         f"During peak solar production, {export_pct}% of what the array makes "
+         "leaves as exports."),
+        ("issue #180's first measured miss",
+         f"{export_pct}% of what the array makes leaves as exports, and it goes "
+         "out when the sun is highest."),
+        ("issue #180's second measured miss",
+         f"{export_pct}% of what the array makes leaves as exports, and nearly "
+         "all of it at lunchtime."),
+    )
+    for label, replacement in unlisted_paraphrases:
+        rewritten = para.replace(lead, replacement)
+        # THE PIN'S PROOF: the paragraph this case requires (`expected`, above)
+        # is `para` unchanged, so any real rewrite of the lead sentence is
+        # automatically a paragraph the exact-match assertion above would
+        # reject -- that IS the fix, checked here by construction rather than
+        # by re-running the assertion a second time.
+        assert rewritten != para, f"{label}: the probe did not change the paragraph"
+        assert rewritten != expected, (
+            f"{label}: the rewrite equals the token-rendered original -- the exact-match "
+            "pin would NOT catch this, so it proves nothing about issue #180")
+        # THE BLOCKLIST GUARD'S GAP: the same rewrite sails past
+        # _referent_guard_rejects, which is the failure mode issue #180 records
+        # and the reason the exact-match pin above exists.
+        assert _referent_guard_rejects(rewritten) is None, (
+            f"{label} was expected to be a referent error the blocklist guard misses "
+            f"(that is the defect issue #180 records) -- it does not miss it: "
+            f"{_referent_guard_rejects(rewritten)}")
+    return (f"§2's paragraph equals report_tokens.S2_EXPORT_TIMING_NOTE verbatim, and "
+            f"the exact-match pin (unlike the blocklist guard) rejects all "
+            f"{len(unlisted_paraphrases)} of issue #180's unlisted paraphrases, which "
+            "the guard alone accepts")
 
 
 def case_s8_more_panels_timing_matches_the_artifacts():
@@ -7814,6 +7912,7 @@ CASES = [
     case_cleaning_gain_is_not_determined_when_two_entries_share_the_date,
     case_weather_regression_paragraph_matches_the_artifact,
     case_s2_key_architectural_fact_matches_the_artifacts,
+    case_s2_key_architectural_fact_is_token_rendered,
     case_s8_more_panels_timing_matches_the_artifacts,
     case_s8_export_value_is_published_as_a_bounded_range,
     case_s8_export_period_split_matches_the_profiles,
