@@ -64,11 +64,13 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 # artifact is stale without regenerating it. The gate stays the authority when you intend
 # to commit the regeneration — it leaves the rebuilt artifact in the tree, which --check
 # deliberately does not. Two cases where they can disagree, both real: (1) --check diffs
-# against data/ as it is ON DISK, `git diff` against the index, so uncommitted edits under
-# data/ split them (pass --baseline head to match the gate exactly); (2) --check gives each
-# generator its own sandbox seeded from the COMMITTED artifacts, so a chain where one
-# generator consumes another's freshly rewritten output is not reproduced — for a chain,
-# run the gate.
+# against data/ as it is ON DISK by default, `git diff` against the INDEX, so uncommitted
+# edits under data/ split them — pass --baseline index to match the gate exactly (it runs
+# `git write-tree` and diffs against that; `--baseline head` does NOT match, since HEAD
+# diverges from the index the moment something is staged but not committed); (2) --check
+# gives each generator its own sandbox seeded from the COMMITTED artifacts, so a chain
+# where one generator consumes another's freshly rewritten output is not reproduced —
+# for a chain, run the gate.
 
 # Bill artifacts (rerun after adding statements to private/1-raw-data/*-bills/):
 # parse_bills.py finds the repo root itself, so run it from anywhere. It regenerates the

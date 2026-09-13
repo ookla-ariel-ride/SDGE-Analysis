@@ -273,6 +273,97 @@ def case_a_real_generator_reports_a_real_diff_when_the_baseline_differs():
             "into a reported modification naming that key")
 
 
+@case
+def case_baseline_index_matches_the_section_9_gates_git_diff_semantics():
+    """The section 9 gate is `git diff --exit-code data/...` with no ref, which
+    compares the working tree against the INDEX. --baseline head compares
+    against HEAD instead -- a THIRD state whenever a regenerated artifact has
+    been `git add`ed but not committed (issue #158 AC4). Build a repo with
+    HEAD, the index and the working tree all holding different content for
+    the same artifact, and confirm --baseline index is the one that agrees
+    with what `git diff --exit-code` itself would report there."""
+    gen = GEN_WALKUP % {"out": "out.json", "payload": '{"v": "staged"}'}
+    head_content = json.dumps({"v": "head"}, indent=1) + "\n"
+    staged_content = json.dumps({"v": "staged"}, indent=1) + "\n"
+    worktree_content = json.dumps({"v": "worktree"}, indent=1) + "\n"
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": gen}, {"out.json": head_content})
+        (repo / "data" / "out.json").write_text(staged_content)
+        r = subprocess.run(["git", "-C", str(repo), "add", "data/out.json"],
+                           capture_output=True, text=True, env=env)
+        assert r.returncode == 0, r.stderr
+        (repo / "data" / "out.json").write_text(worktree_content)
+
+        gate = subprocess.run(["git", "-C", str(repo), "diff", "--exit-code",
+                               "--", "data/out.json"], capture_output=True, env=env)
+        assert gate.returncode == 1, (
+            "the gate itself must see the index and the working tree diverge here")
+
+        results = {label: DR.dry_run(repo / "analysis" / "g.py", baseline=label)
+                  for label in ("worktree", "head", "index")}
+        for label, rep in results.items():
+            assert rep.failure is None, (label, rep.failure)
+
+        # the generator always writes staged_content, so comparing it against
+        # each baseline's own content proves index -- and only index -- names
+        # data/out.json unchanged.
+        assert results["head"].would_change is True, "HEAD holds v=head, not v=staged"
+        assert results["worktree"].would_change is True, \
+            "the working tree holds v=worktree, not v=staged"
+        assert results["index"].would_change is False, (
+            "the index holds v=staged, exactly what the generator writes -- "
+            f"--baseline index must report no change: "
+            f"{[c.path for c in results['index'].changes]}")
+    return ("--baseline index diffs against `git write-tree`'s current index, "
+            "matching the section 9 gate's `git diff --exit-code` (working tree "
+            "vs index) exactly and distinctly from --baseline worktree (data/ on "
+            "disk) and --baseline head (the last commit)")
+
+
+@case
+def case_baseline_index_fails_closed_on_an_unmerged_index():
+    """git write-tree fails on an index carrying unmerged entries -- an
+    ordinary, reachable state (a conflicted merge or rebase left unresolved),
+    not a theoretical one. index_data_dir() must not swallow that failure:
+    --baseline index has to fail closed the same way every other git call in
+    this module does, and must not strand the sandbox it already built."""
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": "print('hi')\n"}, {"out.json": "{}\n"})
+        blob = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"],
+                              input="conflict\n", capture_output=True, text=True, env=env)
+        assert blob.returncode == 0, blob.stderr
+        sha = blob.stdout.strip()
+        # Stage the same path at stages 1 (base), 2 (ours) and 3 (theirs) --
+        # an unmerged entry, without going through an actual merge.
+        info = "".join(f"100644 {sha} {stage}\tdata/out.json\n" for stage in (1, 2, 3))
+        r = subprocess.run(["git", "-C", str(repo), "update-index", "--index-info"],
+                           input=info, capture_output=True, text=True, env=env)
+        assert r.returncode == 0, r.stderr
+        wt = subprocess.run(["git", "-C", str(repo), "write-tree"],
+                            capture_output=True, text=True, env=env)
+        assert wt.returncode != 0, "the fixture failed to produce an unmerged index"
+
+        tmpdir = pathlib.Path(tempfile.gettempdir())
+        before = set(tmpdir.glob(DR.SANDBOX_PREFIX + "*"))
+
+        try:
+            DR.dry_run(repo / "analysis" / "g.py", baseline="index")
+            raise AssertionError("write-tree's failure on an unmerged index was swallowed")
+        except DR.DryRunError as e:
+            assert "write-tree" in str(e), e
+
+        after = set(tmpdir.glob(DR.SANDBOX_PREFIX + "*"))
+        assert after == before, f"a sandbox was left stranded: {sorted(after - before)}"
+
+        code, out = _cli(repo / "analysis" / "g.py", "--baseline", "index", "--check")
+        assert code == 2, (code, out)
+    return ("an index with unmerged entries makes git write-tree fail, and "
+            "--baseline index reports that as a dry-run FAILURE (exit 2), never "
+            "'no changes', with no sandbox stranded on disk")
+
+
 # ---------------------------------------------------------------------------
 # AC: a run that did not really happen is a FAILURE, never "no changes".
 # ---------------------------------------------------------------------------
@@ -417,8 +508,20 @@ def case_the_sandbox_is_outside_the_repo_and_holds_no_path_back_into_private():
                     escapes.append(str(f.relative_to(p)))
             assert not escapes, f"sandbox symlinks resolve into the real private/: {escapes}"
             n_priv = sum(1 for f in priv.rglob("*") if f.is_file())
-            assert n_priv == sum(1 for f in (ROOT / "private").rglob("*") if f.is_file()), \
-                "the private/ copy does not hold the same number of files as the archive"
+            skip_names = {d.name for d in (ROOT / "private").iterdir()
+                         if d.is_dir() and d.name.startswith("verify")}
+            expected = sum(
+                1 for f in (ROOT / "private").rglob("*")
+                if f.is_file()
+                and f.relative_to(ROOT / "private").parts[0] not in skip_names)
+            assert n_priv == expected, (
+                "the private/ copy does not hold the same file count as the "
+                "archive minus its skipped top-level private/verify* "
+                f"directories {sorted(skip_names)}")
+            for skipped in skip_names:
+                assert not (priv / skipped).exists(), (
+                    f"private/{skipped} was copied into the sandbox -- it should "
+                    "be skipped (issue #158 AC2)")
             for name in DR.CWD_FIXTURES:
                 src = ROOT / "private" / "verify" / name
                 if src.is_file():
@@ -1091,6 +1194,44 @@ def case_a_generator_that_overwrites_a_cwd_fixture_cannot_reach_the_real_one():
     return ("a generator that opens usage.csv for writing in its CWD truncates the "
             "sandbox's own copy: the fixture under private/verify/ is unchanged and "
             "the overwrite is reported as a sandbox write")
+
+
+@case
+def case_a_generator_reading_the_nested_private_verify_copy_fails_closed():
+    """_copy_private() skips every top-level private/verify* directory (issue
+    #158 AC2): the only route a generator has to private/verify/ content
+    inside the sandbox is the three named CWD fixtures _copy_cwd_fixtures()
+    stages directly from the real private/verify/. A generator that goes
+    looking for some OTHER file nested under private/verify/ -- a path no
+    documented workflow reads inside a dry run -- must fail closed with the
+    missing path named, not silently see an empty directory and carry on
+    with wrong output."""
+    body = ("import pathlib\n"
+            "def _repo_root():\n"
+            "    p = pathlib.Path.cwd()\n"
+            "    while not ((p / 'analysis').is_dir() and (p / 'data').is_dir()):\n"
+            "        p = p.parent\n"
+            "    return p\n"
+            "p = _repo_root() / 'private' / 'verify' / 'nested_only.txt'\n"
+            "open(p).read()\n"
+            "(_repo_root() / 'data' / 'out.json').write_text('{}\\n')\n")
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": body}, {"out.json": "{}\n"})
+        verify = repo / "private" / "verify"
+        verify.mkdir(parents=True)
+        (verify / "nested_only.txt").write_text(
+            "only reachable through the real archive, never the sandbox copy\n")
+
+        rep = DR.dry_run(repo / "analysis" / "g.py")
+
+        assert rep.failure is not None, "expected a failure, got a clean dry run"
+        assert "nested_only.txt" in rep.failure, rep.failure
+        assert "FileNotFoundError" in rep.failure, rep.failure
+        assert rep.changes == [], rep.changes
+    return ("a generator reading a NESTED private/verify/ path (not one of the "
+            "three CWD fixtures) fails closed with a FileNotFoundError naming "
+            "the missing file, since _copy_private() skips private/verify* "
+            "entirely -- never a silent empty read")
 
 
 @case

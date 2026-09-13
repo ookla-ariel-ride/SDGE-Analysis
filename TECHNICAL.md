@@ -4587,17 +4587,36 @@ to it on its first probe. Neither idiom has any way to name the real repo, and
 backstop, so a malformed sandbox exits non-zero instead of quietly finding the real
 `data/`. `test_dry_run.py` exercises both idioms.
 
+**What this containment is, and is not (issue #151).** The argument above is PATH
+DERIVATION, not an OS-enforced boundary. The generator runs as an ordinary subprocess
+with the caller's own filesystem permissions, so it only holds for the two idioms this
+codebase actually uses; a generator that writes to an absolute path, or one built from an
+environment variable, is bound by neither and could write anywhere the user can write. The
+before/after hash of `data/` and stat-manifest of `private/` (below) exist to DETECT that,
+not to prevent it -- no container, `sandbox-exec`, or namespace stands between the
+generator and the rest of the filesystem. Owner decision (2026-09-04): document this limit
+rather than build the OS-enforced boundary that would close it. `dry_run.py` runs this
+repository's own generators as a development aid; it is not a sandbox for untrusted code
+and must never be described as one.
+
 **The sandbox.** A `mkdtemp` tree under the system temp dir, refused outright if it is
 entangled with the checkout. Tracked files are copied out (`git ls-files`), the generator
-itself is copied even when untracked (the report notes it), and the whole `private/`
-archive is copied, never symlinked: a symlink would be a writable path from the sandbox
-into the authoritative raw archive, where a stray write could truncate a bill PDF and a
-before/after manifest could only report the damage afterwards. `copytree(symlinks=False)`
-dereferences, so a checkout that stages bill PDFs as symlinks carries no route back out;
-the CWD fixtures (`usage.csv`, `samA.csv`, `samB.csv`) are copied from `private/verify/`
-for the same reason. `PYTHONPATH` is cleared so the real `analysis/` can never be
-imported, the run is bounded by `--timeout` (1800 s default), and disposal refuses any
-path that is not the prefixed temp sandbox this process created.
+itself is copied even when untracked (the report notes it), and the `private/` archive is
+copied, never symlinked, MINUS any top-level `private/verify*` directory (issue #158 AC2):
+a symlink would be a writable path from the sandbox into the authoritative raw archive,
+where a stray write could truncate a bill PDF and a before/after manifest could only report
+the damage afterwards, and `private/verify*` is skipped because no generator reads a
+NESTED copy of it inside the sandbox -- the documented workflow runs a generator with its
+CWD set to `private/verify/` and reads `usage.csv`/`samA.csv`/`samB.csv` as plain relative
+paths, which is exactly what the separate CWD-fixture staging (below) reproduces, straight
+from the real `private/verify/`, never through this nested copy. Measured on this
+project's primary checkout (2026-09-12, will differ on any other clone): skipping it cuts
+the copy from ~222 MB / ~6,135 files to about half that, since `private/verify-*` scratch
+trees from past ad hoc runs accumulate at the top level of `private/` and nothing removes
+them. `copytree(symlinks=False)` dereferences, so a checkout that stages bill PDFs as
+symlinks carries no route back out. `PYTHONPATH` is cleared so the real `analysis/` can
+never be imported, the run is bounded by `--timeout` (1800 s default), and disposal
+refuses any path that is not the prefixed temp sandbox this process created.
 
 **Stranded sandboxes, and why the sweep needs a lock.** `TemporaryDirectory` and the
 `finally` that disposes of this one both unwind only on an ordinary exit; a `SIGKILL`
@@ -4633,29 +4652,42 @@ state the sweep reads as "provably abandoned". The lock is held through the `rmt
 to the open file description: an orphaned generator outliving a killed parent keeps the
 sandbox looking in use, which is the crash shape the sweep exists to survive. A stale
 sandbox that cannot be removed is reported to stderr and left alone; it belongs to a prior
-run, so it must not fail the current one. The two comparison copies (`-baseline`/`-head`)
-can hold no marker of their own, since nothing keeps them open, so their liveness is
-unknowable and they are never standalone sweep candidates; the sweep reaches one only
-through an owning sandbox it has just claimed and removed, and `--keep-sandbox` renames
-them out of the prefix alongside the sandbox itself, so a kept tree keeps the baseline it
-was compared against instead of orphaning it. The same prefix/marker/sweep pattern guards
-the three test suites that stage the real archive: `test_scripts_runnable.py`
+run, so it must not fail the current one. The three comparison copies
+(`-baseline`/`-head`/`-index`) can hold no marker of their own, since nothing keeps them
+open, so their liveness is unknowable and they are never standalone sweep candidates; the
+sweep reaches one only through an owning sandbox it has just claimed and removed, and
+`--keep-sandbox` renames them out of the prefix alongside the sandbox itself, so a kept
+tree keeps the baseline it was compared against instead of orphaning it. The same
+prefix/marker/sweep pattern guards the three test suites that stage the real archive:
+`test_scripts_runnable.py`
 (`sdge-scripts-runnable-`), `test_parse_bills.py` (`sdge-parse-bills-`) and
 `test_stage_private_data.py` (`sdge-stage-private-`).
 
 **Why a "no changes" verdict can be believed.** Three things must hold before any diff is
 reported: the generator exited 0, the sandbox was populated (`analysis/` and `data/` both
-present and non-empty), and the run wrote something: every seeded file is backdated a day,
-so any write at all lands newer. An empty write set is a failure. That is the same
-mtime-not-content rule `test_scripts_runnable.py` uses, for the same reason: several
-generators legitimately reproduce the committed bytes, so content equality cannot separate
-"reproduced it" from "never opened it". The real `data/` is hashed before and after the
-run and `private/` stat-manifested before and after; either one changing is reported as a
-failure, not as a diff.
+present and non-empty), and the run left a TRACE -- it either wrote something (every seeded
+file is backdated a day, so any write at all lands newer) or DELETED something, visible
+only in the diff since a deleted file cannot be caught by mtime. A run with neither a write
+nor a removal is a failure; a deletion-only run is reported as that removal, since deleting
+an artifact is a real change, not rejected as a no-op. That mtime-not-content rule is the
+same one `test_scripts_runnable.py` uses, for the same reason: several generators
+legitimately reproduce the committed bytes, so content equality cannot separate "reproduced
+it" from "never opened it". The real `data/` is hashed before and after the run and
+`private/` stat-manifested before and after; either one changing is reported as a failure,
+not as a diff.
 
 **The diff.** The sandbox's `data/` against the baseline: `data/` as it stands on disk
-(`--baseline worktree`, the default) or as of HEAD (`--baseline head`, materialised with
-`git archive`). JSON is described by top-level keys added, removed and changed; CSV by
+(`--baseline worktree`, the default), as of HEAD (`--baseline head`, materialised with
+`git archive HEAD`), or as currently staged (`--baseline index`, materialised by running
+`git write-tree` and archiving the tree it returns). `write-tree` changes no ref, no index
+entry and no working-tree file, but it is not read-only end to end: it adds one loose,
+content-addressed object to `.git/objects` (skipped if that exact tree already exists),
+unreferenced the moment the command returns and eventually garbage-collected -- ordinary
+git-gc litter, not a change to the repo's tracked state, but a real write this module's
+"writes nothing into the repo" claim is about the tracked tree and `data/`, not
+`.git/objects`, and does not cover. An index with unmerged entries makes `write-tree` fail,
+which `dry_run.py` reports as a FAILURE rather than "no changes," same as any other git
+call in this module. JSON is described by top-level keys added, removed and changed; CSV by
 header change and by rows added or removed as a multiset; anything else by byte length.
 Added paths `.gitignore` would exclude are put to `git check-ignore` and dropped, so
 `parse_bills.py`'s publication lock is not reported as a new artifact. Generators that
@@ -4666,18 +4698,29 @@ way the §9 gate's `cmp` does.
 least one artifact would change; 2 the dry run itself failed, which is never reported as
 "no changes". `--check` is therefore the non-mutating counterpart of the §9 gate, which
 stays the authority when the regeneration is meant to be committed: the gate leaves the
-rebuilt artifact in the tree, and it diffs against the index where `--check` diffs against
-`data/` on disk (`--baseline head` matches the gate). Each generator also gets its own
-sandbox, seeded from the repo's own artifacts, so a chain where one generator consumes
-another's freshly rewritten output is not reproduced; run the gate for a chain.
+rebuilt artifact in the tree. The gate's own comparison (`git diff --exit-code data/...`,
+no ref) is the working tree against the INDEX, and `--baseline index` (issue #158 AC4) is
+the one baseline that matches it exactly -- `--baseline head` compares against HEAD
+instead, which diverges from the index the moment an artifact is `git add`ed but not yet
+committed, and `--baseline worktree` (the default) diverges from the index whenever the
+working tree holds `data/` content the index does not (an unstaged edit, or an edit made
+after staging -- staging alone, with no further edit, leaves the working tree and the
+index identical). Each generator also gets its own sandbox, seeded from the repo's own
+artifacts, so a chain where one generator consumes another's freshly rewritten output is
+not reproduced; run the gate for a chain.
 
-**Tests.** `test_dry_run.py` (25 cases), run by CI and counted by `check_coverage.sh`. Among
+**Tests.** `test_dry_run.py` (48 cases), run by CI and counted by `check_coverage.sh`. Among
 them: the real `data/` is byte-identical after a dry run; both repo-root idioms land their
 writes in the sandbox; a generator that writes nothing, one that crashes, and an empty or
-rootless sandbox are each a failure rather than "no changes"; a generator writing under
-`private/` or over a CWD fixture cannot reach the real one; a sandbox escape is caught by the
-`data/` hash guard; disposal refuses any path that is not its own sandbox; and `--check` exits
-0 when a generator reproduces its artifact.
+rootless sandbox are each a failure rather than "no changes"; a generator that only deletes
+an artifact is reported as a removal, not a no-op; a generator writing under `private/` or
+over a CWD fixture cannot reach the real one; a generator reading a NESTED
+`private/verify/` path fails closed naming the missing file; a sandbox escape is caught by
+the `data/` hash guard; disposal refuses any path that is not its own sandbox; `--check`
+exits 0 when a generator reproduces its artifact; `--baseline index` agrees with `git
+diff --exit-code` against a repo where HEAD, the index and the working tree each hold
+different content for the same artifact; and an index with unmerged entries makes
+`--baseline index` fail closed (exit 2) with no sandbox left stranded.
 
 ### 3.31 `analysis/marginal_capacity_value.py` — what one more kW of panels is worth (`data/marginal_capacity_value.json`)
 
