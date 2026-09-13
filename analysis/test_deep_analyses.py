@@ -22,6 +22,7 @@ exact here.
 SkipCase matches test_parse_bills.py's typed-exception convention (issue #44
 AC4); there is no skip path in this file since the fixture is fully synthetic.
 """
+import ast
 import datetime as dt
 import json
 import pathlib
@@ -48,20 +49,36 @@ class SkipCase(Exception):
 END = dt.date(2026, 7, 24)
 START = END - dt.timedelta(days=365)
 
-def _generator_constants():
-    """EXTRACT deep_analyses.py's own hardcoded WFNBC/PCIA/NBC/BSC/UDC5/CEA5
-    directly out of its source (executing the exact declaring line, not
-    hand-copying literals into this file) -- the same drift risk
+def _declaration(src, name):
+    """The single source line of deep_analyses.py that declares `name`.
+
+    Line-at-a-time, not a slice between two landmarks: the generator's rate
+    tables now sit beside a PLAN_RATES map that references them all (issue
+    #278), so a slice wide enough to catch one table catches statements that
+    do not stand alone."""
+    start = src.index(f"\n{name}=") + 1
+    return src[start:src.index("\n", start)]
+
+
+def _exec_declarations(names, src=None):
+    """deep_analyses.py's own declarations of `names`, executed out of its
+    source rather than hand-copied into this file -- the same drift risk
     test_battery_backup_sims.py's identical pattern documents: the generator
     declares its own rate table, not analysis/rates.py's canonical one, and a
     hand-copied number silently stops matching the moment the generator's own
     constant changes."""
-    src = (ANALYSIS / "deep_analyses.py").read_text()
-    line = src[src.index("WFNBC=0.00591"):src.index("\nout={}")]
+    if src is None:
+        src = (ANALYSIS / "deep_analyses.py").read_text()
     ns = {}
-    exec(line, ns)
-    udc5_cea5 = src[src.index('UDC5={"S":'):src.index("\ndef rates(")]
-    exec(udc5_cea5, ns)
+    for name in names:
+        exec(_declaration(src, name), ns)
+    return ns
+
+
+def _generator_constants():
+    """deep_analyses.py's own WFNBC/PCIA/UDC5/CEA5. The WFNBC line declares
+    PCIA, NBC and BSC beside it, so one exec carries all four."""
+    ns = _exec_declarations(("WFNBC", "UDC5", "CEA5"))
     return ns["WFNBC"], ns["PCIA"], ns["UDC5"], ns["CEA5"]
 
 
@@ -73,27 +90,53 @@ def _house_base_kw():
     source for the same reason _generator_constants() does: a hand-copied
     0.4 here would keep the hand computations below agreeing with a generator
     whose base had moved, for the wrong reason."""
-    src = (ANALYSIS / "deep_analyses.py").read_text()
-    line = src[src.index("EV_SESSION_HOUSE_BASE_KW="):]
-    line = line[:line.index("\n")]
-    ns = {}
-    exec(line, ns)
+    ns = _exec_declarations(("EV_SESSION_HOUSE_BASE_KW",))
     return float(ns["EV_SESSION_HOUSE_BASE_KW"])
 
 
 _HOUSE_BASE_KW = _house_base_kw()
 
 
-def _rate_sop(season):
-    return _UDC5[season]["sop"] + _WFNBC + _PCIA + _CEA5[season]["sop"]
+def _plan_rates_binding():
+    """{plan: [UDC name, CEA name]} out of deep_analyses.py's PLAN_RATES.
+
+    ast for the mapping, since its values are the NAMES of the tables declared
+    above it rather than literals. Reading the binding rather than repeating it
+    here is what keeps this file from hand-copying which table belongs to which
+    plan (issue #278)."""
+    src = (ANALYSIS / "deep_analyses.py").read_text()
+    for node in ast.walk(ast.parse(src)):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "PLAN_RATES"):
+            return {ast.literal_eval(k): [e.id for e in v.elts]
+                    for k, v in zip(node.value.keys, node.value.values)}
+    raise AssertionError("deep_analyses.py no longer declares PLAN_RATES at module "
+                         "level, so this file cannot read its plan table")
 
 
-def _rate_off(season):
-    return _UDC5[season]["off"] + _WFNBC + _PCIA + _CEA5[season]["off"]
+def _plan_tables(plan):
+    """The (UDC, CEA) pair PLAN_RATES binds to `plan`, as values: the binding,
+    then the declarations the two names point at."""
+    bound = _plan_rates_binding()
+    assert plan in bound, (plan, sorted(bound))
+    ns = _exec_declarations(bound[plan])
+    return tuple(ns[name] for name in bound[plan])
 
 
-def _rate_on(season):
-    return _UDC5[season]["on"] + _WFNBC + _PCIA + _CEA5[season]["on"]
+def _rate_sop(season, udc=None, cea=None):
+    udc, cea = (_UDC5 if udc is None else udc), (_CEA5 if cea is None else cea)
+    return udc[season]["sop"] + _WFNBC + _PCIA + cea[season]["sop"]
+
+
+def _rate_off(season, udc=None, cea=None):
+    udc, cea = (_UDC5 if udc is None else udc), (_CEA5 if cea is None else cea)
+    return udc[season]["off"] + _WFNBC + _PCIA + cea[season]["off"]
+
+
+def _rate_on(season, udc=None, cea=None):
+    udc, cea = (_UDC5 if udc is None else udc), (_CEA5 if cea is None else cea)
+    return udc[season]["on"] + _WFNBC + _PCIA + cea[season]["on"]
 
 
 def _season(month):
@@ -138,12 +181,15 @@ def _shape(h):
     return BASE_KWH
 
 
-def _session_expectations():
+def _session_expectations(udc=None, cea=None):
     """Hand computation of ONE nightly session, per season: EV-only energy
     (house base off every slot), its cost at each slot's own rate, its cost if
     it had all charged super-off-peak, and the raw draw priced the way the
     unfixed generator did (issue #229). Also the two session-scalar mispricings
-    the crossing fixture exists to expose."""
+    the crossing fixture exists to expose.
+
+    `udc`/`cea` price the session on a plan other than the fixture's default
+    (issue #278: the block prices household.plan, not a hardcoded EV-TOU-5)."""
     base_slot = _HOUSE_BASE_KW * 0.25
     on_ev = (EV_ON_KWH - base_slot) * EV_ON_SLOTS       # 7.6 kWh
     off_ev = (EV_OFF_KWH - base_slot) * EV_OFF_SLOTS    # 23.2 kWh
@@ -152,7 +198,9 @@ def _session_expectations():
     n = EV_ON_SLOTS + EV_OFF_SLOTS
     out = {}
     for s in ("S", "W"):
-        on, off, sop = _rate_on(s), _rate_off(s), _rate_sop(s)
+        on = _rate_on(s, udc, cea)
+        off = _rate_off(s, udc, cea)
+        sop = _rate_sop(s, udc, cea)
         out[s] = {
             "kwh": kwh, "raw_kwh": raw,
             "actual": on_ev * on + off_ev * off,            # per-interval, EV-only
@@ -210,10 +258,19 @@ like -- a different shape from a key holding another household's letter, and
 deep_analyses.py has to refuse both."""
 
 
-def _household_yaml(has_ev):
+SYNTH_PLAN = "EV-TOU-5"
+"""The rate plan the fixture's intake declares unless a case names another.
+
+deep_analyses.py's wildcard block reads household.plan (issue #278), so every
+root needs one; EV-TOU-5 keeps the default fixture on the plan the rest of this
+file's hand computations price (_UDC5/_CEA5)."""
+
+
+def _household_yaml(has_ev, plan=SYNTH_PLAN):
     """test_scripts_runnable.SYNTH_HOUSEHOLD as an EV or a genuinely EV-FREE
-    intake. deep_analyses.py imports behavior_rebuild for the intake flag
-    household.has_ev (issue #147), so every root now needs one.
+    intake, on rate plan `plan`. deep_analyses.py imports behavior_rebuild for
+    the intake flag household.has_ev (issue #147) and reads household.plan for
+    the wildcard block (issue #278), so every root now needs both.
 
     has_ev False sets household.has_ev false AND removes the charger block:
     behavior_rebuild.py refuses a declared charger beside a false flag. Every
@@ -224,29 +281,33 @@ def _household_yaml(has_ev):
     assert "household:\n  pto_date: 2019-12-01\n" in hh, \
         "SYNTH_HOUSEHOLD's household block no longer has the shape this edit expects"
     assert "charger:\n  kw: 11.5\n" in hh, "SYNTH_HOUSEHOLD no longer declares a charger"
-    if has_ev:
-        return hh
-    hh = hh.replace("household:\n  pto_date: 2019-12-01\n",
-                    "household:\n  pto_date: 2019-12-01\n  has_ev: false\n")
-    hh = hh.replace("charger:\n  kw: 11.5\n", "")
-    assert "has_ev: false" in hh and "charger:" not in hh, hh
+    assert "plan:" not in hh, \
+        "SYNTH_HOUSEHOLD now declares a plan of its own; this edit would add a second"
+    if not has_ev:
+        hh = hh.replace("household:\n  pto_date: 2019-12-01\n",
+                        "household:\n  pto_date: 2019-12-01\n  has_ev: false\n")
+        hh = hh.replace("charger:\n  kw: 11.5\n", "")
+        assert "has_ev: false" in hh and "charger:" not in hh, hh
+    hh = hh.replace("household:\n", f'household:\n  plan: "{plan}"\n')
+    assert f'plan: "{plan}"' in hh, hh
     return hh
 
 
 def _stage(tmp, src_text=None, has_ev=True, free_fix_scenario=FREE_FIX_EV,
-           where="current-run"):
+           where="current-run", plan=SYNTH_PLAN):
     """Build one throwaway root deep_analyses.py can run in.
 
     `src_text` substitutes a PATCHED copy of the generator's own source (used
     below to perturb the rate tables it declares); None stages the committed
-    file byte-for-byte. `has_ev` is THIS root's intake; `free_fix_scenario` is
-    what the dispatch artifact says about the household IT came from; `where`
-    puts that artifact in the CWD (the current-run copy, which wins), in data/
-    (the committed fallback), or in both."""
+    file byte-for-byte. `has_ev` is THIS root's intake, `plan` its declared
+    rate plan; `free_fix_scenario` is what the dispatch artifact says about the
+    household IT came from; `where` puts that artifact in the CWD (the
+    current-run copy, which wins), in data/ (the committed fallback), or in
+    both."""
     (tmp / "analysis").mkdir()
     (tmp / "data").mkdir()          # so _repo_root() resolves tmp as root
     (tmp / "private").mkdir()
-    (tmp / "private" / "household.yaml").write_text(_household_yaml(has_ev))
+    (tmp / "private" / "household.yaml").write_text(_household_yaml(has_ev, plan))
     for mod in ("rates.py", "household.py", "behavior_rebuild.py"):
         shutil.copy(ANALYSIS / mod, tmp / mod)
     (tmp / "deep_analyses.py").write_text(
@@ -271,11 +332,11 @@ def _run(tmp):
                           capture_output=True, text=True, timeout=300)
 
 
-def _run_generator(src_text=None):
+def _run_generator(src_text=None, plan=SYNTH_PLAN):
     """Run the REAL deep_analyses.py end to end on the synthetic house and
     return the deep_results.json it wrote."""
     with tempfile.TemporaryDirectory() as td:
-        tmp = _stage(pathlib.Path(td), src_text=src_text)
+        tmp = _stage(pathlib.Path(td), src_text=src_text, plan=plan)
         r = _run(tmp)
         assert r.returncode == 0, f"deep_analyses.py failed: {r.stderr[-2000:]}"
         return json.loads((tmp / "deep_results.json").read_text())
@@ -481,7 +542,8 @@ def case_wasted_vs_perfect_prices_the_same_ev_only_energy_on_both_sides():
 # Every field the artifact publishes is classified below. An unclassified key
 # fails the case, so a NEW dollar figure cannot be added without saying which
 # rate table it answers to.
-#   usd_ev5  -- priced off the script's UDC5/CEA5 (EV-TOU-5) table
+#   usd_ev5  -- priced off the script's UDC5/CEA5 table, the PLAN_RATES row for
+#               this fixture's own household.plan (SYNTH_PLAN, EV-TOU-5)
 #   usd_drp  -- priced off its UDCP/CEAP (TOU-DR-P) table
 #   physical -- kW, kWh, counts and days: no rate anywhere in them
 #   fixed    -- dollars, but not priced from either table (the Monte Carlo
@@ -512,27 +574,30 @@ FIELD_KINDS = {
 
 _MONEY_KEY = re.compile(r"cost|usd|price|dollar|blend|\$", re.I)
 
-# (label, the source slice whose tables get scaled, the kind that must move)
-_TABLES = (("EV-TOU-5", ('UDC5={"S":', "\ndef rates("), ("UDC5", "CEA5"), "usd_ev5"),
-           ("TOU-DR-P", ('UDCP={"S":', 'UDC5={"S":'), ("UDCP", "CEAP"), "usd_drp"))
+# (label, the tables that get scaled, the kind that must move)
+_TABLES = (("EV-TOU-5", ("UDC5", "CEA5"), "usd_ev5"),
+           ("TOU-DR-P", ("UDCP", "CEAP"), "usd_drp"))
 
 
-def _source_with_scaled_table(start, end, names, factor):
-    """deep_analyses.py's source with one of its declared rate tables scaled.
+def _source_with_scaled_table(names, factor):
+    """deep_analyses.py's source with the named declared rate tables scaled.
 
-    The tables are re-emitted from the values the generator itself declares
-    (exec'd out of its own source, never hand-copied), so this keeps working
-    when a rate changes."""
+    Each table's own declaring LINE is rewritten in place, so the PLAN_RATES
+    map that binds the tables to plan names (issue #278) survives untouched
+    and keeps pointing at the scaled objects. The tables are re-emitted from
+    the values the generator itself declares (exec'd out of its own source,
+    never hand-copied), so this keeps working when a rate changes."""
     src = (ANALYSIS / "deep_analyses.py").read_text()
-    block = src[src.index(start):src.index(end)]
-    ns = {}
-    exec(block, ns)
-    scaled = "\n".join(
-        "{}={!r}".format(name, {s: {p: v * factor for p, v in cells.items()}
-                                for s, cells in ns[name].items()})
-        for name in names) + "\n"
-    assert src.count(block) == 1, "rate-table slice is not unique in the source"
-    return src.replace(block, scaled)
+    for name in names:
+        line = _declaration(src, name)
+        ns = {}
+        exec(line, ns)
+        scaled = "{}={!r}".format(
+            name, {s: {p: v * factor for p, v in cells.items()}
+                   for s, cells in ns[name].items()})
+        assert src.count(line) == 1, f"{name}'s declaration is not unique in the source"
+        src = src.replace(line, scaled)
+    return src
 
 
 def case_no_published_dollar_figure_survives_a_change_to_its_rate_table():
@@ -555,8 +620,8 @@ def case_no_published_dollar_figure_survives_a_change_to_its_rate_table():
         f"{sorted(FIELD_KINDS['phantom'])}")
 
     moved = 0
-    for label, (start, end), names, kind in _TABLES:
-        got = _run_generator(_source_with_scaled_table(start, end, names, 2.0))
+    for label, names, kind in _TABLES:
+        got = _run_generator(_source_with_scaled_table(names, 2.0))
         for block, fields in FIELD_KINDS.items():
             for field, this_kind in fields.items():
                 a, b = base[block][field], got[block][field]
@@ -576,6 +641,220 @@ def case_no_published_dollar_figure_survives_a_change_to_its_rate_table():
     return (f"every dollar figure deep_results.json publishes ({moved} across two "
             "tariffs) moves when its own rate table moves, and the phantom block "
             "publishes no dollar figure at all")
+
+
+# ---------------------------------------------------------------------------
+# Issue #278: the wildcard block prices THIS household's plan.
+#
+# The block used to build itself from two hardcoded rate tables and emit keys
+# for EV-TOU-5 and TOU-DR-P only, whatever household.plan said. On this
+# household it happened to name the right plan; on any other one section 0's
+# card and section 9's heading were left with a block that never priced the
+# plan, and report_tokens refuses by name rather than publish a comparison the
+# artifact does not support -- so the household could not generate a report at
+# all.
+#
+# The published key text is a CONTRACT between this generator and
+# report_tokens._wildcard_totals, so it is asserted here as literal strings
+# (the same way the structural check above does) rather than rebuilt from the
+# generator's own constants: a test that reassembles the convention from the
+# source it is checking cannot see the convention change.
+# ---------------------------------------------------------------------------
+WILDCARD_BATTERY = "PW3"
+WILDCARD_EVENT_PLAN = "TOU-DR-P"
+WILDCARD_EVENT_KEY = f"{WILDCARD_EVENT_PLAN} + {WILDCARD_BATTERY} (15 events dodged)"
+WILDCARD_NO_BATTERY_KEY = f"{WILDCARD_EVENT_PLAN} no battery (events hit)"
+# every plan the block's own table prices, so the cases below drive the whole
+# table rather than the one alternative that happens to be handy
+WILDCARD_PRICED_PLANS = ("EV-TOU-5", "EV-TOU-2", "TOU-ELEC", WILDCARD_EVENT_PLAN)
+WILDCARD_UNPRICED_PLAN = "TOU-DR2"   # a two-period plan: no super-off-peak rate to read
+
+
+def case_the_wildcard_block_prices_this_households_own_plan():
+    """issue #278: household.plan is the plan the wildcard block prices.
+
+    Three properties, none of which a renamed key satisfies:
+      * the household's own key names household.plan, and its TOTAL moves with
+        that plan -- a block that relabelled one EV-TOU-5 workup would give the
+        same dollars under three different plan names;
+      * the RIVAL side does not move with it: the event plan is priced from its
+        own table, so both TOU-DR-P totals are identical across households;
+      * every key parses under report_tokens' convention, which is the reader
+        that refuses the block when it does not.
+
+    A household already ON the event plan gets the question the other way
+    round: the block prices its plan against every other plan its table
+    carries, so section 9's heading still has a rival to name.
+    """
+    own_totals = {}
+    for plan in WILDCARD_PRICED_PLANS:
+        wild = _run_generator(plan=plan)["wildcard"]
+        rivals = [p for p in WILDCARD_PRICED_PLANS if p != plan] \
+            if plan == WILDCARD_EVENT_PLAN else [WILDCARD_EVENT_PLAN]
+        expected = {WILDCARD_EVENT_KEY, WILDCARD_NO_BATTERY_KEY} | {
+            f"{p} + {WILDCARD_BATTERY}" for p in rivals + [plan]
+            if p != WILDCARD_EVENT_PLAN}
+        assert set(wild) == expected, (
+            f"a household on {plan} got a wildcard block keyed {sorted(wild)}; "
+            f"expected {sorted(expected)}")
+
+        parsed = {k: RT._wildcard_key(k) for k in wild}
+        assert all(parsed.values()), (plan, parsed)
+        priced = {}
+        for key, (name, configuration, _note) in parsed.items():
+            assert configuration not in priced.setdefault(name, {}), (plan, parsed)
+            priced[name][configuration] = wild[key]
+        assert plan in priced and WILDCARD_BATTERY in priced[plan], (
+            f"a household on {plan} got a wildcard block that never prices "
+            f"{plan} with the battery: {sorted(wild)}")
+        assert set(priced) == set(rivals) | {plan}, (plan, sorted(priced))
+        for name in priced:
+            assert WILDCARD_BATTERY in priced[name], (
+                f"{name} carries no battery entry, which report_tokens refuses: "
+                f"{sorted(wild)}")
+        own_totals[plan] = priced[plan][WILDCARD_BATTERY]
+
+        # the rival side is priced from the event plan's own table, so it is the
+        # same two figures whatever plan the household is on
+        assert wild[WILDCARD_NO_BATTERY_KEY] == _run_generator()["wildcard"][
+            WILDCARD_NO_BATTERY_KEY], (
+            f"the event plan's no-battery total moved when the household moved to "
+            f"{plan}; the rival is priced from its own table")
+
+    distinct = sorted(set(own_totals.values()))
+    assert len(distinct) == len(own_totals), (
+        "two plans were priced to the same total, so the block is relabelling one "
+        f"workup rather than pricing each plan: {own_totals}")
+
+    # a plan the block's table cannot price is refused BY NAME, not priced as
+    # something else and not written half-way
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _stage(pathlib.Path(td), plan=WILDCARD_UNPRICED_PLAN)
+        r = _run(tmp)
+        assert r.returncode != 0, (
+            f"deep_analyses.py priced a household on {WILDCARD_UNPRICED_PLAN}, a plan "
+            f"its rate table does not carry:\n{r.stdout[-2000:]}")
+        assert WILDCARD_UNPRICED_PLAN in r.stderr and "household.plan" in r.stderr, r.stderr
+        assert not (tmp / "deep_results.json").exists(), (
+            "deep_results.json was written despite the unpriceable-plan abort")
+
+    return ("deep_analyses.py's wildcard block prices household.plan: "
+            + ", ".join(f"{p} ${t:,}" for p, t in own_totals.items())
+            + f", each against the {WILDCARD_EVENT_PLAN} workup, every key parsing "
+            "under report_tokens' convention, and an unpriceable plan refused by name")
+
+
+def _analyze_tables():
+    """analyze.py's three published rate tables (UDC, EECC, CEA) as literals.
+
+    READ, NEVER IMPORTED: analyze.py loads usage.csv at import, so importing it
+    would tie this case to the private archive and skip in CI, which is where
+    the two files most need to be compared. ast.literal_eval reaches the values
+    without running a line of it.
+    """
+    src = (ANALYSIS / "analyze.py").read_text()
+    out = {}
+    for node in ast.walk(ast.parse(src)):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in ("UDC", "EECC", "CEA")):
+            out[node.targets[0].id] = ast.literal_eval(node.value)
+    missing = {"UDC", "EECC", "CEA"} - set(out)
+    assert not missing, (
+        f"analyze.py no longer declares {sorted(missing)} as a literal at module "
+        "level, so this pin cannot read the rows deep_analyses.py copies")
+    return out
+
+
+# Which analyze.py table each half of a PLAN_RATES pair is a copy of, in the
+# order the pair declares them. The first half is the utility's delivery total
+# and the second is the CCA's generation, so the pin below compares each against
+# the table it came from -- and never against EECC, SDG&E's own BUNDLED
+# generation, which analyze.py carries for a different comparison and whose
+# numbers differ (EV-TOU-5 summer on-peak 0.47019 there against the CCA's
+# 0.51684).
+_PLAN_RATE_SOURCES = ("UDC", "CEA")
+
+
+def case_the_wildcard_rate_table_is_analyze_pys_published_rows():
+    """The comment beside PLAN_RATES claims every row is analyze.py's own. Pin
+    it, because nothing else can: two files each declaring the same published
+    tariff by hand is exactly the drift CLAUDE.md section 9's one-rates-module
+    rule exists to prevent, and the labelled cross-plan exception that lets
+    both exist does not make them agree.
+
+    The EECC cross-check is a POSITIVE CONTROL for the comparison itself: it
+    proves this case can tell the CCA generation row from SDG&E's bundled one,
+    so a pass means the rows match the table the comment names rather than any
+    table with the right shape.
+    """
+    tables = _analyze_tables()
+    plans = sorted(_plan_rates_binding())
+    for plan in plans:
+        ours = _plan_tables(plan)
+        assert len(ours) == len(_PLAN_RATE_SOURCES), (plan, ours)
+        for source, row in zip(_PLAN_RATE_SOURCES, ours):
+            theirs = tables[source].get(plan)
+            assert theirs is not None, (
+                f"analyze.py's {source} table does not carry {plan}, which "
+                f"deep_analyses.py's PLAN_RATES prices; the comment beside PLAN_RATES "
+                "claims every row is analyze.py's")
+            assert row == theirs, (
+                f"deep_analyses.py's {source} row for {plan} is not analyze.py's "
+                f"{source}[{plan!r}]: {row} against {theirs}. The two files declare the "
+                "same published tariff by hand, so a row that moves in one and not the "
+                "other publishes two prices for one plan.")
+    ev5_cca, ev5_bundled = tables["CEA"]["EV-TOU-5"], tables["EECC"]["EV-TOU-5"]
+    assert ev5_cca != ev5_bundled, (
+        "analyze.py's CEA and EECC rows for EV-TOU-5 are identical, so this case cannot "
+        "tell the CCA generation table from SDG&E's bundled one and its match above "
+        "proves nothing about which table deep_analyses.py copied")
+    assert _plan_tables("EV-TOU-5")[1] == ev5_cca, (
+        "deep_analyses.py's CEA5 is not the CCA generation row")
+    return (f"every UDC and CEA row in deep_analyses.py's PLAN_RATES is analyze.py's own "
+            f"({len(plans)} plans: {', '.join(plans)}), and the pin distinguishes the "
+            f"CCA generation row from SDG&E's bundled EECC row "
+            f"({ev5_cca['S']['on']} against {ev5_bundled['S']['on']} on EV-TOU-5 summer "
+            "on-peak)")
+
+
+def case_the_ev_session_workpaper_prices_this_households_plan():
+    """issue #278, same defect one block along: the EV-session workpaper priced
+    every household's sessions off the hardcoded EV-TOU-5 table.
+
+    cost_total, cost_if_all_sop and wasted_vs_perfect are all EV-only energy at
+    a rate, and the rate came from UDC5/CEA5 whatever household.plan said. On a
+    household on EV-TOU-2 or TOU-ELEC every one of the three was a figure from
+    another plan's tariff, and nothing in the artifact said so.
+
+    Driven against a hand computation on each plan's OWN PLAN_RATES row, read
+    out of the generator's source. The three plans differ in their UDC row
+    (0.31711/0.30372/0.25317 on- and off-peak, 0.04114/0.16275/0.25317
+    super-off-peak), so a block still pricing one hardcoded table lands on one
+    set of figures for all three and fails both the oracle and the last
+    assertion.
+    """
+    n_summer, n_winter = _season_days()
+    got = {}
+    for plan in ("EV-TOU-5", "EV-TOU-2", "TOU-ELEC"):
+        udc, cea = _plan_tables(plan)
+        X = _session_expectations(udc, cea)
+        ev = _run_generator(plan=plan)["ev_sessions"]
+        exp_actual = n_summer * X["S"]["actual"] + n_winter * X["W"]["actual"]
+        exp_sop = n_summer * X["S"]["sop"] + n_winter * X["W"]["sop"]
+        assert abs(ev["cost_total"] - round(exp_actual)) <= 2, (
+            f"a household on {plan} got cost_total {ev['cost_total']}, not the "
+            f"{exp_actual:.2f} its own plan row prices")
+        assert abs(ev["cost_if_all_sop"] - round(exp_sop)) <= 1, (plan, ev, exp_sop)
+        assert abs(ev["wasted_vs_perfect"] - round(exp_actual - exp_sop)) <= 2, (
+            plan, ev, exp_actual - exp_sop)
+        got[plan] = (ev["cost_total"], ev["cost_if_all_sop"], ev["wasted_vs_perfect"])
+    assert len(set(got.values())) == len(got), (
+        "the three plans were priced to one set of figures, so the block is still "
+        f"reading one hardcoded rate table: {got}")
+    return ("the EV-session workpaper prices household.plan's own rate row: "
+            + "; ".join(f"{plan} cost_total ${t[0]:,} wasted ${t[2]:,}"
+                        for plan, t in got.items()))
 
 
 def case_dispatch_artifact_from_the_other_household_is_refused():
@@ -667,6 +946,9 @@ def case_dispatch_artifact_from_the_other_household_is_refused():
 CASES = [case_deep_analyses_end_to_end_matches_hand_and_oracle_computations,
          case_wasted_vs_perfect_prices_the_same_ev_only_energy_on_both_sides,
          case_no_published_dollar_figure_survives_a_change_to_its_rate_table,
+         case_the_wildcard_block_prices_this_households_own_plan,
+         case_the_wildcard_rate_table_is_analyze_pys_published_rows,
+         case_the_ev_session_workpaper_prices_this_households_plan,
          case_dispatch_artifact_from_the_other_household_is_refused]
 
 
