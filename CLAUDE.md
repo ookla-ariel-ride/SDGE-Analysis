@@ -1,13 +1,15 @@
 # CLAUDE.md — operating rules for the home-energy analysis
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this
-repository. It focuses the work and encodes the mistakes we already made so they aren't
-repeated. Read it before touching this project. It applies to Claude Cowork, Claude Code,
-and any agent.
+This file is the shared canonical project guidance for every agent, including Claude Cowork,
+Claude Code, and Codex. Root AGENTS.md directs agents here. It focuses the work and encodes
+the mistakes we already made so they aren't repeated. Read it before touching this project.
+Current user instructions take precedence.
 
 ## Commands
 
 ```bash
+# Start from the repository root. Only the private/verify block below changes directory.
+
 # One-time setup on any fresh clone — enable the secret/PII pre-commit gate:
 git config core.hooksPath .githooks       # requires: brew install gitleaks
 
@@ -47,6 +49,7 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 #  extended_findings.py fails closed: it computes all battery figures from the dispatch
 #  engine, asserts them against battery_dispatch_policies.json, validates every required
 #  section, and writes the artifact atomically — a partial/failed run changes nothing.)
+cd ../..                                            # return to the repository root
 
 # Dry run — ask "what would this generator change?" without changing it. It copies the
 # tracked tree into a temp sandbox outside the repo and COPIES private/ in (never a
@@ -56,7 +59,7 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 # different path and can lie), then diffs the sandbox's data/ against the repo's — JSON by
 # changed top-level key, CSV by changed rows. It writes nothing into the repo, and a crash,
 # a no-op, a rootless sandbox or a sandbox that cannot be deleted afterwards is reported
-# as a FAILURE (exit 2), never as "no changes". Run from anywhere:
+# as a FAILURE (exit 2), never as "no changes". Run these commands from the repo root:
 ./.venv/bin/python analysis/dry_run.py analysis/parse_bills.py            # report only
 ./.venv/bin/python analysis/dry_run.py analysis/parse_bills.py --check    # exit 1 if stale
 ./.venv/bin/python analysis/test_dry_run.py                               # its guard suite
@@ -68,17 +71,18 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 # edits under data/ split them — pass --baseline index to match the gate exactly (it runs
 # `git write-tree` and diffs against that; `--baseline head` does NOT match, since HEAD
 # diverges from the index the moment something is staged but not committed); (2) --check
-# gives each generator its own sandbox seeded from the COMMITTED artifacts, so a chain
-# where one generator consumes another's freshly rewritten output is not reproduced —
-# for a chain, run the gate.
+# gives each generator its own sandbox seeded from the working-tree copies of tracked
+# files (plus non-ignored untracked data/ files for the default worktree baseline).
+# Outputs from one sandbox do not feed the next generator's sandbox — for a chain,
+# run the gate.
 
 # Bill artifacts (rerun after adding statements to private/1-raw-data/*-bills/):
-# parse_bills.py finds the repo root itself, so run it from anywhere. It regenerates the
+# parse_bills.py finds the repo root itself. From the repo root, it regenerates the
 # two legacy summaries as its own reproduction gate — they must not change:
-../../.venv/bin/python parse_bills.py && git diff --exit-code ../../data/electric_bill_summary.csv \
-    ../../data/gas_bill_summary.csv ../../data/bill_periods_electric.csv \
-    ../../data/bill_periods_gas.csv ../../data/bill_tou_detail.csv \
-    ../../data/bill_gas_detail.csv ../../data/bill_corpus_boundary.json
+./.venv/bin/python analysis/parse_bills.py && git diff --exit-code data/electric_bill_summary.csv \
+    data/gas_bill_summary.csv data/bill_periods_electric.csv \
+    data/bill_periods_gas.csv data/bill_tou_detail.csv \
+    data/bill_gas_detail.csv data/bill_corpus_boundary.json
 # The seventh artifact, data/bill_corpus_boundary.json, states which statements the six
 # above actually contain. The published corpus is DERIVED, not declared: a statement PDF
 # with no row in the billing-history export is outside it and appears in no artifact,
@@ -99,11 +103,12 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 # private/1-raw-data/caiso_raw/ when present, otherwise rebuilds exactly from the
 # committed data/caiso_hourly_intensity.csv; it fails closed if coverage would shrink
 # and writes both artifacts atomically (TECHNICAL.md §3.15):
-../../.venv/bin/python carbon_fullyear.py && git diff --exit-code ../../data/carbon_fullyear_results.json ../../data/caiso_hourly_intensity.csv
+(cd private/verify && ../../.venv/bin/python ../../analysis/carbon_fullyear.py) && git diff --exit-code data/carbon_fullyear_results.json data/caiso_hourly_intensity.csv
 
 # Coverage gate (local, needs the private archive like the §9 gate): every test
 # suite plus every generator on the real inputs must keep the analysis package
-# at >= 90% statement coverage (currently ~93%):
+# at >= 90% statement coverage. Install coverage separately from the repo root:
+./.venv/bin/pip install coverage
 ./analysis/check_coverage.sh                          # fails under 90%
 # One run at a time: a second run refuses while the first holds its lock. `ps` will
 # not show it reliably; ask `cat .check_coverage.holder` (pid, start, data file) or
@@ -136,6 +141,10 @@ list what data would settle it.
   CEA relief credit applied — the bill showed it doesn't.)
 - Distinguish MODELED from ACTUAL everywhere. Label modeled figures as modeled; anchor absolute
   dollars to actual bills. (Our interval model overstated the annual bill ~40%.)
+- Battery model results do not establish equipment ownership. The owner states that no
+  battery is installed (2026-10-22). Check the project inventory and existing household
+  evidence before asking the owner again. Treat proposed battery configurations as modeled
+  unless newer direct evidence records an installation.
 - When two methods disagree, reconcile them explicitly and quantify the gap before drawing a
   conclusion. Do not paper over a discrepancy.
 - Prefer differences to levels: savings/paybacks computed as deltas between two model runs are
@@ -216,9 +225,16 @@ pin (or a line in that case's unpinnable list) in the same change (issue #216).
   needs removing, stop and ask; do not act on that judgment call unsupervised.
 
 ## 5. Commits actually land — verify, don't assume.
+The parent commits and pushes small logical milestones after independent checks, frequently
+as work progresses. Do not hold all changes for one final commit. Subagents never commit.
+Use the authorization already given in the current task; do not ask again at each milestone.
+A branch push does not authorize publication or merge. All §9 publication gates still apply
+before a report ships or a merge occurs, together with applicable tests, coverage, and review.
+
 The GitHub web UI can silently fail if you navigate away before the commit POST completes.
 After every commit, re-read the repo/commit list and confirm it's there before moving on.
 (We had four commits silently fail this way.)
+After a push, check that the remote branch contains the intended commit.
 
 ## 6. Browser hygiene.
 - Single clicks; double-clicks caused a duplicate-request error on the bill PDF endpoint.
@@ -232,8 +248,11 @@ Tesla, SMA, Fronius, PVOutput, etc. all expose production feeds. Describe the DA
 (gross hourly/daily production, system size, metering config), not one vendor's menu.
 
 ## 8. Scope discipline, and use subagents wherever possible.
-Ask clarifying questions before large work. Keep a task list. Verify programmatically. Do not
-expand scope silently.
+Ask clarifying questions when an unresolved ambiguity affects scope or correctness. Use
+existing project evidence and current user instructions first. Keep a task list. Verify
+programmatically. Do not expand scope silently.
+Close an issue only when evidence addresses every acceptance criterion. State any unmet
+criterion or limit before claiming completion.
 
 **Default to delegating.** Any unit of work that can be stated as a self-contained brief —
 an analysis, a script, a fix, an audit, a doc pass — should go to a subagent rather than be
@@ -504,7 +523,7 @@ render an absent or non-string review name rather than publishing "reviewed with
 "reviewed with False".
 
 ## Repo map (what's public vs private)
-- Public: `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `CLAUDE.md`,
+- Public: `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `AGENTS.md`, `CLAUDE.md`,
   `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md`, `household.example.yaml` (placeholders
   only — the filled copy lives at `private/household.yaml`), `requirements.txt`,
   `data/` (de-identified), `analysis/` (scripts), `research/`.
