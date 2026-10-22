@@ -120,6 +120,54 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(quality['series_used_for_production'],'historical_main_mirror')
         self.assertEqual(result['characterization']['gen_w'][0]['samples'],288)
 
+    def test_extra_manifest_source_with_nonhash_private_sentinel_preserves_output(self):
+        self.manifest['files']['synthetic_private_identifier']={'sha256':'synthetic private provenance text'}
+        self.change_manifest()
+        output=self.root/'published.json'
+        output.write_text('existing output')
+        with self.assertRaises(SystemExit):
+            study.main(['--input-dir',str(self.root),'--output',str(output)])
+        self.assertEqual(output.read_text(),'existing output')
+
+    def test_manifest_files_needs_a_dict_with_every_declared_source(self):
+        sources=self.manifest['files']
+        for invalid in [None,[],list(sources),{key:value for key,value in sources.items() if key!='meter'}]:
+            with self.subTest(kind=type(invalid).__name__):
+                self.manifest['files']=invalid
+                self.change_manifest()
+                output=self.root/'published.json'
+                output.write_text('existing output')
+                with self.assertRaises(SystemExit):
+                    study.main(['--input-dir',str(self.root),'--output',str(output)])
+                self.assertEqual(output.read_text(),'existing output')
+
+    def test_known_source_nonhash_or_wrong_hash_preserves_output(self):
+        for bad_hash in ['synthetic private provenance text','0'*64]:
+            with self.subTest(hash_kind='nonhash' if len(bad_hash)!=64 else 'wrong_hash'):
+                self.manifest['files']['meter']['sha256']=bad_hash
+                self.change_manifest()
+                output=self.root/'published.json'
+                output.write_text('existing output')
+                with self.assertRaises(SystemExit):
+                    study.main(['--input-dir',str(self.root),'--output',str(output)])
+                self.assertEqual(output.read_text(),'existing output')
+
+    def test_private_provenance_is_allowed_but_only_checked_hashes_are_public(self):
+        sentinel='synthetic private provenance text'
+        self.manifest['private_provenance']={'synthetic_private_note':sentinel}
+        self.manifest['files']['meter']['private_note']=sentinel
+        self.change_manifest()
+        output=self.root/'published.json'
+        study.main(['--input-dir',str(self.root),'--output',str(output)])
+        text=output.read_text()
+        hashes=json.loads(text)['study']['input_sha256']
+        self.assertEqual(set(hashes),{'meter','mirror','eagle','generation','weather'})
+        for name in ['meter','mirror','eagle','generation','weather']:
+            self.assertEqual(hashes[name],hashlib.sha256((self.root/f'{name}.csv').read_bytes()).hexdigest())
+        self.assertNotIn(sentinel,text)
+        self.assertNotIn('synthetic_private_note',text)
+        self.assertNotIn('private_note',text)
+
     def test_hash_mismatch_fails_before_output_change(self):
         output=self.root/'published.json'
         output.write_text('original')

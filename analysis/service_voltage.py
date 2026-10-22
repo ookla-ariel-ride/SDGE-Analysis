@@ -135,6 +135,8 @@ def load_snapshot(input_dir):
         if any(bound.tz_convert(TZ) != bound.tz_convert(TZ).normalize() for bound in [start,end]):
             raise ValueError('snapshot bounds must be complete local calendar dates')
         files = manifest['files']
+        if not isinstance(files,dict) or set(files) != set(SPECS):
+            raise ValueError('snapshot sources must exactly match the declared schema')
         result = {}
         for kind in SPECS:
             meta = files[kind]
@@ -585,7 +587,7 @@ def build_study(input_dir):
         'study':{'first_local_date':start.tz_convert(TZ).date().isoformat(),
                  'last_local_date':(end-pd.Timedelta(seconds=1)).tz_convert(TZ).date().isoformat(),
                  'timezone':TZ,'snapshot_manifest_sha256':hashlib.sha256(manifest_bytes).hexdigest(),
-                 'input_sha256':{kind:meta['sha256'] for kind,meta in manifest['files'].items()},
+                 'input_sha256':{kind:manifest['files'][kind]['sha256'] for kind in SPECS},
                  'private_raw_only':True,'generator_reads_live_database':False},
         'service_voltage_reference':{'nominal_v':[120,240],'range_a_leg_v':[114,126],
                                      'range_a_line_v':[228,252],'bounds_inclusive':True,
