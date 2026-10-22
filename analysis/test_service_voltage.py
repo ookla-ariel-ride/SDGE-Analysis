@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -83,6 +84,70 @@ class InputTests(unittest.TestCase):
         (self.root/'manifest.json').write_text(json.dumps({'schema_version':99}))
         with self.assertRaises(ValueError):
             study.load_snapshot(self.root)
+
+
+class TimestampUnitTests(unittest.TestCase):
+    def test_source_grid_validation_accepts_equivalent_parser_resolutions(self):
+        # pandas parsing is pure. Force only its storage unit to exercise the
+        # pandas 3 inference change on older pandas; parse every instant for real.
+        parse=pd.to_datetime
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            snapshot(root)
+            for unit in ['ns','us','ms','s']:
+                def parse_at_unit(*args,**kwargs):
+                    return parse(*args,**kwargs).as_unit(unit)
+                for kind in ['meter','mirror','eagle','generation','weather']:
+                    with self.subTest(unit=unit,source=kind):
+                        with patch.object(study.pd,'to_datetime',side_effect=parse_at_unit):
+                            got=study.read_source(root/f'{kind}.csv',kind)
+                        self.assertEqual(len(got),{'meter':288,'mirror':288,'eagle':1440,'generation':288,'weather':24}[kind])
+                        if kind=='generation':
+                            self.assertTrue((got.src_ts==got.ts).all())
+
+    def test_coverage_and_gaps_are_seconds_for_every_datetime_unit(self):
+        times=pd.to_datetime(['2026-01-01T08:00Z','2026-01-01T08:05Z','2026-01-01T08:15Z'],utc=True)
+        make_range=pd.date_range
+        for unit in ['ns','us','ms','s']:
+            def range_at_unit(*args,**kwargs):
+                return make_range(*args,**kwargs).as_unit(unit)
+            with self.subTest(unit=unit):
+                data=pd.DataFrame({'ts':times.as_unit(unit),'v':[120.,120.,120.]})
+                # Exercise the expected grid's storage unit as well as the input.
+                with patch.object(study.pd,'date_range',side_effect=range_at_unit):
+                    got=study.coverage(data,pd.Timestamp('2026-01-01T08:00Z'),pd.Timestamp('2026-01-01T08:20Z'),300,['v'])
+                self.assertEqual(got['possible_slots'],4)
+                self.assertEqual(got['occupied_slots'],3)
+                self.assertEqual(got['represented_seconds_estimate'],900)
+                self.assertEqual(got['missing_seconds'],300)
+                self.assertEqual(got['max_gap_seconds'],600)
+                self.assertEqual(got['interval_seconds']['p50'],450)
+                self.assertEqual(got['gaps_above_1_5_cadence'],1)
+
+    def test_source_grid_still_rejects_real_offsets_at_every_precision(self):
+        cases=['2026-01-01T00:00:01Z','2026-01-01T00:00:00.001Z',
+               '2026-01-01T00:00:00.000001Z','2026-01-01T00:00:00.000000001Z']
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            for timestamp in cases:
+                with self.subTest(timestamp=timestamp):
+                    meter=root/'meter.csv'
+                    meter.write_text('ts,line_v,leg1_v,leg2_v,leg1_a,leg2_a,freq\n'+f'{timestamp},240,120,120,0,0,60\n')
+                    with self.assertRaises(ValueError):study.read_source(meter,'meter')
+                    generation=root/'generation.csv'
+                    generation.write_text('ts,src_ts,gen_w,con_w\n'+f'2026-01-01T00:05:00Z,{timestamp},1000,1500\n')
+                    with self.assertRaises(ValueError):study.read_source(generation,'generation')
+
+    def test_future_source_timestamp_and_nanosecond_bounds_still_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'generation.csv'
+            path.write_text('ts,src_ts,gen_w,con_w\n2026-01-01T00:00:00Z,2026-01-01T00:05:00Z,1000,1500\n')
+            with self.assertRaises(ValueError):study.read_source(path,'generation')
+        data=frame(['2026-01-01T08:00Z'],v=[120.])
+        for start,end in [('2026-01-01T08:00:00.000000001Z','2026-01-01T08:05Z'),
+                          ('2026-01-01T08:00Z','2026-01-01T08:05:00.000000001Z')]:
+            with self.subTest(start=start,end=end),self.assertRaises(ValueError):
+                study.coverage(data,pd.Timestamp(start),pd.Timestamp(end),300,['v'])
 
 
 class SnapshotTests(unittest.TestCase):

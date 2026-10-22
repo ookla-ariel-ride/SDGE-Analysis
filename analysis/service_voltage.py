@@ -92,10 +92,11 @@ def read_source(path, kind):
     if data.ts.duplicated().any() or not data.ts.is_monotonic_increasing:
         raise ValueError(f'{kind}: duplicate or unsorted timestamps')
     cadence = 3600 if kind == 'weather' else 60 if kind == 'eagle' else 300
-    if len(data) and np.any(data.ts.astype('int64') % (cadence * 10**9)):
+    # pandas 3 infers datetime units; integer grid checks always use nanoseconds.
+    if len(data) and np.any(data.ts.dt.as_unit('ns').astype('int64') % (cadence * 10**9)):
         raise ValueError(f'{kind}: timestamps are not on the source grid')
     if kind == 'generation':
-        if np.any(data.src_ts.astype('int64') % (300 * 10**9)) or (data.src_ts > data.ts).any():
+        if np.any(data.src_ts.dt.as_unit('ns').astype('int64') % (300 * 10**9)) or (data.src_ts > data.ts).any():
             raise ValueError('generation: invalid upstream timestamp')
     if kind == 'mirror':
         flag = data.voltage_semantics_valid
@@ -187,7 +188,7 @@ def coverage(data, start, end, cadence, required):
     valid = data.loc[data[required].notna().all(axis=1) & (data.ts >= start) & (data.ts < end), 'ts']
     expected = pd.date_range(start, end, freq=f'{cadence}s', inclusive='left')
     occupied = pd.DatetimeIndex(valid).intersection(expected)
-    gaps = np.diff(occupied.astype('int64')) / 1e9
+    gaps = np.diff(occupied.as_unit('ns').astype('int64')) / 1e9
     elapsed = (end - start).total_seconds()
     # Interval weights, including the final sample only until end, never across gaps.
     represented = sum(min(cadence, (end - ts).total_seconds()) for ts in occupied)
