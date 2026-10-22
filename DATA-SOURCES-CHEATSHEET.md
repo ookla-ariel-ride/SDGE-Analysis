@@ -141,7 +141,9 @@ these as resolved by declaration, which is a different outcome from failing to r
 - **The answer is a document** in gitignored `private/1-raw-data/`: `electric_interval_csv`,
   `electric_bill_pdfs`, `gas_bill_pdfs`, `gas_interval_csv`, `plan_comparison_capture`,
   `cca_rate_schedule`, `rate_table_pdfs`, `solar_hourly_consumption_export`,
-  `solar_daily_production_export`, `ev_charge_stats`, `wall_charger_export`.
+  `solar_daily_production_export`, `ev_charge_stats`, `wall_charger_export`,
+  `high_cadence_consumption_export`, `high_cadence_measurement_metadata`,
+  `high_cadence_controlled_test_log`.
 - **The answer is a source or a research finding** recorded in the report and its
   methodology: `tou_windows_source`, `baseline_allowance_source`, `rate_history_source`,
   `weather_temps_source`, `precip_source`, `grid_co2_source`, `reliability_reports`,
@@ -988,6 +990,53 @@ where: "The repo or path running the poller, where it is not this one. Null wher
 privacy: private-only
 privacy_note: "A filesystem path or repo name on the operator's own machine, which can carry a username or a directory layout. It describes the setup rather than the energy data, and no analysis script reads it."
 ```
+
+## E5. High-cadence consumption study 📥🔒 (optional; study prerequisites only)
+
+These document fields apply only to a requested high-cadence feasibility study. They add no
+mandatory answers to `household.yaml`. Record document receipt in gitignored
+`private/intake-status.md`. Keep the documents in gitignored
+`private/1-raw-data/high-cadence/`. See the [prospective protocol](research/high-cadence-feasibility.md)
+for the collection and controlled-test prerequisites.
+
+**Privacy decision: private-only.** Raw readings and test records can reveal household
+activity. Their timestamps, device or circuit identifiers, load labels, and occupancy notes
+stay private, including when a load label is anonymous. Credentials stay only in gitignored
+`.env`; omit credentials from all three documents.
+
+```yaml
+id: high_cadence_consumption_export
+question: "Can you supply the stored high-cadence consumption series for the requested feasibility study?"
+type: file
+required_if: "A high-cadence feasibility study is requested; not required for the standard household analysis."
+where: "Export a stable copy from the existing meter or monitoring archive to private/1-raw-data/high-cadence/. Include timezone-aware measurement and collection times where available, power in watts, net-versus-gross meaning, missing values, and quality or freshness flags. Include the qualifying continuous 60-day window before performance analysis. Stored EAGLE demand history is a candidate; a Sense stream is not mandatory. Keep all raw readings and identifiers private."
+privacy: private-only
+```
+
+```yaml
+id: high_cadence_measurement_metadata
+question: "Can you supply the measurement, clock, freshness, and export metadata for that series and its solar reference?"
+type: file
+required_if: "A high-cadence feasibility study is requested; not required for the standard household analysis."
+where: "Keep a manifest in private/1-raw-data/high-cadence/ with source quantity, units, physical sensing point, sign convention, timezone, device and collector clocks, timestamp meaning, source freshness evidence, nominal sampling period, measured gaps, meter accuracy limits, and solar alignment. Record export bounds, query or method, code/schema revisions, row counts, quality masks, and file hashes. Keep device/account identifiers and locations private; credentials go only in gitignored .env. A collector timestamp alone does not establish a fresh device sample."
+privacy: private-only
+```
+
+```yaml
+id: high_cadence_controlled_test_log
+question: "Can you supply independent timestamped on/off ground truth for at least three known loads, including small steps?"
+type: file
+required_if: "A high-cadence feasibility study is requested; not required for the standard household analysis."
+where: "Keep the log and independent meter records in private/1-raw-data/high-cadence/. Record anonymous load labels, timezone-aware on/off times, clock uncertainty, measured watts and reference-meter accuracy, repetitions, calibration versus blinded held-out cycles, solar conditions, and concurrent loads. Include steps at or below the proposed 300 W limit and smaller steps to bound minimum detection. Use ordinary appliance controls and correctly rated metering; no owner electrical work is needed. Software appliance detections are not independent ground truth."
+privacy: private-only
+```
+
+The path-less declarations record where these answers live. The household-value scanner
+does not read their contents or prove raw-document privacy. Public outputs may contain only
+script-produced, de-identified aggregates: cadence/gap summaries and pooled detection scores.
+Exclude raw timestamps, event sequences, identifiers, per-load activity traces, and occupancy
+notes. Check the proposed public output for activity inference before publication; aggregation
+alone does not make a detailed event trace safe.
 
 ## F. Gas usage 📥🔒 (if you have gas)
 
