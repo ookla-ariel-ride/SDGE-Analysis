@@ -40,6 +40,9 @@
 #   private/1-raw-data/caiso_raw/             (optional) CAISO day-cache; without it
 #                                             carbon_fullyear.py rebuilds exactly from
 #                                             the committed data/caiso_hourly_intensity.csv
+#   private/1-raw-data/service-telemetry/    (when present) manifest and five frozen CSVs;
+#                                             required by service_voltage.py, not by other
+#                                             studies. Export helpers and secrets stay out.
 #   private/verify/usage.csv, samA.csv, samB.csv  the sandbox copies the verify flow
 #                                             expects (samA=partial year, samB=full year)
 #
@@ -2525,6 +2528,38 @@ if [ -d "$SRC/private/1-raw-data/caiso_raw" ] && \
   STAGE_CAISO=1
 fi
 
+# Telemetry is optional for unrelated studies, but a present snapshot must be
+# complete and consist of ordinary, singly-named inputs. Fixed names keep the
+# private export helper, .env, and unrelated files out of every copy. The model
+# checks manifest schema, row counts, hashes, and CSV content at generation.
+STAGE_SERVICE_TELEMETRY=0
+_SERVICE_TELEMETRY_FILES="manifest.json meter.csv mirror.csv eagle.csv generation.csv weather.csv"
+_telemetry="$SRC/private/1-raw-data/service-telemetry"
+if [ -e "$_telemetry" ] || [ -L "$_telemetry" ]; then
+  STAGE_SERVICE_TELEMETRY=1
+  for _dir in "$SRC/private" "$SRC/private/1-raw-data" "$_telemetry"; do
+    if [ -L "$_dir" ] || [ ! -d "$_dir" ]; then
+      _refuse "the service-telemetry source path is not an ordinary directory" \
+        "source:      $_dir" \
+        "expected:    real directories, without symbolic links"
+    fi
+  done
+  for _file in $_SERVICE_TELEMETRY_FILES; do
+    _input="$_telemetry/$_file"
+    if [ -L "$_input" ] || [ ! -f "$_input" ]; then
+      _refuse "a service-telemetry source input is missing or unsafe" \
+        "source:      $_input" \
+        "expected:    all six fixed snapshot inputs as ordinary files"
+    fi
+    if ! _shared=$(find "$_input" -type f -links +1 -print); then
+      _refuse "a service-telemetry source link count could not be read" \
+        "source:      $_input" "expected:    a readable, singly-named file"
+    fi
+    [ -z "$_shared" ] || _refuse "a service-telemetry source input is a hard link" \
+      "source:      $_input" "expected:    a file with exactly one name"
+  done
+fi
+
 # ---------------------------------------------------------------------------
 # DESTINATION PATH GUARD (issue #184, adversarial review) -- the guard above
 # decides WHICH TREE may be written to; this one decides which PATHS INSIDE it
@@ -3080,6 +3115,7 @@ _check_dir_slot "$DST_REAL/private/verify"
 _scanned_subtrees="electric-bills"
 [ "$HAS_GAS" != True ] || _scanned_subtrees="$_scanned_subtrees gas-bills"
 [ "$STAGE_CAISO" != 1 ] || _scanned_subtrees="$_scanned_subtrees caiso_raw"
+[ "$STAGE_SERVICE_TELEMETRY" != 1 ] || _scanned_subtrees="$_scanned_subtrees service-telemetry"
 for _sub in $_scanned_subtrees; do
   _check_dir_slot "$DST_REAL/private/1-raw-data/$_sub"
   _reject_links_under "$DST_REAL/private/1-raw-data/$_sub"
@@ -3098,6 +3134,11 @@ for _srcfile in "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv \
   [ -e "$_srcfile" ] || continue
   _dst_leaves[${#_dst_leaves[@]}]="$DST_REAL/private/1-raw-data/$(basename -- "$_srcfile")"
 done
+if [ "$STAGE_SERVICE_TELEMETRY" = 1 ]; then
+  for _file in $_SERVICE_TELEMETRY_FILES; do
+    _dst_leaves[${#_dst_leaves[@]}]="$DST_REAL/private/1-raw-data/service-telemetry/$_file"
+  done
+fi
 for _leaf in "${_dst_leaves[@]}"; do
   _reject_link "$_leaf"
   _reject_special "$_leaf"
@@ -3112,6 +3153,23 @@ done
 for _sub in electric-bills gas-bills caiso_raw; do
   _collect_stale_under "$_sub"
 done
+# Only the six frozen inputs belong to this managed snapshot. A helper or
+# credential already at the destination is never adopted, copied, or removed.
+_telemetry_dst="$DST_REAL/private/1-raw-data/service-telemetry"
+if [ "$STAGE_SERVICE_TELEMETRY" != 1 ]; then
+  _collect_stale_under "service-telemetry"
+elif [ -d "$_telemetry_dst" ]; then
+  # Shell globs preserve whitespace/newlines and include dotfiles. No recursive
+  # walk is needed: a child directory is itself an unmanaged snapshot entry.
+  for _entry in "$_telemetry_dst"/* "$_telemetry_dst"/.[!.]* "$_telemetry_dst"/..?*; do
+    [ -e "$_entry" ] || [ -L "$_entry" ] || continue
+    _rel=${_entry#"$_telemetry_dst/"}
+    case "$_rel" in
+      manifest.json|meter.csv|mirror.csv|eagle.csv|generation.csv|weather.csv) ;;
+      *) _note_stale "private/1-raw-data/service-telemetry/$_rel" ;;
+    esac
+  done
+fi
 _collect_stale_glob "Electric_15_Minute_*.csv"
 _collect_stale_glob "enphase_sam8760_*.csv"
 if [ ${#_stale_paths[@]} -ne 0 ]; then
@@ -3550,6 +3608,15 @@ _copy_subtree_skipping_os_metadata() {   # $1 = subtree name under private/1-raw
   done < <(find "$src_dir" -mindepth 1 -print0)
 }
 
+_copy_service_telemetry() {   # $1 = fixed subtree name
+  local sub="$1" file
+  mkdir -- "$_STAGE_RAW/$sub" || _copy_failed "private/1-raw-data/$sub"
+  for file in $_SERVICE_TELEMETRY_FILES; do
+    cp -P -- "$SRC/private/1-raw-data/$sub/$file" "$_STAGE_RAW/$sub/$file" \
+      || _copy_failed "private/1-raw-data/$sub/$file"
+  done
+}
+
 # THE COPY PHASE. `|| _copy_failed` rather than `set -e`'s silent abort: the
 # handler removes the staging copy and says what the archive holds, which is
 # what it held.
@@ -3580,6 +3647,10 @@ cp "$SRC/private/1-raw-data/enphase_sam8760_2025.csv" "$_STAGE_VERIFY/samB.csv" 
 
 if [ "$STAGE_CAISO" = 1 ]; then
   _copy_subtree_skipping_os_metadata "caiso_raw"
+fi
+
+if [ "$STAGE_SERVICE_TELEMETRY" = 1 ]; then
+  _copy_service_telemetry "service-telemetry"
 fi
 
 # THE RENAME PHASE. Every copy has landed; from here each step moves a whole

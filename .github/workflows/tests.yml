@@ -89,6 +89,8 @@ jobs:
         run: python analysis/test_household.py
       - name: transactional set publication
         run: python analysis/test_publish.py
+      - name: service voltage frozen-input, physical, missing-evidence and boundary guards
+        run: python analysis/test_service_voltage.py
       - name: service headroom NEC arithmetic and DST guards
         run: python analysis/test_service_headroom.py
       # NOT a real-value scan. private/household.yaml is gitignored, so no
