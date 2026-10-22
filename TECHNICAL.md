@@ -2344,7 +2344,7 @@ point except the real REF_POWER_KW=11.5 kW anchor, where it was held at the cite
 let charge power drift alongside the named dimension between the reference and its
 immediate neighbors, contaminating the power-elasticity derivative with a second moving
 variable. `charge_kw` is therefore held at 5 kW at every power-sweep point. This is the
-right control because this household's actual battery never changes its own capacity or
+right control because the hypothetical reference battery keeps the same capacity and
 charge circuitry in this sweep (only the hypothetical discharge rating varies), so 5 kW
 isolates discharge power without inventing a rating for a hypothetical unit. Effect on the
 real data: the non-anchor power-sweep points' `save_usd` shift down a few cents each (less
@@ -4946,6 +4946,75 @@ against the committed real-year `meter_derived` column would reject any syntheti
 
 ---
 
+### 3.32 `analysis/portable_solar_storage.py` — exploratory portable PV and storage (`data/portable_solar_storage.json`)
+
+This study models prospective hardware. The household owns no battery. Every Powerwall
+case is hypothetical. The study uses the measured 2025-07-24 through 2026-07-23 meter
+window and frozen June 2026 rates. Hardware savings are bill differences from the
+post-free-fix baseline at those same rates. They exclude the separate free-behavior saving.
+Equipment, circuit, export-settlement, and legal evidence appears in
+[`research/sb868-portable-solar-storage.md`](research/sb868-portable-solar-storage.md).
+These exploratory results do not establish lawful grid-parallel operation or a purchase recommendation.
+
+**Inputs and physical method.** `load_inputs()` needs staged `usage.csv`, `samA.csv`,
+and `samB.csv` in its working directory, plus `private/household.yaml`. It uses
+`behavior_rebuild.load()` and `battery_dispatch_policies.free_fix_shift()` without a
+separate TOU calendar. Added PV uses §3.31's production derivation, DC nameplate,
+three-way tie-out, and independent monitoring reconciliation. Both DST transition days
+carry zero added PV. Every meter row represents 0.25 elapsed hours.
+
+`dispatch()` preserves gross import and export channels. It accounts separately for
+direct PV, source-specific charging, losses, continuous AC standby, curtailment, and DC
+state of charge (SOC). Controllers act in order on remaining flows. Batteries do not
+intentionally export. The optional shared AC cap includes added PV and every battery's
+discharge. This AC-coupled model does not capture DC production above the cap. The
+annual SOC vector iterates to a `1e-8` kWh tolerance; nonconvergence raises an error.
+
+Every bill uses `rates.bill_nem_monthly()`, including NBC on gross imports, PCIA,
+delivery, CEA generation, and fixed charges. Credited, zero-credit, and incremental
+zero-export cases use separate physical and billing accounts. Zero-credit removes
+compensation for incremental meter exports, including displaced rooftop exports.
+Zero-export curtails only new residual PV. These are disclosed counterfactual accounts;
+they do not establish legal settlement or prove perfect device export control.
+
+**Interpretation limits.** The schedule uses permitted solar surplus and super-off-peak
+grid charging, with off/on-peak discharge. It makes no optimality claim. The base reserve,
+round-trip efficiency, and standby values are assumptions, not measured product behavior.
+Interval data cannot resolve instantaneous simultaneous flows. Sequential controllers
+represent priority, not CT feedback or transient behavior. A delayed production proxy
+does not represent measured west-facing irradiance. Backup runtime assumes a constant
+load with no outage solar recharge. Installed quotes and household circuit capability
+remain unknown. Discounted price ceilings are screening values before unknown costs.
+
+**Reproduction and registration.** From the repository root, after private intake and
+meter/SAM staging:
+
+```bash
+cd private/verify
+test -f usage.csv && test -f samA.csv && test -f samB.csv
+../../.venv/bin/python ../../analysis/portable_solar_storage.py
+git diff --exit-code -- ../../data/portable_solar_storage.json
+```
+
+The generator atomically replaces only `data/portable_solar_storage.json`; it does not
+write interval traces. `test_scripts_runnable.py` registers it in `MANIFEST`, declares
+exclusive artifact ownership in `OWNS`, and places the real CLI in
+`NEEDS_PRIVATE_ARCHIVE`. The real-archive gate checks that it writes its artifact and
+reproduces the committed bytes. `check_coverage.sh` runs its suite and real generator
+without changing the 90% coverage floor or privacy exclusions.
+
+**Archive-free checks.** `analysis/test_portable_solar_storage.py` imports the module
+without private intake. It exercises the complete `build_study(...,
+include_references=False)` scenario matrix, marginal comparisons, physical dispatch,
+monthly rebilling, and economics on synthetic inputs. `VERIFIED_ELSEWHERE_IN_CI`
+names the matrix case and hand-computed reserve/loss/power and monthly NBC/credit cases.
+The census runs those cases in a fresh archive-free root. CI runs the full suite;
+real household loading, production reconciliation, and artifact byte reproduction
+remain local-only. The suite fails on missing sources rather than reporting success
+through an unconditional skip.
+
+---
+
 ## 4. Battery simulation methodology
 
 **Arbitrage dispatch (identical unconditional-charge policy in `battery_backup_sims.py`,
@@ -5333,17 +5402,18 @@ the second tier) is itself guarded
 `case_verified_elsewhere_mapping_is_real_and_wired_into_ci`), so this can't silently drift
 from the code:
 
-- **`CI_RUNNABLE` (15 generators)** — `behavior_rebuild.py`,
+- **`CI_RUNNABLE` (16 generators)** — `behavior_rebuild.py`,
   `battery_dispatch_policies.py`, `package_results.py`, `report_data.py`, `analyze.py`,
   `analyze_norelief.py`, `carbon_fullyear.py`, `tou_audit.py`, `rates_history.py`,
   `tou_spread.py`, `nem3_grandfathering.py`, `dsgs_vpp_backtest.py`,
-  `battery_sizing_curve.py`, `perfect_foresight_dispatch.py`, `tou_structure_stress.py`.
+  `battery_sizing_curve.py`, `perfect_foresight_dispatch.py`, `tou_structure_stress.py`,
+  `extra_results.py`.
   These run end to end in CI against a synthetic Green Button export shaped by
   `test_scripts_runnable.py`'s own fixture (a real household file only has to look like
   this: 96-slot/DST-adjusted days, an EV session signature, a solar shape). **CI verifies
   their main computational path directly**, with no skip path at all
   (`case_the_ci_tier_cannot_skip`).
-- **`NEEDS_PRIVATE_ARCHIVE` (17 generators)** need an input that shared fixture cannot
+- **`NEEDS_PRIVATE_ARCHIVE` (22 generators)** need an input that shared fixture cannot
   supply (a bill-PDF corpus, a SAM-8760 pair, a monitoring production history, or a
   fail-closed tie-out against a real-year-derived committed artifact that a synthetic run
   must legitimately fail). Before issue #44, CI's only exercise of these was
@@ -5359,7 +5429,7 @@ from the code:
   fresh archive-free root (the real `analysis/` + the real committed `data/`, no
   `private/` anywhere) and runs every claimed case there, failing if any of them skips.
   The count as of this commit:
-  - **8 of 17 are verified end to end in CI**, each by its own dedicated test file whose
+  - **9 of 22 have computational coverage in CI**, each by its own dedicated test file whose
     claimed case that mechanical check confirmed runs to a pass with no private archive
     present:
     - `service_headroom.py` (`test_service_headroom.py`, pre-existing).
@@ -5380,7 +5450,11 @@ from the code:
       (aggregate CAISO grid data with nothing household-specific in it, so no synthesis
       needed), with a promoted `battery_dispatch_policies.json` tie-out and an independent
       hand-computed baseline-CO2 check. Fault-injection tested.
-  - **9 of 17 are not verified end to end anywhere in CI today.** Per generator, what was
+    - `portable_solar_storage.py`: `build_study(..., include_references=False)` runs the
+      scenario matrix on synthetic inputs, with separate hand-computed physical and
+      monthly billing cases. Real household loading, production reconciliation, and
+      artifact byte reproduction remain local-only (§3.32).
+  - **13 of 22 lack this archive-free integration coverage.** Per generator, what was
     checked before concluding this:
     - `marginal_capacity_value.py` (issue #190) — **assessed, not attempted.** It needs
       both SAM 8760 exports and the raw Green Button file to derive the hourly production
@@ -5419,6 +5493,11 @@ from the code:
       qualitatively different fixture-building effort than a synthetic Green Button export
       or a promoted JSON artifact. **Believed disproportionate effort relative to this
       issue's scope; not attempted.**
+    - `quiet_night_floor.py`, `threeway_production_validation.py`,
+      `heat_pump_conversion.py`, and `all_electric_endgame.py` also sit in
+      `NEEDS_PRIVATE_ARCHIVE` without a `VERIFIED_ELSEWHERE_IN_CI` entry. They need
+      SAM/monitoring or gas inputs and their derived evidence. The portable study's
+      integration does not establish archive-free coverage for those generators.
 - **The real-archive byte-tie-out itself** (`case_generators_run_on_the_real_archive`:
   every `NEEDS_PRIVATE_ARCHIVE` and `CI_RUNNABLE` generator reproduces its committed
   artifact byte-for-byte against the actual private data) is **local-only**: CI runners

@@ -533,3 +533,35 @@ committed requirements.txt (pandas, numpy, pyyaml, pdfplumber, openpyxl, scipy โ
 added for issue #13's perfect-foresight LP solver, `scipy.optimize.linprog`/HiGHS). These
 encode the working developer setup;
 dropping them in a regeneration silently breaks the privacy gate and the reproduction path.
+
+## 14. Exploratory portable solar and storage study
+
+`analysis/portable_solar_storage.py` owns only `data/portable_solar_storage.json`.
+The household owns no battery; Powerwall and portable-storage cases are hypothetical.
+Hardware deltas use the post-free-fix baseline at frozen June 2026 rates. They exclude
+the free-behavior saving. See TECHNICAL.md ยง3.32 and
+[`research/sb868-portable-solar-storage.md`](research/sb868-portable-solar-storage.md)
+for methods, limitations, and equipment/legal evidence. These exploratory cases do not
+establish grid-parallel eligibility, circuit coverage, or a purchase recommendation.
+
+Run the synthetic suite from the repository root. It needs no private intake:
+
+```bash
+./.venv/bin/python analysis/test_portable_solar_storage.py
+```
+
+For real reproduction, first stage `private/household.yaml` and the meter/SAM inputs
+under `private/verify`. Keep all raw sources inside `private/`. From the repository root:
+
+```bash
+cd private/verify
+test -f usage.csv && test -f samA.csv && test -f samB.csv
+../../.venv/bin/python ../../analysis/portable_solar_storage.py
+git diff --exit-code -- ../../data/portable_solar_storage.json
+```
+
+The generator fails closed without staged inputs or production reconciliation.
+The census checks exclusive ownership and real-artifact reproduction. CI runs the
+synthetic study builder, physics, billing, and economics cases. Household input loading
+and artifact byte reproduction remain local-only. The coverage gate includes both
+the suite and the real generator; its 90% floor and privacy exclusions still apply.
