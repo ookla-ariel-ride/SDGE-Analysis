@@ -182,6 +182,7 @@ MANIFEST = {
     "quiet_night_floor.py": "generator",
     "threeway_production_validation.py": "generator",
     "marginal_capacity_value.py": "generator",
+    "portable_solar_storage.py": "generator",
     "heat_pump_conversion.py": "generator",
     "extra_results.py": "generator",
     "all_electric_endgame.py": "generator",
@@ -245,6 +246,7 @@ OWNS = {
     # writes directly into ROOT/data via its own repo_root() walk-up, same
     # convention as threeway_production_validation.py/quiet_night_floor.py
     "marginal_capacity_value.py":   [("data", "marginal_capacity_value.json")],
+    "portable_solar_storage.py":    [("data", "portable_solar_storage.json")],
     # writes directly into ROOT/data via its own repo_root() walk-up, same
     # convention as threeway_production_validation.py/quiet_night_floor.py
     "heat_pump_conversion.py":      [("data", "heat_pump_conversion.json")],
@@ -539,6 +541,11 @@ NEEDS_PRIVATE_ARCHIVE = {
                                    "meter_derived column it also ties out against day by "
                                    "day, so a synthetic year must diverge from that "
                                    "real-year artifact and trip it"),
+    "portable_solar_storage.py": ("the staged usage.csv and SAM 8760 pair (samA.csv/"
+                                   "samB.csv), plus the real-year production tie-out "
+                                   "and monitoring reconciliation inherited from "
+                                   "marginal_capacity_value.py; the shared synthetic "
+                                   "fixture cannot satisfy those evidence checks"),
 }
 
 # Generators listed above that nonetheless run END TO END IN CI -- just not
@@ -558,18 +565,15 @@ NEEDS_PRIVATE_ARCHIVE = {
 # and fails if any of them skips, specifically so this dict cannot silently
 # regress to asserting something false again.
 #
-# Only 7 of the 17 NEEDS_PRIVATE_ARCHIVE generators are covered this way today
-# (battery_plan_matrix.py added after its "genuinely cannot" claim was
+# Only generators in the mapping below have this archive-free coverage
+# (battery_plan_matrix.py was added after its "genuinely cannot" claim was
 # disproved by a working demonstration -- an independently computed
 # reference, not the generator's own committed real-year artifact, can
-# satisfy its fail-closed tie-outs for real). The other 10 (parse_bills.py,
-# bill_decomposition.py, irreducible_bill.py, carbon_dispatch_tradeoff.py,
-# cca_rate_extraction.py, cca_bundled_counterfactual.py,
-# uncertainty_propagation.py, gross_import_decomposition.py,
-# reprice_by_vintage.py, marginal_capacity_value.py) are NOT verified end to end anywhere in CI as of this
-# commit -- see TECHNICAL.md 6.7 for the honest per-generator accounting of
-# why each one is or is not yet covered, and which are believed tractable vs.
-# disproportionate.
+# satisfy its fail-closed tie-outs for real). The self-check below computes
+# the current covered/uncovered counts from the mappings, rather than relying
+# on a hand-maintained count here. See TECHNICAL.md 6.7 for the per-generator
+# accounting and the distinction between computational coverage and local-only
+# real-input loading/artifact reproduction.
 VERIFIED_ELSEWHERE_IN_CI = {
     "service_headroom.py": ("test_service_headroom.py",
                             ["case_build_runs_end_to_end_on_a_synthetic_house"]),
@@ -588,6 +592,12 @@ VERIFIED_ELSEWHERE_IN_CI = {
                                ["case_battery_plan_matrix_end_to_end_on_a_synthetic_house"]),
     "carbon_dispatch_tradeoff.py": ("test_carbon_dispatch_tradeoff.py",
                                     ["case_compute_runs_end_to_end_on_a_synthetic_house"]),
+    # Runs the real study builder and hand-computed dispatch/billing checks.
+    # Real-input loading and artifact byte reproduction remain local-only.
+    "portable_solar_storage.py": ("test_portable_solar_storage.py",
+                                 ["case_matrix_integrates_each_pair_and_keeps_free_behavior_out_of_hardware",
+                                  "case_storage_reserve_losses_and_charge_discharge_limits",
+                                  "case_monthly_rebill_crosses_credit_bucket_and_preserves_nbc"]),
 }
 
 # The fixture window is DERIVED from the pipeline's anchor date so re-pointing
