@@ -96,7 +96,7 @@ for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
          test_prose_rhythm test_stamp_report_version \
          test_generate_report test_quiet_night_floor test_heat_pump_conversion \
          test_stage_private_data test_extra_results test_all_electric_endgame \
-         test_marginal_capacity_value \
+         test_marginal_capacity_value test_portable_solar_storage \
          test_dry_run test_private_egress test_suite_runner; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "analysis/$t.py" >/dev/null
   echo "suite  $t"
@@ -115,7 +115,8 @@ for g in behavior_rebuild battery_dispatch_policies battery_plan_matrix \
          cca_rate_extraction cca_bundled_counterfactual battery_sizing_curve \
          perfect_foresight_dispatch tou_structure_stress gross_import_decomposition \
          reprice_by_vintage quiet_night_floor uncertainty_propagation \
-         heat_pump_conversion extra_results all_electric_endgame; do
+         heat_pump_conversion extra_results all_electric_endgame \
+         portable_solar_storage; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "$g.py" >/dev/null 2>&1 \
     && echo "gen    $g" || { echo "gen    $g FAILED"; exit 1; }
 done

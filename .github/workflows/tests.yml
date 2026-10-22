@@ -212,3 +212,7 @@ jobs:
       # decomposition and the clipping branch; real-archive cases gated behind SkipCase.
       - name: marginal capacity value guard tests
         run: python analysis/test_marginal_capacity_value.py
+      # The study builder, physics, billing, and economics use synthetic inputs.
+      # Staged household/SAM loading and byte reproduction remain local-only.
+      - name: exploratory portable solar and storage guard tests
+        run: python analysis/test_portable_solar_storage.py
