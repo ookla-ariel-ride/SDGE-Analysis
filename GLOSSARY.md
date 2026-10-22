@@ -210,6 +210,8 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 **Monte Carlo** — Running a calculation thousands of times with the uncertain inputs randomly varied, to see the range of plausible outcomes rather than one number; used here for a conservative battery-payback range. [Wikipedia: Monte Carlo method](https://en.wikipedia.org/wiki/Monte_Carlo_method)
 
+**Non-intrusive load monitoring (NILM)** — Estimating individual appliance use from a shared whole-home electricity measurement. Power changes can suggest appliance on/off events, but overlapping loads and variable power can make separation uncertain. A stored sampling interval alone does not establish detection accuracy; independent appliance measurements must test it. [Hart: technical overview](https://www.georgehart.com/research/nalm.html), [Batra et al.: NILMTK](https://arxiv.org/html/1404.3878).
+
 **Weather normalization** — Adjusting energy figures for how hot, cold, or cloudy a period was (via degree-days or clear-sky models) so that year-to-year comparisons reflect the equipment and behavior, not the weather.
 
 **Charge Stats (Tesla app)** — The per-vehicle charging summary in the Tesla mobile app: trailing-12-month energy added, split by location (home / Supercharger / other) and TOU bucket. Reports battery-side kWh (energy into the pack), which runs 8–12% below wall-side meter readings due to charging losses. [Tesla: charging support](https://www.tesla.com/support/charging)

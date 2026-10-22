@@ -114,6 +114,9 @@ PATHLESS_FIELDS = {
     "wall_charger_export": "document",
     "service_telemetry_snapshot": "document",
     "service_measurement_provenance": "document",
+    "high_cadence_consumption_export": "document",
+    "high_cadence_measurement_metadata": "document",
+    "high_cadence_controlled_test_log": "document",
     # the answer is a source or a research finding, recorded in the report
     "tou_windows_source": "source", "baseline_allowance_source": "source",
     "rate_history_source": "source", "weather_temps_source": "source",
