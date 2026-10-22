@@ -367,12 +367,13 @@ def main():
     passed = 0
     for fn in CASES:
         try:
-            fn()
+            description = fn()
         except suite_runner.CASE_FAILURES as exc:
             suite_runner.report_case_failure(fn, exc)
         else:
             passed += 1
-            print(f'ok {fn.__name__}')
+            suffix = f': {description}' if description is not None else ''
+            print(f'ok {fn.__name__}{suffix}')
     print(f'{passed}/{len(CASES)} passed')
     return int(passed != len(CASES))
 
