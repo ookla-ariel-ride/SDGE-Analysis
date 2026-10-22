@@ -6265,13 +6265,20 @@ dashboard link with no id in it.
 
 ### 11.5 What literal enforcement cannot see
 
-A value scan searches committed files for the answer as it appears in `private/household.yaml`.
-It catches a copy-paste, which is the common failure. It does not catch these, and a gate
-that reports "clean" is reporting only that it found no literal match:
+A value scan searches committed files for answers from `private/household.yaml`.
+For typed numeric answers that produce a needle, JSON compares complete numeric tokens
+by exact `Decimal` value. Equivalent decimal and exponent forms match. A distinct number
+containing the same digits does not match.
 
-- **Reformatting.** A price held as `30000.0` in the intake is `30,000` in prose, `30000` in
-  JSON and `$30k` in a chart label. A date held as `2021-04` is `Apr 2021` in a sentence. A
-  scan for the intake spelling sees none of those.
+JSON strings and keys retain substring protection for numeric answers.
+Numeric-looking string answers retain their existing
+identifier rules. Prose and YAML retain their existing scan rules.
+
+A gate that reports "clean" found no match under these rules. It does not catch these:
+
+- **Reformatting.** A price held as `30000.0` in the intake is `30,000` in prose or `$30k`
+  in a chart label. A date held as `2021-04` is `Apr 2021` in a sentence. A scan for the
+  intake spelling sees none of those.
 - **Rendering in English.** A month name, a spelled-out number, a rounded figure: all
   publish the value without publishing the string.
 - **Arithmetic.** A derived figure carries the input without quoting it. The net-of-ITC
