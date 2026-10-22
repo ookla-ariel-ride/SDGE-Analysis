@@ -142,7 +142,7 @@ ACRONYMS = frozenset({
     # (a shout survives hyphens), so each rate plan and file name that really
     # is written this way is named here rather than loosening the pattern.
     "TOU-DR", "TOU-DR1", "TOU-DR2", "TOU-DR-P", "TOU-ELEC", "EV-TOU-5",
-    "EV-TOU-2", "DR-SES", "WF-NBC", "DATA-SOURCES-CHEATSHEET",
+    "EV-TOU-2", "NEM-ST", "DR-SES", "WF-NBC", "DATA-SOURCES-CHEATSHEET",
     # utilities, tariffs, programs, regulators
     "SDGE", "SDG", "CAISO", "CPUC", "CEC", "CCA", "CEA", "NEM", "NBT", "NBC",
     "PCIA", "UDC", "TOU", "IOU", "VNEM", "SGIP", "DSGS", "ELRP", "PSPS", "VPP",

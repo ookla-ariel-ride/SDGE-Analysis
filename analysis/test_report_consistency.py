@@ -4187,7 +4187,7 @@ def case_s8_more_panels_timing_matches_the_artifacts():
     §8 is advanced-tier prose and exempt from the basic tier's density cap, so
     this case checks only the figures and their referents, not the sentence
     shape."""
-    m = re.search(r"<p><b>More panels: .*?</p>", HTML, re.S)
+    m = re.search(r"<p>The constraint is timing\..*?</p>", HTML, re.S)
     assert m, "§8's 'more panels' paragraph not found in index.html"
     para = m.group(0)
 
@@ -4382,7 +4382,7 @@ def case_s8_export_value_is_published_as_a_bounded_range():
          that quotes data/marginal_capacity_value.json's bill delta (issue
          #190, the interval-level counterfactual re-billed through the NEM
          engine), with the modeled pill in the same sentence, the added kWh
-         and the import-offset share beside it and the cap clause after it.
+         and the import-offset share beside it and the conditional comparison after it.
          Every other such sentence is refused, and §8 publishes none of the
          expansion payback arithmetic that rested on pricing added capacity at
          the export credit;
@@ -4391,7 +4391,7 @@ def case_s8_export_value_is_published_as_a_bounded_range():
 
     §8's own verdict is checked separately by
     case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering, which
-    holds the two artifact-backed figures the "no" actually rests on."""
+    checks the original-capacity uncertainty and conditional grandfathering stake."""
     # SCOPED TO §8, not to the 'more panels' paragraph. The section's timing
     # figures and its export valuation are pinned by different cases and are
     # deliberately different paragraphs -- one paragraph carrying both would be
@@ -4518,7 +4518,7 @@ def case_s8_export_value_is_published_as_a_bounded_range():
     assert len(valued) == 1, (
         f"§8 prices added capacity in {len(valued)} sentences {valued!r}; exactly one "
         "may, the one that quotes data/marginal_capacity_value.json")
-    # The figures beside it, and the cap clause after it, are the artifact's too.
+    # The figures beside it, and the conditional comparison after it, are the artifact's too.
     kwh_fig = f"{per['added_production_kwh']:,.0f} kWh/yr"
     share_fig = f"{per['import_offset_pct']:.0f}% of that"
     for needle, what in ((kwh_fig, "the added production"),
@@ -4534,9 +4534,10 @@ def case_s8_export_value_is_published_as_a_bounded_range():
         f"data/marginal_capacity_value.json's verdict_check ratio {vc} does not follow "
         "from data/nem3_grandfathering.json's bracket and its own bill delta")
     multiple = f"{vc['low']:.1f}–{vc['high']:.1f}×"
-    assert re.search(r"grandfathering at risk is " + re.escape(multiple) + r" that", text), (
-        f"§8's added-capacity sentence is not followed by the cap clause naming the "
-        f"grandfathering at risk as {multiple} the added kW's value; the value must "
+    assert re.search(r"If an option transfers the existing array to NBT, the grandfathering "
+                     r"value is " + re.escape(multiple) + r" that", text), (
+        f"§8's added-capacity sentence lacks a conditional NBT comparison naming the "
+        f"grandfathering value as {multiple} the added kW's value; the value must "
         "not be published without what it is measured against (issue #190)")
 
     # And none of the arithmetic that rested on it survives anywhere in §8.
@@ -4565,7 +4566,7 @@ def case_s8_export_value_is_published_as_a_bounded_range():
             f"between them, states the season-wide-mean day-type assumption both carry, "
             f"prices added capacity in exactly one sentence, at the artifact's "
             f"{value_fig}/yr with the modeled pill, {kwh_fig} and {share_fig} beside it "
-            f"and the {multiple} cap clause after it, and in none of its "
+            f"and the {multiple} conditional grandfathering comparison after it, and in none of its "
             f"{len(_EXPANSION_PAYBACK_FORMS)} forbidden payback forms")
 
 
@@ -4767,7 +4768,7 @@ def case_the_template_prices_no_added_capacity_and_needs_no_gap_token_in_s8():
          and the retired sentence carried its valuation in one -- and that
          sentence is the artifact's: it carries {{MARGINAL_KW_VALUE_YR}} and the
          modeled pill (issue #190), with {{MARGINAL_KW_GRANDFATHERING_MULTIPLE}}
-         somewhere after it as the cap clause."""
+         somewhere after it as the conditional grandfathering comparison."""
     rt = _report_tokens_module()
     template = (ROOT / "report-template.html").read_text()
     live = re.sub(r"<!--.*?-->", " ", template, flags=re.S)
@@ -4811,41 +4812,71 @@ def case_the_template_prices_no_added_capacity_and_needs_no_gap_token_in_s8():
     tail = section[section.index("{{MARGINAL_KW_VALUE_YR}}"):]
     assert "{{MARGINAL_KW_GRANDFATHERING_MULTIPLE}}" in tail, (
         "report-template.html's live §8 markup publishes {{MARGINAL_KW_VALUE_YR}} with no "
-        "{{MARGINAL_KW_GRANDFATHERING_MULTIPLE}} cap clause after it; the value must not "
+        "{{MARGINAL_KW_GRANDFATHERING_MULTIPLE}} conditional grandfathering comparison after it; the value must not "
         "be published without what it is measured against")
     return ("report-template.html's live §8 markup references no KNOWN_GAPS token, prices "
             "added capacity in exactly one sentence, through {{MARGINAL_KW_VALUE_YR}} with "
-            "the modeled pill, and follows it with the grandfathering-multiple cap clause")
+            "the modeled pill, and follows it with the grandfathering-multiple conditional grandfathering comparison")
+
+
+def _assert_expansion_qualification(fragment, where, *, full_rule=False):
+    """Check the tariff's meaning without pinning the writer's sentence.
+
+    Current equipment is not original approved interconnected capacity. The
+    threshold is a rule, not established household headroom; a larger addition
+    does not establish automatic loss of the existing facility's legacy term.
+    """
+    text = re.sub(r"<[^>]*>", " ", fragment)
+    text = " ".join(text.split())
+    assert not re.search(r"(?:More solar\?|More panels:)\s*No\b|cap (?:alone |still )?decides|"
+                         r"tariff decides|cap is what settles", text, re.I), (
+        f"{where} gives a blanket expansion rejection from unresolved tariff inputs")
+    assert not re.search(r"(?:caps? (?:the )?expansion (?:at|to)|"
+                         r"expansion (?:limit|cap|allowance) (?:is|of|at)|"
+                         r"(?:approved )?headroom (?:is|of)|that's)\s*~?[\d.]+\s*kW", text, re.I), (
+        f"{where} asserts known numerical expansion headroom from current equipment")
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        automatic = re.search(r"(?:exceed\w*|cross\w*)[^.]{0,100}"
+                              r"(?:forfeit\w*|los\w*|remov\w*|puts all)", sentence, re.I)
+        assert not automatic or re.search(r"does not automatically|not automatic|"
+                                          r"does not itself", sentence, re.I), (
+            f"{where} claims automatic existing-array grandfathering loss: {sentence}")
+    assert re.search(r"(?:approved|original)[^.]{0,80}capacity[^.]{0,80}"
+                     r"(?:not determined|unknown|not established)", text, re.I), (
+        f"{where} must state original approved capacity is unknown")
+    assert re.search(r"headroom[^.]{0,60}(?:not determined|unknown|not established)|"
+                     r"(?:does not|cannot)[^.]{0,40}establish[^.]{0,40}headroom", text, re.I), (
+        f"{where} must not infer approved headroom from current equipment")
+    assert re.search(r"separate[^.]{0,90}(?:eligible tariff|authorized process)", text, re.I), (
+        f"{where} omits the separate eligible path for a larger addition")
+    if full_rule:
+        assert re.search(r"NEM-ST Special Condition 9\(b\)|NEM-ST SC 9\(b\)", text), (
+            f"{where} omits current NEM-ST SC 9(b)")
+        assert 'tarfKey=871' in fragment, f"{where} omits the primary tariff citation"
+        assert re.search(r"greater of 10%[^.]{0,100}original interconnected[^.]{0,60}"
+                         r"capacity or 1 kW", text, re.I), (
+            f"{where} omits the original-capacity 10%-or-1-kW rule")
+        assert re.search(r"annual onsite (?:load|consumption)", text, re.I), (
+            f"{where} omits the annual onsite consumption condition")
+    return text
 
 
 def case_s0_expansion_cap_matches_the_s8_one():
-    """RELATIONSHIP, §0's growth cap against §8's: SAME QUANTITY, TWO TYPED
-    COPIES. Neither is recomputed -- the array's DC nameplate lives in
-    private/household.yaml and this file runs without the private archive, so
-    §8's copy is pinned to its tariff citation by
-    case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering and this
-    pins §0's to §8's.
+    """Both sections keep capacity unknown and a larger addition separate.
 
-    §0's "more solar" bullet is now the sentence a reader acts on -- it says
-    the cap is what settles the question -- so the cap figure in it is
-    load-bearing, and it is the same drift class
-    case_s8_specific_yield_matches_the_token_rendered_one exists for: two
-    hand-typed copies of one figure with nothing tying them together."""
-    m = re.search(r"<li><b>More solar\? No\.</b>.*?</li>", HTML, re.S)
-    assert m, "§0's 'More solar? No.' bullet not found in index.html"
-    s0 = re.search(r"caps? (?:the )?expansion (?:at|to) ~?([\d.]+) ?kW", m.group(0))
-    assert s0, (
-        "§0's 'more solar' bullet no longer states the NEM 2.0 growth cap, which is "
-        f"what it says settles the question: {m.group(0)!r}")
-    s8 = re.search(r"that's <b>~([\d.]+) kW</b>", _s8_section())
-    assert s8, (
-        "§8 no longer states the NEM 2.0 growth cap in kW, so §0's copy of it has "
-        "nothing to be checked against")
-    assert s0.group(1) == s8.group(1), (
-        f"§0 caps expansion at ~{s0.group(1)} kW while §8 derives ~{s8.group(1)} kW "
-        "from the tariff's 10%-or-1-kW rule against this array's nameplate. One of the "
-        "two hand-typed copies has drifted")
-    return (f"§0's 'more solar' bullet and §8 both cap expansion at ~{s0.group(1)} kW")
+    The complete tariff rule belongs in §8; §0 links it. Neither section may
+    turn the current DC inventory into known original-approved headroom.
+    """
+    m = re.search(r"<li><b>More solar\? [^<]*</b>.*?</li>", HTML, re.S)
+    assert m, "§0's 'More solar?' bullet not found in index.html"
+    s0 = _assert_expansion_qualification(m.group(0), "§0")
+    assert re.search(r"[Dd]efer", s0), "§0 must defer expansion pending missing inputs"
+    for evidence in ("original approval", "connection", "settlement", "installed price"):
+        assert evidence in s0, f"§0 must name missing {evidence}"
+    _assert_expansion_qualification(_s8_section(), "§8", full_rule=True)
+    assert '<a href="#s8">' in m.group(0), "§0 must link §8's complete tariff rule"
+    return "§0 and §8 keep original capacity/headroom unknown and permit a separate eligible addition"
+
 
 
 def case_the_added_capacity_guard_rejects_the_defect_and_accepts_a_priced_install():
@@ -4895,42 +4926,104 @@ def case_the_added_capacity_guard_rejects_the_defect_and_accepts_a_priced_instal
 
 
 def case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering():
-    """issue #182: §8's "no" must stay legible on its own two artifact-backed
-    figures -- the NEM 2.0 growth cap and what grandfathering is worth -- so a
-    reader can see the recommendation does not depend on any marginal-panel
-    valuation.
+    """Keep the tariff qualification and exact artifact-backed dollar range.
 
-    RELATIONSHIP, the grandfathering range here against §13's: SAME QUANTITY,
-    ONE ARTIFACT, TWO PLACES IN THE PAGE. Both are
-    data/nem3_grandfathering.json's two scenario values; §13's subsection is
-    pinned by case_nem3_grandfathering_section_matches_the_artifact, and this
-    pins §8's copy of them to the same artifact so the two cannot drift.
-
-    The ~1.0 kW cap is NOT recomputed from the nameplate: the array's DC
-    nameplate lives in private/household.yaml and this file runs without the
-    private archive. It is pinned as published, against the tariff citation
-    that authorizes it, which is what a reader would check."""
+    The value compares legacy treatment with whole-facility NBT. A separate
+    addition need not transfer the existing array, so it is a conditional
+    stake, not an unavoidable cost of expansion.
+    """
     section = _s8_section()
+    _assert_expansion_qualification(section, "§8", full_rule=True)
     n3 = json.loads((ROOT / "data" / "nem3_grandfathering.json").read_text())
     low = n3["grandfathering_value_range_usd_per_yr"]["low"]
     high = n3["grandfathering_value_range_usd_per_yr"]["high"]
     published = f"{_fmt_usd2(low)}–{_fmt_usd2(high)}/yr"
-    assert published in section, (
-        f"§8 does not state the grandfathering at risk as {published}, the range "
-        "data/nem3_grandfathering.json publishes -- it is half of what the expansion "
-        "verdict rests on")
+    assert published in section, f"§8 must retain artifact-backed grandfathering {published}"
+    s0 = re.search(r"<li><b>More solar\? [^<]*</b>.*?</li>", HTML, re.S)
+    assert s0 and published in s0.group(0), (
+        f"§0 must match §8 and the artifact-backed grandfathering {published}")
+    text = re.sub(r"<[^>]*>", " ", section)
+    for evidence in (r"[Dd]efer (?:expansion|purchase)", r"original approval", r"connection",
+                     r"settlement", r"installed price"):
+        assert re.search(evidence, text), f"§8 must defer purchase pending {evidence}"
+    return f"§8 qualifies expansion under SC 9(b) and retains {published} of grandfathering"
 
-    assert "Special Condition 7(b)" in section, (
-        "§8 no longer cites the NEM tariff provision that sets the growth cap, so the "
-        "cap it publishes is unsourced")
-    cap = re.search(r"that's <b>~([\d.]+) kW</b>", section)
-    assert cap, (
-        "§8 no longer states the NEM 2.0 growth cap in kW -- the other half of what "
-        "the expansion verdict rests on")
-    assert float(cap.group(1)) > 0, f"§8's growth cap is {cap.group(1)} kW"
-    return (f"§8's verdict rests on the published ~{cap.group(1)} kW NEM 2.0 growth cap "
-            f"(Special Condition 7(b)) and the {published} of grandfathering at risk, "
-            "both artifact- or tariff-backed")
+
+def case_expansion_qualification_rejects_known_headroom_and_automatic_loss():
+    """Drive the meaning guard with the retired claims and valid paraphrases."""
+    good = ('NEM-ST SC 9(b), <a href="https://tariffsprd.sdge.com/?tarfKey=871">tariff</a>. '
+            'Growth uses the greater of 10% of original interconnected nameplate capacity or 1 kW, '
+            'subject to annual onsite consumption. Original approved capacity is unknown. '
+            'Approved headroom is not established. Larger additions can use a separate '
+            'eligible tariff or authorized process. Exceeding the limit does not automatically '
+            "remove the existing array's legacy treatment.")
+    _assert_expansion_qualification(good, "qualified paraphrase", full_rule=True)
+    claims = (
+        "The tariff caps expansion at ~1.0 kW.",
+        "Approved headroom is 1.005 kW.",
+        "Exceeding the limit forfeits the existing array's NEM 2.0 status.",
+        "Crossing the cap puts all grandfathering at risk.",
+        "More panels: No, and the tariff decides it.",
+    )
+    for claim in claims:
+        try:
+            _assert_expansion_qualification(good + ' ' + claim, "mutant", full_rule=True)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"qualification guard accepted {claim!r}")
+    return f"expansion qualification accepts correct paraphrase and rejects {len(claims)} retired claims"
+
+
+
+def case_numeric_expansion_limit_paraphrases_fail_both_publication_checks():
+    """P2: uncertainty elsewhere cannot cancel a numeric household limit.
+
+    Probe the actual section checks, not only the helper. The exact review
+    sentence and its limit/cap/allowance forms remain contradictory when
+    appended to otherwise correctly qualified prose.
+    """
+    global HTML
+    original = HTML
+    checks = (case_s0_expansion_cap_matches_the_s8_one,
+              case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering)
+    for check in checks:
+        check()
+    claims = [f"For this home's 10.05 kW array, the expansion {noun} {link} ~1.0 kW."
+              for noun in ("limit", "cap", "allowance")
+              for link in ("is", "of", "at")]
+    try:
+        for claim in claims:
+            for section in ("§0", "§8"):
+                if section == "§0":
+                    HTML, count = re.subn(
+                        r"(<li><b>More solar\? [^<]*</b>.*?)(</li>)",
+                        lambda m: m.group(1) + f"<p>{claim}</p>" + m.group(2),
+                        original, flags=re.S)
+                    assert count == 1, "§0 mutation must change exactly one bullet"
+                else:
+                    marker = '<details class="sec" id="sec9"'
+                    assert original.count(marker) == 1, "§8 mutation needs one closing boundary"
+                    HTML = original.replace(marker, f"<p>{claim}</p>\n" + marker)
+                # §0's check also reads §8; §8's own check only reads its
+                # grandfathering figure in §0, so do not expect it to judge
+                # §0's separate numeric-limit prose.
+                for check in checks if section == "§8" else checks[:1]:
+                    try:
+                        check()
+                    except AssertionError as e:
+                        assert "asserts known numerical expansion headroom" in str(e), (
+                            f"{check.__name__} rejected {claim!r} for an unrelated reason: {e}")
+                    else:
+                        raise AssertionError(
+                            f"{check.__name__} accepted unsupported {section} claim {claim!r}")
+    finally:
+        HTML = original
+    for check in checks:
+        check()
+    return (f"both publication checks reject {len(claims)} numeric expansion-limit forms "
+            "in §8; §0's check also rejects them in its bullet, and current qualified prose passes")
+
 
 
 def case_s8_specific_yield_matches_the_token_rendered_one():
@@ -4970,11 +5063,11 @@ def case_s0_more_solar_bullet_keeps_the_two_shares_apart():
 
     §0 is basic tier, so the item states the two shares and nothing about the
     export price: what it needs to settle the question is already in the clause
-    beside it (the growth cap and the grandfathering it puts at risk) and the
+    beside it (original approval, the separate tariff path, and conditional grandfathering value) and the
     derivation is §8's job. Same guard as §2 and §8, on the same two
     artifact-derived figures."""
-    m = re.search(r"<li><b>More solar\? No\.</b>.*?</li>", HTML, re.S)
-    assert m, "§0's 'More solar? No.' bullet not found in index.html"
+    m = re.search(r"<li><b>More solar\? [^<]*</b>.*?</li>", HTML, re.S)
+    assert m, "§0's 'More solar?' bullet not found in index.html"
     item = m.group(0)
 
     export_pct = _export_share_pct()
@@ -5342,7 +5435,7 @@ def case_the_referent_guard_reads_across_a_sentence_boundary():
         f"{_referent_guard_rejects(priced)}")
 
     # The rule that was NOT adopted, measured on the live §8 paragraph.
-    live = re.search(r"<p><b>More panels: .*?</p>", HTML, re.S)
+    live = re.search(r"<p>The constraint is timing\..*?</p>", HTML, re.S)
     assert live, "§8's 'more panels' paragraph not found in index.html"
     s8 = live.group(0)
     midday_pct = _midday_export_share_pct()
@@ -5359,8 +5452,8 @@ def case_the_referent_guard_reads_across_a_sentence_boundary():
 
     for where, pattern in (("§2", r'<p class="small">That last split is the fact behind '
                                   r"every recommendation.*?</p>"),
-                           ("§8", r"<p><b>More panels: .*?</p>"),
-                           ("§0", r"<li><b>More solar\? No\.</b>.*?</li>")):
+                           ("§8", r"<p>The constraint is timing\..*?</p>"),
+                           ("§0", r"<li><b>More solar\? [^<]*</b>.*?</li>")):
         m = re.search(pattern, HTML, re.S)
         assert m, f"{where}'s guarded passage not found in index.html"
         assert _assert_the_two_shares_stay_apart(
@@ -6887,13 +6980,11 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
         "index counts the behaviors (Four); the count has no token"),
     ("s6", "Price-aware (all non-super-off-peak imports)"): ("c0c52fc7d519",
         "index's expansion cell adds cycles/day; no token for pw3x cycles exists"),
-    ("s8", "<b>More panels:"): ("9a8f60d24ea0",
-        "deliberate divergence (#182): index still publishes the priced timing paragraph "
-        "under its own 'More panels' lead; re-pinned after #183 hung the timing sentence "
-        "on the midday clause, and again after #190 put the marginal-kW value sentences "
-        "on this template line (index carries the same three sentences, rendered, in "
-        "the paragraph that follows the export-valuation range; both are pinned to "
-        "data/marginal_capacity_value.json by the §8 cases)"),
+    ("s8", "The constraint is timing."): ("8ad8c6d8dd23",
+        "index keeps measured timing details under the token-rendered purchase deferral; "
+        "the template states the same export fraction and points to the token's midday "
+        "share. The marginal-kW paragraph now matches the template exactly, including "
+        "the conditional whole-facility NBT comparison"),
     ("s9", "degradation trend</h3>"): ("8da8f6ba573b",
         "index's heading carries the measured span (6-year); no token owns it"),
     ("s9", "Inverter clipping"): ("f861755778ff",
@@ -8108,6 +8199,8 @@ CASES = [
     case_s0_expansion_cap_matches_the_s8_one,
     case_the_added_capacity_guard_rejects_the_defect_and_accepts_a_priced_install,
     case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering,
+    case_expansion_qualification_rejects_known_headroom_and_automatic_loss,
+    case_numeric_expansion_limit_paraphrases_fail_both_publication_checks,
     case_s8_specific_yield_matches_the_token_rendered_one,
     case_s0_more_solar_bullet_keeps_the_two_shares_apart,
     case_the_midday_share_weights_each_hour_by_its_real_interval_count,

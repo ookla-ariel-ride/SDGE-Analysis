@@ -34,8 +34,13 @@ Captured 2026-07-25. Supports `analysis/extended_findings.py` → `data/extended
 | CEA storage programs | None exist (Battery Bonus Connect is income-qualified new-install) | $0 |
 - DSGS explicitly permits TOU-arbitrage compensation alongside (rate-plan carve-out from
   the double-dip ban); events overlap the on-peak window the battery discharges anyway.
-- NEM 2.0 risk: storage additions don't affect grandfathering; if interconnected
-  **non-export**, VPP grid export needs a Rule 21 modification — confirm with SDG&E first.
+- NEM 2.0 (tariff checked 2026-10-22): storage-only additions ordinarily retain the
+  remaining legacy term under SC 9(d). Customers who apply and have an SGIP
+  reservation accepted on or after June 4, 2024 must move to NBT, except
+  Residential Solar and Storage Equity or low-income-qualified Equity Resiliency
+  residential customers. [Current NEM-ST, sheet 28, effective September 3, 2024](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE).
+  A **non-export** battery needs the applicable interconnection change before VPP
+  grid export. Check the exact connection with SDG&E. [Current Rule 21](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=96&utilId=SDGE).
 - Open item: confirm in the Tesla app that 2026-season DSGS enrollment is being accepted.
 - Sources: dsgs.olivineinc.com; CEC DSGS Guidelines 5th Ed.; tesla.com/support/energy/
   virtual-power-plant/{dsgs,sdge,sdcp}; sgipsd.org/incentives; cpuc.ca.gov/elrp;
