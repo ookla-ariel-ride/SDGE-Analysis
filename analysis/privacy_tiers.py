@@ -112,6 +112,8 @@ PATHLESS_FIELDS = {
     "rate_table_pdfs": "document", "solar_hourly_consumption_export": "document",
     "solar_daily_production_export": "document", "ev_charge_stats": "document",
     "wall_charger_export": "document",
+    "service_telemetry_snapshot": "document",
+    "service_measurement_provenance": "document",
     # the answer is a source or a research finding, recorded in the report
     "tou_windows_source": "source", "baseline_allowance_source": "source",
     "rate_history_source": "source", "weather_temps_source": "source",

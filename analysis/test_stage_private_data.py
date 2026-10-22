@@ -233,9 +233,10 @@ _CP_ARG = re.compile(r'^\s*cp\s+(?:-R\s+)?"?\$SRC"?/private/1-raw-data/([^\s"\\]
 # file-by-file what to copy so it can skip OS metadata at copy time rather
 # than deleting it afterward. This is the second, ADDITIONAL shape that
 # counts as staging a subtree; a literal `cp -R` line is still the only
-# shape recognized for anything this function does not wrap.
+# shape recognized for anything this function does not wrap. The fixed-file
+# telemetry helper is a second explicit subtree-copy operation.
 _SKIP_METADATA_CALL_ARG = re.compile(
-    r'^\s*_copy_subtree_skipping_os_metadata\s+"([^"]+)"', re.M)
+    r'^\s*(?:_copy_subtree_skipping_os_metadata|_copy_service_telemetry)\s+"([^"]+)"', re.M)
 
 
 def _staged_basenames(script_text):
@@ -4568,6 +4569,8 @@ def case_real_archive_stage_script_produces_every_required_path():
             for name in referenced:
                 if name in OPTIONAL_NOT_STAGED:
                     continue
+                if name == "service-telemetry" and not (src / "private" / "1-raw-data" / name).exists():
+                    continue
                 if name == "gas-bills" and not source_has_gas_bills:
                     continue
                 if not list((dst / "private" / "1-raw-data").glob(name)) \
@@ -4579,6 +4582,192 @@ def case_real_archive_stage_script_produces_every_required_path():
     return (f"a real run of stage-private-data.sh produced all "
            f"{len(referenced) - len(OPTIONAL_NOT_STAGED)} required private "
            f"inputs plus the three private/verify sandbox copies")
+
+
+_SERVICE_TELEMETRY_FILES = ("manifest.json", "meter.csv", "mirror.csv", "eagle.csv",
+                            "generation.csv", "weather.csv")
+
+
+def _synthetic_service_telemetry(src):
+    directory = src / "private" / "1-raw-data" / "service-telemetry"
+    directory.mkdir()
+    for name in _SERVICE_TELEMETRY_FILES:
+        (directory / name).write_text(f"synthetic snapshot {name}\n")
+    return directory
+
+
+@case
+def case_service_telemetry_stages_only_frozen_inputs_as_independent_files():
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+        raw = _synthetic_service_telemetry(src)
+        (raw / "export_snapshot.py").write_text("private export helper\n")
+        # No credential file is created or removed by this fixture.
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode == 0, result.stderr
+            target = dst / "private" / "1-raw-data" / "service-telemetry"
+            assert target.is_dir(), "the frozen telemetry snapshot was not staged"
+            assert {p.name for p in target.iterdir()} == set(_SERVICE_TELEMETRY_FILES)
+            for name in _SERVICE_TELEMETRY_FILES:
+                copied = target / name
+                assert copied.read_bytes() == (raw / name).read_bytes()
+                assert not copied.is_symlink() and copied.stat().st_nlink == 1
+                assert not os.path.samefile(copied, raw / name)
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode == 0, result.stderr
+    return "the snapshot stages byte-identically without its export helper or shared file inodes"
+
+
+@case
+def case_service_telemetry_absence_is_optional_but_partial_snapshot_refuses():
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            assert result.returncode == 0, result.stderr
+            assert not (dst / "private" / "1-raw-data" / "service-telemetry").exists()
+            raw = _synthetic_service_telemetry(src)
+            (raw / "weather.csv").unlink()
+            before = _snapshot(dst)
+            before_bytes = _content_snapshot(dst)
+            result = _run_script(src, dst, cwd=src, timeout=120)
+            _assert_source_refused(result, dst, before, "partial snapshot", "weather.csv")
+            assert _content_snapshot(dst) == before_bytes
+    return "unrelated studies need no snapshot; a present incomplete snapshot refuses before writes"
+
+
+@case
+def case_service_telemetry_unsafe_source_paths_refuse_before_writes():
+    for shape in ("directory_symlink", "file_symlink", "hardlink", "fifo"):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+            raw = _synthetic_service_telemetry(src)
+            if shape == "directory_symlink":
+                moved = raw.with_name("outside-telemetry")
+                raw.rename(moved)
+                raw.symlink_to(moved, target_is_directory=True)
+            else:
+                path = raw / "meter.csv"
+                path.unlink()
+                outside = pathlib.Path(td) / "outside.csv"
+                outside.write_text("outside bytes\n")
+                if shape == "file_symlink":
+                    path.symlink_to(outside)
+                elif shape == "hardlink":
+                    os.link(outside, path)
+                else:
+                    os.mkfifo(path)
+            with _linked_worktree(td) as dst:
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=120)
+                _assert_source_refused(result, dst, before, shape, "service-telemetry")
+    return "source snapshot directories and files refuse symlinks, hardlinks, and FIFOs before writes"
+
+
+@case
+def case_service_telemetry_unsafe_destination_paths_refuse_before_writes():
+    for shape in ("directory_symlink", "file_symlink", "hardlink", "fifo"):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+            _synthetic_service_telemetry(src)
+            with _linked_worktree(td) as dst:
+                raw = dst / "private" / "1-raw-data" / "service-telemetry"
+                raw.parent.mkdir(parents=True)
+                outside = pathlib.Path(td) / "outside"
+                outside.mkdir()
+                (outside / "meter.csv").write_text("outside bytes\n")
+                if shape == "directory_symlink":
+                    raw.symlink_to(outside, target_is_directory=True)
+                else:
+                    raw.mkdir()
+                    path = raw / "meter.csv"
+                    if shape == "file_symlink":
+                        path.symlink_to(outside / "meter.csv")
+                    elif shape == "hardlink":
+                        os.link(outside / "meter.csv", path)
+                    else:
+                        os.mkfifo(path)
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=120)
+                _assert_refused(result, dst, before, shape)
+                assert (outside / "meter.csv").read_text() == "outside bytes\n"
+    return "destination snapshot paths retain the existing symlink, hardlink, and FIFO guards"
+
+
+@case
+def case_service_telemetry_destination_leftovers_refuse_without_removal():
+    for source_present in (False, True):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+            if source_present:
+                _synthetic_service_telemetry(src)
+            with _linked_worktree(td) as dst:
+                target = dst / "private" / "1-raw-data" / "service-telemetry"
+                target.mkdir(parents=True)
+                # A source helper is not a managed frozen input even when
+                # it has the same name on both sides.
+                helper = target / "export_snapshot.py"
+                helper.write_text("existing private helper\n")
+                if source_present:
+                    (src / "private" / "1-raw-data" / "service-telemetry" /
+                     "export_snapshot.py").write_text("source helper\n")
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=120)
+                _assert_refused(result, dst, before, "unmanaged telemetry leftovers")
+                assert helper.read_text() == "existing private helper\n"
+    return "stale telemetry and unmanaged helpers refuse without adoption or removal"
+
+
+@case
+def case_service_telemetry_adjacent_allowed_names_refuse_before_writes():
+    # Two allowed basenames in one filesystem name are still unmanaged.
+    # Check both file/directory shapes and the newline enumeration control.
+    accepted = []
+    for name in ("meter.csv mirror.csv", "meter.csv\nmirror.csv"):
+        for directory in (False, True):
+            with tempfile.TemporaryDirectory() as td:
+                src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+                _synthetic_service_telemetry(src)
+                with _linked_worktree(td) as dst:
+                    target = dst / "private" / "1-raw-data" / "service-telemetry"
+                    target.mkdir(parents=True)
+                    extra = target / name
+                    if directory:
+                        extra.mkdir()
+                        content = extra / "unmanaged.csv"
+                    else:
+                        content = extra
+                    content.write_text("synthetic unrelated private bytes\n")
+                    before = _snapshot(dst)
+                    before_bytes = _content_snapshot(dst)
+                    result = _run_script(src, dst, cwd=src, timeout=120)
+                    if result.returncode == 0:
+                        accepted.append((name, "directory" if directory else "file"))
+                        continue
+                    _assert_refused(result, dst, before, f"unmanaged name {name!r}")
+                    assert content.read_text() == "synthetic unrelated private bytes\n"
+                    assert _content_snapshot(dst) == before_bytes
+    assert not accepted, f"the stage accepted unmanaged entries: {accepted!r}"
+    return "adjacent allowed basenames remain unmanaged as files or directories, including newline names"
+
+
+@case
+def case_service_telemetry_copy_failure_keeps_existing_archive_bytes():
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+        raw = _synthetic_service_telemetry(src)
+        with _linked_worktree(td) as dst:
+            control = _run_script(src, dst, cwd=src, timeout=120)
+            assert control.returncode == 0, control.stderr
+            (raw / "meter.csv").write_text("new synthetic bytes\n")
+            before = _content_snapshot(dst)
+            env, log = _failing_tool_shim(td, "cp", "weather.csv", partial=True)
+            result = _run_script(src, dst, cwd=src, env=env, timeout=120)
+            assert result.returncode != 0 and "weather.csv" in result.stderr, result.stderr
+            assert "weather.csv" in log.read_text()
+            assert _content_snapshot(dst) == before, "a failed telemetry copy changed the archive"
+    return "a failed telemetry copy preserves every existing archive byte"
 
 
 def run():

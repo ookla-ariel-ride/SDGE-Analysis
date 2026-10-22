@@ -824,7 +824,7 @@ MOVERS_FLOOR = frozenset({
 # impossible without the other.
 # ===========================================================================
 DECLARED_IGNORE_PATHS = ("private/1-raw-data", "private/verify", "private/household.yaml")
-DECLARED_SUBTREES = ("electric-bills", "gas-bills", "caiso_raw")
+DECLARED_SUBTREES = ("electric-bills", "gas-bills", "caiso_raw", "service-telemetry")
 DECLARED_LEAVES = (
     "private/household.yaml",
     "private/verify/usage.csv",
@@ -834,6 +834,12 @@ DECLARED_LEAVES = (
     "private/1-raw-data/electric_billing_history_2024-2026.csv",
     "private/1-raw-data/Electric_15_Minute_*.csv",
     "private/1-raw-data/enphase_sam8760_*.csv",
+    "private/1-raw-data/service-telemetry/manifest.json",
+    "private/1-raw-data/service-telemetry/meter.csv",
+    "private/1-raw-data/service-telemetry/mirror.csv",
+    "private/1-raw-data/service-telemetry/eagle.csv",
+    "private/1-raw-data/service-telemetry/generation.csv",
+    "private/1-raw-data/service-telemetry/weather.csv",
 )
 
 _RE_UNCOMMITTABLE = re.compile(r'^_require_uncommittable\s+"([^"]+)"', re.M)
@@ -847,7 +853,48 @@ _RE_LEAF_GLOB_LOOP = re.compile(r'for _srcfile in (.*?);\s*do', re.S)
 _RE_LEAF_GLOB = re.compile(r'"\$SRC"/private/1-raw-data/([^\s"\\;]+\*[^\s"\\;]*)')
 
 
-def _shell_write_set(text):
+def _shell_fixed_snapshot(text):
+    """Read the conditional fixed-file loop, and tie it to the real copy loop.
+
+    A new filename changes the census. A different guard/copy list, destination,
+    or condition fails closed here instead of silently checking fewer paths.
+    """
+    guarded = re.search(
+        r'if \[ "\$(\w+)" = 1 \]; then\s+'
+        r'for _file in \$(\w+); do\s+'
+        r'_dst_leaves\[\$\{#_dst_leaves\[@\]\}\]="\$DST_REAL/([^"\n]+)/\$_file"',
+        text)
+    assert guarded, "the conditional fixed-file destination loop could not be found"
+    appends = re.findall(r'^\s*_dst_leaves\[\$\{#_dst_leaves\[@\]\}\]=', text, re.M)
+    assert len(appends) == 2, (
+        "the leaf append sites changed; classify each glob or fixed-file loop before comparing paths")
+    flag, variable, prefix = guarded.groups()
+    declaration = re.search(r'^' + re.escape(variable) + r'="([^"\n]+)"$', text, re.M)
+    assert declaration, f"the fixed-file list {variable} could not be read"
+    files = shlex.split(declaration.group(1))
+    assert files and len(files) == len(set(files))
+    assert all(re.fullmatch(r'[\w.-]+', name) for name in files), files
+    # Find the function whose body uses the SAME fixed-file list. Other copy
+    # helpers precede it, so selecting the first _copy_* function is too broad.
+    copies = [(name, body) for name, body in re.findall(
+        r'^(_copy_\w+)\(\) \{[^\n]*\n(.*?)^\}', text, re.M | re.S)
+        if f'for file in ${variable}; do' in body]
+    assert len(copies) == 1, f"the fixed-file copy loop no longer uses {variable} once"
+    function, body = copies[0]
+    assert 'cp -P -- "$SRC/private/1-raw-data/$sub/$file" "$_STAGE_RAW/$sub/$file"' in body, (
+        "the fixed-file copy loop no longer writes the guarded relative paths")
+    subtree = prefix.removeprefix("private/1-raw-data/")
+    assert prefix == f"private/1-raw-data/{subtree}" and "/" not in subtree
+    assert re.search(r'if \[ "\$' + re.escape(flag) + r'" = 1 \]; then\s+'
+                     + re.escape(function) + r' "' + re.escape(subtree) + r'"\s+fi', text), (
+        "the fixed-file copies no longer use the destination loop's condition and subtree")
+    assert f'_telemetry="$SRC/{prefix}"' in text
+    assert 'if [ -e "$_telemetry" ] || [ -L "$_telemetry" ]; then' in text
+    assert f'  {flag}=1' in text
+    return subtree, [f"{prefix}/{name}" for name in files]
+
+
+def _shell_write_set(text, source=None):
     ignore = _RE_UNCOMMITTABLE.findall(text)
     subtrees = _RE_SUBTREES.findall(text)
     m = _RE_LEAF_ARRAY.search(text)
@@ -858,16 +905,26 @@ def _shell_write_set(text):
     loop = _RE_LEAF_GLOB_LOOP.search(text)
     assert loop, "stage-private-data.sh: the leaf-glob loop could not be found"
     globs = sorted({f"private/1-raw-data/{g}" for g in _RE_LEAF_GLOB.findall(loop.group(1))})
-    return ignore, subtrees, leaves + globs
+    subtree, fixed = _shell_fixed_snapshot(text)
+    if source is not None:
+        # These agreement sources already passed the shell's source guard:
+        # gas-bills presence matches has_gas, while CAISO also needs a day file.
+        raw = pathlib.Path(source) / "private" / "1-raw-data"
+        subtrees = [s for s in subtrees if (raw / s).is_dir()
+                    and (s != "caiso_raw" or any((raw / s).glob("caiso_co2_*.csv")))]
+        if not (raw / subtree).exists() and not (raw / subtree).is_symlink():
+            fixed = []
+    return ignore, subtrees, leaves + globs + fixed
 
 
 # ===========================================================================
 # 4. FIXTURES for the agreement table
 # ===========================================================================
-def _synthetic_src(td):
+def _synthetic_src(td, telemetry=False):
     """A SOURCE tree stage-private-data.sh accepts, holding no real data: empty
     files with the names the copies look for, a household.yaml with has_gas
-    false, and a .venv/bin/python standing in for the source's interpreter.
+    false, optional empty telemetry files, and a .venv/bin/python standing in
+    for the source's interpreter.
 
     The stand-in points at sys.executable rather than at ROOT/.venv, which CI
     never creates (tests.yml pip-installs into the runner's interpreter).
@@ -888,6 +945,11 @@ def _synthetic_src(td):
                  "enphase_sam8760_2026.csv"):
         (raw / name).touch()
     (raw / "electric-bills").mkdir()
+    if telemetry:
+        subtree, leaves = _shell_fixed_snapshot(SCRIPT.read_text())
+        (raw / subtree).mkdir()
+        for rel in leaves:
+            (src / rel).touch()
     return src
 
 
@@ -1207,16 +1269,14 @@ def _python_verdict(root, src, env=None):
     environment would make every env fixture in this table a test of the wrong
     thing.
     """
-    ignore, subtrees, leaves = _shell_write_set(SCRIPT.read_text())
+    ignore, subtrees, leaves = _shell_write_set(SCRIPT.read_text(), source=src)
     # A managed path that the copies also write as a FILE is a leaf, not a
     # directory -- derived from the two parsed lists rather than re-typed, so a
     # fourth managed path arrives correctly classified.
     dirs = [p for p in ignore if p not in leaves]
-    # The source decides which subtrees the script will actually descend, and
-    # the python side is told the same thing: has_gas false and no caiso_raw in
-    # the synthetic source means neither is copied, so neither is scanned.
-    recursive = [f"private/1-raw-data/{s}" for s in subtrees
-                 if (pathlib.Path(src) / "private" / "1-raw-data" / s).is_dir()]
+    # The parser applies the same source conditions to subtrees AND fixed
+    # leaves. An absent optional snapshot must not gain a six-file write set.
+    recursive = [f"private/1-raw-data/{s}" for s in subtrees]
     try:
         if env is None:
             PE.check_write_set(root, dirs=dirs, leaves=leaves,
@@ -1245,7 +1305,7 @@ class DestCase:
     the destination KIND the single-path API is asked about, and its own
     expected verdict.
 
-    The two python answers are allowed to differ, and three rows do differ, but
+    The two python answers are allowed to differ, and some rows do differ, but
     never silently: a row whose `single` verdict is not its `expect` must say
     why in `asymmetry`, and a row that cannot be asked of the single-path API at
     all must say why in `single_na`. Enforced by
@@ -1253,7 +1313,7 @@ class DestCase:
     """
 
     def __init__(self, name, build, expect, why, probe=None, single=None,
-                 asymmetry=None, single_na=None, teardown=None):
+                 asymmetry=None, single_na=None, teardown=None, telemetry=False):
         self.name = name
         self.build = build          # (td, worktree_or_None) -> (dest, env|None)
         self.expect = expect        # None to accept, else a reason code
@@ -1269,6 +1329,7 @@ class DestCase:
         # to what it was testing. Called in a `finally`, so a case that raises
         # mid-way still hands the tree back.
         self.teardown = teardown    # (dest) -> None, or None
+        self.telemetry = telemetry  # add the optional six-file synthetic source
         # Every builder takes (td, worktree_or_None); the ones that need a real
         # worktree name that second parameter `wt` and the ones that do not name
         # it `_wt`. Exact equality, not a substring test: a rename that silently
@@ -1519,6 +1580,27 @@ def _directory_where_a_file_belongs(td, wt):
     return wt, None
 
 
+def _telemetry_destination(name, kind):
+    """A fixed snapshot slot with the requested wrong kind or unsafe inode."""
+    def build(td, wt):
+        snapshot = wt / "private" / "1-raw-data" / "service-telemetry"
+        snapshot.mkdir(parents=True)
+        leaf = snapshot / name
+        if kind == "directory":
+            leaf.mkdir()
+        else:
+            outside = pathlib.Path(td) / "outside-snapshot"
+            outside.touch()
+            if kind == "symlink":
+                leaf.symlink_to(outside)
+            elif kind == "hardlink":
+                os.link(outside, leaf)
+            else:
+                raise AssertionError(f"unknown snapshot fixture kind: {kind}")
+        return wt, None
+    return build
+
+
 TABLE = [
     DestCase("a registered worktree of this checkout", _registered_worktree, None,
              "the accepting half: a guard that refuses correct input is the shape "
@@ -1654,6 +1736,27 @@ TABLE = [
              "the run reports success and the file it was supposed to write is not "
              "there",
              probe=("private/household.yaml", "file"), single="special_file"),
+    DestCase("a registered worktree with the fixed snapshot", _registered_worktree,
+             None, "the optional snapshot must stage all six ordinary files",
+             probe=("private/1-raw-data/service-telemetry/manifest.json", "file"),
+             single=None, telemetry=True),
+    *[DestCase(f"a directory in the snapshot {name} slot",
+               _telemetry_destination(name, "directory"), "special_file",
+               "the recursive scan allows directories; the fixed-file guard must refuse this slot",
+               probe=(f"private/1-raw-data/service-telemetry/{name}", "file"),
+               single="special_file", telemetry=True)
+      for name in ("manifest.json", "meter.csv", "mirror.csv", "eagle.csv",
+                   "generation.csv", "weather.csv")],
+    DestCase("a symlink inside the fixed snapshot",
+             _telemetry_destination("meter.csv", "symlink"), "symlink_under",
+             "the optional snapshot gets the same recursive link guard as the other staged trees",
+             probe=("private/1-raw-data/service-telemetry", "tree"),
+             single="symlink_under", telemetry=True),
+    DestCase("a hard link inside the fixed snapshot",
+             _telemetry_destination("weather.csv", "hardlink"), "hardlink_under",
+             "the optional snapshot must not write through another name for an outside inode",
+             probe=("private/1-raw-data/service-telemetry", "tree"),
+             single="hardlink_under", telemetry=True),
 ]
 
 # Anti-narrowing for the table, same shape as MOVERS_FLOOR: every refusal
@@ -6884,22 +6987,89 @@ def case_an_inherited_pathspec_variable_does_not_refuse_every_destination():
 
 
 @case
+def case_the_fixed_snapshot_census_detects_file_and_loop_drift():
+    """A fixed-file addition must reach the census; divergent loops must fail.
+
+    These mutations stay in memory. No source archive or shell script changes.
+    """
+    text = SCRIPT.read_text()
+    for name in ("manifest.json", "meter.csv", "mirror.csv", "eagle.csv",
+                 "generation.csv", "weather.csv"):
+        assert f"private/1-raw-data/service-telemetry/{name}" in _shell_write_set(text)[2], (
+            f"the census misses the fixed snapshot input {name}")
+    changed = text.replace('weather.csv"\n_telemetry=',
+                           'weather.csv future.csv"\n_telemetry=', 1)
+    assert changed != text
+    assert "private/1-raw-data/service-telemetry/future.csv" in _shell_write_set(changed)[2]
+    try:
+        _check_shell_write_set(changed)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("a new fixed snapshot file escaped the declared census")
+    for old, new in (
+            ('for _file in $_SERVICE_TELEMETRY_FILES; do\n    _dst_leaves',
+             'for _file in $_OTHER_FILES; do\n    _dst_leaves'),
+            ('for file in $_SERVICE_TELEMETRY_FILES; do\n    cp -P',
+             'for file in $_OTHER_FILES; do\n    cp -P'),
+            ('"$_STAGE_RAW/$sub/$file"', '"$_STAGE_RAW/$sub/other.csv"'),
+            ('for _leaf in "${_dst_leaves[@]}"; do',
+             '_dst_leaves[${#_dst_leaves[@]}]="$DST_REAL/private/extra.csv"\n'
+             'for _leaf in "${_dst_leaves[@]}"; do')):
+        changed = text.replace(old, new, 1)
+        assert changed != text
+        try:
+            _shell_write_set(changed)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("the fixed-file guard and copy loops can drift silently")
+    return "the fixed-file census catches added inputs, changed append sites, and guard/copy loop drift"
+
+
+@case
 def case_the_write_set_matches_the_shell_script():
-    """The paths the python side checks are PARSED from the shell script, then
-    compared with the constants above. A new `cp` line, a fourth managed path
-    or a fourth scanned subtree fails here instead of silently leaving the
-    agreement table testing a subset."""
-    ignore, subtrees, leaves = _shell_write_set(SCRIPT.read_text())
+    """Compare parsed paths with the declared census, including optional files.
+
+    A changed managed path, scanned subtree, or fixed-file list fails here
+    instead of silently leaving the agreement table testing a subset.
+    """
+    return _check_shell_write_set(SCRIPT.read_text())
+
+
+def _check_shell_write_set(text):
+    ignore, subtrees, leaves = _shell_write_set(text)
     assert tuple(ignore) == DECLARED_IGNORE_PATHS, (
         f"stage-private-data.sh now requires {ignore} to be uncommittable; "
         f"DECLARED_IGNORE_PATHS still says {list(DECLARED_IGNORE_PATHS)}")
     assert tuple(subtrees) == DECLARED_SUBTREES, (
-        f"the recursively-copied subtrees changed: {subtrees}")
+        f"the scanned subtrees changed: {subtrees}")
     assert sorted(leaves) == sorted(DECLARED_LEAVES), (
         f"the files the copies write changed:\n  shell: {sorted(leaves)}\n"
         f"  declared: {sorted(DECLARED_LEAVES)}")
     return (f"{len(ignore)} managed paths, {len(subtrees)} scanned subtrees and "
             f"{len(leaves)} written leaves, all read out of stage-private-data.sh")
+
+
+@case
+def case_the_agreement_table_covers_the_optional_fixed_snapshot():
+    """Keep source absence, source presence, and every fixed file in scope."""
+    text = SCRIPT.read_text()
+    subtree, fixed = _shell_fixed_snapshot(text)
+    for present in (False, True):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, telemetry=present)
+            _, subtrees, leaves = _shell_write_set(text, source=src)
+            assert (subtree in subtrees) == present
+            assert set(leaves).intersection(fixed) == (set(fixed) if present else set())
+    rows = [row for row in TABLE if row.telemetry]
+    refused_leaves = {row.probe[0] for row in rows
+                      if row.expect == "special_file" and row.probe}
+    assert refused_leaves == set(fixed), (
+        "every fixed file needs its own directory-in-a-file-slot agreement fixture")
+    assert {row.expect for row in rows} >= {None, "special_file", "symlink_under", "hardlink_under"}
+    assert any(not row.telemetry and row.expect is None for row in TABLE)
+    return "optional source absence/presence and all six file slots stay in the mandatory agreement table"
 
 
 @case
@@ -6968,8 +7138,8 @@ def case_the_shell_and_the_python_predicate_agree_on_every_destination():
     stage-private-data.sh, check_write_set() and check_destination() are each
     asked about the same fixture. The first two must return identical verdicts;
     the third answers about the row's own probe path, and must return the
-    verdict the row declares -- which for three rows is a different code, for
-    the reason written into the row.
+    verdict the row declares -- including a different code where the row states
+    the reason for that difference.
 
     Each case gets its own throwaway worktree, because the ACCEPTING cases
     really do run the copies -- against a synthetic source holding no real
@@ -6980,7 +7150,7 @@ def case_the_shell_and_the_python_predicate_agree_on_every_destination():
     rows, bad = [], []
     for tc in TABLE:
         with tempfile.TemporaryDirectory() as td:
-            src = _synthetic_src(td)
+            src = _synthetic_src(td, telemetry=tc.telemetry)
             ctx = _worktree(td) if tc.needs_worktree else contextlib.nullcontext(None)
             with ctx as wt:
                 dest, env = tc.build(pathlib.Path(td), wt)
@@ -7021,6 +7191,11 @@ def _run_one_table_case(tc, td, src, dest, env, bad):
     `finally` around it without the whole body moving an indent level.
     """
     shell = _shell_verdict(_run_shell(src, dest, cwd=td, env=env))
+    if shell is None and tc.telemetry:
+        _, fixed = _shell_fixed_snapshot(SCRIPT.read_text())
+        for rel in fixed:
+            assert (pathlib.Path(dest) / rel).is_file(), f"the accepted run did not stage {rel}"
+            assert (pathlib.Path(dest) / rel).read_bytes() == (pathlib.Path(src) / rel).read_bytes()
     saved = dict(os.environ)
     try:
         if env is not None:

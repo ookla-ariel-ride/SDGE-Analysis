@@ -6621,6 +6621,8 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
       * vendor and code constants: EV pack sizes (60-100 kWh), Charge Stats'
         8-12% charging loss, rated-miles 80-90%, NEC's 120% and 125% rules;
       * definitions: 1 kW for one hour is 1 kWh, a therm is ~29 kWh of heat;
+        nominal 120/240 V service values are external definitions, not measured
+        voltage or values derived from service_voltage.json;
       * bill facts with no artifact field: the BSC's October 2025 start.
 
     The token-derived pins, some of whose tokens need private/household.yaml
@@ -6645,6 +6647,12 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
     cca = json.loads((ROOT / "data" / "cca_bundled_counterfactual.json").read_text())
     soil = json.loads((ROOT / "data" / "soiling_results.json").read_text())
     carbon = json.loads((ROOT / "data" / "carbon_fullyear_results.json").read_text())
+    voltage = json.loads((ROOT / "data" / "service_voltage.json").read_text())["voltage"]
+    leg_range = voltage["leg1_v"]["range_a_v"]
+    line_range = voltage["line_v"]["range_a_v"]
+    assert leg_range == voltage["leg2_v"]["range_a_v"], (
+        "service_voltage.json:voltage leg1_v and leg2_v disagree on the Range A "
+        "limits the glossary states as one per-leg range")
     disp = DISPATCH
     assert "published_comparison" in pfd, (
         "perfect_foresight_dispatch.json has no published_comparison: perfect_foresight_dispatch dropped the greedy comparison (see its NOTICE); run battery_dispatch_policies.py on this frame, then regenerate perfect_foresight_dispatch.py")
@@ -6695,6 +6703,10 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
 
     # (glossary entry, figure as it must appear, what derives it)
     pins = [
+        ("ANSI C84.1 Range A", f"{leg_range[0]:g}–{leg_range[1]:g} V",
+         "service_voltage.json:voltage.{leg1_v,leg2_v}.range_a_v"),
+        ("ANSI C84.1 Range A", f"{line_range[0]:g}–{line_range[1]:g} V",
+         "service_voltage.json:voltage.line_v.range_a_v"),
         ("Grandfathering",
          f"${nem3['grandfathering_value_range_usd_per_yr']['low']:,.2f}–"
          f"${nem3['grandfathering_value_range_usd_per_yr']['high']:,.2f} per year",
