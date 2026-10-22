@@ -46,7 +46,7 @@ detection below the smallest tested passing step. No model is built in this prep
 
 ## 1. Keep intake private and preserve the source
 
-The [cheatsheet's study fields](../DATA-SOURCES-CHEATSHEET.md#e5-high-cadence-consumption-study--optional-study-prerequisites-only)
+The [cheatsheet's study fields](../DATA-SOURCES-CHEATSHEET.md#e6-high-cadence-consumption-study--optional-study-prerequisites-only)
 set all three document answers to `private-only`: `high_cadence_consumption_export`,
 `high_cadence_measurement_metadata`, and `high_cadence_controlled_test_log`.
 Keep raw exports, manifests, reference-meter records, load labels, and event times under

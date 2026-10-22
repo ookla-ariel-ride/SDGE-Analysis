@@ -18,8 +18,9 @@ things, and no more:
      unresolvable -- the last being a broken rule, not a clean bill;
   3. turns the private-only values into "needles" and scans every tracked file
      for them -- structurally where the file has a structure to walk (JSON and
-     YAML: string leaves and keys, compared for equality), as text everywhere
-     else, and both ways for YAML, which has comments outside its structure;
+     YAML: string leaves and keys, compared for equality; JSON numeric answers
+     also use complete numeric values), as text everywhere else, and both
+     ways for YAML, which has comments outside its structure;
   4. for the fields no literal scan can cover -- a boolean, a short enum --
      enforces the greppable substitute the cheatsheet states instead: no
      committed artifact carries a key of that name, and no committed script
@@ -37,7 +38,8 @@ WHAT THIS CANNOT SEE, stated so the gate is not read as more than it is
 
   * a value that was reformatted -- a date rendered in English, a figure
     rounded, a number written with thousands separators -- is a different
-    string and is not found;
+    string and is not found. JSON numbers are compared by exact decimal value,
+    so trailing zeros and exponent notation do not hide a numeric answer;
   * anything DERIVED arithmetically from a private value: a ratio, a per-unit
     cost, a sum a private figure contributed to;
   * a boolean, and a one-word enum shorter than BARE_WORD_TEXT_MIN_CHARS. That
@@ -76,6 +78,7 @@ appears in this file.
 import ast
 import collections
 import csv
+import decimal
 import io
 import json
 import pathlib
@@ -109,6 +112,8 @@ PATHLESS_FIELDS = {
     "rate_table_pdfs": "document", "solar_hourly_consumption_export": "document",
     "solar_daily_production_export": "document", "ev_charge_stats": "document",
     "wall_charger_export": "document",
+    "service_telemetry_snapshot": "document",
+    "service_measurement_provenance": "document",
     "high_cadence_consumption_export": "document",
     "high_cadence_measurement_metadata": "document",
     "high_cadence_controlled_test_log": "document",
@@ -169,6 +174,10 @@ YAML_PATH_OVERRIDES = {
 #     the file, prose and comments included. That is the mode that catches a
 #     private answer quoted inside an explanatory sentence, which is how this
 #     gate came to exist;
+#     JSON numeric answers are the exception: whole numeric tokens are compared
+#     by value, while strings and keys still receive the substring scan. A
+#     different calculated number containing the same digits is not the answer.
+#     Numeric-looking STRING answers keep the ordinary substring rule;
 #   * a single bare word with no digits is ordinary English before it is a door
 #     legend, and it turns up inside unrelated sentences by coincidence. Those
 #     are compared for EQUALITY against a structured file's own string leaves
@@ -227,14 +236,17 @@ class Needle:
     reports a finding may print it.
     """
 
-    __slots__ = ("field_id", "path", "leaf_path", "value", "mode")
+    __slots__ = ("field_id", "path", "leaf_path", "value", "mode", "number")
 
-    def __init__(self, field_id, path, leaf_path, value, mode):
+    def __init__(self, field_id, path, leaf_path, value, mode, number=None):
         self.field_id = field_id
         self.path = path
         self.leaf_path = leaf_path
         self.value = value
         self.mode = mode
+        self.number = decimal.Decimal(str(number)) if number is not None else None
+        if self.number is not None and not self.number.is_finite():
+            self.number = None
 
     @property
     def text_searchable(self):
@@ -503,12 +515,13 @@ def needles(household, fields=None, shape=None):
                     continue
                 s = str(v)
                 mode = "anywhere" if re.search(r"[\d\s]", s) else "as a value"
-                out.append(Needle(f["id"], path, leaf_path, s, mode))
+                number = v if isinstance(v, (int, float)) else None
+                out.append(Needle(f["id"], path, leaf_path, s, mode, number))
     # two schedule rows can carry the same legend, and two feeds the same
     # owner; that is one value to look for, and one finding to report
     seen, unique = set(), []
     for n in out:
-        key = (n.field_id, n.leaf_path, n.value, n.mode)
+        key = (n.field_id, n.leaf_path, n.value, n.mode, n.number)
         if key not in seen:
             seen.add(key)
             unique.append(n)
@@ -900,6 +913,30 @@ def _mask(text, spans):
     return "".join(chars)
 
 
+def _json_numeric_content(text):
+    """Exact numeric tokens and every raw/decoded JSON string, keys included.
+
+    The parser's number hooks see every occurrence, including values that a
+    duplicate key overwrites. Decimal preserves distinctions that binary floats
+    round away. Strings stay searchable as bytes and after JSON escape decoding.
+    """
+    numbers = set()
+
+    def number(token):
+        numbers.add(decimal.Decimal(token))
+        return None
+
+    try:
+        json.loads(text, parse_int=number, parse_float=number)
+    except (ValueError, decimal.DecimalException) as e:
+        raise UnparseableArtifact("JSON content", e) from None
+    strings = []
+    for match in re.finditer(r'"(?:[^"\\]|\\.)*"', text):
+        raw = match.group()
+        strings.extend((raw.lower(), json.loads(raw).lower()))
+    return numbers, strings
+
+
 def _found_in(text, needle_list, structured=None, as_text=True):
     """The needles that occur in one body of text. Returns needles, not Hits.
 
@@ -910,11 +947,18 @@ def _found_in(text, needle_list, structured=None, as_text=True):
     """
     low = text.lower()
     strings = structured_strings(structured) if structured is not None else None
+    numeric_json = None
+    if not as_text and any(n.number is not None for n in needle_list):
+        numeric_json = _json_numeric_content(text)
     out = []
     for n in needle_list:
         v = n.value.lower()
         if n.mode == "anywhere":
-            found = v in low
+            if n.number is not None and numeric_json is not None:
+                numbers, json_strings = numeric_json
+                found = n.number in numbers or any(v in s for s in json_strings)
+            else:
+                found = v in low
         else:
             found = strings is not None and v in strings
             if not found and as_text and n.text_searchable:

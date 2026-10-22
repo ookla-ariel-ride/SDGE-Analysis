@@ -172,6 +172,7 @@ MANIFEST = {
     "bill_decomposition.py": "generator",
     "tou_audit.py": "generator",
     "service_headroom.py": "generator",
+    "service_voltage.py": "generator",
     "irreducible_bill.py": "generator",
     "nem3_grandfathering.py": "generator",
     "dsgs_vpp_backtest.py": "generator",
@@ -182,6 +183,7 @@ MANIFEST = {
     "quiet_night_floor.py": "generator",
     "threeway_production_validation.py": "generator",
     "marginal_capacity_value.py": "generator",
+    "portable_solar_storage.py": "generator",
     "heat_pump_conversion.py": "generator",
     "extra_results.py": "generator",
     "all_electric_endgame.py": "generator",
@@ -196,6 +198,7 @@ MANIFEST = {
 # whose seven artifacts (six bill CSVs plus bill_corpus_boundary.json) have their own
 # transactional gate and test suite.
 OWNS = {
+    "service_voltage.py": [("data", "service_voltage.json")],
     "rates_history.py":             [("data", "rate_vintages.csv"),
                                      ("data", "rate_rebilling_residuals.csv")],
     "behavior_rebuild.py":          [("cwd", "behavior_rebuild.json")],
@@ -245,6 +248,7 @@ OWNS = {
     # writes directly into ROOT/data via its own repo_root() walk-up, same
     # convention as threeway_production_validation.py/quiet_night_floor.py
     "marginal_capacity_value.py":   [("data", "marginal_capacity_value.json")],
+    "portable_solar_storage.py":    [("data", "portable_solar_storage.json")],
     # writes directly into ROOT/data via its own repo_root() walk-up, same
     # convention as threeway_production_validation.py/quiet_night_floor.py
     "heat_pump_conversion.py":      [("data", "heat_pump_conversion.json")],
@@ -462,6 +466,7 @@ CI_RUNNABLE = {
 # stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run
 # only where that archive exists, and the reason is recorded rather than implied.
 NEEDS_PRIVATE_ARCHIVE = {
+    "service_voltage.py": "the frozen private/1-raw-data/service-telemetry snapshot and manifest",
     "parse_bills.py": "the bill PDF corpus (private/1-raw-data/*-bills/)",
     "bill_decomposition.py": ("the bill PDF corpus (the charged CEA per-TOU rates and "
                               "the billing-mode sentences are printed nowhere else) and "
@@ -539,6 +544,11 @@ NEEDS_PRIVATE_ARCHIVE = {
                                    "meter_derived column it also ties out against day by "
                                    "day, so a synthetic year must diverge from that "
                                    "real-year artifact and trip it"),
+    "portable_solar_storage.py": ("the staged usage.csv and SAM 8760 pair (samA.csv/"
+                                   "samB.csv), plus the real-year production tie-out "
+                                   "and monitoring reconciliation inherited from "
+                                   "marginal_capacity_value.py; the shared synthetic "
+                                   "fixture cannot satisfy those evidence checks"),
 }
 
 # Generators listed above that nonetheless run END TO END IN CI -- just not
@@ -558,19 +568,21 @@ NEEDS_PRIVATE_ARCHIVE = {
 # and fails if any of them skips, specifically so this dict cannot silently
 # regress to asserting something false again.
 #
-# Only 7 of the 17 NEEDS_PRIVATE_ARCHIVE generators are covered this way today
-# (battery_plan_matrix.py added after its "genuinely cannot" claim was
+# Only generators in the mapping below have this archive-free coverage
+# (battery_plan_matrix.py was added after its "genuinely cannot" claim was
 # disproved by a working demonstration -- an independently computed
 # reference, not the generator's own committed real-year artifact, can
-# satisfy its fail-closed tie-outs for real). The other 10 (parse_bills.py,
-# bill_decomposition.py, irreducible_bill.py, carbon_dispatch_tradeoff.py,
-# cca_rate_extraction.py, cca_bundled_counterfactual.py,
-# uncertainty_propagation.py, gross_import_decomposition.py,
-# reprice_by_vintage.py, marginal_capacity_value.py) are NOT verified end to end anywhere in CI as of this
-# commit -- see TECHNICAL.md 6.7 for the honest per-generator accounting of
-# why each one is or is not yet covered, and which are believed tractable vs.
-# disproportionate.
+# satisfy its fail-closed tie-outs for real). The self-check below computes
+# the current covered/uncovered counts from the mappings, rather than relying
+# on a hand-maintained count here. See TECHNICAL.md 6.7 for the per-generator
+# accounting and the distinction between computational coverage and local-only
+# real-input loading/artifact reproduction.
 VERIFIED_ELSEWHERE_IN_CI = {
+    "service_voltage.py": ("test_service_voltage.py",
+                           ["SnapshotTests.test_fixture_generator_reports_full_day_and_unknown_loss",
+                            "ProductionTests.test_known_negative_conditional_slope_is_found_without_causal_loss",
+                            "JoinTests.test_production_model_refuses_missing_reference",
+                            "SnapshotTests.test_hash_mismatch_fails_before_output_change"]),
     "service_headroom.py": ("test_service_headroom.py",
                             ["case_build_runs_end_to_end_on_a_synthetic_house"]),
     "battery_backup_sims.py": ("test_battery_backup_sims.py",
@@ -588,6 +600,12 @@ VERIFIED_ELSEWHERE_IN_CI = {
                                ["case_battery_plan_matrix_end_to_end_on_a_synthetic_house"]),
     "carbon_dispatch_tradeoff.py": ("test_carbon_dispatch_tradeoff.py",
                                     ["case_compute_runs_end_to_end_on_a_synthetic_house"]),
+    # Runs the real study builder and hand-computed dispatch/billing checks.
+    # Real-input loading and artifact byte reproduction remain local-only.
+    "portable_solar_storage.py": ("test_portable_solar_storage.py",
+                                 ["case_matrix_integrates_each_pair_and_keeps_free_behavior_out_of_hardware",
+                                  "case_storage_reserve_losses_and_charge_discharge_limits",
+                                  "case_monthly_rebill_crosses_credit_bucket_and_preserves_nbc"]),
 }
 
 # The fixture window is DERIVED from the pipeline's anchor date so re-pointing
@@ -1784,6 +1802,81 @@ def _archive_free_root(tmp):
     return tmp
 
 
+_REQUIRED_UNITTEST_RUNNER = """
+import json
+import sys
+import unittest
+
+class RequiredResult(unittest.TextTestResult):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.executed_ids = []
+        self.successful_ids = []
+
+    def startTest(self, test):
+        self.executed_ids.append(test.id())
+        super().startTest(test)
+
+    def addSuccess(self, test):
+        self.successful_ids.append(test.id())
+        super().addSuccess(test)
+
+suite = unittest.defaultTestLoader.loadTestsFromNames(sys.argv[1:])
+result = unittest.TextTestRunner(verbosity=2, resultclass=RequiredResult).run(suite)
+print('REQUIRED_UNITTEST_RESULT=' + json.dumps({
+    'executed': result.executed_ids,
+    'successful': result.successful_ids,
+    'skipped': [test.id() for test, reason in result.skipped],
+    'failures': [test.id() for test, traceback in result.failures],
+    'errors': [test.id() for test, traceback in result.errors],
+}))
+sys.exit(0 if result.wasSuccessful() and not result.skipped else 1)
+"""
+
+
+def _check_required_unittests(test_file, cases, cwd):
+    requested = [f"{test_file[:-3]}.{case}" for case in cases]
+    result = subprocess.run(
+        [sys.executable, "-c", _REQUIRED_UNITTEST_RUNNER, *requested],
+        cwd=cwd, capture_output=True, text=True, timeout=900)
+    prefix = "REQUIRED_UNITTEST_RESULT="
+    reports = [line[len(prefix):] for line in result.stdout.splitlines()
+               if line.startswith(prefix)]
+    assert len(reports) == 1, (
+        f"{test_file}: no unique unittest result: {result.stderr[-600:]}")
+    report = json.loads(reports[0])
+    assert (result.returncode == 0 and report['executed'] == requested
+            and report['successful'] == requested and not report['skipped']
+            and not report['failures'] and not report['errors']), (
+        f"{test_file}: required unittest IDs did not all execute and pass: "
+        f"requested={requested}, result={report}, exit={result.returncode}; "
+        f"{result.stderr[-600:]}")
+
+
+def case_required_unittest_mapping_checks_actual_ids_and_outcomes():
+    # A mapping must fail for an absent method, a skip, or an assertion failure.
+    # Even one successful test must not hide another outcome in the same run.
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        (root / "test_mapping_fixture.py").write_text(
+            "import unittest\n"
+            "class Contract(unittest.TestCase):\n"
+            "    def test_success(self): self.assertEqual(2 + 2, 4)\n"
+            "    @unittest.skip('synthetic skip')\n"
+            "    def test_skip(self): pass\n"
+            "    def test_failure(self): self.assertEqual(2 + 2, 5)\n")
+        _check_required_unittests("test_mapping_fixture.py", ["Contract.test_success"], root)
+        for other in ("Contract.test_missing", "Contract.test_skip", "Contract.test_failure"):
+            try:
+                _check_required_unittests(
+                    "test_mapping_fixture.py", ["Contract.test_success", other], root)
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError(f"unittest mapping accepted {other}")
+    return "qualified unittest IDs must execute and succeed; missing methods, skips, and failures refuse"
+
+
 def case_verified_elsewhere_mapping_is_real_and_wired_into_ci():
     """VERIFIED_ELSEWHERE_IN_CI is a claim about what actually runs in CI --
     check it by actually running it, not by trusting the dict.
@@ -1822,6 +1915,27 @@ def case_verified_elsewhere_mapping_is_real_and_wired_into_ci():
         assert not (free / "private").exists(), "archive-free root must have no private/ at all"
         for name, (test_file, cases) in sorted(VERIFIED_ELSEWHERE_IN_CI.items()):
             src = (ANALYSIS / test_file).read_text()
+            if all("." in c for c in cases):
+                # unittest registers test_* methods through TestCase, rather
+                # than this repo's usual CASES list. Run each named method
+                # explicitly: an absent method, skip, or assertion must fail.
+                tree = ast.parse(src)
+                registered = {
+                    f"{cls.name}.{method.name}"
+                    for cls in tree.body if isinstance(cls, ast.ClassDef)
+                    if any(isinstance(base, ast.Attribute) and base.attr == "TestCase"
+                           for base in cls.bases)
+                    for method in cls.body if isinstance(method, ast.FunctionDef)
+                    and method.name.startswith("test_")
+                }
+                absent = set(cases) - registered
+                assert not absent, (
+                    f"{name}: {test_file} has no registered unittest methods {sorted(absent)}")
+                try:
+                    _check_required_unittests(test_file, cases, free / "analysis")
+                except (AssertionError, subprocess.TimeoutExpired) as exc:
+                    wrong.append(f"{name}: {exc}")
+                continue
             for c in cases:
                 # static: the case must actually be a defined function referenced
                 # in this file's own CASES list -- catches a rename/removal that
@@ -2219,6 +2333,7 @@ def case_check_coverage_reports_an_empty_measurement_as_its_own_failure():
 
 
 CASES = [
+    case_required_unittest_mapping_checks_actual_ids_and_outcomes,
     case_manifest_is_complete_and_exact,
     case_no_two_generators_own_the_same_artifact,
     case_every_script_parses,

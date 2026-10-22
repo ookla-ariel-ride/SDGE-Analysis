@@ -34,10 +34,15 @@ Confirmed asymmetry: discharge continuous max 11.5 kW vs. charge continuous max
 ## Incentives status (as of Jul 2026)
 - Federal 25D residential 30% credit: **expired Dec 31, 2025** (no ITC for residential
   battery retrofits in 2026).
-- CA SGIP general-market (~$200/kWh ≈ $2,700 on 13.5 kWh): **waitlisted 12–18 months**;
-  join the waitlist anyway. RSSE (income-qualified) also waitlisted.
-- NEM 2.0: adding storage does NOT affect grandfathering (20 yr from PTO 12/27/2019 →
-  ~Dec 2039). Solar-charged storage retains retail export credits.
+- CA SGIP: the earlier waitlist note does not establish current program availability.
+  This study assumes no SGIP. Check the program administrator before enrollment;
+  current NEM-ST conditions can also change the tariff outcome.
+- NEM 2.0 (tariff checked 2026-10-22): storage-only additions ordinarily retain the
+  remaining legacy term (20 yr from PTO 12/27/2019 to ~Dec 2039). Customers who
+  apply and have an SGIP reservation accepted on or after June 4, 2024 must move
+  to NBT, except Residential Solar and Storage Equity or low-income-qualified
+  Equity Resiliency residential customers. Export credits depend on the applicable
+  NEM-ST SC 10 metering/control rules. [Current NEM-ST SC 9(d), sheet 28, effective September 3, 2024](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE).
 
 ## Simulation results (see `data/battery_sim.json`, `data/backup_endurance.json`)
 Arbitrage (per-interval, 90% RTE, charge from would-be exports + SOP grid top-up,

@@ -62,6 +62,8 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 ## Solar & hardware
 
+**ANSI C84.1 Range A** — The normal service-voltage range: 114–126 V for nominal 120 V service, and 228–252 V for nominal 240 V service. Service limits differ from equipment utilization limits and address sustained voltage. This definition uses [PG&E's *Voltage Tolerance Boundary*, July 2018, pages 1–2](https://www.pge.com/assets/pge/docs/contact-us/report-an-issue/Voltage_Tolerance.pdf), a utility interpretation that does not identify the ANSI edition. The full standard was not obtained. Rounded gateway samples within this range do not establish calibrated service-point compliance or rule out events between samples. See the [service-voltage study](research/service-voltage.md).
+
 **Capacity factor** — Actual annual energy output divided by what the system would make running at full rated power 24/7. This array's ~18.7% is healthy for rooftop solar (the sun is only up part of the day). [Wikipedia: capacity factor](https://en.wikipedia.org/wiki/Capacity_factor)
 
 **Clipping** — When panels can momentarily produce more DC power than the inverter's AC limit, the inverter "clips" the excess and it's lost. This system's 5-minute data shows no meaningful clipping (§9 of the report): peak power on the year's best day, 8.52 kW, sits about 10% below the 9.45 kW AC ceiling.
@@ -82,7 +84,7 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 **PVOutput** — A free public website where solar owners publish their systems' output; it provides this report's independent multi-year production record. [pvoutput.org](https://pvoutput.org)
 
-**Rule 21 (interconnection)** — The CPUC tariff governing how customer solar and battery systems connect to the utility grid. Relevant here because a battery interconnected under a non-export agreement needs a Rule 21 modification before it can export in a virtual power plant; storage additions do not affect NEM 2.0 grandfathering either way. [CPUC: Rule 21 interconnection](https://www.cpuc.ca.gov/industries-and-topics/electrical-energy/infrastructure/rule-21-interconnection)
+**Rule 21 (interconnection)** — The CPUC tariff governing how customer solar and battery systems connect to the utility grid. A battery under a non-export agreement needs the applicable interconnection change before it can export in a virtual power plant. Storage-only additions ordinarily keep the remaining NEM 2.0 term under NEM-ST SC 9(d). Customers who apply and have an SGIP reservation accepted on or after June 4, 2024 must move to NBT, with two exceptions. The exceptions cover Residential Solar and Storage Equity and low-income-qualified Equity Resiliency residential customers. Check the exact connection and incentive category. [CPUC: Rule 21 interconnection](https://www.cpuc.ca.gov/industries-and-topics/electrical-energy/infrastructure/rule-21-interconnection); [Current SDG&E Rule 21](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=96&utilId=SDGE); [NEM-ST SC 9(d), sheet 28, effective September 3, 2024](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE).
 
 **SAM 8760** — An Enphase report of hourly whole-home consumption for a calendar year: 8,760 values, one per hour (24 × 365). Named for NREL's System Advisor Model, which uses this format. [NREL SAM](https://sam.nrel.gov)
 

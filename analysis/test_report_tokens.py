@@ -4246,21 +4246,10 @@ def case_s2_verdict_refuses_to_time_exports_it_cannot_rebuild():
             f"rebuilding the year's exports (live midday share {live:.1%})")
 
 
-# THE TWO §8 VERDICT TOKENS ARE PINNED BY VALUE, NOT BY VOCABULARY (issue
-# #183). Both quote the ALL-HOURS export share, exports over production, the
-# figure EXPORTED_SHARE publishes. That ratio is the same number whether the
-# exports leave at noon or at dusk, so a clause that put it "at the wrong time
-# of day" or "at low value" was describing the midday slice and pointing at
-# the whole; the heading carried the second wording and the expansion token
-# the first. A blocklist of time and value words was the first pin written
-# here and it was the wrong shape: "for pennies", "into a glut", "when the
-# grid least needs it" and "60 percent" all walked past it (the same hole
-# issue #180 names in the page-wide guard). So each token is asserted EQUAL
-# to the sentence built from its own helper values -- the all-hours share, the
-# grandfathering bracket, the midday share and the tariff window -- and any
-# wording change, in either direction, fails by value. The retired-wording
-# case below feeds the pin the two retired strings and shows it refusing them,
-# so the pin stays a test of the defect rather than of a spelling.
+# The §8 tokens keep export fraction separate from export timing. Their
+# purchase deferral must also survive regeneration: original approval,
+# connection, settlement, and installed price remain missing inputs. A known
+# cap or automatic loss of existing grandfathering cannot support a blanket no.
 def _s8_scaffolds():
     """{token: the sentence it must render}, from the helpers the tokens read."""
     exp_pct = rt._all_hours_export_pct(rt.CTX)
@@ -4268,14 +4257,12 @@ def _s8_scaffolds():
     window = rt._cheap_window()
     return {
         "S8_VERDICT_SHORT": (
-            f"No, no, and not yet — the array already exports {exp_pct}% of production, "
-            f"and expansion risks the {rt._grandfathering_bracket('S8_VERDICT_SHORT')} "
-            "NEM 2.0 grandfathering"),
+            "Defer expansion pending original approval, connection, settlement, and installed "
+            f"price; keep healthy hardware — {exp_pct}% of production is exported, with "
+            f"{rt._grandfathering_bracket('S8_VERDICT_SHORT')} of NEM 2.0 grandfathering"),
         "EXPANSION_VERDICT_SHORT": (
-            f"No — expansion risks the "
-            f"{rt._grandfathering_bracket('EXPANSION_VERDICT_SHORT')} NEM 2.0 "
-            f"grandfathering, and {midday_pct}% of the year's exports already leave in "
-            f"the {window} window"),
+            "Defer purchase pending original approval, connection, settlement, and installed "
+            f"price — {midday_pct}% of the year's exports leave in the {window} window"),
     }
 
 
@@ -4284,16 +4271,14 @@ def _assert_s8_tokens_match_their_scaffolds():
         value = rt.resolve_token(token)
         assert value == expected, (
             f"{token} renders {value!r}, not the sentence its own helper values build "
-            f"({expected!r}) -- the wording moved, and the only wordings this pin has "
-            "ever refused attached a time of day or a value to the all-hours export "
-            "share, which says nothing about either")
+            f"({expected!r}) -- preserve qualified expansion and distinct export referents")
 
 
 @case
 def case_s8_verdict_tokens_render_exactly_their_helper_values():
     """The heading and the expansion verdict each render the one sentence
     their helpers build: the all-hours share (a plain fraction), the
-    grandfathering bracket (the reason for the "no"), and, on the expansion
+    grandfathering bracket (a conditional tariff stake), and, on the expansion
     token, the midday slice timed by its own share. Both stay inside the
     basic-tier density cap."""
     _assert_s8_tokens_match_their_scaffolds()
@@ -4303,7 +4288,7 @@ def case_s8_verdict_tokens_render_exactly_their_helper_values():
     midday_pct = round(rt._midday_export_share(rt.CTX) * 100)
     return (f"S8_VERDICT_SHORT and EXPANSION_VERDICT_SHORT render exactly their helper "
             f"values (all-hours {exp_pct}%, midday {midday_pct}%, "
-            f"{rt._grandfathering_bracket('S8_VERDICT_SHORT')} at risk), inside the "
+            f"{rt._grandfathering_bracket('S8_VERDICT_SHORT')} grandfathering), inside the "
             "density cap")
 
 
@@ -4323,6 +4308,17 @@ def case_s8_value_pin_refuses_both_retired_wordings():
         # The same conflation past the old blocklist: no listed word, same claim.
         ("EXPANSION_VERDICT_SHORT",
          f"No — already exports {exp_pct}% of production for pennies"),
+    )
+    retired += (
+        ("S8_VERDICT_SHORT",
+         f"No, no, and not yet — the array already exports {exp_pct}% of production, "
+         f"and expansion risks the {bracket} NEM 2.0 grandfathering"),
+        ("EXPANSION_VERDICT_SHORT",
+         f"No — expansion risks the {bracket} NEM 2.0 grandfathering, and "
+         f"{round(rt._midday_export_share(rt.CTX) * 100)}% of the year's exports "
+         f"already leave in the {rt._cheap_window()} window"),
+        ("EXPANSION_VERDICT_SHORT",
+         "Exceeding the cap automatically forfeits the entire existing array's NEM status"),
     )
     for token, wording in retired:
         with _swapped(rt.TOKENS[token], "get", lambda ctx, w=wording: w):
@@ -12782,7 +12778,7 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     A short repeated number is not flagged, and neither is a figure repeated
 #     in a DIFFERENT CONTAINER. The live example of the latter is the lifetime
 #     table, which prints the first year's value in both the annual and the
-#     cumulative cell (report-template.html:553) -- and be precise about WHICH
+#     cumulative cell (report-template.html:555) -- and be precise about WHICH
 #     rule spares it, because there are two and only one of them is load-
 #     bearing. Today's FIRST_YEAR_VALUE happens to be 7 characters, one under
 #     _SEAM_MIN_ECHO, so the length floor would exclude it anyway; that is an
@@ -13131,7 +13127,7 @@ _SEAM_INLINE_TAGS = frozenset((
 # or list items are not one run of text however few characters of markup the
 # author put between them, so the echo rule does not compare ACROSS one at all
 # -- not "at a distance", not at all. That is what spares the lifetime table's
-# cumulative column (report-template.html:553, which prints FIRST_YEAR_VALUE in
+# cumulative column (report-template.html:555, which prints FIRST_YEAR_VALUE in
 # both the annual and the cumulative cell) no matter how long that value grows,
 # and it does so without a second threshold to tune.
 #
@@ -13301,7 +13297,7 @@ _SEAM_CLASSES = ("doubled-sigil", "missing-unit", "echoed-phrase")
 #
 # ONE STATED LIMIT: a marker cannot separate two occurrences of the SAME token
 # on the SAME line. Several template lines print a token twice -- the lifetime
-# table's row (report-template.html:553, FIRST_YEAR_VALUE in both the annual
+# table's row (report-template.html:555, FIRST_YEAR_VALUE in both the annual
 # and the cumulative cell) is the one this file has reason to name elsewhere --
 # and none of them is allowlisted, so an entry for one would excuse both.
 # Line numbers are the next granularity down and they do not help here either.
@@ -16087,14 +16083,14 @@ def case_the_lifetime_tables_cumulative_cell_is_not_an_echo():
     clear the floor, and a case that passed only because of the floor fails.
 
     The line number is pinned too. Two comments in this file name
-    report-template.html:553 as this row; the last pair of comments to name a
+    report-template.html:555 as this row; the last pair of comments to name a
     line number here named five of them and every one was stale."""
     text = rt.TEMPLATE.read_text()
     row = _seam_template_line("FIRST_YEAR_VALUE", text)
     lineno = text.splitlines().index(row) + 1
-    assert lineno == 553, (
+    assert lineno == 555, (
         f"the lifetime table's repeated-value row is report-template.html:{lineno}, "
-        "not 553. Update the two comments in this file that name that line -- the "
+        "not 555. Update the two comments in this file that name that line -- the "
         "class 3 paragraph in the block comment and the _SEAM_INLINE_TAGS policy "
         "comment -- in the same edit, which is what this assertion exists to force")
     assert row.count("{{FIRST_YEAR_VALUE}}") == 2, (

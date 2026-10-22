@@ -16,7 +16,7 @@ marked **(required)** are the minimum; the rest make the analysis richer.
 **This document doubles as the machine-consumable intake-interview spec.** Every field below
 carries a small fenced `yaml` block: a stable `id`, the homeowner-facing `question`, the
 answer `type` (string / number / date / file / bool / list), when it's `required_if`
-(always / has_solar / has_ev / has_gas / has_battery_interest / has_new_load_interest),
+(always / has_solar / has_ev / has_gas / has_battery_interest / has_new_load_interest / optional),
 `where` to get it (the
 portal walkthrough), and its `privacy` tier — `public-ok` (may appear in the published
 report: system kW, climate zone, plan name, odometer readings), `private-only`
@@ -142,6 +142,7 @@ these as resolved by declaration, which is a different outcome from failing to r
   `electric_bill_pdfs`, `gas_bill_pdfs`, `gas_interval_csv`, `plan_comparison_capture`,
   `cca_rate_schedule`, `rate_table_pdfs`, `solar_hourly_consumption_export`,
   `solar_daily_production_export`, `ev_charge_stats`, `wall_charger_export`,
+  `service_telemetry_snapshot`, `service_measurement_provenance`,
   `high_cadence_consumption_export`, `high_cadence_measurement_metadata`,
   `high_cadence_controlled_test_log`.
 - **The answer is a source or a research finding** recorded in the report and its
@@ -991,7 +992,43 @@ privacy: private-only
 privacy_note: "A filesystem path or repo name on the operator's own machine, which can carry a username or a directory layout. It describes the setup rather than the energy data, and no analysis script reads it."
 ```
 
-## E5. High-cadence consumption study 📥🔒 (optional; study prerequisites only)
+## E5. Service voltage telemetry (optional)
+
+Raw service telemetry and its installation-specific measurement records are **private-only**.
+Keep frozen files under `private/1-raw-data/service-telemetry/`.
+The `optional` condition means these documents are not needed for the general household intake.
+These are path-less document answers; do not add their contents or paths to `household.yaml`.
+Credentials, tokens, and connection secrets belong only in gitignored `.env`.
+
+```yaml
+id: service_telemetry_snapshot
+question: "Do you have frozen voltage, frequency, grid-power, solar-power, and weather exports for a service-voltage study?"
+type: file
+required_if: optional
+where: "Export the existing collector's stored records into private/1-raw-data/service-telemetry/. Keep the raw source timestamps, missing values, units, source labels, quality flags, and immutable snapshot manifest with its file hashes there. Do not query live devices from the public analysis generator."
+privacy: private-only
+```
+
+```yaml
+id: service_measurement_provenance
+question: "What records establish the selected sensor, physical measurement point, calibration, accuracy, clock, and field meanings?"
+type: file
+required_if: optional
+where: "Keep collector-version notes, model and firmware evidence, calibration records, installation diagrams, source comparisons, and private event records under private/1-raw-data/service-telemetry/. Mark facts that lack evidence as unknown. Keep account and device identifiers private; credentials belong only in .env."
+privacy: private-only
+```
+
+**Raw-document boundary.** These tiers bind the complete source documents, including timestamps and household-specific measurement provenance.
+They do not declare raw readings or provenance answers public because a generator can read them.
+Only de-identified aggregates and method descriptions that pass the existing privacy and publication gates can enter public artifacts.
+Do not publish raw rows, exact household event times, device or account identifiers, credentials, or installation-specific records.
+Generic measurement limits need public documentation; a claim about this measurement chain needs checked project evidence.
+
+This ledger records the prior private-only decision for this study.
+It grants no retroactive permission to publish source documents.
+The path-less declaration resolves the intake field; it does not scan raw document contents for publication safety.
+
+## E6. High-cadence consumption study 📥🔒 (optional; study prerequisites only)
 
 These document fields apply only to a requested high-cadence feasibility study. They add no
 mandatory answers to `household.yaml`. Record document receipt in gitignored

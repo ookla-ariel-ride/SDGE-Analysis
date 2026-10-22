@@ -278,6 +278,88 @@ def case_the_repo_scan_catches_a_planted_value():
             "planted in markdown prose and on one published as a JSON value")
 
 
+def case_distinct_json_numbers_do_not_disclose_a_private_number():
+    """A numeric substring is not the numeric intake answer (issue #306)."""
+    for private, text in (
+            (27.625, '[127.625, 27.6259, -27.625, 0.00027625]'),
+            (-27.625, '[-27.6259, 27.625]'),
+            (12345, '[912345, 123456, 12345.0000000000001]')):
+        needles = PT.needles({"location": {"lat": private}})
+        assert needles, "the invented numeric answer produced no needle"
+        assert not PT.scan_text(text, needles, relpath="data/result.json"), \
+            "a different JSON number matched part of a private number"
+    return "distinct JSON numbers pass, including values a float rounds equal"
+
+
+def case_json_numeric_equivalents_still_disclose_the_private_number():
+    """Compare whole numeric tokens without a float conversion or lost keys."""
+    for private, tokens in (
+            (27.625, ('27.625', '27.6250', '2.7625e+1', '27625e-3')),
+            (-27.625, ('-27.625', '-27.62500', '-27625e-3')),
+            (12345, ('12345', '12345.0', '1.2345E4'))):
+        needles = PT.needles({"location": {"lat": private}})
+        for token in tokens:
+            for text in (token, '{"nested": [{"value": ' + token + '}]}',
+                         '{"same": ' + token + ', "same": 0}'):
+                hits = PT.scan_text(text, needles, relpath="data/result.json")
+                assert len(hits) == 1 and hits[0].field_id == "site_latitude", \
+                    "an exact or equivalent JSON number escaped the scan"
+    return "exact numbers and equivalent decimals/exponents fail at every depth"
+
+
+def case_numeric_answers_in_strings_and_text_still_disclose_the_value():
+    needles = PT.needles({"location": {"lat": 27.625}})
+    for text in ('"27.625"', '{"prefix27.625suffix": 0}',
+                 '{"note": "prefix27.625suffix"}',
+                 r'{"note": "\u0032\u0037.625"}'):
+        assert PT.scan_text(text, needles, relpath="data/result.json"), \
+            "a private number inside a JSON string or key escaped the scan"
+    for rel, text in (("notes.md", "Calculated 127.6259 units."),
+                      ("analysis/example.py", "# The value is 27.625\n"),
+                      ("data/result.yaml", "value: 127.6259\n"),
+                      ("data/result.yaml", "value: 0 # note 27.625\n")):
+        assert PT.scan_text(text, needles, relpath=rel), \
+            "the existing text or YAML substring rule changed"
+    # Numeric-looking strings are identifiers, not typed numeric answers.
+    identifier = PT.needles({"location": {"lat": "27.625"}})
+    assert PT.scan_text('[127.6259]', identifier, relpath="data/result.json"), \
+        "a numeric-looking string lost its existing substring protection"
+    secret = PT.needles({"monitoring": [{"url": "site-27625"}]})
+    assert PT.scan_text('{"site-27625": "prefixsite-27625suffix"}', secret,
+                        relpath="data/result.json"), \
+        "a digit-bearing identifier in a JSON key or string escaped the scan"
+    for text in ('{"value": 27.625,}', '[27.625 # a comment]'):
+        try:
+            PT.scan_text(text, needles, relpath="data/result.json")
+        except PT.UnparseableArtifact:
+            pass
+        else:
+            raise AssertionError("malformed JSON passed the numeric scan")
+    return "JSON strings/keys, identifiers, prose, YAML and invalid JSON stay guarded"
+
+
+def case_the_staged_numeric_gate_uses_whole_json_values():
+    household = {"location": {"lat": 27.625}}
+    rel = "data/result.json"
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        _tree(root, {rel: '{"calculated": [127.625, 27.6259]}'})
+        items, _ = PT.staged_items(root)
+        hits, _ = PT.gate(items, household)
+        assert not hits, "the staged gate blocked a distinct JSON number"
+        (root / rel).write_text('{"nested": [2.7625e+1]}')
+        items, _ = PT.staged_items(root)
+        hits, _ = PT.gate(items, household)
+        assert not hits, "the staged numeric gate read unstaged bytes"
+        subprocess.run(["git", "add", rel], cwd=root, check=True)
+        items, _ = PT.staged_items(root)
+        hits, _ = PT.gate(items, household)
+        assert len(hits) == 1 and hits[0].field_id == "site_latitude", \
+            "the staged gate missed a numeric equivalent"
+        assert "27.625" not in str(hits), "a staged finding printed a value"
+    return "the staged gate passes collisions and blocks a staged numeric equivalent"
+
+
 def case_a_test_module_and_the_template_are_scanned_like_any_other_file():
     """No file class goes unscanned, which it did until an adversarial pass.
 
@@ -1647,6 +1729,10 @@ CASES = [
     case_every_field_id_resolves_or_is_declared_path_less,
     case_the_resolver_reaches_a_key_inside_a_list,
     case_the_repo_scan_catches_a_planted_value,
+    case_distinct_json_numbers_do_not_disclose_a_private_number,
+    case_json_numeric_equivalents_still_disclose_the_private_number,
+    case_numeric_answers_in_strings_and_text_still_disclose_the_value,
+    case_the_staged_numeric_gate_uses_whole_json_values,
     case_a_test_module_and_the_template_are_scanned_like_any_other_file,
     case_only_a_literal_the_baseline_already_held_is_excused,
     case_a_yaml_artifact_is_read_structurally_and_not_by_pattern,
