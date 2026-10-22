@@ -760,7 +760,7 @@ def case_hyphenated_shouting_counts_as_one_word():
     (TOU-DR-P, EV-TOU-5) are named in ACRONYMS rather than pattern-exempted."""
     html = "<p>THIS-WORD-IS-SHOUTED in running prose here now</p>\n" + _filler(1000)
     assert prose_rhythm.measure(html)["caps"] == ["THIS-WORD-IS-SHOUTED"], prose_rhythm.measure(html)["caps"]
-    for token in ("TOU-DR-P", "EV-TOU-5", "TOU-ELEC"):
+    for token in ("TOU-DR-P", "EV-TOU-5", "TOU-ELEC", "NEM-ST"):
         ok = f"<p>the {token} plan is priced against this year of usage</p>\n" + _filler(1000)
         assert prose_rhythm.measure(ok)["caps"] == [], (token, prose_rhythm.measure(ok)["caps"])
     return ("a hyphenated chain of capitals is one shouted word; the rate-plan names stay "
