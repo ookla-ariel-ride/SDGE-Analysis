@@ -4,7 +4,7 @@
 
 A selected-appliance pilot can answer useful questions with an owned, borrowed, or returnable supported battery. It needs measured selected loads first. It does not justify a household-wiring pilot or a battery purchase from whole-house savings.
 
-This study separates electricity savings from backup. It does not authorize purchases, utility applications, or electrical work. The published report recommendation remains unchanged. Issue #304 remains incomplete where the acceptance map names missing evidence.
+This study separates electricity savings from backup. It does not authorize purchases, utility applications, or electrical work. Publication of portable-study recommendations remains deferred. The existing report and glossary include the supported tariff qualifications. Issue #304 remains incomplete where the acceptance map names missing evidence.
 
 ## 1. The household already has solar and owns no battery
 
@@ -472,7 +472,7 @@ Large DP3/Ultra X PDFs exceeded the web reader's size limit; the manufacturer PD
 | Maximum worthwhile installed price; each battery/panel increment | **Incomplete** | Conditional discounted ceilings and increments in §§8–11; product-capable load/loss/connection evidence and full ownership costs needed for an actual maximum |
 | Justified pilot with meters/reserve/control/load/success criteria and matched baseline | **Incomplete** | Proposed protocol in §13; selected load, duration/budget, exact unit, completed metering and control tests absent |
 | Backup priced separately; circuits established; no unsupported rooftop recharge | **Incomplete** | No rooftop recharge assumed; owner backup value, essential circuits/surges, supported transfer/PV design and outage evidence absent |
-| Report/glossary/consistency updates only after study supports claims | **Not triggered; publication remains deferred** | Prerequisites above remain open; no report recommendation or glossary claim changes |
+| Report/glossary/consistency updates only after study supports claims | **Portable-study publication deferred** | Portable-study prerequisites remain open. The existing report and glossary include supported tariff qualifications; those changes do not establish portable-equipment eligibility |
 
 ### Additional requested comparisons that remain unavailable
 
