@@ -62,6 +62,8 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 ## Solar & hardware
 
+**ANSI C84.1 Range A** — The normal service-voltage range: 114–126 V for nominal 120 V service, and 228–252 V for nominal 240 V service. Service limits differ from equipment utilization limits and address sustained voltage. This definition uses [PG&E's *Voltage Tolerance Boundary*, July 2018, pages 1–2](https://www.pge.com/assets/pge/docs/contact-us/report-an-issue/Voltage_Tolerance.pdf), a utility interpretation that does not identify the ANSI edition. The full standard was not obtained. Rounded gateway samples within this range do not establish calibrated service-point compliance or rule out events between samples. See the [service-voltage study](research/service-voltage.md).
+
 **Capacity factor** — Actual annual energy output divided by what the system would make running at full rated power 24/7. This array's ~18.7% is healthy for rooftop solar (the sun is only up part of the day). [Wikipedia: capacity factor](https://en.wikipedia.org/wiki/Capacity_factor)
 
 **Clipping** — When panels can momentarily produce more DC power than the inverter's AC limit, the inverter "clips" the excess and it's lost. This system's 5-minute data shows no meaningful clipping (§9 of the report): peak power on the year's best day, 8.52 kW, sits about 10% below the 9.45 kW AC ceiling.

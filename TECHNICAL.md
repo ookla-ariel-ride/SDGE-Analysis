@@ -4944,6 +4944,97 @@ the archive, two runs reproduce the committed bytes. Not verified end to end in 
 second tier): it needs both SAM exports and the raw Green Button file, and its tie-out
 against the committed real-year `meter_derived` column would reject any synthetic year.
 
+
+### 3.32 `analysis/service_voltage.py` — sampled voltage evidence (`data/service_voltage.json`)
+
+The generator describes monitored readings and conditional associations. It does not
+establish calibrated service-point compliance, utility-side causation, or lost production.
+The public artifact contains aggregates. Exact acquisition times, raw rows, source
+identifiers, and database access remain private.
+
+**Frozen inputs and reproduction.** The default input directory is
+`private/1-raw-data/service-telemetry/`. It contains `manifest.json`, `meter.csv`,
+`mirror.csv`, `eagle.csv`, `generation.csv`, and `weather.csv`. The generator never connects
+to a live database. Run `.venv/bin/python analysis/service_voltage.py`; use `--input-dir DIR`
+for a synthetic or separately staged snapshot and `--output FILE` for an explicit output.
+The normal output is `data/service_voltage.json`. A successful run writes deterministic,
+sorted JSON through a temporary file beside the output, then replaces the output atomically.
+An invalid input leaves an existing output intact.
+
+The schema-v1 manifest states the time zone (`America/Los_Angeles`), complete local-date
+bounds (`start`, `end_exclusive`), and each source's fixed filename, SHA256, and row count.
+`load_snapshot()` checks those declarations against the five CSVs. `read_source()` checks
+exact column order, ordered unique timestamps, explicit offsets, cadence alignment, numeric
+values, and physical bounds. Empty numeric cells remain missing; they never become zero.
+NaN/Inf text and malformed inputs fail closed. `build_study(input_dir)` performs the full
+analysis without a database or credentials. The private manifest records source queries,
+units, clocks, provenance, and the snapshot's source revision. Public provenance uses hashes.
+
+**Measurement chain and missing evidence.** Local gateway voltage takes precedence over its
+PVOutput mirror. The mirror supplies additional available fields, but it remains the same
+instrument chain. Separate channel summaries retain available leg and line evidence;
+paired calculations need both legs. The mirror's semantic-quality flag masks voltage and
+frequency where deployment history makes their meaning uncertain. Solar remains separate
+from that mask. The collector rounds and filters values. Neither those operations nor
+line-versus-leg arithmetic supplies calibration, measurement accuracy, or the sensing point.
+
+Coverage uses expected source slots and reports missing time separately. Daily denominators
+follow local dates, including daylight-saving changes. The latest-60-local-date denominator
+uses calendar dates rather than a fixed elapsed-hour subtraction. Estimated represented
+duration stops at the source cadence; a sample never fills a long gap. Outside-range duration
+is an estimate from sampled evidence, not a measured sustained excursion. Range A comparisons
+use inclusive service boundaries of 114–126 V per leg and 228–252 V line. Utilization limits
+and momentary-event limits differ. Frequency statistics describe the instrument chain and
+reported resolution; they do not establish grid frequency quality.
+
+**Power alignment and statistical method.** Grid demand uses watts, with import positive
+and export negative. Solar joins at its exact five-minute slot. Grid power joins within an
+explicit 30-second tolerance without a gap fill. The owner states that no battery is
+installed. Inferred gross load equals contemporaneous grid demand plus solar power;
+negative inferred loads receive an exclusion count. Timestamp alignment does not establish
+simultaneous acquisition or instrument freshness. Reported mirror consumption does not
+serve as independent gross-load truth. The poller generation tee uses its source timestamp
+for comparison with the historical mirror; absent comparisons remain insufficient evidence.
+The study does not treat an unresolved generation-source disagreement as production truth.
+
+Voltage regressions condition on solar, inferred gross load, local-hour harmonics, and day
+effects. A nighttime import model reduces solar-related confounding. Production regressions
+use hourly means with at least eleven common five-minute slots, modeled plane-of-array
+irradiance of at least 100 W/m², irradiance squared, temperature and its irradiance
+interaction, local-hour harmonics, and a quadratic seasonal trend. The irradiance label
+refers to the preceding hour. Leave-one-date-out predictions measure expected-power
+reference error. Daily-cluster CR1 confidence intervals permit dependence within each date;
+they do not remove dependence across dates or measurement error. Sensitivities remove
+inferred load, retain final weather only, and shift weather by one hour in each direction.
+
+The expected-power reference does not establish verified unconstrained production.
+Reverse causality, modeled weather, shading, soiling, unknown instrument accuracy, and
+missing inverter event evidence limit causal interpretation. No sampled excursion does not
+prove continuous compliance or zero curtailment. `causal_loss_kwh` and `causal_cost_usd`
+remain null. A future priced counterfactual needs identified physical loss and canonical
+rates applied to aligned interval flows. This study supplies no numerical purchase or
+complaint recommendation.
+
+**Pipeline and clean-room gates.** `test_scripts_runnable.py` registers this generator as
+the sole owner of `data/service_voltage.json` and as a private-archive generator. Its CI
+mapping runs qualified tests for a full synthetic `build_study()`, a known conditional
+production slope, missing production evidence, and hash-failure output preservation in an
+archive-free copy. The mapping checks actual executed test IDs and successful outcomes;
+missing methods, skips, and failures fail the check. CI also runs the complete dedicated
+suite. `check_coverage.sh` runs that suite and the real generator under the existing 90%
+statement-coverage floor.
+
+`stage-private-data.sh` copies the snapshot when its source directory exists. Its absence
+permits unrelated studies; `service_voltage.py` itself still fails closed without it. A
+present snapshot needs all six fixed ordinary, singly-named files. Source paths refuse
+symbolic links and special files. Destination paths use the existing repository,
+registration, ignore, ownership, symbolic-link, hard-link, special-file, and stale-file
+guards. Copies land in the existing private staging directories before any replacement.
+The script copies only the six frozen inputs. It never copies the export helper, `.env`,
+or arbitrary files beside them. Manifest content and hash checks belong to the generator,
+not the copy operation. The public source and measurement discussion appears in
+[research/service-voltage.md](research/service-voltage.md).
+
 ---
 
 ## 4. Battery simulation methodology
