@@ -27,10 +27,12 @@ precision):
           manufacturer datasheet coefficient asserted as fact.
   - The private Green Button archive staged in this environment covers only
     2025-06-27 .. 2026-07-26 (SDG&E's ~13-month export window). It does NOT
-    reach back to May/June 2024. Daily production records
+    reach back to May/June 2024. The continuous daily production records
     (pvoutput_daily.csv / enphase_daily_production.csv) and the whole-home CT
-    archive (SAM 8760, samA.csv/samB.csv) likewise start no earlier than
-    2025. Every 2024-side figure below is therefore an ESTIMATE built from
+    archive (SAM 8760, samA.csv/samB.csv) start no earlier than 2025.
+    Earlier daily samples in cleaning_study_daily.csv support the cleaning
+    study but do not cover the May/June 2024 comparison window. Every
+    reconstructed 2024 production/load figure below is therefore an ESTIMATE built from
     what DOES survive from 2024 -- the bill's own net_kwh/gross_kwh (exact)
     and the calendar-year PVOutput total (data/pvoutput_yearly_2020-2025.csv,
     exact) -- never a fabricated interval series. Session-level EV detection
@@ -68,12 +70,13 @@ METHOD SUMMARY (full derivation: TECHNICAL.md 3.26):
   5. EV share of the 2026 window's consumption comes from detect_sessions,
      not a guess; its share of the two-year INCREASE is bounded, not
      claimed exactly, because 2024's EV baseline is unavailable.
-  6. The 6-year (2021-2025) PVOutput efficiency trend is refit here
-     (OLS / CAGR / Theil-Sen, all artifact-backed) and reconciled explicitly
-     against index.html's existing hand-computed "~0.5-1.0%/yr" claim, using
-     the soiling module's own validated 2024-08-12 cleaning event (11.8%
-     gain after ~4.4 dry months) as a bound on how much of the year-to-year
-     swing weather/soiling timing alone can produce.
+  6. The five-year (2021-2025) PVOutput efficiency trend is refit here
+     (OLS / CAGR / Theil-Sen, all artifact-backed). The current report states
+     that true panel degradation and its bounds are NOT DETERMINED. The
+     historical "~0.5-1.0%/yr" best-estimate band remains only as compatibility
+     metadata, not a current conclusion or model input. The soiling module's
+     2024-08-12 cleaning estimate (11.8% gain after ~4.4 dry months) shows a
+     short-term effect; it does not establish an annual correction or bound.
 
 Run from private/verify per the standard sandbox (needs usage.csv, samA.csv,
 samB.csv, plus the committed data/ files and private/household.yaml beside
@@ -319,9 +322,10 @@ def production_block():
         "period_2024_estimated_kwh_clearsky_basis": round(prod_2024_est_clearsky, 1),
         "yearly_2024_calendar_total_kwh": yearly_2024_kwh,
         "estimate_basis": (
-            "ESTIMATED, not measured: no daily production record exists for "
-            "2024 anywhere in this repo (pvoutput_daily.csv and "
-            "enphase_daily_production.csv both start 2025-07-24). Estimated as "
+            "ESTIMATED, not measured for this comparison window: "
+            "pvoutput_daily.csv and enphase_daily_production.csv both start "
+            "2025-07-24. Earlier daily samples in cleaning_study_daily.csv "
+            "support the cleaning study but do not cover May-June 2024. Estimated as "
             "a PER-DAY seasonal-rate index: (this 29-day 2026 window's own "
             "average daily output) / (the trailing year's own average daily "
             "output) -- a dimensionless ratio, computed from the SAME 29 "
@@ -967,9 +971,9 @@ def ev_block(cons):
 
 
 # ---------------------------------------------------------------------------
-# 6. Degradation trend: artifact-backed, reconciled against the one claim in
-#    index.html section 9 that is still hand-reasoned rather than derived from
-#    this artifact -- the "best-estimate ~0.5-1.0%/yr" verdict (AC2, AC6).
+# 6. Naive degradation trend and limits of attribution (AC2, AC6).
+#    Historical prose estimates stay explicitly historical; current report
+#    claims must state that the true degradation rate and bounds are unknown.
 # ---------------------------------------------------------------------------
 def _theil_sen(x, y):
     slopes = []
@@ -1043,17 +1047,21 @@ def degradation_block():
             "Clear-sky annual insolation varies only ~%.2f%% year to year "
             "(leap-day effect only) -- geometry cannot explain the observed "
             "%.1f%% peak-to-trough swing in avg_eff_kwh_per_kw_day (2022 "
-            "4.839 -> 2023 4.245), so that swing must be real weather (cloud "
-            "cover) and/or soiling, which this repo cannot separate for "
-            "years before 2025 (no daily weather or production record "
-            "exists before 2025-07-24)." % (clearsky_spread_pct, peak_to_trough_pct)),
+            "4.839 -> 2023 4.245). This check does not isolate weather, "
+            "soiling, or panel aging. Earlier daily production samples exist "
+            "in cleaning_study_daily.csv, but the available weather and "
+            "production records do not cover the full comparison well enough "
+            "to separate those effects." % (clearsky_spread_pct, peak_to_trough_pct)),
         "single_event_soiling_swing_pct": single_event_swing_pct,
         "single_event_soiling_basis": (
             "data/soiling_results.json -> sanity_check_2024_cleaning: an "
-            "11.8% production gain measured after the 2024-08-12 cleaning, "
-            "following ~134 dry days (~4.4 months) with no rain -- a "
-            "VALIDATED (not modeled) single-event swing, reused read-only "
-            "from analysis/soiling_analysis.py, never recomputed here."),
+            "11.8% production gain estimated by difference-in-differences "
+            "after the 2024-08-12 cleaning, following ~134 dry days "
+            "(~4.4 months) with no rain. The estimate uses measured daily "
+            "production and control years; attribution to cleaning is not "
+            "a direct meter measurement. It is reused read-only from "
+            "analysis/soiling_analysis.py, never recomputed here, and does "
+            "not establish a full-year correction or bound."),
         # WHICH OF THE REPORT'S CLAIMS IS STILL SOMETHING TO RECONCILE AGAINST.
         # This block used to pin the report's naive band as a hand-typed
         # "existing_report_naive_range_pct_per_yr": [1.3, 1.7] literal, from
@@ -1069,21 +1077,29 @@ def degradation_block():
         # copy is. The field is therefore gone, not corrected. The estimators
         # are published above; the span belongs to whoever renders it, once.
         #
-        # The best-estimate range below IS still an independent claim. Section
-        # 9 states "best-estimate ~0.5-1.0%/yr" as hand-reasoned prose that no
-        # committed artifact derives, so measuring this script's evidence
-        # against it is a real reconciliation -- and it finds a real
-        # disagreement, recorded in gap_on_the_best_estimate.
+        # Preserve the historical best-estimate numeric field for existing
+        # consumers, but label its scope explicitly. It is not a current
+        # report claim or an input to any calculation. Current publication
+        # checks enforce non-determination of both the true rate and bounds.
         "reconciliation": {
             "existing_report_best_estimate_range_pct_per_yr": [0.5, 1.0],
+            "existing_report_fields_scope": (
+                "Historical compatibility only. The existing_report_* fields "
+                "record a superseded unsupported prose estimate; they are "
+                "not current report conclusions or model inputs."),
             "existing_report_location": (
-                'index.html, section 9, "Array health: 6-year degradation '
-                'trend" -- specifically its hand-reasoned "best-estimate '
-                '~0.5-1.0%/yr" verdict, which no committed artifact in this '
-                "repo derives. The naive band printed in the same section is "
+                'Historical index.html, section 9, "Array health: 6-year '
+                'degradation trend": its former hand-reasoned "best-estimate '
+                '~0.5-1.0%/yr" verdict was not derived by a committed artifact. '
+                "The current report states that true degradation and its "
+                "bounds are not determined. The naive band in that section is "
                 "NOT an independent claim to reconcile against: "
                 "report_tokens.DEGRADATION_NAIVE_RANGE renders it from this "
                 "artifact's own three estimators."),
+            "current_report_status": {
+                "true_degradation_rate": "NOT DETERMINED",
+                "bounds": "NOT DETERMINED",
+            },
             "this_scripts_naive_figures_pct_per_yr": {
                 "ols": round(ols_pct_per_yr, 2),
                 "cagr": round(cagr_pct_per_yr, 2),
@@ -1100,44 +1116,35 @@ def degradation_block():
                 "evidence that the naive trend is a property of the annual "
                 "series rather than of one fit's sensitivity. It is NOT "
                 "evidence about true panel degradation, which needs the "
-                "weather normalization this repo cannot do before 2025-07-24 "
-                "-- see gap_on_the_best_estimate. This is the only agreement "
+                "weather normalization the available records cannot support "
+                "over the full comparison span -- see gap_on_the_best_estimate. "
+                "This is the only agreement "
                 "claim available here: the report's published naive band is "
                 "the span of these same three figures, so checking them "
                 "against it would be checking a number against itself."),
             "gap_on_the_best_estimate": (
-                "NOT DETERMINED -- and not bounded either (Codex review pass "
-                "3, finding 2: an earlier draft claimed a 0%/yr-to-naive-rate "
-                "'bracket', reasoning that soiling/weather timing could only "
-                "make the naive trend look WORSE than true degradation. That "
-                "reasoning only covers one direction: soiling/weather could "
-                "just as easily mask a TRUE degradation rate WORSE than the "
-                "naive trend shows, if later years happened to be sunnier or "
-                "cleaner -- a single VALIDATED dry-spell/soiling event "
-                f"(an {single_event_swing_pct}% swing -- more than double the "
-                f"ENTIRE naive 4-year change, {total_change_pct:.1f}%) proves "
-                "soiling/weather CAN swing the annual total by more than the "
-                "naive trend itself, in either direction, not that it is "
-                "bounded to only push one way). The existing report's tighter "
-                "'0.5-1.0%/yr best estimate' is a qualitative downward "
-                "adjustment (reasoning: the naive metric isn't weather-"
-                "normalized, so true degradation is probably lower), not a "
-                "value any committed artifact in this repo derives, and not "
-                "something this script's evidence can confirm OR bound: with "
-                "no daily weather or production record before 2025-07-24 to "
-                "separate soiling/weather timing from true panel aging in "
-                "the 2021-2025 span, and a single confounding event already "
-                "shown to be large enough to explain the ENTIRE naive trend "
-                "on its own, the honest statement is that true degradation "
-                "is NOT DETERMINED from data in this repo -- not merely "
-                "uncertain within a stated range."),
+                "True degradation is NOT DETERMINED, and the available "
+                "evidence establishes no bound. Weather and soiling can "
+                "either steepen the naive decline or mask panel aging if "
+                "later years are sunnier or cleaner. The cleaning study's "
+                f"{single_event_swing_pct}% gain and the naive four-year "
+                f"change of {total_change_pct:.1f}% cover different time "
+                "windows. The event demonstrates short-term confounding; "
+                "it does not measure an annual correction or establish "
+                "how much weather or soiling changed annual totals. Earlier "
+                "daily production samples support that study, but the "
+                "weather and production records do not cover the full "
+                "2021-2025 span well enough to isolate panel aging. The "
+                "historical 0.5-1.0%/yr best-estimate band was an unsupported "
+                "downward adjustment and is not a current report conclusion. "
+                "Lack of normalization does not establish that the true "
+                "rate lies above, below, or within the naive range."),
             "what_would_settle_it": (
-                "A multi-year (2020-2024) daily production + local rainfall "
-                "+ irradiance record, or repeated professional cleanings "
-                "with a measured before/after gain each year, to build a "
-                "real soiling-corrected annual trend the way "
-                "soiling_analysis.py already does for the one year it has "
-                "daily data."),
+                "Daily production, local weather, and irradiance covering "
+                "the full comparison span, together with soiling controls "
+                "such as documented cleanings and before/after measurements. "
+                "These would support a weather- and soiling-adjusted trend; "
+                "the short cleaning-study samples alone cannot supply one."),
         },
     }
 
@@ -1207,7 +1214,7 @@ def temperature_sensitivity_block():
             "regression cannot be extended to years before 2025-07-24 (no "
             "daily temperature record exists in this repo before then), so "
             "it is a magnitude check for the ONE year available, not a "
-            "correction applied to the 6-year degradation trend."),
+            "correction applied to the multi-year degradation trend."),
     }
 
 

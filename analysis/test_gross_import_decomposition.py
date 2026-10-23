@@ -15,6 +15,7 @@ Run from the repo root:
 """
 import datetime as dt
 import glob
+import html as html_lib
 import json
 import pathlib
 import re
@@ -136,36 +137,49 @@ def case_clearsky_annual_totals_barely_vary_year_to_year():
     return f"clear-sky annual insolation spread is only {deg['clearsky_annual_spread_pct']}% across 2021-2025"
 
 
+def _assert_current_degradation_report(html, historical_range):
+    """Read the current degradation subsection, never an unrelated disclaimer.
+
+    The report must state both non-determination and absence of a bound, and
+    must not restore the unsupported historical best-estimate claim."""
+    section = re.search(r"<h3>Array health:.*?</h3>(.*?)(?=<h3\b|</section>|</details>)",
+                        html, re.I | re.S)
+    assert section, "index.html has no array-health degradation subsection to check"
+    prose = re.sub(r"<!--.*?-->", "", section.group(1), flags=re.S)
+    prose = " ".join(html_lib.unescape(re.sub(r"<[^>]+>", "", prose)).split())
+    assert re.search(r"\btrue degradation(?: rate)? is not determined\b", prose, re.I), (
+        "the current degradation subsection does not state that true degradation "
+        "is not determined")
+    assert "does not establish a range that bounds it" in prose, (
+        "the current degradation subsection does not state that the evidence "
+        "establishes no bound")
+    lo, hi = historical_range
+    band = re.compile(rf"{re.escape(str(lo))}\s*[-–—]\s*{re.escape(str(hi))}\s*%/yr")
+    assert not band.search(prose), (
+        "the current degradation subsection restores the unsupported historical "
+        f"{lo}-{hi}%/yr range")
+    assert not re.search(r"best[- ]estimate", prose, re.I), (
+        "the current degradation subsection restores a best-estimate claim "
+        "that the analysis cannot derive")
+
+
 @case
 def case_degradation_reconciliation_claims_only_what_is_not_circular():
-    """AC6, and issue #165's residual. This case used to check that the naive
-    figures "reproduce the existing report's stated ~1.3-1.7%/yr range",
-    against a literal the reconciliation block carried by hand. That framing
-    is retired because it became circular: report_tokens.
-    DEGRADATION_NAIVE_RANGE renders the report's published band as the SPAN
-    of these same three estimators, so the literal was a second copy of this
-    script's own answer -- and it went stale the way a copy does, still
-    reading 1.3-1.7 after the span had moved to 1.3-1.8.
+    """Keep the estimator span separate from any inference about panel aging.
 
-    Two assertions guard the two halves of that lesson:
-      1. NO key in the reconciliation may state the report's naive band at
-         all. Written as a shape check over every `existing_report_*` key
-         rather than a ban on the one retired name, so re-deriving the same
-         circular field under a fresh name fails too.
-      2. The one claim-about-the-report that survives -- the hand-reasoned
-         0.5-1.0%/yr best estimate, which no artifact derives -- must still
-         be TRUE of index.html. A claim about another file is precisely what
-         rots unwatched, so it is read off the committed page, not trusted.
-
-    The page read is its own positive control: an index.html that cannot be
-    read, or that no longer prints any best-estimate band, fails on the
-    existence and search assertions rather than quietly matching nothing."""
+    The report's naive band is rendered from these estimators; copying it
+    back into their artifact is circular. The historical best-estimate band
+    stays only for compatibility, with its scope stated explicitly. Current
+    report checks must enforce non-determination, not require an unsupported
+    claim to remain published. Mutation probes prove each current-report
+    guard rejects the corresponding regression."""
     deg = gi.degradation_block()
     assert -2.5 < deg["ols_pct_per_yr"] < -1.0, deg["ols_pct_per_yr"]
     assert -2.5 < deg["cagr_pct_per_yr"] < -0.5, deg["cagr_pct_per_yr"]
     rec = deg["reconciliation"]
     for key in ("existing_report_best_estimate_range_pct_per_yr",
-                "existing_report_location", "this_scripts_naive_figures_pct_per_yr",
+                "existing_report_location", "existing_report_fields_scope",
+                "current_report_status", "this_scripts_naive_figures_pct_per_yr",
                 "agreement_among_the_three_naive_estimators",
                 "gap_on_the_best_estimate", "what_would_settle_it"):
         assert key in rec, f"reconciliation missing {key}"
@@ -178,28 +192,46 @@ def case_degradation_reconciliation_claims_only_what_is_not_circular():
         "second copy of an answer this artifact already carries, and comparing the "
         "estimators against it compares a number with itself. Publish the estimators and "
         "let the renderer take the span.")
+    assert rec["existing_report_fields_scope"].startswith("Historical compatibility only"), (
+        "the retained best-estimate fields do not state their historical-only scope")
+    assert rec["existing_report_location"].startswith("Historical index.html"), (
+        "the retained best-estimate location still asserts a current report claim")
+    assert rec["current_report_status"] == {
+        "true_degradation_rate": "NOT DETERMINED", "bounds": "NOT DETERMINED"}, (
+            "the owner now claims a true degradation rate or bound without "
+            "full-span weather/production normalization")
 
-    lo, hi = rec["existing_report_best_estimate_range_pct_per_yr"]
     html_path = ROOT / "index.html"
     assert html_path.is_file(), (
         f"{html_path} is the committed report this reconciliation makes a claim about; "
         "without it this case would be checking that claim against nothing")
     html = html_path.read_text(encoding="utf-8")
-    band = re.compile(rf"{re.escape(str(lo))}\s*[-–—]\s*{re.escape(str(hi))}\s*%/yr")
-    assert band.search(html), (
-        f"the reconciliation says index.html publishes a {lo}-{hi}%/yr best estimate and "
-        f"builds gap_on_the_best_estimate on it, but no {band.pattern!r} appears in "
-        f"{html_path} -- the artifact's claim about the report is no longer true of the "
-        "report")
-    assert "best-estimate" in html or "best estimate" in html, (
-        f"{html_path} still prints a {lo}-{hi}%/yr figure but no longer calls it a best "
-        "estimate; the reconciliation names it as the report's hand-reasoned "
-        "best-estimate verdict")
+    historical_range = rec["existing_report_best_estimate_range_pct_per_yr"]
+    _assert_current_degradation_report(html, historical_range)
 
-    return (f"the reconciliation states no naive band of its own (OLS {deg['ols_pct_per_yr']}"
-            f"%/yr, CAGR {deg['cagr_pct_per_yr']}%/yr are published for the renderer to span), "
-            f"and its one claim about the report -- the hand-reasoned {lo}-{hi}%/yr best "
-            "estimate it disagrees with -- is verified against index.html itself")
+    heading = re.search(r"<h3>Array health:.*?</h3>", html, re.I | re.S).group(0)
+    lo, hi = historical_range
+    probes = {
+        "missing subsection": html.replace(heading, "<h3>Unrelated analysis</h3>", 1),
+        "missing non-determination": html.replace("not determined", "estimated"),
+        "missing no-bound conclusion": html.replace(
+            "does not establish a range that bounds it", "establishes a precise bound"),
+        "restored historical band": html.replace(
+            heading, heading + f"<p>The rate is {lo}–{hi}%/yr.</p>", 1),
+        "restored best estimate": html.replace(
+            heading, heading + "<p>A best-estimate rate describes the array.</p>", 1),
+    }
+    for why, changed in probes.items():
+        assert changed != html, f"{why}: the mutation did not change the current report"
+        try:
+            _assert_current_degradation_report(changed, historical_range)
+        except AssertionError:
+            continue
+        raise AssertionError(f"the current-report guard accepted {why}")
+
+    return (f"the reconciliation keeps its historical band explicitly historical, "
+            f"states no circular naive band, and checks index.html's non-determination "
+            f"and no-bound conclusions; all {len(probes)} mutation probes fail closed")
 
 
 @case
@@ -244,14 +276,16 @@ def case_degradation_reproduces_the_soiling_modules_own_validation_target():
     deg = gi.degradation_block()
     assert deg["single_event_soiling_swing_pct"] == known_gain, (
         deg["single_event_soiling_swing_pct"], known_gain)
-    # the whole point of citing it: the single validated event dwarfs the naive multi-year trend
+    # Compare their magnitudes without treating the event's short study window
+    # as an annual correction or a bound on the multi-year trend.
     assert known_gain > abs(deg["total_change_pct_2021_2025"]), (
         "the single-event soiling swing should exceed the entire naive 4-year "
         "change for the reconciliation's argument to hold")
-    return (f"the single-event soiling swing ({known_gain}%) is pinned to soiling_results.json's "
-            f"own validated cleaning event, which recomputes to {recomputed}% from "
+    return (f"the single-event soiling estimate ({known_gain}%) is pinned to soiling_results.json's "
+            f"own cleaning study, which recomputes to {recomputed}% from "
             f"data/{soil.CLEANING_STUDY_CSV}, and exceeds the naive 4-year trend "
-            f"({deg['total_change_pct_2021_2025']}%), as the reconciliation argues")
+            f"({deg['total_change_pct_2021_2025']}%); their different time windows "
+            "do not establish an annual correction or bound")
 
 
 @case

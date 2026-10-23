@@ -2945,7 +2945,7 @@ byte-identical; this script never imports `deep_analyses.py`).
 | Input | Distribution | Evidential basis |
 |---|---|---|
 | Escalation | Uniform(0%, 12%) | **Estimated.** `data/tou_spread.json`'s `battery.uniform_ladder` bounding range (3/5/8/12%); the escalation trend itself is "not determined" in that artifact, so this is a bounding scenario range, not a measured rate. Floor kept at the old model's 0%; ceiling asserted at build time to equal the ladder's own top scenario, so a future `tou_spread.json` regeneration cannot silently drift out of sync. |
-| Degradation (battery capacity fade) | Uniform(0.5%, 2.5%)/yr | Manufacturer (Powerwall 3) warranty degradation curve, unchanged from the old Monte Carlo. This is battery fade, not solar panel degradation (a separate, already-published ~0.5-1.0%/yr figure, index.html §9), which answers a different question. |
+| Degradation (battery capacity fade) | Uniform(0.5%, 2.5%)/yr | Manufacturer (Powerwall 3) warranty degradation curve, unchanged from the old Monte Carlo. This is battery fade. The report does not determine the separate solar panel degradation rate; see index.html §9 and §3.26 below. |
 | Install cost | Uniform($12,500, $17,000) | Quoted installer cost bound, unchanged from the old Monte Carlo. |
 | EV-behavior persistence | Beta(2,1) compliance fraction *c*, mean 0.667 | **Estimated.** Blends `battery_dispatch_policies.json`'s pre-behavior marginal (the published `pw3` save, *c*=0) and post-behavior marginal (`post_behavior.mid.battery_marginal`, *c*=1), the only two compliance points the pipeline computes. This is a modeled, not-yet-implemented change (§7 recommends it as a pending action, "do it this week"; this household has not sustained it), which is why the prior is the mild Beta(2,1) and not a more confident Beta(4,1). The mild skew toward *c*=1 reflects only the indirect evidence that ~80% of this household's EV charging already lands in favorable windows unshifted (2,618 of ~13,100 kWh/yr currently mis-timed, per `behavior_rebuild.py`'s own session detection). |
 | Soiling / production loss | Triangular(0, 0, lossB) | `data/soiling_results.json`'s two named, different scenarios, reframed relative to the observed baseline: the Green Button `Generation` column is this year's actual, already-soiled production, and scenario A **is** "this year's evidence", so the observed data already embeds roughly scenario A's own loss, and scaling it down by scenario A's raw loss fraction would double-subtract that loss. `lossB` = the incremental further loss (as a fraction of measured annual generation) to reach `scenario_B_2024_cleaning_evidence`'s worse, dirtier rate, relative to that same observed baseline, never scenario B's raw loss applied on top of an already-reduced series. Converted into a battery-saving derate via a calibrated sensitivity (below). |
@@ -3401,11 +3401,13 @@ no purchased satellite/NSRDB feed. A true weather-normalized Performance Ratio i
 therefore not determined (GLOSSARY.md's "Performance ratio (PR)" entry states this
 explicitly). The private Green Button archive staged for this analysis covers only
 2025-06-27..2026-07-26 (SDG&E's ~13-month export window) and does not reach back to
-May/June 2024; the daily production records (`data/pvoutput_daily.csv`,
+May/June 2024; the continuous daily production records (`data/pvoutput_daily.csv`,
 `data/enphase_daily_production.csv`) and the whole-home CT archive (SAM 8760,
 `private/1-raw-data/enphase_sam8760_{2025,2026}.csv` via `samA.csv`/`samB.csv`) likewise
-start no earlier than 2025. Every 2024-side figure below is an estimate built from what
-survives from 2024, the bill's own `net_kwh`/`gross_kwh` (exact) and 2024's exact
+start no earlier than 2025. Earlier daily samples in `data/cleaning_study_daily.csv`
+support the cleaning study, but do not cover the May/June 2024 comparison window.
+The reconstructed 2024 production and load figures below are estimates built from
+the bill's own `net_kwh`/`gross_kwh` (exact) and 2024's exact
 calendar-year PVOutput total (`data/pvoutput_yearly_2020-2025.csv`), never a fabricated
 interval series.
 
@@ -3417,9 +3419,9 @@ analysis.py`'s `clearsky_ghi_kwh_m2()` (never
    effects), not for actual cloud cover. Precomputed once over a day-of-year lookup table
    (`_clearsky_doy_table()`, 366 entries from a real leap year) instead of recomputed per calendar year, since
    the Spencer declination the function uses depends only on day-of-year. Annual totals
-   for 2021-2025 vary only ~0.15% year to year (leap-day effect only), proof that geometry
+   for 2021-2025 vary only ~0.15% year to year (leap-day effect only). Geometry
    alone cannot explain the observed 14.0% peak-to-trough swing in PVOutput's `avg_eff_kwh_per_kw_day`
-(2022 4.839 -> 2023 4.245), so that swing must be real weather and/or soiling.
+(2022 4.839 -> 2023 4.245). This check does not isolate weather, soiling, or panel aging.
 2. Day-matched calendar-window comparison: the 2024 production estimate is transferred via
    this year's own empirically measured seasonal fraction (this window's share of a
    trailing year's output), not via clear-sky geometry. The two disagree by ~10%
@@ -3442,26 +3444,34 @@ cell-temperature coefficient (~-0.35%/degC above 25degC STC) because ambient dai
 temperature damps the true midday cell-temperature swing; the two numbers measure
 different physical quantities and are not directly comparable. This regression cannot be
 extended before 2025-07-24 (no daily temperature record exists earlier in this repo), so
-it is a magnitude check for the one year available, not a correction applied to the 6-year
+it is a magnitude check for the one year available, not a correction applied to the multi-year
 trend.
 
-**Degradation isolated from soiling and weather (AC2, AC6), reconciled against
-index.html's existing claim.** `degradation_block()` refits the 2021-2025
+**Naive degradation trend and limits of attribution (AC2, AC6).**
+`degradation_block()` refits the 2021-2025
 `avg_eff_kwh_per_kw_day` series (excluding 2020's partial 357-day year, matching
 index.html's own "full years 2021-2025" framing) three ways: OLS (-1.765%/yr), CAGR
 first-to-last (-1.332%/yr), and Theil-Sen median-of-pairwise-slopes (-1.484%/yr, a check
 against the 2023 outlier dominating a 5-point OLS). Their span, rounded to one decimal, is
 the "~1.3-1.8%/yr" naive band index.html publishes and
 `report_tokens.DEGRADATION_NAIVE_RANGE` renders; the band is those three estimators, so
-the page states no containment the artifact does not already carry. The tighter
-"best-estimate ~0.5-1.0%/yr" verdict in that same paragraph is a different matter: it is a
-qualitative downward adjustment (reasoning: the naive metric isn't weather-normalized, so
-true degradation is probably lower), and no committed artifact in this repo independently
-derives that narrower range. `soiling_results.json`'s validated 2024-08-12 cleaning event
-(`sanity_check_2024_cleaning`, reused read-only, never recomputed) shows an 11.8%
-production gain after ~134 dry days (~4.4 months) with no rain: a single validated event
-whose swing exceeds the entire naive 4-year change (-5.22%, 2021 to 2025) by more than
-double.
+the page states no containment the artifact does not already carry.
+
+The current report states that true panel degradation and its bounds are not determined.
+The artifact retains `existing_report_best_estimate_range_pct_per_yr` (`[0.5, 1.0]`)
+and `existing_report_location` as historical compatibility fields. Its
+`existing_report_fields_scope` labels them explicitly; neither field supplies a current
+conclusion or model input. That historical band was an unsupported downward adjustment
+to the naive trend. `current_report_status` records `NOT DETERMINED` for both the
+true degradation rate and its bounds. The report test checks those conclusions and
+rejects restoration of the unsupported band or a best-estimate claim.
+
+`soiling_results.json`'s 2024-08-12 cleaning study (`sanity_check_2024_cleaning`,
+reused read-only) estimates an 11.8% production gain after ~134 dry days (~4.4 months)
+with no rain. The difference-in-differences estimate uses measured daily production
+and control years. The attribution to cleaning is an estimate, not a direct measurement.
+Its magnitude exceeds the naive four-year change (-5.22%, 2021 to 2025), but the
+two percentages cover different time windows.
 
 **Why the cleaning event does not bracket true degradation.** Using the cleaning event to
 argue a bound (true degradation sits between ~0%/yr, if the observed swing is entirely
@@ -3469,14 +3479,12 @@ soiling/weather timing, and the naive rate, if none of it is) only rules out one
 of confounding: it assumes soiling/weather can only make the naive trend look worse than
 true degradation, when it could just as easily mask a true degradation rate worse than the
 naive trend shows, if later years in the 2021-2025 span happened to be sunnier or had less
-soiling accumulation. A single confounding event large enough to explain the entire naive
-4-year change on its own is evidence that soiling/weather can move the annual total by
-more than the naive trend itself, in either direction, not evidence that the true rate is
-bounded to only push one way. With no daily weather or production record before 2025-07-24
-to separate soiling/weather timing from true panel aging across 2021-2025, true
-degradation is not determined from data in this repo, which is a stronger statement than
-"uncertain within a stated bracket". index.html's degradation subsection (sec9) cites this
-script's naive-range confirmation and this non-determination, and no bound.
+soiling accumulation. The event demonstrates a short-term soiling effect; it does not
+measure an annual correction or bound either weather or soiling over a full year.
+Earlier daily production samples support the cleaning study, but the available weather
+and production records do not cover the full 2021-2025 span well enough to isolate panel
+aging. True degradation and its bounds are not determined from these data. The report's
+degradation subsection states that limit beside the artifact-derived naive range.
 
 **Gross household load, not net import (AC3).** The Green Button
 `Consumption`/`Generation` columns are net import/export, never gross load (self-consumed
@@ -3578,13 +3586,11 @@ own accounting follows the same rule.
    corner of the Shapley decomposition is the same 768-hour (32-day) length.
    `identifiability_robustness_check()`'s own EV-concentrated scenario is built the same
    way (`_solve_year_scales_ev_shape()`, symmetric, template-based).
-7. *Sign of the degradation bracket.* `degradation_
-block()`'s reconciliation bracket takes `max(abs(...),
-abs(...))`, the intended
-   magnitude; `max(ols_pct_per_yr, cagr_pct_per_yr)` on two
-negative decline rates would silently report a "bracket" running from 0%/yr to a more
-negative number and mathematically exclude the positive 0.5-1.0%/yr figure it claims to
-bound.
+7. *No degradation bracket.* `degradation_block()` publishes the naive estimators
+   and states that the true rate and its bounds are not determined. It does not turn
+   their signed slopes into a 0%-to-naive-rate bound. Weather and soiling can affect
+   the apparent trend in either direction, so correcting a bracket's sign cannot
+   justify such a bracket.
 
 **The answer, on comparable, dimensionally consistent grounds.** Under the default
 scenario (both years share the 32-day template's diurnal shape, each scaled uniformly to
@@ -3635,7 +3641,7 @@ artifact, both of which produce dramatic, attention-grabbing "divergences" in pl
 this quieter, correct agreement, would be caught and not mistaken for a more interesting
 finding.
 
-This does not contradict the 6-year degradation trend above: both scenarios' production
+This does not contradict the multi-year degradation trend above: both scenarios' production
 terms sit comfortably inside the ~45-60 kWh expected from the naive 1.3-1.8%/yr
 degradation rate applied to this window, so a small, real per-year decline remains
 entirely consistent with what this short, two-years-apart, no-2024-daily-data comparison

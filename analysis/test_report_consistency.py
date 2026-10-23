@@ -6985,10 +6985,8 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
         "the template states the same export fraction and points to the token's midday "
         "share. The marginal-kW paragraph now matches the template exactly, including "
         "the conditional whole-facility NBT comparison"),
-    ("s9", "degradation trend</h3>"): ("8da8f6ba573b",
-        "index's heading carries the measured span (6-year); no token owns it"),
     ("s9", "Inverter clipping"): ("f861755778ff",
-        "index's heading bakes this household's verdict (none worth acting on)"),
+        "index's heading states the sampled-curve evidence and annual-loss limit"),
     ("s9", "Phantom / always-on load"): ("d47f1f64d6aa",
         "index's heading bakes this household's verdict (identified, de-prioritized)"),
     ("s10", "detailed electric statements"): ("c6c9ebdc2a26",

@@ -13339,7 +13339,7 @@ _SEAM_ALLOWLIST = {
         "which is why this count differs from BILL_COUNT and why neither is a "
         "quantity with a unit.",
     ("BILLING_PERIOD_COUNT", "missing-unit",
-     "-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods<!-- TODO:"):
+     "-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods<!-- NOTE:"):
         "the same billing-period COUNT at its second occurrence, on the bottom "
         "line's anchoring sentence. A separate entry on purpose: the two "
         "occurrences are excused one at a time.",
