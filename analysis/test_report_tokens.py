@@ -17914,8 +17914,12 @@ def case_archived_cleaning_cadence_does_not_support_a_purchase_verdict():
     def expensive(doc):
         for row in doc["cleaning"].values():
             row["save1"] = 100000
-    with _patched(rt, "_json", _stub_for("extra_results.json", expensive)):
-        text = _renders("SEC12_TEASER")
+    # Match the public study's event with an invented price. This exercises
+    # the measured-event branch without reading private household answers.
+    cleaning_date = rt._json("soiling_results.json")[rt._MEASURED_CLEANING_BLOCK]["cleaning_date"]
+    with _example_household([{"date": cleaning_date, "cost_usd": 150}]):
+        with _patched(rt, "_json", _stub_for("extra_results.json", expensive)):
+            text = _renders("SEC12_TEASER")
     assert "not determined" in text.lower(), text
     assert "covers the" not in text and "modeled schedule" not in text, text
     assert "production gain" in text, text
