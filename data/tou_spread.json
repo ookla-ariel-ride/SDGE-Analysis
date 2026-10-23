@@ -473,18 +473,18 @@
  },
  "not_determined": {
   "all_in_spread": {
-   "reason": "The all-in on-peak price is delivery plus generation. With generation undetermined past the provider break, an all-in spread trend would splice a charged tariff to a comparison figure across 72% of the corpus.",
+   "reason": "The all-in on-peak price is delivery plus generation. Using data/bill_tou_detail.csv alone would splice a charged tariff to a bundled comparison across 72% of the corpus. The separately extracted CCA series has not been joined or fitted in this study, so it supplies no all-in trend.",
    "verdict": "not determined",
    "would_settle_it": [
     "Same as generation_escalation above."
    ]
   },
   "generation_escalation": {
-   "reason": "On a CCA date this corpus carries no charged generation tariff. The printed generation table is SDG&E's bundled comparison, off the actual CEA charge by -6.8% to +104.3% (issue #3). The provider broke on 2024-12-27, leaving 547 of 763 corpus days (2024-05-25..2026-06-26) with no charged generation price.",
+   "reason": "This study fits delivery rates from data/bill_tou_detail.csv. On CCA dates, that file's generation table is SDG&E's bundled comparison, off the actual CEA charge by -6.8% to +104.3% (issue #3). The provider changed on 2024-12-27; 547 of 763 corpus days (2024-05-25..2026-06-26) use that comparison. The project's separately extracted charged CCA rates are in data/cca_generation_rates.csv. This study does not use that series or fit a generation trend.",
    "verdict": "not determined",
    "would_settle_it": [
-    "The CCA's own per-TOU rates, which appear only on the CCA pages of the statements; parse_bills.py does not extract those pages.",
-    "A second bundled-era stretch long enough to fit generation separately -- the corpus has only 216 bundled days."
+    "Fit the separately extracted charged CCA rates in data/cca_generation_rates.csv, with date matching, separate treatment of the provider change, and an evidence-adequacy check. The presence of that series alone does not establish a trend.",
+    "Add a longer bundled-era series if needed for a separate generation fit -- the corpus has only 216 bundled days."
    ]
   }
  },

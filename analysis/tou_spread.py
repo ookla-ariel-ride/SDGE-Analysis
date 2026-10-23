@@ -21,15 +21,17 @@ confident wrong number:
    assuming it: a future corpus with a genuine 0.00000 price on positive kwh
    must fail loudly here instead of being dropped as if it were an export.
 
-2. IT NEVER ESCALATES GENERATION. Issue #3 established, and rates_history.py now
-   enforces at the type level, that on a CCA date there is no charged generation
-   tariff in this corpus at all -- the printed generation table is SDG&E's
-   bundled comparison, off the actual CEA charge by -6.8% to +104.3%. The
-   provider broke on 2024-12-27, so 547 of the corpus's 763 days (72%) have no
-   charged generation price. Delivery is the charged tariff in BOTH eras, so
-   delivery escalation is measurable and generation escalation is not. Splicing
-   a charged tariff to a comparison figure and fitting the join would be a
-   fabricated trend wearing a slope's clothing.
+2. IT FITS DELIVERY ONLY. Issue #3 established, and rates_history.py now
+   enforces at the type level, that data/bill_tou_detail.csv's generation
+   table is SDG&E's bundled comparison on CCA dates. It differs from the actual
+   CEA charge by -6.8% to +104.3%. The provider changed on 2024-12-27, so 547
+   of the corpus's 763 days (72%) carry that comparison in this input table.
+   The project also has the charged CCA rates: cca_rate_extraction.py extracts
+   them separately into data/cca_generation_rates.csv. This module does not
+   use that series or fit a generation or all-in trend. Such a fit needs
+   date-matched charged rates, separate treatment of the provider change,
+   and an evidence-adequacy check. It must not treat bundled comparison rates
+   as the customer's charged CCA rates.
 
 3. IT NEVER REPORTS A CELL THIN ON EVIDENCE AS MEASURED. The adequacy test below
    was fixed before any fit was run and is not tuned to the answer.
@@ -426,8 +428,8 @@ def _cell_escalation(obs, origin):
 def _spread_series(priced, season, origin):
     """On-peak minus super-off-peak DELIVERY price, per observation date.
 
-    Paired on the date both cells were in force. Delivery only: see the module
-    docstring on why generation cannot join this series.
+    Paired on the date both cells were in force. Delivery only: the module
+    docstring explains the separate CCA series this study does not use.
     """
     def by_date(tou):
         d = {}
@@ -851,14 +853,14 @@ def build():
             f"the ENTIRE ${seed}/yr battery marginal, uniformly -- exactly as "
             "the 3/5/8/12% rungs apply their rate. That seed spans both seasons "
             "and includes generation, while the measured rate is WINTER DELIVERY "
-            "spread only. Summer and generation are not determined, so this run "
-            "escalates components this corpus cannot measure. It is a ladder rung "
+            "spread only. Summer and generation trends are not established by "
+            "this study, so this run also escalates unmeasured components. It is a ladder rung "
             "whose RATE is measured, not a decomposed all-in forecast.")
         run["scenario_zero_escalation"] = _payback(seed, 0.0)
         run["basis"] = (
-            "DELIVERY spread only. The generation half of the on-peak price "
-            "cannot be escalated from this corpus, so this figure is what the "
-            "delivery component alone implies -- not an all-in forecast. "
+            "DELIVERY spread only. This module does not fit a generation trend, "
+            "so this figure is what the delivery component alone implies -- "
+            "not an all-in forecast. "
             "scenario_zero_escalation (nothing escalates) and this run "
             "(everything escalates at the measured winter delivery rate) are "
             "SENSITIVITY SCENARIOS, not bounds: the undetermined components can "
@@ -885,27 +887,32 @@ def build():
         "generation_escalation": {
             "verdict": "not determined",
             "reason": (
-                "On a CCA date this corpus carries no charged generation tariff. "
-                "The printed generation table is SDG&E's bundled comparison, off "
-                "the actual CEA charge by -6.8% to +104.3% (issue #3). The "
-                f"provider broke on {CCA_START.isoformat()}, leaving {cca_days} "
-                f"of {corpus_days} corpus days "
+                "This study fits delivery rates from data/bill_tou_detail.csv. "
+                "On CCA dates, that file's generation table is SDG&E's bundled "
+                "comparison, off the actual CEA charge by -6.8% to +104.3% "
+                f"(issue #3). The provider changed on {CCA_START.isoformat()}; "
+                f"{cca_days} of {corpus_days} corpus days "
                 f"({corpus_first.isoformat()}..{corpus_last.isoformat()}) "
-                "with no charged generation price."),
+                "use that comparison. The project's separately extracted charged "
+                "CCA rates are in data/cca_generation_rates.csv. This study does "
+                "not use that series or fit a generation trend."),
             "would_settle_it": [
-                "The CCA's own per-TOU rates, which appear only on the CCA pages "
-                "of the statements; parse_bills.py does not extract those pages.",
-                "A second bundled-era stretch long enough to fit generation "
-                f"separately -- the corpus has only {corpus_days - cca_days} "
+                "Fit the separately extracted charged CCA rates in "
+                "data/cca_generation_rates.csv, with date matching, separate "
+                "treatment of the provider change, and an evidence-adequacy check. "
+                "The presence of that series alone does not establish a trend.",
+                "Add a longer bundled-era series if needed for a separate "
+                f"generation fit -- the corpus has only {corpus_days - cca_days} "
                 "bundled days.",
             ]},
         "all_in_spread": {
             "verdict": "not determined",
             "reason": ("The all-in on-peak price is delivery plus generation. "
-                       "With generation undetermined past the provider break, an "
-                       "all-in spread trend would splice a charged tariff to a "
-                       f"comparison figure across {round(100 * cca_days / corpus_days)}% "
-                       "of the corpus."),
+                       "Using data/bill_tou_detail.csv alone would splice a "
+                       "charged tariff to a bundled comparison across "
+                       f"{round(100 * cca_days / corpus_days)}% of the corpus. "
+                       "The separately extracted CCA series has not been joined "
+                       "or fitted in this study, so it supplies no all-in trend."),
             "would_settle_it": ["Same as generation_escalation above."]},
     }
 

@@ -343,8 +343,8 @@ def case_break_check_can_only_suppress():
 
 @case
 def case_generation_is_never_escalated():
-    """Issue #3: on a CCA date there is no charged generation tariff. No
-    generation cell may appear in the escalation output at all."""
+    """This delivery-only study does not use the separate charged CCA series.
+    No generation cell may appear in its escalation output."""
     result = json.loads((ROOT / "data" / "tou_spread.json").read_text())
     cells = result["delivery_cell_escalation"]
     assert cells, "no cells produced"
