@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """Synthetic physics, billing, and economics checks; no private data needed."""
 import pathlib
+import copy
+import hashlib
+import json
+import subprocess
+import tempfile
+from contextlib import contextmanager
+from itertools import product
+from unittest.mock import patch
 import sys
 from dataclasses import replace
 
@@ -371,6 +379,297 @@ def case_uncredited_physical_export_changes_nbc_only():
     assert abs(result['after']['components']['nbc_usd'] - .4 * m.R.NBC) < 1e-12
     assert abs(result['before']['components']['nbc_usd'] - .4 * m.R.NBC) < 1e-12
     assert abs(result['savings_usd'] + .6 * m.R.energy('S', 'sop')) < 1e-12
+
+
+
+# These fixtures catch wrong channel prices and calendar mapping, not source text.
+def nbt_case(generation=True):
+    keys = list(product(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+                        ['Weekday', 'Weekend'], range(24)))
+    delivery = {k: .1 if k[0] == 'Jul' else .05 for k in keys}
+    gen = {k: (.05 if k[0] == 'Jul' else .02) if generation else 0. for k in keys}
+    return {'vintage': 'NBT00', 'generation_credit_assumption': 'delivery_generation_cea_bonus' if generation else 'delivery_cea_bonus_only',
+            'delivery_lookup': delivery, 'generation_lookup': gen, 'cea_bonus_usd_per_kwh': .01,
+            'total_lookup': {k: delivery[k] + gen[k] + .01 for k in keys}}
+
+
+@contextmanager
+def invented_import_rates():
+    old = (R.UDC, R.CEA, R.PCIA, R.NBC, R.BSC)
+    R.UDC = {s: dict.fromkeys(('on', 'off', 'sop'), v) for s, v in [('W', .2), ('S', .4)]}
+    R.CEA = {s: dict.fromkeys(('on', 'off', 'sop'), v) for s, v in [('W', .1), ('S', .3)]}
+    R.PCIA, R.NBC, R.BSC = .01, .02, .5
+    try:
+        yield
+    finally:
+        R.UDC, R.CEA, R.PCIA, R.NBC, R.BSC = old
+
+
+def nbt_api():
+    m = model()
+    assert hasattr(m, '_nbt_bill'), 'signed NBT ledger API is missing'
+    return m
+
+
+@case
+def case_nbt_two_month_hand_components_and_partial_date_fixed_charge():
+    m = nbt_api()
+    d = frame(['2026-01-07 12:00', '2026-01-07 12:15', '2026-07-04 17:00'])
+    with invented_import_rates():
+        bill = m._nbt_bill(d, [2, 1, 3], [.5, .5, 1], physical_exports=[1, 1, 1], case=nbt_case())
+        want = dict(zip(('import_delivery_usd', 'import_generation_usd', 'import_pcia_usd', 'import_nbc_usd',
+                         'fixed_usd', 'export_delivery_credit_usd', 'export_generation_credit_usd', 'export_cea_bonus_credit_usd'),
+                        (1.8, 1.2, .06, .12, 1, -.15, -.07, -.02)))
+        for key, value in want.items():
+            assert abs(bill['components'][key] - value) < 1e-12, key
+        assert abs(bill['total_usd'] - 3.94) < 1e-12
+        assert abs(bill['monthly']['2026-01']['total_usd'] - 1.41) < 1e-12
+        assert abs(bill['monthly']['2026-07']['total_usd'] - 2.53) < 1e-12
+        only = m._nbt_bill(d, [2, 1, 3], [.5, .5, 1], physical_exports=[1, 1, 1], case=nbt_case(False))
+        assert abs(only['total_usd'] - 4.01) < 1e-12
+
+
+@case
+def case_nbt_physical_credit_channels_gross_nbc_and_zero_export():
+    m = nbt_api()
+    d = frame(['2026-01-07 12:00'])
+    with invented_import_rates():
+        full = m._nbt_bill(d, [1], [.5], physical_exports=[2], case=nbt_case())
+        none = m._nbt_bill(d, [1], [0], physical_exports=[2], case=nbt_case())
+        assert full['components']['import_nbc_usd'] == none['components']['import_nbc_usd'] == .02
+        assert full['physical_exports_kwh'] == none['physical_exports_kwh'] == 2
+        assert abs(none['total_usd'] - full['total_usd'] - .04) < 1e-12
+        assert none['weighted_export_credit_usd_per_kwh'] is None
+        assert none['total_usd'] == m._nbt_bill(d, [1], [0], physical_exports=[2], case=nbt_case(False))['total_usd']
+
+
+@case
+def case_nbt_quarter_hours_holiday_dst_rows_and_missing_spring_hour():
+    m = nbt_api()
+    d = frame(['2026-07-03 12:00', '2025-07-04 12:00', '2025-07-04 12:15', '2025-07-04 12:30',
+               '2025-07-04 12:45', '2025-11-02 01:15', '2025-11-02 01:15', '2026-03-08 01:45', '2026-03-08 03:00'])
+    case_ = nbt_case(False)
+    for key in case_['total_lookup']:
+        case_['delivery_lookup'][key] = .2 if key[1] == 'Weekend' else .1
+        case_['total_lookup'][key] = case_['delivery_lookup'][key] + .01
+    before = d.copy(deep=True)
+    b = m._nbt_bill(d, np.zeros(9), [.25]*9, physical_exports=[.25]*9, case=case_)
+    # July 3 weekday is .11; all eight remaining holiday/Sunday rows are .21.
+    assert abs(b['export_credit_total_usd'] - .4475) < 1e-12
+    assert b['credited_exports_kwh'] == 2.25
+    assert b['monthly']['2025-11']['credited_exports_kwh'] == .5
+    assert b['monthly']['2026-03']['credited_exports_kwh'] == .5
+    pd.testing.assert_frame_equal(d, before)
+
+
+@case
+def case_nbt_invalid_flows_dates_and_missing_touched_bucket_fail_closed():
+    m = nbt_api()
+    d = frame(['2026-01-07 12:00'])
+    for imp, credit, physical in [([-1], [0], [0]), ([float('nan')], [0], [0]),
+                                  ([1, 2], [0], [0]), ([1], [.1], [0]),
+                                  ([1], [float('inf')], [1]), ([1], [0], [-1])]:
+        rejects(lambda: m._nbt_bill(d, imp, credit, physical_exports=physical, case=nbt_case()))
+    physical = np.array([1.])
+    m._nbt_bill(d, [1], [1 + 5e-10], physical_exports=physical, case=nbt_case())
+    assert physical[0] == 1., 'tolerance must not change physical exports'
+    rejects(lambda: m._nbt_bill(d, [1], [1+2e-9], physical_exports=physical, case=nbt_case()))
+    bad = d.copy(); bad['ym'] = pd.Period('2026-02')
+    rejects(lambda: m._nbt_bill(bad, [1], [0], physical_exports=[0], case=nbt_case()))
+    accepted_buckets = []
+    for field, value in (('seas', 'S'), ('p', 'on')):
+        bad = d.copy(); bad[field] = value
+        try:
+            m._nbt_bill(bad, [1], [0], physical_exports=[0], case=nbt_case())
+        except ValueError:
+            pass
+        else:
+            accepted_buckets.append(field)
+    assert not accepted_buckets, f'timestamp-inconsistent buckets accepted: {accepted_buckets}'
+    for name in ('total_lookup', 'delivery_lookup', 'generation_lookup'):
+        bad_case = nbt_case(); bad_case[name].pop(('Jan', 'Weekday', 12))
+        try:
+            m._nbt_bill(d, [1], [0], physical_exports=[0], case=bad_case)
+        except (ValueError, SystemExit):
+            pass
+        else:
+            assert False, name
+
+
+@case
+def case_nbt_generation_sensitivity_changes_storage_and_pv_in_opposite_directions():
+    m = nbt_api()
+    d = frame(['2026-01-07 12:00'])
+    with invented_import_rates(), patch.object(m, 'steady_dispatch', side_effect=AssertionError('reprice invoked dispatch')):
+        # Storage loses 1 kWh of credited rooftop export; PV adds 1 kWh.
+        for after_import, after_export, full_delta, only_delta in [(0, 0, .25, .27), (1, 2, .08, .06), (2, 1, -.33, -.33)]:
+            got = []
+            for case_ in (nbt_case(), nbt_case(False)):
+                out = m.nbt_bill_comparison(d, [1], [1], [after_import], [after_export], physical_exports_after=[after_export], case=case_)
+                got.append(out['signed_ledger_delta_usd'])
+            assert np.allclose(got, [full_delta, only_delta], atol=1e-12), got
+
+
+@case
+def case_nbt_credit_excess_remains_visible_in_positive_and_negative_ledgers():
+    m = nbt_api()
+    d = frame(['2026-01-07 12:00', '2026-07-04 17:00'])
+    with invented_import_rates():
+        case_ = nbt_case()
+        for k in case_['total_lookup']:
+            case_['generation_lookup'][k] = .2
+            case_['total_lookup'][k] = case_['delivery_lookup'][k] + .21
+        positive = m._nbt_bill(d, [1, 10], [2, 0], physical_exports=[2, 0], case=case_)
+        diag = positive['settlement_diagnostics']
+        assert positive['total_usd'] > 0
+        assert abs(diag['monthly']['2026-01']['generation_credit_excess_usd'] - .32) < 1e-12
+        assert diag['annual']['generation_credit_excess_usd'] == 0
+        negative = m._nbt_bill(d.iloc[:1], [1], [10], physical_exports=[10], case=case_)
+        assert negative['total_usd'] < 0
+        assert negative['settlement_diagnostics']['negative_months'] == ['2026-01']
+        assert negative['settlement_diagnostics']['annual']['observed_net_export']
+        assert negative['economics'] is None
+        assert negative['payable_bill_established'] is False
+        assert negative['actual_tariff_accuracy_established'] is False
+        assert negative['settlement_credit_limits_applied'] is False
+        assert negative['settlement_diagnostics']['nsc_usd'] is None
+
+
+@case
+def case_nbt_matrix_maps_every_scenario_and_marginal_to_its_behavior_baseline():
+    m = nbt_api()
+    d = frame(pd.date_range('2026-01-07', periods=96, freq='15min'))
+    imp = np.where(d.p.to_numpy() == 'on', .3, .1)
+    exp = np.where((d.dt.dt.hour >= 10) & (d.dt.dt.hour < 14), .4, 0)
+    inputs = {'frame': d, 'imports': imp+.1, 'post_imports': imp, 'exports': exp,
+              'pv_per_kw': np.where(exp > 0, .1, 0), 'moved_kwh': 9.6, 'free_fix_scenario': 'synthetic', 'provenance': {}}
+    context = m.load_nbt_context()
+    snapshot = copy.deepcopy(inputs)
+    traces = []
+    real_dispatch = m.steady_dispatch
+    def capture(*args, **kwargs):
+        result = real_dispatch(*args, **kwargs)
+        traces.append(result)
+        return result
+    with patch.object(m, 'steady_dispatch', side_effect=capture):
+        out = m.build_study(inputs, include_references=False, nbt_context=context)
+    saved = copy.deepcopy(traces)
+    altered = copy.deepcopy(context)
+    for case_ in altered['cases'].values():
+        case_['delivery_lookup'] = dict(case_['delivery_lookup'])
+        for k in case_['total_lookup']:
+            case_['total_lookup'][k] += .1
+            case_['delivery_lookup'][k] += .1
+    with patch.object(m, 'steady_dispatch', side_effect=AssertionError('tariff cases reran dispatch')):
+        reprice = m._nbt_sensitivity(d, inputs['imports'], imp, exp, out['scenarios'],
+                                    {r['id']: t for r, t in zip(out['scenarios'], traces)},
+                                    [], {}, out['marginal_comparisons'], altered)
+    def unchanged(a, b):
+        if isinstance(a, dict):
+            assert a.keys() == b.keys()
+            for k in a:
+                unchanged(a[k], b[k])
+        elif isinstance(a, list):
+            for x, y in zip(a, b):
+                unchanged(x, y)
+        elif isinstance(a, np.ndarray):
+            np.testing.assert_array_equal(a, b)
+        else:
+            assert a == b
+    unchanged(traces, saved)  # Includes source accounts, controllers, SOC, and all physical flows.
+    sensitivity = out['present_2026_nbt_sensitivity']
+    first_case = next(iter(sensitivity['cases']))
+    assert reprice['cases'][first_case]['baselines']['post_free_fix']['total_usd'] != sensitivity['cases'][first_case]['baselines']['post_free_fix']['total_usd']
+    rows = {r['id']: r for r in out['scenarios']}
+    assert len(sensitivity['cases']) == 4
+    for c in sensitivity['cases'].values():
+        assert set(c['scenarios']) == set(rows)
+        assert c['canonical_references'] == {}
+        assert c['free_behavior_signed_ledger_delta_usd'] > 0
+        assert {r['export_treatment'] for r in c['scenarios'].values()} == {'credited', 'zero_credit', 'zero_export'}
+        for identifier, r in c['scenarios'].items():
+            source = rows[identifier]
+            baseline = 'unchanged_behavior' if source['behavior'] == 'unchanged' else 'post_free_fix'
+            assert r['baseline_id'] == baseline
+            assert r['source_scenario_id'] == identifier
+            assert abs(r['annual_hardware_signed_ledger_delta_usd'] - (c['baselines'][baseline]['total_usd']-r['signed_cost_ledger']['total_usd'])) < 1e-10
+            assert abs(r['nbt_ledger_delta_minus_nem_model_saving_usd'] - (r['annual_hardware_signed_ledger_delta_usd']-source['annual_savings_usd'])) < 1e-10
+            assert r['economics'] is None
+        assert len(c['marginals']) == len(out['marginal_comparisons'])
+        for pair in c['marginals'].values():
+            before, after = (c['scenarios'][pair[k]] for k in ('before_id', 'after_id'))
+            assert abs(pair['incremental_signed_ledger_delta_usd'] - (before['signed_cost_ledger']['total_usd']-after['signed_cost_ledger']['total_usd'])) < 1e-10
+        assert {'powerwall_then_small', 'small_then_powerwall'} <= set(c['scenarios'])
+        bad = copy.deepcopy(c['scenarios']); bad['battery_3.84kwh']['baseline_id'] = 'unchanged_behavior'
+        rejects(lambda: m._nbt_marginals(bad, out['marginal_comparisons']))
+    assert set(sensitivity['scenario_ranges']) == set(rows)
+    pd.testing.assert_frame_equal(inputs['frame'], snapshot['frame'])
+    for key in ('imports', 'post_imports', 'exports', 'pv_per_kw'):
+        np.testing.assert_array_equal(inputs[key], snapshot[key])
+
+
+@case
+def case_nbt_public_import_and_synthetic_bill_need_no_intake_or_dispatch():
+    source = str(pathlib.Path(__file__).resolve().parent)
+    code = f"""
+import sys, importlib.abc
+sys.path.insert(0, {source!r})
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in ('household', 'behavior_rebuild', 'battery_dispatch_policies'):
+            raise AssertionError('private intake/dispatch import: '+fullname)
+sys.meta_path.insert(0, Block())
+import portable_solar_storage as m
+import nem3_grandfathering as ng
+import pandas as pd
+d=pd.DataFrame({{'dt': pd.to_datetime(['2026-01-07 12:00']), 'seas':['W'], 'p':['sop'], 'ym':pd.PeriodIndex(['2026-01'], freq='M')}})
+c=next(iter(m.load_nbt_context()['cases'].values()))
+b=m._nbt_bill(d, [1], [0], physical_exports=[0], case=c)
+assert b['weighted_export_credit_usd_per_kwh'] is None
+"""
+    with tempfile.TemporaryDirectory() as directory:
+        result = subprocess.run([sys.executable, '-c', code], cwd=directory, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@case
+def case_nbt_public_artifact_provenance_semantics_and_all_reference_mappings():
+    root = pathlib.Path(__file__).resolve().parent.parent
+    out = json.loads((root/'data/portable_solar_storage.json').read_text())
+    assert out['schema_version'] == 2, 'public artifact lacks the completed sensitivity'
+    b = out['present_2026_nbt_sensitivity']
+    assert b['tariff_year'] == 2026
+    assert b['observation_window']['start'] == out['provenance']['window_start']
+    assert b['observation_window']['end'] == out['provenance']['window_end']
+    for flag in ('future_transition_projection', 'payable_bill_established', 'actual_tariff_accuracy_established', 'settlement_credit_limits_applied'):
+        assert b[flag] is False
+    rate_bytes = (root/b['rate_provenance']['path']).read_bytes()
+    assert b['rate_provenance']['sha256'] == hashlib.sha256(rate_bytes).hexdigest()
+    assert b['rate_provenance']['sha256'] != hashlib.sha256(rate_bytes + b'\n').hexdigest(), 'changed CSV bytes must expose a stale digest'
+    for path, digest in b['engine_provenance'].items():
+        assert digest == hashlib.sha256((root/path).read_bytes()).hexdigest()
+    assert out['unavailable_scenarios']['post_nem_adoption']['annual_savings_usd'] is None
+    assert out['unavailable_scenarios']['post_nem_adoption']['sensitivity_pointer'] == 'present_2026_nbt_sensitivity'
+    for c in b['cases'].values():
+        assert set(c['scenarios']) == {r['id'] for r in out['scenarios']}
+        assert len(c['canonical_references']) == len(out['canonical_no_reserve_benchmarks'])
+        assert {r['scheduled_row'] for r in c['canonical_references'].values()} == {r['scheduled_row'] for r in out['canonical_no_reserve_benchmarks']}
+        for r in c['canonical_references'].values():
+            source = next(x for x in out['canonical_no_reserve_benchmarks'] if x['scheduled_row'] == r['scheduled_row'])
+            assert (r['capacity_kwh'], r['discharge_kw'], r['charge_kw'], r['policy']) == (source['capacity_kwh'], source['discharge_kw'], source['charge_kw'], source['policy'])
+            assert r['baseline_id'] == 'post_free_fix'
+            assert abs(r['annual_hardware_signed_ledger_delta_usd']-(c['baselines']['post_free_fix']['total_usd']-r['signed_cost_ledger']['total_usd'])) < 2e-6
+            assert abs(r['nbt_ledger_delta_minus_nem_model_saving_usd']-(r['annual_hardware_signed_ledger_delta_usd']-source['annual_savings_usd'])) < 2e-6
+        for pair in c['marginals'].values():
+            before, after = (c['scenarios'][pair[k]] for k in ('before_id', 'after_id'))
+            assert before['baseline_id'] == after['baseline_id']
+            assert abs(pair['incremental_signed_ledger_delta_usd']-(before['signed_cost_ledger']['total_usd']-after['signed_cost_ledger']['total_usd'])) < 2e-6
+        ledgers = list(c['baselines'].values()) + [r['signed_cost_ledger'] for r in list(c['scenarios'].values())+list(c['canonical_references'].values())]
+        for ledger in ledgers:
+            assert abs(sum(x['total_usd'] for x in ledger['monthly'].values())-ledger['total_usd']) < 2e-5
+            assert abs(sum(ledger['components'].values())-ledger['total_usd']) < 1e-5
+            assert ledger['economics'] is None
+    assert 'private/' not in json.dumps(b)
 
 
 def main():

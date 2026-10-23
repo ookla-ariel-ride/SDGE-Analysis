@@ -168,8 +168,6 @@ import sys
 import numpy as np
 import pandas as pd
 
-import battery_dispatch_policies as bp  # reuse run_batt() -- same dispatch nbt_2039 uses
-import behavior_rebuild as br     # reuse load() -- the measured 15-min year
 import rates as R                 # canonical rate constants + NEM 2.0 billing engine
 
 
@@ -382,6 +380,24 @@ def load_rate_table():
     if missing_cols:
         raise SystemExit(f"{RATE_CSV}: missing column(s) {sorted(missing_cols)}")
 
+    # Check BEFORE pivot_table: its default aggregation would hide duplicate keys.
+    keys = ["rate_name", "component", "month", "day_type", "hour"]
+    domains = {"rate_name": set(RAW_FILES), "component": {"delivery", "generation"},
+               "month": set(MONTHS), "day_type": {"Weekday", "Weekend"},
+               "hour": set(range(24))}
+    for column, domain in domains.items():
+        if tab[column].isna().any() or not set(tab[column]).issubset(domain):
+            raise SystemExit(f"{RATE_CSV}: invalid {column} domain")
+    if tab.duplicated(keys).any():
+        raise SystemExit(f"{RATE_CSV}: duplicate rate keys; refusing to average")
+    values = pd.to_numeric(tab["value_usd_per_kwh"], errors="coerce")
+    if not np.isfinite(values.to_numpy(dtype=float)).all():
+        raise SystemExit(f"{RATE_CSV}: nonnumeric or nonfinite rate value")
+    tab["value_usd_per_kwh"] = values
+    expected_rows = len(RAW_FILES) * 2 * 12 * 2 * 24
+    if len(tab) != expected_rows:
+        raise SystemExit(f"{RATE_CSV}: missing rate keys ({len(tab)}/{expected_rows})")
+
     lookups = {}
     delivery_only_lookups = {}
     for rate_name, g in tab.groupby("rate_name"):
@@ -528,6 +544,7 @@ def battery_marginal_under_real_nbt(d, credit_lookups):
     the 3c/5c/8c flat-credit figures) -- the numeric disagreement is stated in
     dollars for each, never averaged or hidden (issue #9 AC6).
     """
+    import battery_dispatch_policies as bp  # intake-dependent dispatch belongs here
     imp0 = d["imp"].values.astype(float)
     gen0 = d["exp"].values.astype(float)
     # charge_kw=bp.CHARGE_KW (issue #40): this household's real, cited
@@ -590,6 +607,7 @@ def battery_marginal_under_real_nbt(d, credit_lookups):
 
 # ------------------------------------------------------------------------ main
 def main():
+    import behavior_rebuild as br  # only the real-data owner needs household intake
     d = br.load()
     d["imp"] = d["Consumption"].astype(float)
     d["exp"] = d["Generation"].astype(float)

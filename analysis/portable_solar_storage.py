@@ -34,6 +34,7 @@ import sys
 import numpy as np
 import pandas as pd
 import rates as R
+import nem3_grandfathering as NG
 
 INTERVAL_HOURS = .25
 SOC_TOLERANCE_KWH = 1e-8
@@ -247,6 +248,215 @@ def bill_comparison(d, imports_before, exports_before, imports_after, credited_e
             'component_savings_usd': {k: before['components'][k] - after['components'][k] for k in before['components']}}
 
 
+
+# All eight components are signed: import/fixed charges positive, export credits negative.
+NBT_COMPONENTS = ('import_delivery_usd', 'import_generation_usd', 'import_pcia_usd',
+                  'import_nbc_usd', 'fixed_usd', 'export_delivery_credit_usd',
+                  'export_generation_credit_usd', 'export_cea_bonus_credit_usd')
+NBT_ECONOMICS_REASON = 'settlement credit limits and relevant-period treatment not modeled'
+NBT_FLOW_TOLERANCE_KWH = 1e-9
+
+
+def load_nbt_context():
+    """Load the shared public table once; derive components without another rate source."""
+    full, delivery_only = NG.load_rate_table()
+    bonus = NG.CEA_BONUS_USD_PER_KWH
+    cases = {}
+    for vintage in sorted(full):
+        delivery = {k: v - bonus for k, v in delivery_only[vintage].items()}
+        generation = {k: full[vintage][k] - delivery_only[vintage][k] for k in full[vintage]}
+        for assumption, lookup, gen in (
+                ('delivery_generation_cea_bonus', full[vintage], generation),
+                ('delivery_cea_bonus_only', delivery_only[vintage], dict.fromkeys(generation, 0.))):
+            cases[f'{vintage}_{assumption}'] = {
+                'vintage': vintage, 'generation_credit_assumption': assumption,
+                'total_lookup': lookup, 'delivery_lookup': delivery,
+                'generation_lookup': gen, 'cea_bonus_usd_per_kwh': bonus}
+    digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+    return {'tariff_year': NG.TARIFF_YEAR, 'cases': cases,
+            'rate_provenance': {'path': str(NG.RATE_CSV.relative_to(NG.ROOT)),
+                                'sha256': digest(NG.RATE_CSV), 'owner': 'analysis/nem3_grandfathering.py --build-rates',
+                                'vintages': sorted(full), 'components': ['delivery', 'generation'],
+                                'cea_bonus_usd_per_kwh': bonus, 'inherited_cea_source': NG.CEA_SOURCE},
+            'engine_provenance': {str(p.relative_to(NG.ROOT)): digest(p) for p in
+                                  (NG.ROOT / 'analysis/nem3_grandfathering.py', NG.ROOT / 'analysis/rates.py')}}
+
+
+def _nbt_pool_diagnostics(record):
+    c = record['components']
+    delivery = -c['export_delivery_credit_usd']
+    generation = -c['export_generation_credit_usd']
+    bonus = -c['export_cea_bonus_credit_usd']
+    return {'delivery_import_charge_usd': c['import_delivery_usd'],
+            'delivery_export_credit_usd': delivery,
+            'delivery_credit_excess_usd': max(delivery-c['import_delivery_usd'], 0.),
+            'generation_import_charge_usd': c['import_generation_usd'],
+            'generation_export_credit_usd': generation, 'cea_bonus_credit_usd': bonus,
+            'generation_credit_excess_usd': max(generation+bonus-c['import_generation_usd'], 0.),
+            'import_pcia_usd': c['import_pcia_usd'], 'import_nbc_usd': c['import_nbc_usd'],
+            'fixed_usd': c['fixed_usd'], 'total_signed_cost_usd': record['total_usd'],
+            'imports_kwh': record['imports_kwh'], 'physical_exports_kwh': record['physical_exports_kwh'],
+            'credited_exports_kwh': record['credited_exports_kwh'],
+            'observed_net_export': record['physical_exports_kwh'] > record['imports_kwh']}
+
+
+def _nbt_bill(d, imports, credited_exports, *, physical_exports, case):
+    """Checked signed calendar-month ledger around NG.bill_nbt, never settlement.
+
+    Accept credit <= physical export + 1e-9 kWh for floating-point residue.
+    Never clip, net, resample, deduplicate or otherwise change physical arrays.
+    """
+    _frame(d)
+    f = d[['dt', 'seas', 'p', 'ym']].copy()
+    if not pd.api.types.is_datetime64_any_dtype(f.dt):
+        raise ValueError('NBT timestamps must be datetime values')
+    if any(str(ym) != str(dt.to_period('M')) for dt, ym in zip(f.dt, f.ym)):
+        raise ValueError('NBT month bucket disagrees with observed timestamp')
+    if any(seas != ('S' if dt.month in R.SUMMER_MONTHS else 'W') for dt, seas in zip(f.dt, f.seas)):
+        raise ValueError('NBT season bucket disagrees with observed timestamp')
+    if any(p != R.period_at(dt) for dt, p in zip(f.dt, f.p)):
+        raise ValueError('NBT TOU bucket disagrees with observed timestamp')
+    f['wkend'] = [R.off_peak_day(t.date()) for t in f.dt]
+    f['imp'] = _array(imports, len(d), 'NBT imports')
+    f['exp'] = _array(credited_exports, len(d), 'NBT credited exports')
+    f['physical_exp'] = _array(physical_exports, len(d), 'NBT physical exports')
+    if np.any(f.exp.to_numpy() - f.physical_exp.to_numpy() > NBT_FLOW_TOLERANCE_KWH):
+        raise ValueError('NBT credited exports exceed physical exports (tolerance 1e-9 kWh)')
+    keys = list(zip((NG.MONTHS[t.month-1] for t in f.dt),
+                    ('Weekend' if w else 'Weekday' for w in f.wkend), f.dt.dt.hour))
+    for name in ('total_lookup', 'delivery_lookup', 'generation_lookup'):
+        if any(k not in case[name] for k in keys):
+            raise ValueError(f'NBT {name}: missing touched lookup bucket')
+        if any(not math.isfinite(case[name][k]) for k in keys):
+            raise ValueError(f'NBT {name}: nonfinite touched rate')
+    # Decomposition is a checked account of the existing engine, not another authority.
+    f['delivery_charge'] = f.imp.to_numpy() * np.array([R.UDC[s][p] for s, p in zip(f.seas, f.p)])
+    f['generation_charge'] = f.imp.to_numpy() * np.array([R.CEA[s][p] for s, p in zip(f.seas, f.p)])
+    f['delivery_credit'] = f.exp.to_numpy() * np.array([case['delivery_lookup'][k] for k in keys])
+    f['generation_credit'] = f.exp.to_numpy() * np.array([case['generation_lookup'][k] for k in keys])
+
+    def record(group):
+        total, credit, _ = NG.bill_nbt(group, case['total_lookup'])
+        parts = dict(zip(NBT_COMPONENTS, (
+            float(group.delivery_charge.sum()), float(group.generation_charge.sum()),
+            float(group.imp.sum())*R.PCIA, float(group.imp.sum())*R.NBC,
+            group.dt.dt.date.nunique()*R.BSC, -float(group.delivery_credit.sum()),
+            -float(group.generation_credit.sum()), -float(group.exp.sum())*case['cea_bonus_usd_per_kwh'])))
+        if abs(sum(parts.values())-total) > 1e-7 or abs(-sum(parts[k] for k in NBT_COMPONENTS[5:])-credit) > 1e-7:
+            raise RuntimeError('NBT component decomposition disagrees with authoritative engine')
+        kwh = float(group.exp.sum())
+        return {'total_usd': total, 'components': parts, 'export_credit_total_usd': credit,
+                'weighted_export_credit_usd_per_kwh': credit/kwh if kwh else None,
+                'imports_kwh': float(group.imp.sum()), 'physical_exports_kwh': float(group.physical_exp.sum()),
+                'credited_exports_kwh': kwh}
+
+    annual = record(f)
+    monthly = {str(ym): record(group) for ym, group in f.groupby('ym')}
+    for key in ('total_usd', 'export_credit_total_usd'):
+        if abs(sum(m[key] for m in monthly.values())-annual[key]) > 1e-7:
+            raise RuntimeError(f'NBT monthly/annual disagreement: {key}')
+    for key in NBT_COMPONENTS:
+        if abs(sum(m['components'][key] for m in monthly.values())-annual['components'][key]) > 1e-7:
+            raise RuntimeError(f'NBT monthly/annual component disagreement: {key}')
+    annual.update({'monthly': monthly, 'settlement_diagnostics': {
+        'annual': _nbt_pool_diagnostics(annual),
+        'monthly': {ym: _nbt_pool_diagnostics(m) for ym, m in monthly.items()},
+        'negative_months': [ym for ym, m in monthly.items() if m['total_usd'] < 0],
+        'allocation_assumption': 'CEA bonus grouped with generation solely for diagnostics; PCIA outside delivery/generation pools pending eligibility research',
+        'nsc_usd': None, 'nsc_reason': 'net-export kWh is a research trigger, not a net-surplus payment estimate'},
+        'payable_bill_established': False, 'actual_tariff_accuracy_established': False,
+        'settlement_credit_limits_applied': False, 'economics': None,
+        'economics_unavailable_reason': NBT_ECONOMICS_REASON})
+    return annual
+
+
+def nbt_bill_comparison(d, imports_before, exports_before, imports_after, credited_exports_after,
+                        *, physical_exports_after, case):
+    """Reprice one matched behavior pair with fixed flows; never invoke dispatch."""
+    before = _nbt_bill(d, imports_before, exports_before, physical_exports=exports_before, case=case)
+    after = _nbt_bill(d, imports_after, credited_exports_after, physical_exports=physical_exports_after, case=case)
+    return {'before': before, 'after': after, 'signed_ledger_delta_usd': before['total_usd']-after['total_usd'],
+            'component_delta_usd': {k: before['components'][k]-after['components'][k] for k in NBT_COMPONENTS},
+            'monthly_signed_ledger_delta_usd': {ym: before['monthly'][ym]['total_usd']-m['total_usd'] for ym, m in after['monthly'].items()}}
+
+
+def _nbt_matched_row(d, row, trace, baselines, case, *, reference=False):
+    baseline_id = 'unchanged_behavior' if row.get('behavior') == 'unchanged' else 'post_free_fix'
+    before = baselines[baseline_id]
+    after = _nbt_bill(d, trace['imports'], trace['credited_exports'], physical_exports=trace['exports'], case=case)
+    delta = before['total_usd']-after['total_usd']
+    result = {'baseline_id': baseline_id, 'source_scenario_id': row['id'],
+              'export_treatment': row.get('export_treatment', 'credited'), 'signed_cost_ledger': after,
+              'annual_hardware_signed_ledger_delta_usd': delta,
+              'component_delta_usd': {k: before['components'][k]-after['components'][k] for k in NBT_COMPONENTS},
+              'monthly_hardware_signed_ledger_delta_usd': {ym: before['monthly'][ym]['total_usd']-m['total_usd'] for ym, m in after['monthly'].items()},
+              'nbt_ledger_delta_minus_nem_model_saving_usd': delta-row['annual_savings_usd'],
+              'settlement_diagnostics': after['settlement_diagnostics'],
+              'economics': None, 'economics_unavailable_reason': NBT_ECONOMICS_REASON}
+    if reference:
+        result.update({k: row[k] for k in ('capacity_kwh', 'discharge_kw', 'charge_kw', 'policy', 'reserve', 'rte', 'standby_w', 'scheduled_row')})
+    return result
+
+
+def _nbt_marginals(rows, marginals):
+    result = {}
+    for pair in marginals:
+        before, after = (rows[pair[k]] for k in ('before', 'after'))
+        if before['baseline_id'] != after['baseline_id']:
+            raise ValueError('NBT marginal needs the same behavior baseline')
+        identifier = f"{pair['before']}__to__{pair['after']}"
+        if identifier in result:
+            raise ValueError('duplicate NBT marginal pair')
+        result[identifier] = {'before_id': pair['before'], 'after_id': pair['after'],
+                              'baseline_id': before['baseline_id'], 'component': pair['component'],
+                              'incremental_signed_ledger_delta_usd': before['signed_cost_ledger']['total_usd']-after['signed_cost_ledger']['total_usd'],
+                              'economics': None, 'economics_unavailable_reason': NBT_ECONOMICS_REASON}
+    return result
+
+
+def _nbt_sensitivity(d, original, post, exports, scenarios, traces, references, reference_traces, marginals, context):
+    """Price saved traces only. Tariff cases never call a physical dispatch function."""
+    cases = {}
+    for identifier, case in context['cases'].items():
+        baselines = {name: _nbt_bill(d, imp, exports, physical_exports=exports, case=case) for name, imp in
+                     (('unchanged_behavior', original), ('post_free_fix', post))}
+        rows = {row['id']: _nbt_matched_row(d, row, traces[row['id']], baselines, case) for row in scenarios}
+        refs = {row['id']: _nbt_matched_row(d, row, reference_traces[row['id']], baselines, case, reference=True) for row in references}
+        cases[identifier] = {'vintage': case['vintage'], 'generation_credit_assumption': case['generation_credit_assumption'],
+                             'baselines': baselines,
+                             'free_behavior_signed_ledger_delta_usd': baselines['unchanged_behavior']['total_usd']-baselines['post_free_fix']['total_usd'],
+                             'scenarios': rows, 'canonical_references': refs, 'marginals': _nbt_marginals(rows, marginals)}
+    ranges = {}
+    for row in scenarios:
+        values = {key: c['scenarios'][row['id']]['annual_hardware_signed_ledger_delta_usd'] for key, c in cases.items()}
+        lo, hi = min(values.values()), max(values.values())
+        ranges[row['id']] = {'minimum_signed_ledger_delta_usd': lo, 'maximum_signed_ledger_delta_usd': hi,
+                             'minimum_cases': [k for k, v in values.items() if v == lo], 'maximum_cases': [k for k, v in values.items() if v == hi]}
+    return {'status': 'modeled fixed-flow signed-cost-ledger sensitivity',
+            'observation_window': {'start': str(d.dt.min().date()), 'end': str(d.dt.max().date()),
+                                   'days': d.dt.dt.date.nunique(), 'interval_count': len(d)},
+            'tariff_year': context['tariff_year'], 'import_rate_basis': 'frozen June 2026 EV-TOU-5 / CEA proxy',
+            'dispatch_basis': 'existing scenario traces; no NBT reoptimization',
+            'future_transition_projection': False, 'actual_tariff_accuracy_established': False,
+            'payable_bill_established': False, 'settlement_credit_limits_applied': False,
+            'rate_provenance': context['rate_provenance'], 'engine_provenance': context['engine_provenance'],
+            'assumptions': {
+                'import_basis': 'gross imports at canonical frozen R.UDC + R.CEA + R.PCIA + R.NBC; distinct service dates times R.BSC',
+                'nbc_basis': 'gross imports in existing NBT proxy; separate from NEM-ST positive physical interval-net NBC',
+                'export_eligibility': 'whole-account hypothetical credit channels: all physical exports for credited; remaining old-export channel for zero_credit/zero_export; no SB 868 compensation determination',
+                'calendar_mapping': 'observed local timestamps unchanged; saved 2026 prices by month, rates.off_peak_day holiday/weekend and hour; quarter-hour kWh sum; repeated fall-DST rows retained; missing spring hour not invented',
+                'credit_settlement': 'unrestricted signed subtraction only; separate credit pools, banks, relevant periods, floors and NSC not applied; calendar months are not established billing cycles',
+                'credit_retention': 'SDG&E eligible delivery credits carry forward during NBT service; CEA terms describe annual remaining generation-credit forfeiture and separate net-surplus settlement; provider rules are not interchangeable',
+                'diagnostic_allocation': 'CEA bonus grouped with generation only for diagnostics; PCIA outside delivery/generation pools pending exact eligibility research',
+                'flow_tolerance_kwh': NBT_FLOW_TOLERANCE_KWH},
+            'cases': cases, 'scenario_ranges': ranges,
+            'limitations': ['Dated 2026 snapshot applied to observed dates, not a future transition projection.',
+                            'Modeled signed calendar-month cost ledgers; proxy engine does not establish payable bills or actual tariff accuracy.',
+                            'Generation-credit interpretation sensitivity is not a probability or rigorous bound on settlement savings.',
+                            'No NBT dispatch optimization, future tariff/equipment-price claim, purchase date, installed-price ceiling, NPV or payback.'],
+            'economics': None, 'economics_unavailable_reason': NBT_ECONOMICS_REASON}
+
+
 def economics(annual_saving, *, installed_cost=None, discount=.05, degradation=.01,
               availability=1., spread_factor=1., compliance_cost=0., compliance_year=4):
     """NPV and installed-price ceiling, zero real escalation; unknown cost stays null.
@@ -443,7 +653,7 @@ def scenario_summary(d, baseline_imports, baseline_exports, result, batteries):
             'conditional_backup_runtime': [backup_runtime(b) for b in batteries]}
 
 
-def build_study(inputs, *, include_references=True):
+def build_study(inputs, *, include_references=True, nbt_context=None):
     """Generate targeted one-variable sweeps; only aggregate financial/energy outputs."""
     from dataclasses import replace
     d, original, post, exp = (inputs[k] for k in ('frame', 'imports', 'post_imports', 'exports'))
@@ -536,7 +746,7 @@ def build_study(inputs, *, include_references=True):
     for order in ('powerwall_then_small', 'small_then_powerwall'):
         marginal('large_13.5kwh_11.5kw', order, 'additional small battery after hypothetical home battery, specified dispatch order')
 
-    reference_rows = []
+    reference_rows, nbt_references, reference_traces = [], [], {}
     if include_references:
         import battery_sizing_curve as bs
         import battery_dispatch_policies as bd
@@ -565,6 +775,9 @@ def build_study(inputs, *, include_references=True):
                                    'soc_iterations': iterations, 'scheduled_row': scheduled['id'],
                                    'scheduled_minus_canonical_savings_usd': scheduled['annual_savings_usd'] - comparison['savings_usd'],
                                    'economics': economics(comparison['savings_usd'])})
+            reference_id = f'canonical_{capacity:g}kwh_{power:g}kw_{charge:g}kw_{bd.PUBLISHED_POLICY}'
+            nbt_references.append(dict(reference_rows[-1], id=reference_id))
+            reference_traces[reference_id] = {'imports': i, 'exports': e, 'credited_exports': e}
         artifact = json.loads((mv.DATA / 'battery_sizing_curve.json').read_text())
         expected = artifact['post_behavior']['shipping_products_on_curve'][0]['save_usd']
         difference = reference_rows[-1]['annual_savings_usd'] - expected
@@ -596,7 +809,9 @@ def build_study(inputs, *, include_references=True):
                                                   'hypothetical_rate_table': comp['hypothetical_rate_table'],
                                                   'economics': economics(comp['savings_usd']),
                                                   'dispatch': 'fixed simple schedule; same physical flows, both baseline and hardware re-billed'})
-    return {'schema_version': 1, 'issue': 304, 'study_date': '2026-10-22',
+    nbt = _nbt_sensitivity(d, original, post, exp, scenarios, traces, nbt_references, reference_traces,
+                           marginals, load_nbt_context() if nbt_context is None else nbt_context)
+    return {'schema_version': 2, 'present_2026_nbt_sensitivity': nbt, 'issue': 304, 'study_date': '2026-10-22',
             'status': 'exploratory; no purchase recommendation or authorization for household wiring',
             'provenance': dict(inputs['provenance'], rate_snapshot='June 2026 EV-TOU-5 / CEA Clean Impact Plus; canonical analysis/rates.py',
                                baseline_repository_commit='05f4c8c', confidence='modeled deltas; estimated portable PV shape'),
@@ -631,7 +846,7 @@ def build_study(inputs, *, include_references=True):
             'unavailable_scenarios': {
                 'selected_loads': {'annual_savings_usd': None, 'reason': 'No real selected-circuit/appliance interval energy, surge or supported wiring evidence. Illustrative runtime is not household selected-load savings.'},
                 'daylight_ev_or_flexible_load': {'annual_savings_usd': None, 'reason': 'Daylight vehicle presence and appliance flexibility unmeasured; existing free overnight EV shift already in baseline.'},
-                'post_nem_adoption': {'annual_savings_usd': None, 'reason': 'Future post-grandfathering tariff and supported configuration unknown; NEM2 engine cannot price NEM3 by changing constants. A separately modeled present-NBT counterfactual could support sensitivity analysis.'},
+                'post_nem_adoption': {'annual_savings_usd': None, 'reason': 'Future post-grandfathering tariff, equipment price and supported configuration remain unknown. The present-2026 NBT signed-ledger sensitivity keeps physical dispatch fixed and does not establish delayed-adoption value.', 'sensitivity_pointer': 'present_2026_nbt_sensitivity'},
                 'measured_standby_and_controls': {'annual_savings_usd': None, 'reason': 'Exact US hardware manual/firmware, standby, minimum-load thresholds, cloud-independent schedules and control responses unverified.'},
                 'whole_home_or_multiday_backup': {'runtime_hours': None, 'reason': 'Essential-circuit energy/startup records, transfer isolation, grid-forming compatibility and outage weather evidence absent.'}},
             'unresolved_inputs': ['exact U.S. certification and connection eligibility', 'NEM/CEA incremental and displaced rooftop export treatment',
