@@ -147,10 +147,10 @@ def _assert_current_degradation_report(html, historical_range):
     assert section, "index.html has no array-health degradation subsection to check"
     prose = re.sub(r"<!--.*?-->", "", section.group(1), flags=re.S)
     prose = " ".join(html_lib.unescape(re.sub(r"<[^>]+>", "", prose)).split())
-    assert re.search(r"\btrue degradation(?: rate)? is not determined\b", prose, re.I), (
+    assert re.search(r"\btrue (?:panel )?degradation(?: rate)? is not determined\b", prose, re.I), (
         "the current degradation subsection does not state that true degradation "
         "is not determined")
-    assert "does not establish a range that bounds it" in prose, (
+    assert "No narrower range or bound on true degradation follows from these checks." in prose, (
         "the current degradation subsection does not state that the evidence "
         "establishes no bound")
     lo, hi = historical_range
@@ -213,9 +213,12 @@ def case_degradation_reconciliation_claims_only_what_is_not_circular():
     lo, hi = historical_range
     probes = {
         "missing subsection": html.replace(heading, "<h3>Unrelated analysis</h3>", 1),
-        "missing non-determination": html.replace("not determined", "estimated"),
+        "missing non-determination": html.replace(
+            "The true panel degradation rate is not determined.",
+            "The true panel degradation rate is estimated.", 1),
         "missing no-bound conclusion": html.replace(
-            "does not establish a range that bounds it", "establishes a precise bound"),
+            "No narrower range or bound on true degradation follows from these checks.",
+            "These checks establish a precise range and bound on true degradation.", 1),
         "restored historical band": html.replace(
             heading, heading + f"<p>The rate is {lo}–{hi}%/yr.</p>", 1),
         "restored best estimate": html.replace(
