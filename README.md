@@ -18,6 +18,9 @@ instead.)
 - Want to run this on your own home? Jump to [Reproduce this for your own home](#reproduce-this-for-your-own-home--start-here).
 - Auditing the methods? Start with [TECHNICAL.md](TECHNICAL.md).
 
+> **Original analysis provenance.** The October 22, 2026 prose review used Codex, independent
+> subagents, Humanizer, and Avoid AI Writing.
+>
 > **How this report was produced:** generated with **Claude Cowork (Fable 5)**, independently
 > reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
 > then re-worked in Claude Cowork to incorporate the findings of both reviews.
