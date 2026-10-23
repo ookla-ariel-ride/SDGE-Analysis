@@ -127,8 +127,8 @@ def case_four_bucket_arithmetic_check_passes_every_period():
     bad = [r for r in result["periods"] if not r["four_bucket_arithmetic_check_pass"]]
     assert not bad, f"{len(bad)} period(s) failed the four-bucket arithmetic check: " \
         f"{[(r['statement_date'], r['period'], r['four_bucket_arithmetic_diff_usd']) for r in bad]}"
-    assert result["period_count"] == 26, \
-        f"expected 26 periods (25 single-period statements + 1 two-period), got " \
+    assert result["period_count"] == 29, \
+        f"expected 29 periods (27 single-period statements + 1 two-period), got " \
         f"{result['period_count']}"
     return f"all {result['period_count']} periods pass the tautological four-bucket " \
         f"arithmetic check (a coding-error guard, not independent verification) " \

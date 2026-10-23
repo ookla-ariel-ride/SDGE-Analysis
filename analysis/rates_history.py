@@ -17,7 +17,7 @@ bill artifacts — never hand-transcribed:
 WHAT SOURCES WHAT (requirement: name the artifact column behind each component)
   * delivery (UDC) $/kWh by season and TOU period
         bill_tou_detail.rate_per_kwh where section == "delivery". Matches
-        rates.py's UDC table on the final vintage (verified by
+        rates.py's UDC table on the frozen June 2026 vintage (checked by
         test_rates_history.py to the cent on all six season×TOU cells).
   * generation $/kWh by season and TOU period — BUNDLED PERIODS ONLY
         bill_tou_detail.rate_per_kwh where section == "generation" is what
@@ -115,7 +115,7 @@ HOW A CELL'S TIMELINE IS BUILT
   rates_on(date) never raises for an in-corpus date: it returns a RateSet in
   which every component is either a sourced value or a flagged absence, and
   reading an absent cell raises SystemExit naming the date and the cell.
-  Outside the corpus (before 2024-05-25 or after 2026-06-26) rates_on itself
+  Outside the corpus (before 2024-05-25 or after 2026-09-25) rates_on itself
   raises — this engine never extrapolates.
 
 RE-BILLING
@@ -155,7 +155,7 @@ THE RESIDUAL ARTIFACT: A RECONSTRUCTION CHECK, NOT A DOLLAR TIE-OUT
   TOU energy lines, nothing external. timeline_energy_usd prices those same kWh
   through the timeline built out of those same rows. Every observation lands
   inside its own span, so the difference is zero as an algebraic identity — on
-  all 26 statements and for ANY rate values whatsoever. It proves the timeline
+  all 29 periods and for ANY rate values whatsoever. It proves the timeline
   reconstruction is self-consistent (segment dating, span merging, cell
   lookup); it CANNOT detect a parser that misread a rate, a column or a
   segment, and it is not an independent validation of dollars.
@@ -941,7 +941,8 @@ def current_vintage():
     What 'the current vintage' means from bill evidence alone — but only for the
     components the bills actually charged at the printed rate. Delivery entries
     are charged tariffs in both provider eras and carry .rate; compare them
-    against rates.py's UDC (test_rates_history.py does, and they match exactly).
+    against dated rates. The newest bills differ from rates.py's frozen June
+    2026 projection vintage; test_rates_history.py checks that distinction.
 
     A GENERATION entry whose printed window touches a CCA period is not a tariff:
     SDG&E printed it as the bundled-generation (EECC) comparison beside a bill the

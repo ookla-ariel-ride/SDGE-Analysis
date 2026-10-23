@@ -47,6 +47,7 @@ import behavior_rebuild as br            # noqa: E402
 import heat_pump_conversion as hpc       # noqa: E402
 import service_headroom as sh            # noqa: E402
 import all_electric_endgame as A         # noqa: E402
+import parse_bills as pb                # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 USAGE_GLOB = str(ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")
@@ -149,9 +150,13 @@ class _GasDetailFixture:
     own floor_savings_by_period() reads these through the hpc module, not
     its own copies) at a temporary fixture pair."""
 
-    def __init__(self, periods_df, detail_rows):
+    def __init__(self, periods_df, detail_rows, statement_dates=None):
         self.periods_df = periods_df
         self.detail_rows = detail_rows
+        # Synthetic fixtures declare their own annual scope. Append tests pass
+        # the original dates explicitly so newer rows cannot redefine it.
+        self.statement_dates = (list(statement_dates) if statement_dates is not None
+                                else sorted(set(periods_df["statement_date"])))
 
     def __enter__(self):
         self._td = tempfile.TemporaryDirectory()
@@ -161,11 +166,14 @@ class _GasDetailFixture:
         self.periods_df.to_csv(periods_csv, index=False)
         pd.DataFrame(self.detail_rows).to_csv(detail_csv, index=False)
         self._real = (hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV)
+        self._statement_dates = pb.SUMMARY_STATEMENTS_GAS
+        pb.SUMMARY_STATEMENTS_GAS = self.statement_dates
         hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV = str(periods_csv), str(detail_csv)
         return self
 
     def __exit__(self, *exc):
         hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV = self._real
+        pb.SUMMARY_STATEMENTS_GAS = self._statement_dates
         self._td.cleanup()
         return False
 
@@ -1835,6 +1843,97 @@ def _twelve_monthly_periods(therms=20.0, billed=50.0, allowance=11.0,
             baseline_rate=baseline_rate, nonbaseline_rate=nonbaseline_rate,
             energy_rate=energy_rate, other_fees_rate=other_fees_rate)
     return _make_periods_df(rows), detail
+
+
+def _annual_window_fixture():
+    old, detail = _twelve_monthly_periods()
+    future, future_detail = _twelve_monthly_periods(
+        therms=200.0, billed=900.0, year=2026)
+    # Keep only the first new statement; even one append must not move the year.
+    extra = future.iloc[:1]
+    extra_date = extra.iloc[0]["statement_date"]
+    dates = list(old["statement_date"])
+    expanded = pd.concat([extra, old.iloc[::-1]], ignore_index=True)
+    expanded_detail = detail + [r for r in future_detail
+                                if r["statement_date"] == extra_date]
+    hdd = pd.Series(1.0, index=[dt.date(2025, 1, 1) + dt.timedelta(days=i)
+                                for i in range(365)])
+    iso = {"annual_total_therms": 240.0,
+           "hdd_regression": {"heating_therms_yr": 73.0, "floor_therms_yr": 167.0},
+           "floor_therms_per_day": 0.4, "annual_heating_therms": 73.0,
+           "total_hdd": 365.0, "hdd_by_day": hdd}
+    return old, detail, expanded, expanded_detail, dates, iso
+
+
+@case
+def case_gas_bill_cross_check_does_not_roll_when_new_statements_arrive():
+    old, detail, expanded, extra_detail, dates, iso = _annual_window_fixture()
+    with _GasDetailFixture(expanded, extra_detail, statement_dates=dates):
+        result = A.gas_end_use_enumeration(iso)["independent_bill_cross_check"]
+    # Twelve selected statements each contain 20 therms; the new one has 200.
+    assert result["trailing_12_statement_therms"] == 240.0, result
+    assert result["pct_difference"] == 0.0, result
+    return "a newer 200-therm bill cannot replace a selected 20-therm bill"
+
+
+@case
+def case_floor_savings_keep_the_pinned_year_after_append():
+    old, detail, expanded, extra_detail, dates, iso = _annual_window_fixture()
+    with _GasDetailFixture(old, detail, statement_dates=dates):
+        before = A.floor_savings_by_period(iso)
+    # Floor = .4 * 365 = 146 therms. Each month first removes 9 therms at
+    # $2.40 and the rest at $2.00, plus $.62/therm in flat charges.
+    assert before[1:] == (425.72, 146.0), before
+    with _GasDetailFixture(expanded, extra_detail, statement_dates=dates):
+        after = A.floor_savings_by_period(iso)
+        last = A.floor_savings_by_period(iso, n_trailing=1)
+    assert after == before, (before, after)
+    assert [r["statement_date"] for r in last[0]] == ["2026-01-03"], last
+    assert last[2] == 12.4, last
+    return "annual floor dollars/therms and selected-year suffix survive append and row reorder"
+
+
+@case
+def case_tier_interaction_keeps_the_pinned_year_after_append():
+    old, detail, expanded, extra_detail, dates, iso = _annual_window_fixture()
+    with _GasDetailFixture(old, detail, statement_dates=dates):
+        before = A.tier_interaction_overstatement(iso)
+    # Both independent removals claim the same $.40 tier premium on all
+    # 73 heating therms, so the combined correction is $29.20.
+    assert before["overstatement_usd"] == 29.2, before
+    with _GasDetailFixture(expanded, extra_detail, statement_dates=dates):
+        after = A.tier_interaction_overstatement(iso)
+    assert after == before, (before, after)
+    return "the joint gas correction keeps all selected heating months after append"
+
+
+def _expect_bad_annual_scope(periods, detail, dates, iso, diagnosis):
+    with _GasDetailFixture(periods, detail, statement_dates=dates):
+        for consumer in (A.gas_end_use_enumeration, A.floor_savings_by_period,
+                         A.tier_interaction_overstatement):
+            try:
+                consumer(iso)
+            except SystemExit as exc:
+                assert diagnosis in str(exc).lower(), str(exc)
+                assert "2025-02-03" in str(exc), str(exc)
+            else:
+                raise AssertionError(f"{consumer.__name__} accepted {diagnosis} annual statement")
+
+
+@case
+def case_missing_annual_gas_statement_is_not_replaced_by_a_newer_bill():
+    old, detail, expanded, extra_detail, dates, iso = _annual_window_fixture()
+    missing = expanded[expanded["statement_date"] != "2025-02-03"]
+    _expect_bad_annual_scope(missing, extra_detail, dates, iso, "missing")
+    return "every annual gas consumer rejects a missing selected statement even with 12 other rows"
+
+
+@case
+def case_duplicate_annual_gas_statement_is_not_double_counted():
+    old, detail, expanded, extra_detail, dates, iso = _annual_window_fixture()
+    duplicate = pd.concat([expanded, old.iloc[:1]], ignore_index=True)
+    _expect_bad_annual_scope(duplicate, extra_detail, dates, iso, "duplicate")
+    return "every annual gas consumer rejects duplicate selected statements"
 
 
 @case

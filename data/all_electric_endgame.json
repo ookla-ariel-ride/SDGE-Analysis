@@ -8,7 +8,7 @@
      "Gas Service: 1 therm @ $2.04568 (4 of 32 days) + 8 therms @ $2.03321 (28 of 32 days) = $18.32",
      "Gas Energy Charge, Public Purpose Programs, State Regulatory Fee: each a flat $/therm rate on every therm (page 2-3 of the PDF)"
     ],
-    "note": "the lowest-usage statement in the corpus -- if a minimum or fixed charge existed, it would be most visible here, and it is not present",
+    "note": "a low-usage statement from the fixed annual window -- its printed line items contain no flat minimum or fixed charge",
     "pdf": "private/1-raw-data/gas-bills/sdge_gas_2025-07-30.pdf",
     "period": "Jun 27, 2025 - Jul 28, 2025",
     "statement_date": "2025-07-30",
@@ -31,11 +31,11 @@
    }
   ],
   "regression": {
-   "intercept_std_error_usd": 3.55,
-   "intercept_usd": -2.46,
-   "n_periods": 25,
-   "note": "the fitted per-statement intercept is small relative to a typical bill and within roughly one standard error of zero given this corpus's own scatter -- consistent with, not merely suggestive of, a genuinely zero fixed charge; the bill PDFs above are the harder evidence, this regression is a cross-check on the same claim, not a replacement for reading the bill",
-   "slope_usd_per_therm": 2.6155
+   "intercept_std_error_usd": 3.03,
+   "intercept_usd": -2.24,
+   "n_periods": 28,
+   "note": "full-corpus diagnostic: all 28 parsed periods, statement dates 2024-06-27 through 2026-09-29; newer statements extend this evidence without moving the fixed annual savings window. The fitted per-statement intercept is small relative to a typical bill and within roughly one standard error of zero given this corpus's own scatter -- consistent with, not merely suggestive of, a genuinely zero fixed charge; the bill PDFs above are the harder evidence, this regression is a cross-check on the same claim, not a replacement for reading the bill",
+   "slope_usd_per_therm": 2.612
   },
   "resolution": "no tension between index.html's existing 'near-zero fixed floor' regression claim and a per-meter fixed charge -- the regression is correct because there genuinely is no such charge on this rate, confirmed by reading two real bill PDFs directly (a 9-therm summer statement and a 61-therm winter statement) line by line, not merely inferred from the regression's own intercept alone",
   "verdict": "confirmed -- GR-Residential has no separate fixed/customer gas charge; every line item on both bill PDFs read directly is a $/therm rate or a percentage of one"
@@ -69,7 +69,7 @@
   "annual_total_therms_meter": 342,
   "independent_bill_cross_check": {
    "daily_meter_annual_total_therms": 342,
-   "note": "a genuinely independent check: 12 real monthly statement reads (data/bill_periods_gas.csv, most recent 12 of 25) against the daily Green Button export's own annual sum -- two different meter-read processes agreeing within 0.29% is real corroboration, not circular",
+   "note": "an independent check: 12 monthly statement reads selected by parse_bills.SUMMARY_STATEMENTS_GAS (2025-07-30 through 2026-06-30; statement dates) against the unchanged daily Green Button export's own annual sum -- two different meter-read processes agreeing within 0.29% is real corroboration, not circular",
    "pct_difference": 0.29,
    "trailing_12_statement_therms": 341.0
   },

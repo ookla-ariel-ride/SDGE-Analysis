@@ -11,7 +11,7 @@ and re-runs the payback on the measured spread instead.
 THREE THINGS THIS MODULE REFUSES TO DO, each because doing it produces a
 confident wrong number:
 
-1. IT NEVER TREATS A SETTLEMENT ZERO AS A PRICE. 58 of the 216 rows in
+1. IT NEVER TREATS A SETTLEMENT ZERO AS A PRICE. 60 of the 240 rows in
    data/bill_tou_detail.csv carry rate_per_kwh 0.00000, and every one of them
    has kwh <= 0: under NEM 2.0 an export cell defers settlement to the annual
    true-up, so the statement prints no unit price. Those rows are observations
@@ -24,8 +24,8 @@ confident wrong number:
 2. IT FITS DELIVERY ONLY. Issue #3 established, and rates_history.py now
    enforces at the type level, that data/bill_tou_detail.csv's generation
    table is SDG&E's bundled comparison on CCA dates. It differs from the actual
-   CEA charge by -6.8% to +104.3%. The provider changed on 2024-12-27, so 547
-   of the corpus's 763 days (72%) carry that comparison in this input table.
+   CEA charge by -6.8% to +104.3%. The provider changed on 2024-12-27, so 638
+   of the corpus's 854 days (75%) carry that comparison in this input table.
    The project also has the charged CCA rates: cca_rate_extraction.py extracts
    them separately into data/cca_generation_rates.csv. This module does not
    use that series or fit a generation or all-in trend. Such a fit needs

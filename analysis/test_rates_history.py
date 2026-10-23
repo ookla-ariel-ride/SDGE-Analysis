@@ -132,7 +132,7 @@ def _corrupted_corpus(mutate):
 
 # One statement can print more than one billing period (CLAUDE.md §1: one PDF can
 # contain several billing cycles, so periods are parsed, not files). On this corpus
-# 26 periods come off 25 statements, and exactly one statement carries two of them.
+# 29 periods come off 28 statements, and exactly one statement carries two of them.
 # Pinned so a new multi-period statement has to be noticed rather than absorbed.
 MULTI_PERIOD_STATEMENTS = {
     "2025-10-31": ("9/26/25 - 9/30/25", "10/1/25 - 10/27/25"),
@@ -144,7 +144,7 @@ MULTI_PERIOD_STATEMENTS = {
 # of these tuples and fails the gate — the regression an aggregate coverage
 # percentage would have absorbed. The uncorroborated counts are the honest half:
 # the corpus cannot corroborate them, so they are pinned WITH their reason instead
-# of being dropped, and 0 of the 26 statements is recorded as fully validated when
+# of being dropped, and 0 of the 29 periods is recorded as fully validated when
 # it is not.
 CORROBORATION = {
     "5/25/24 - 6/25/24":   (0, 0, 0, 6, "first_witness_is_later_than_this_statement:6"),
@@ -186,8 +186,12 @@ CORROBORATION = {
     "4/29/26 - 5/28/26":   (4, 4, 0, 2,
                             "last_witness_is_earlier_than_this_statement:2"),
     "5/29/26 - 6/26/26":   (0, 0, 0, 10,
-                            "last_witness_is_earlier_than_this_statement:8;"
-                            "no_witness_anywhere_for_this_cell:2"),
+                            "first_witness_is_later_than_this_statement:2;"
+                            "flanking_witnesses_disagree_the_change_is_undated:4;"
+                            "last_witness_is_earlier_than_this_statement:4"),
+    "6/27/26 - 7/28/26": (4, 4, 0, 2, "flanking_witnesses_disagree_the_change_is_undated:2"),
+    "7/29/26 - 8/26/26": (2, 2, 0, 8, "flanking_witnesses_disagree_the_change_is_undated:8"),
+    "8/27/26 - 9/25/26": (0, 0, 0, 6, "last_witness_is_earlier_than_this_statement:6"),
 }
 # The mid-cycle change on each split statement, pinned separately:
 # (differing cells, their corroborated lines, their uncorroborated lines).
@@ -197,6 +201,7 @@ SPLIT_DIFFERING = {
     "1/28/25 - 2/26/25":   (4, 0, 8),
     "12/27/25 - 1/27/26":  (4, 0, 8),
     "3/28/26 - 4/28/26":   (4, 0, 8),
+    "7/29/26 - 8/26/26":   (3, 0, 6),
 }
 
 
@@ -222,23 +227,23 @@ def _corroboration_snapshot():
 def case_coverage_window_is_derived_from_the_artifacts():
     start, end = H.coverage()
     assert start == dt.date(2024, 5, 25), start
-    assert end == dt.date(2026, 6, 26), end
-    return "coverage is 2024-05-25..2026-06-26, read off the 26 committed periods"
+    assert end == dt.date(2026, 9, 25), end
+    return "coverage is 2024-05-25..2026-09-25, read off the 29 committed periods"
 
 
 def case_out_of_coverage_dates_raise_and_name_themselves():
-    for day in (dt.date(2024, 5, 24), dt.date(2026, 6, 27), dt.date(2020, 1, 1)):
-        _raises(lambda d=day: H.rates_on(d), str(day), "2024-05-25", "2026-06-26")
+    for day in (dt.date(2024, 5, 24), dt.date(2026, 9, 26), dt.date(2020, 1, 1)):
+        _raises(lambda d=day: H.rates_on(d), str(day), "2024-05-25", "2026-09-25")
     return "rates_on refuses dates outside the corpus, naming the date and the window"
 
 
 def case_every_corpus_day_yields_a_fully_classified_rate_set():
-    """AC: a complete rate set for every day 5/25/24-6/26/26, sourced only from
+    """AC: a complete rate set for every day 5/25/24-9/25/26, sourced only from
     the artifacts. 'Complete' means all 12 cells come back with an explicit
     classification — a bill-sourced CHARGED tariff (direct or carried), a printed
     CCA-generation COMPARISON labelled as not-a-tariff, or a flagged absence —
     never a silent hole, never an invented number, and never a comparison number
-    in the .rate slot. The four-way counts over 763 days × 12 cells are pinned
+    in the .rate slot. The four-way counts over 854 days × 12 cells are pinned
     here, so a cell that changes authority or falls out of coverage fails.
 
     For the cells that bill the day (its own season) the absences are pinned
@@ -286,14 +291,14 @@ def case_every_corpus_day_yields_a_fully_classified_rate_set():
                 absent[(sec, tp)] = absent.get((sec, tp), 0) + 1
         days += 1
         day += dt.timedelta(days=1)
-    assert days == 763, days
-    assert classes == {"direct": 2102, "carried": 336, "absent": 4921,
-                       "comparison": 1797}, classes
+    assert days == 854, days
+    assert classes == {"direct": 2372, "carried": 336, "absent": 5473,
+                       "comparison": 2067}, classes
     assert sum(classes.values()) == 12 * days, classes
-    want = {("delivery", "off_peak"): 306 + 269,
-            ("generation", "off_peak"): 306 + 213,
+    want = {("delivery", "off_peak"): 306 + 272,
+            ("generation", "off_peak"): 306 + 216,
             ("delivery", "on_peak"): 7, ("generation", "on_peak"): 7}
-    assert absent == want, absent                  # sop: sourced on all 763 days
+    assert absent == want, absent                  # sop: sourced on all 854 days
     frac = 1 - sum(absent.values()) / (6 * days)
     return (f"all {days} days return 12 classified cells "
             f"({classes['direct']} direct, {classes['carried']} carried, "
@@ -428,8 +433,8 @@ def case_the_aggregations_never_hand_out_a_cca_generation_tariff():
             assert entry.authority == H.CHARGED_TARIFF, entry
             assert entry.rate is not None and entry.comparison_rate is None, entry
     assert comparisons == {
-        ("summer", "on_peak"): 0.47019, ("summer", "off_peak"): 0.17311,
-        ("summer", "super_off_peak"): 0.08147, ("winter", "on_peak"): 0.19990,
+        ("summer", "on_peak"): 0.48396, ("summer", "off_peak"): 0.17818,
+        ("summer", "super_off_peak"): 0.08385, ("winter", "on_peak"): 0.19990,
         ("winter", "off_peak"): 0.14337, ("winter", "super_off_peak"): 0.07410,
     }, comparisons
     # no charged generation rate is reachable from either aggregation, on any date
@@ -444,7 +449,7 @@ def case_the_aggregations_never_hand_out_a_cca_generation_tariff():
                     leaked.append((day, cell, cv_.rate))
         day += dt.timedelta(days=1)
     assert not leaked, leaked[:5]
-    assert cca_days == 547, cca_days               # 2024-12-27..2026-06-26
+    assert cca_days == 638, cca_days               # 2024-12-27..2026-09-25
     # the retired tuple shapes must not silently unpack
     for fn in (lambda: [x for x in gen],
                lambda: gen[0],
@@ -514,11 +519,11 @@ def case_the_vintage_artifact_separates_charged_tariffs_from_comparisons():
         counts[(row["section"], row["authority"])] = \
             counts.get((row["section"], row["authority"]), 0) + 1
     assert counts == {
-        ("delivery", H.CHARGED_TARIFF): 47,
+        ("delivery", H.CHARGED_TARIFF): 50,
         ("generation", H.CHARGED_TARIFF): 13,
-        ("generation_printed_comparison", H.COMPARISON_ONLY): 36,
-        ("base_services_charge", H.CHARGED_TARIFF): 26,
-        ("provider", H.NOT_A_RATE): 26,
+        ("generation_printed_comparison", H.COMPARISON_ONLY): 40,
+        ("base_services_charge", H.CHARGED_TARIFF): 29,
+        ("provider", H.NOT_A_RATE): 29,
     }, counts
     # the split at the provider break, both halves, same printed number
     def find(section, season, tp, start):
@@ -550,37 +555,42 @@ def case_the_vintage_artifact_separates_charged_tariffs_from_comparisons():
             f"rate_per_kwh, and no note says 'billed on'")
 
 
-def case_current_vintage_matches_rates_py_to_the_cent():
-    """AC: the engine's final delivery vintage equals rates.py's UDC on all six
-    season×TOU cells. Delivery is the charged tariff in both provider eras, so all
-    six entries are authority=charged_tariff and their .rate is the number to
-    compare. (rates.py's CEA table comes from the CCA's own schedule, which the
-    bill artifacts do not carry — see the module docstring.)"""
+def case_current_vintage_and_frozen_projection_rates_are_distinct():
+    """New bills change the historical rate, not the frozen June projection."""
     cv = H.current_vintage()
-    for seas, season in (("S", "summer"), ("W", "winter")):
-        for short, long_tp in zip(tuple(R.UDC["S"]),
-                                  ("on_peak", "off_peak", "super_off_peak")):
-            want = R.UDC[seas][short]
-            entry = cv[("delivery", season, long_tp)]
-            assert entry.authority == H.CHARGED_TARIFF, entry
-            assert entry.is_charged_tariff and entry.comparison_rate is None, entry
-            got = entry.rate
-            assert abs(got - want) < 0.005, (seas, short, got, want)
-            assert got == want, (seas, short, got, want)   # in fact exact
-    return "all six UDC season×TOU cells match rates.py exactly, not just to the cent"
+    expected = {("summer", "on_peak"): 0.29710,
+                ("summer", "off_peak"): 0.29710,
+                ("summer", "super_off_peak"): 0.02606,
+                ("winter", "on_peak"): 0.31174,
+                ("winter", "off_peak"): 0.31174,
+                ("winter", "super_off_peak"): 0.02606}
+    for (season, tp), want in expected.items():
+        entry = cv[("delivery", season, tp)]
+        assert entry.authority == H.CHARGED_TARIFF, entry
+        assert entry.rate == want and entry.comparison_rate is None, entry
+    june = H.rates_on(dt.date(2026, 6, 20))
+    for short, tp in zip(tuple(R.UDC["S"]),
+                         ("on_peak", "off_peak", "super_off_peak")):
+        assert june.delivery("summer", tp) == R.UDC["S"][short]
+    may = H.rates_on(dt.date(2026, 5, 20))
+    for short, tp in zip(tuple(R.UDC["W"]),
+                         ("on_peak", "off_peak", "super_off_peak")):
+        assert may.delivery("winter", tp) == R.UDC["W"][short]
+    assert cv[("delivery", "summer", "on_peak")].rate != R.UDC["S"]["on"]
+    return "latest bill rates remain separate from the frozen June model rates"
 
 
-def case_rebilling_reproduces_all_26_statements_within_1pct():
+def case_rebilling_reproduces_all_billing_periods_within_1pct():
     """AC: each statement re-billed from its own per-TOU kWh within ±1%. Note what
     that gate does and does not prove. The reference is the statement's OWN printed
     TOU energy lines and the timeline is built from those same rows, so the
-    piecewise residual is zero as an identity — exactly 0 on all 26, and it would
+    piecewise residual is zero as an identity — exactly 0 on all 29, and it would
     stay 0 with corrupted rates (case_a_perturbed_rate_... proves that). The check
     with teeth is the corroboration gate in the next case; the share of dollars the
     holdout can price is reported here as a descriptive figure and is deliberately
     NOT asserted against a threshold (see that case's docstring)."""
     periods = [p["period"] for p in H._engine().periods]
-    assert len(periods) == 26, len(periods)
+    assert len(periods) == 29, len(periods)
     for period in periods:
         r = H.rebill_statement(period)
         assert _is_zero(r["residual"]), (period, r)  # identity, not just ±1%
@@ -594,7 +604,7 @@ def case_rebilling_reproduces_all_26_statements_within_1pct():
         if h["residual_pct"] is not None:
             assert abs(h["residual_pct"]) <= 1.0, (period, h)
             worst = max(worst, abs(h["residual_pct"]))
-    return (f"26/26 statements re-bill to exactly $0.000000 residual (an identity); "
+    return (f"29/29 periods re-bill to exactly $0.000000 residual (an identity); "
             f"the holdout re-bill prices {100 * priced / printed:.1f}% of printed "
             f"dollars from the OTHER statements' rates, worst |residual| {worst:.4f}%")
 
@@ -646,7 +656,7 @@ def case_every_corroborable_line_agrees_and_the_rest_is_pinned_as_uncorroborated
         corr += c["corroborated_rows"]
         unc += c["uncorroborated_rows"]
         direct += c["direct_witness_rows"]
-    assert (corr, unc, direct) == (81, 77, 0), (corr, unc, direct)
+    assert (corr, unc, direct) == (87, 93, 0), (corr, unc, direct)
     _raises(lambda: H.corroboration("1/1/26 - 1/2/26"), "no billing period")
     # the committed artifact carries the same five numbers per statement, so the
     # published table is gated too, not just the API behind it
@@ -659,7 +669,7 @@ def case_every_corroborable_line_agrees_and_the_rest_is_pinned_as_uncorroborated
                 row["holdout_uncorroborated_reasons"]) == \
             CORROBORATION[row["period"]], row
     return (f"{corr} printed lines are corroborated by the rest of the corpus and "
-            f"all {corr} agree exactly (holdout residual $0.00 on 26/26); the other "
+            f"all {corr} agree exactly (holdout residual $0.00 on 29/29); the other "
             f"{unc} are pinned per statement as uncorroborated-by-construction with "
             f"their reason, and no witness is stronger than a carried span")
 
@@ -702,7 +712,7 @@ def case_the_holdout_unit_is_the_statement_not_the_billing_period():
 
     So corroboration() exposes which statements are behind each witness, and this
     pins three things:
-      * the inventory: 26 periods, 25 statements, one of them carrying two periods;
+      * the inventory: 29 periods, 28 statements, one of them carrying two periods;
       * on EVERY statement, no corroborated line's witness includes the held-out
         statement (the universal form, so a second multi-period statement is
         covered the day it arrives);
@@ -717,7 +727,7 @@ def case_the_holdout_unit_is_the_statement_not_the_billing_period():
     for p in eng.periods:
         by_stmt.setdefault(p["statement_date"], []).append(p["period"])
     multi = {s: tuple(v) for s, v in by_stmt.items() if len(v) > 1}
-    assert len(eng.periods) == 26 and len(by_stmt) == 25, (len(eng.periods),
+    assert len(eng.periods) == 29 and len(by_stmt) == 28, (len(eng.periods),
                                                            len(by_stmt))
     assert multi == MULTI_PERIOD_STATEMENTS, multi
     # every TOU row's statement_date agrees with bill_periods_electric (the loader
@@ -849,7 +859,7 @@ def case_split_statement_mid_cycle_changes_are_recorded_as_uncorroborated():
     corroborate those lines — the change is printed nowhere else, so the flanking
     witnesses disagree and the date of the change inside the gap is undetermined.
     That is pinned here per statement, and it is 0 corroborated lines out of every
-    differing cell on all five. Three of the five have no corroborated line at all,
+    differing cell on all six. Three of the six have no corroborated line at all,
     which is why their holdout coverage reads 0% in the artifact — recorded as a
     hole, not as agreement."""
     split = [p["period"] for p in H._engine().periods
@@ -877,10 +887,10 @@ def case_split_statement_mid_cycle_changes_are_recorded_as_uncorroborated():
         assert int(row["split_differing_cells"]) == cells, row
         assert int(row["split_differing_corroborated_rows"]) == dcorr, row
         assert int(row["split_differing_uncorroborated_rows"]) == dunc, row
-    return ("on all 5 split statements every cell whose rate moved mid-cycle is "
+    return ("on all 6 split periods every cell whose rate moved mid-cycle is "
             "recorded uncorroborated (0 corroborated lines among them, reason: the "
             "flanking witnesses disagree and nothing else dates the change); 3 of "
-            "the 5 have no corroborated line at all")
+            "the 6 have no corroborated line at all")
 
 
 def case_rate_only_vintage_collapse_worsens_the_split_statements():
@@ -890,7 +900,7 @@ def case_rate_only_vintage_collapse_worsens_the_split_statements():
     row at the rates in force on its block's LAST day, so any residual is
     attributable to collapsing vintages and to nothing else.
 
-    Four of the five split statements worsen measurably. The fifth
+    Five of the six split periods worsen measurably. The remaining period
     (12/27/24-1/27/25) does not, and the artifact says why: every priced cell
     printed the SAME rate in both of its segments there (the bill split the cycle
     but those rates did not move), and the two cells that could differ — winter
@@ -899,7 +909,7 @@ def case_rate_only_vintage_collapse_worsens_the_split_statements():
     eng = H._engine()
     split = [p["period"] for p in eng.periods
              if H.rebill_statement(p["period"])["n_segments"] > 1]
-    assert len(split) == 5, split
+    assert len(split) == 6, split
     worsened = beyond_1pct = 0
     flat = []
     for period in split:
@@ -912,7 +922,7 @@ def case_rate_only_vintage_collapse_worsens_the_split_statements():
         assert abs(vint["residual_pct"]) > abs(piece["residual_pct"]), (period, vint)
         worsened += 1
         beyond_1pct += abs(vint["residual_pct"]) > 1.0
-    assert worsened == 4, worsened
+    assert worsened == 5, worsened
     assert beyond_1pct == 1, beyond_1pct
     assert flat == [("12/27/24 - 1/27/25", 2)], flat
     single = eng.periods[1]["period"]                # 6/26/24-7/25/24: one segment
@@ -922,8 +932,8 @@ def case_rate_only_vintage_collapse_worsens_the_split_statements():
         assert p1["rebilled"] == c1["rebilled"], f"{mode} must be a no-op on 1 segment"
     worst = max(abs(H.rebill_statement(p, "vintage_collapse")["residual_pct"])
                 for p in split)
-    return (f"the rate-only collapse worsens {worsened} of the 5 split statements "
-            f"(1 beyond ±1%, up to {worst:.2f}%); on the 5th every priced cell "
+    return (f"the rate-only collapse worsens {worsened} of the 6 split periods "
+            f"(1 beyond ±1%, up to {worst:.2f}%); on the remaining period every priced cell "
             f"printed one rate across both segments and 2 rows have no sourced "
             f"block-end rate")
 
@@ -1008,7 +1018,7 @@ def case_a_perturbed_rate_is_invisible_to_the_identity_but_caught_by_the_holdout
     return (f"a +$0.05/kWh corruption leaves the reconstruction residual at $0, "
             f"moves the holdout residual to ${hold['residual']:.2f} "
             f"({hold['residual_pct']:.2f}% of the priced lines), and moves 3 of the "
-            f"26 pinned corroboration tuples")
+            f"29 pinned corroboration tuples")
 
 
 def case_a_common_mode_shift_of_one_repeated_vintage_is_invisible_to_the_holdout():
@@ -1073,25 +1083,16 @@ def case_a_common_mode_shift_of_one_repeated_vintage_is_invisible_to_the_holdout
 
 
 def case_a_corruption_on_an_uncorroborable_line_is_reported_as_uncorroborated():
-    """NEGATIVE fixture, the honest counterpart: corrupt a line the corpus CANNOT
-    corroborate and check the machinery says so instead of scoring a pass.
+    """The first positive summer off-peak line predates every other witness.
 
-    Target: summer off-peak delivery on the last statement (5/29/26-6/26/26). That
-    cell's only positive-kWh line anywhere in the corpus is this one — every earlier
-    summer off-peak bucket netted negative and printed $0.00000 — so no witness
-    exists, and no amount of holding-out can produce one. Add $0.05/kWh and:
-      * nothing moves: the reconstruction residual stays $0, the holdout has no
-        priced basis at all (residual_pct None, coverage 0%), and every pinned
-        corroboration tuple is unchanged, because a corruption here is invisible;
-      * but the line is not silently accepted either. Its status is
-        "uncorroborated" with reason no_witness_anywhere_for_this_cell, in the
-        artifact as well as in the API, so a reader sees a hole rather than a tick.
-    This is the shape the retired >60%-coverage gate mis-scored: aggregate coverage
-    stayed comfortably high while a line like this sat entirely outside it."""
+    Later statements supply this cell, but no earlier witness dates its first
+    rate. A corruption here stays outside the holdout's priced basis and must
+    stay explicitly uncorroborated in the API and written artifact.
+    """
     period, cell = "5/29/26 - 6/26/26", ("delivery", "summer", "off_peak")
     before = [r for r in H.corroboration(period)["rows"] if r["cell"] == cell]
     assert len(before) == 1 and before[0]["status"] == "uncorroborated", before
-    assert before[0]["reason"] == "no_witness_anywhere_for_this_cell", before
+    assert before[0]["reason"] == "first_witness_is_later_than_this_statement", before
 
     def mutate(rows):
         hits = [r for r in rows if r["period"] == period
@@ -1111,7 +1112,7 @@ def case_a_corruption_on_an_uncorroborable_line_is_reported_as_uncorroborated():
         row = [r for r in H.corroboration(period)["rows"] if r["cell"] == cell][0]
         assert row["printed_rate"] == before[0]["printed_rate"] + 0.05, row
         assert row["status"] == "uncorroborated", row
-        assert row["reason"] == "no_witness_anywhere_for_this_cell", row
+        assert row["reason"] == "first_witness_is_later_than_this_statement", row
         assert (row["witness_rate"], row["agrees"]) == (None, None), row
         # and the artifact this corpus would publish says the same thing
         with tempfile.TemporaryDirectory() as d:
@@ -1119,12 +1120,34 @@ def case_a_corruption_on_an_uncorroborable_line_is_reported_as_uncorroborated():
                 open(H._write_artifacts(d)[1], newline=""))}[period]
         assert written["holdout_corroborated_rows"] == "0", written
         assert written["holdout_uncorroborated_reasons"] == (
-            "last_witness_is_earlier_than_this_statement:8;"
-            "no_witness_anywhere_for_this_cell:2"), written
+            "first_witness_is_later_than_this_statement:2;"
+            "flanking_witnesses_disagree_the_change_is_undated:4;"
+            "last_witness_is_earlier_than_this_statement:4"), written
         assert written["holdout_priced_pct"] == "0.00", written
     return ("a corruption on a line no other statement witnesses moves nothing, and "
-            "is reported as uncorroborated (no_witness_anywhere_for_this_cell) in "
+            "is reported as uncorroborated (first_witness_is_later_than_this_statement) in "
             "both the API and the artifact — never as agreement")
+
+
+def case_a_cell_with_no_other_witness_stays_explicitly_uncorroborated():
+    """Keep the unique-cell refusal covered after newer bills supply that cell."""
+    period = "5/29/26 - 6/26/26"
+    cell = ("delivery", "summer", "off_peak")
+    def mutate(rows):
+        for row in rows:
+            if (row["section"], row["season"], row["tou_period"]) != cell:
+                continue
+            if row["period"] != period:
+                row["kwh"], row["rate_per_kwh"] = "-1.0", "0.00000"
+            elif float(row["kwh"]) > 0:
+                row["rate_per_kwh"] = "0.35203"
+    with _corrupted_corpus(mutate):
+        row, = [r for r in H.corroboration(period)["rows"] if r["cell"] == cell]
+        assert row["status"] == "uncorroborated", row
+        assert row["reason"] == "no_witness_anywhere_for_this_cell", row
+        assert (row["witness_rate"], row["agrees"]) == (None, None), row
+        assert _is_zero(H.rebill_statement(period)["residual"])
+    return "a unique billed cell stays uncorroborated despite a zero reconstruction residual"
 
 
 def case_a_malformed_printed_rate_on_a_billed_bucket_is_refused():
@@ -1235,7 +1258,7 @@ def case_cca_generation_gap_is_recorded_as_data():
     Bundled statements have no CCA charge and the columns stay empty there."""
     rows = list(csv.DictReader(
         open(H.DATA / "rate_rebilling_residuals.csv", newline="")))
-    assert len(rows) == 26, len(rows)
+    assert len(rows) == 29, len(rows)
     gaps = {}
     for row in rows:
         got = H.cca_generation_gap(row["period"])
@@ -1247,12 +1270,12 @@ def case_cca_generation_gap_is_recorded_as_data():
         gaps[row["period"]] = (float(row["printed_generation_usd"]),
                                float(row["cca_billed_generation_usd"]),
                                float(row["cca_generation_gap_pct"]))
-    assert len(gaps) == 19, len(gaps)
+    assert len(gaps) == 22, len(gaps)
     assert gaps["1/28/26 - 2/26/26"] == (116.09, 56.82, 104.32), gaps["1/28/26 - 2/26/26"]
     worst = max(gaps.values(), key=lambda t: abs(t[2]))
     span = (min(t[2] for t in gaps.values()), max(t[2] for t in gaps.values()))
     assert worst[2] > 100 and span[0] < 0, (worst, span)
-    return (f"all 19 CCA statements carry the printed-vs-billed generation gap "
+    return (f"all 22 CCA periods carry the printed-vs-billed generation gap "
             f"({span[0]:.1f}% to {span[1]:.1f}%; 1/28/26-2/26/26 prints $116.09 "
             f"against a $56.82 charge)")
 
@@ -1568,9 +1591,9 @@ def case_bill_nem_prices_bundled_dates_and_refuses_cca_ones():
     assert abs(cca_udc - 20.0 * H.rates_on(dt.date(2025, 8, 1))
                .delivery("summer", "on_peak")) < 1e-9, cca_udc
     # and it fails closed when the frame reaches a date the corpus cannot price
-    bad = frame.assign(dt=[pd.Timestamp("2026-06-27 17:00")] * 2)
-    _raises(lambda: H.bill_nem(bad), "2026-06-27")
-    _raises(lambda: H.bill_nem(bad, delivery_only=True), "2026-06-27")
+    bad = frame.assign(dt=[pd.Timestamp("2026-09-26 17:00")] * 2)
+    _raises(lambda: H.bill_nem(bad), "2026-09-26")
+    _raises(lambda: H.bill_nem(bad, delivery_only=True), "2026-09-26")
     return ("bill_nem prices bundled dates per historical vintage, refuses CCA "
             "dates unless delivery_only=True, and fails closed off-corpus")
 
@@ -1584,8 +1607,8 @@ CASES = [
     case_generation_refuses_on_cca_dates_and_only_the_diagnostic_answers,
     case_the_aggregations_never_hand_out_a_cca_generation_tariff,
     case_the_vintage_artifact_separates_charged_tariffs_from_comparisons,
-    case_current_vintage_matches_rates_py_to_the_cent,
-    case_rebilling_reproduces_all_26_statements_within_1pct,
+    case_current_vintage_and_frozen_projection_rates_are_distinct,
+    case_rebilling_reproduces_all_billing_periods_within_1pct,
     case_every_corroborable_line_agrees_and_the_rest_is_pinned_as_uncorroborated,
     case_the_holdout_unit_is_the_statement_not_the_billing_period,
     case_a_shared_statement_error_cannot_corroborate_its_sibling_period,
@@ -1595,6 +1618,7 @@ CASES = [
     case_a_perturbed_rate_is_invisible_to_the_identity_but_caught_by_the_holdout,
     case_a_common_mode_shift_of_one_repeated_vintage_is_invisible_to_the_holdout,
     case_a_corruption_on_an_uncorroborable_line_is_reported_as_uncorroborated,
+    case_a_cell_with_no_other_witness_stays_explicitly_uncorroborated,
     case_a_malformed_printed_rate_on_a_billed_bucket_is_refused,
     case_a_mis_associated_segment_is_caught_or_pinned,
     case_cca_generation_gap_is_recorded_as_data,

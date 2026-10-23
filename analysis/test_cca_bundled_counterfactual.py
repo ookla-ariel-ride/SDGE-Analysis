@@ -463,16 +463,17 @@ _MIXED_SIGN_CELLS = [
      [(64.0, 0.12379), (-93.0, 0.0)], -29.0),
     ("2026-05-04", "3/28/26 - 4/28/26", "winter", "off_peak",
      [(-9.0, 0.0), (27.0, 0.14337)], 18.0),
+    ("2026-09-01", "7/29/26 - 8/26/26", "summer", "off_peak",
+     [(-4.0, 0.0), (87.0, 0.17818)], 83.0),
 ]
 
 
 @case
-def case_mixed_sign_cells_are_found_directly_in_the_raw_corpus_and_number_exactly_three():
+def case_mixed_sign_cells_are_found_directly_in_the_raw_corpus():
     """Reproduces the second Codex review's own verification method: scans every
     generation-section row of data/bill_tou_detail.csv directly (not through direction_a's
-    disposition logic) and confirms there are EXACTLY 3 (statement, period, season, TOU)
-    cells whose segments carry both signs, and that they are exactly the 3 named in the
-    defect report -- not a hardcoded count, an independent re-derivation of it."""
+    disposition logic) and confirms there are EXACTLY 4 (statement, period, season, TOU)
+    cells whose segments carry both signs, and that they are the three original cells plus the September 2026 cell -- not a hardcoded count, an independent re-derivation of it."""
     import csv as _csv
     from collections import defaultdict
     rows = list(_csv.DictReader(open(CX.DATA / "bill_tou_detail.csv")))
@@ -493,13 +494,13 @@ def case_mixed_sign_cells_are_found_directly_in_the_raw_corpus_and_number_exactl
 def case_mixed_sign_cells_are_excluded_from_direction_a_regardless_of_aggregate_sign():
     """The bug this fix targets: an EARLIER version of direction_a() only checked segment
     signs for cells whose PERIOD-TOTAL kWh was positive (the kWh > 0 branch), so a
-    mixed-sign cell whose aggregate happened to net NEGATIVE (2 of the 3 real cells here)
-    would never even reach the segment-summing code, while the 1 whose aggregate happened
+    mixed-sign cell whose aggregate happened to net NEGATIVE (2 of the 4 real cells here)
+    would never even reach the segment-summing code, while the 2 whose aggregate happened
     to net POSITIVE (3/28/26 - 4/28/26) would be priced as one blended figure. This
-    asserts the fix catches all 3 regardless: none of the 3 real mixed-sign cells appear
-    in priced_detail, and all 3 appear in excluded_mixed_sign_detail -- proving the
+    asserts the fix catches all 4 regardless: none of the 4 real mixed-sign cells appear
+    in priced_detail, and all 4 appear in excluded_mixed_sign_detail -- proving the
     exclusion is NOT gated on the aggregate's own sign (the corpus already gives us one
-    of each: 2 net-export aggregates and 1 net-import aggregate)."""
+    of each: 2 net-export aggregates and 2 net-import aggregates)."""
     a = CX.direction_a(CX.cca_period_cells())
     priced_keys = {(r["statement_date"], r["period"], r["season"], r["tou_period"])
                    for r in a["priced_detail"]}
@@ -511,11 +512,11 @@ def case_mixed_sign_cells_are_excluded_from_direction_a_regardless_of_aggregate_
     assert expected == mixed_keys, (expected, mixed_keys)
     aggregate_signs = {tot > 0 for _sd, _p, _se, _tp, _segs, tot in _MIXED_SIGN_CELLS}
     assert aggregate_signs == {True, False}, (
-        "the 3 real cells must include both a net-import and a net-export aggregate, or "
+        "the 4 real cells must include both a net-import and a net-export aggregate, or "
         "this case would not actually prove the exclusion is sign-independent")
-    return (f"all 3 mixed-sign cells excluded (excluded_mixed_sign_cells="
+    return (f"all 4 mixed-sign cells excluded (excluded_mixed_sign_cells="
            f"{a['excluded_mixed_sign_cells']}), none priced, regardless of the period's "
-           "own net-kWh sign (2 net-export aggregates + 1 net-import aggregate)")
+           "own net-kWh sign (2 net-export aggregates + 2 net-import aggregates)")
 
 
 @case
@@ -682,15 +683,27 @@ def case_direction_a_refuses_a_period_missing_one_expected_cell():
 
 
 @case
+def case_recommendation_uses_both_actual_sample_day_counts():
+    a = dict(delta_usd_per_year=1.0, days=638,
+             excluded_net_export_cca_credit_usd=-1.0, excluded_net_export_cells=1,
+             excluded_mixed_sign_cca_usd=-1.0, excluded_mixed_sign_cells=1)
+    result = CX.recommendation(a, {"days": 216}, {})
+    assert "638 days vs 216" in result["why_not_direction_b"], result
+    changed = CX.recommendation(dict(a, days=700), {"days": 300}, {})
+    assert "700 days vs 300" in changed["why_not_direction_b"], changed
+    return "recommendation states each supplied sample's actual days"
+
+
+@case
 def case_direction_a_real_corpus_passes_the_coverage_gate_cleanly():
     """No false positives: the real, complete data/cca_generation_rates.csv must pass the
-    new coverage gate without raising, and must still price the full 19-period, 66-cell
+    new coverage gate without raising, and must still price the full 22-period, 75-cell
     corpus exactly as before the gate was added."""
     a = CX.direction_a(CX.cca_period_cells())
-    assert a["n_periods"] == 19, a["n_periods"]
+    assert a["n_periods"] == 22, a["n_periods"]
     total = (a["priced_cells"] + a["excluded_absent_cells"]
              + a["excluded_carried_export_cells"] + a["excluded_mixed_sign_cells"])
-    assert total == 66, total
+    assert total == 75, total
     return f"real corpus passes the coverage gate cleanly: {a['n_periods']} periods, {total} cells"
 
 

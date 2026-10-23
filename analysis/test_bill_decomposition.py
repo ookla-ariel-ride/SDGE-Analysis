@@ -338,15 +338,15 @@ def case_the_real_corpus_no_longer_drops_a_negative_pcia_line():
                 f"independent re-parse of the printed line gives {printed}")
             confirmed_negative += 1
     assert len(negative_form_statements) == 12, (
-        f"expected 12 of 25 statements to print the negative-before-$ PCIA form, "
+        f"expected 12 of 28 statements to print the negative-before-$ PCIA form, "
         f"found {len(negative_form_statements)}: {negative_form_statements}")
     assert confirmed_negative == 9, (
         f"expected 9 of the 12 negative-before-$ statements to be checkable here "
         f"(12 minus the 3 known dual-valued statements out of scope), got "
         f"{confirmed_negative}")
-    assert any_pcia_checked == 15, (
-        f"expected 15 non-dual-valued PCIA-bearing statements in total (9 "
-        f"negative-before-$ + 6 plain positive), got {any_pcia_checked}")
+    assert any_pcia_checked == 18, (
+        f"expected 18 non-dual-valued PCIA-bearing statements in total (9 "
+        f"negative-before-$ + 9 plain positive), got {any_pcia_checked}")
     return (f"{confirmed_negative} of {len(negative_form_statements)} negative-before-$ "
             f"PCIA statements recover their exact printed negative value (the other 3 "
             f"hit an unrelated, pre-existing duplicate-line bug, out of scope); "
@@ -1277,7 +1277,7 @@ def case_no_per_year_price_figure_is_published():
     assert not per_year, per_year
     assert idx["is_total_change_not_a_rate"] is True, idx
     assert "two matched" in idx["no_annual_rate_path"], idx["no_annual_rate_path"]
-    assert "no matched observation between them" in idx["no_annual_rate_path"], idx
+    assert "uses only the two early-summer periods" in idx["no_annual_rate_path"], idx
     assert idx["years_apart"] > 1.0, idx
     # the report may quote the total change over the window, never a per-year rate
     report = _report()
@@ -1429,42 +1429,33 @@ def case_no_export_staged_is_still_the_documented_unchecked_case():
 
 
 def case_no_export_and_a_boundary_excluded_pdf_fails_closed():
-    """Issue #150's follow-on to the option-1 decision (keep the export-less publish
-    path): with NO export staged, statement_dates()'s own `outside = sorted(set(dates)
-    - seen) if seen else []` goes quiet, because `seen` is None. A PDF the committed
-    artifacts deliberately exclude under an export-DERIVED boundary — this corpus's
-    2026-08-03, recorded in data/bill_corpus_boundary.json — is then not "outside the
-    corpus on purpose" to this function; it is an unexplained `extra` against
-    data/bill_periods_electric.csv, and statement_dates() raises SystemExit.
+    """A missing export cannot explain a PDF excluded from the artifact.
 
-    This is not a regression #150 introduces. On main before #149 the same line read
-    `extra = sorted(set(dates) - want)` with no `outside` subtraction at all, so this
-    state failed there too. #149 fixed the case where the export IS present; this
-    case pins the export-less case exactly as it was: a committed artifact that claims
-    a boundary this run cannot check must not be read as reconciled. Requiring the
-    export (option 2) would make this state moot; keeping it (option 1, the decision
-    this issue records) means bill_decomposition.py stays fail-closed here, and the
-    remedy is to re-stage the export, not to relax the check."""
-    if not B.ELEC_DIR.exists():
-        raise SkipCase("needs the private bill PDF archive")
-    dates = {m.group(1) for m in
-             (re.search(r"(\d{4}-\d{2}-\d{2})\.pdf$", str(p))
-              for p in B.ELEC_DIR.glob("sdge_electric_*.pdf")) if m}
-    boundary = json.loads((ROOT / "data" / "bill_corpus_boundary.json").read_text())
-    excluded = {e["statement_date"] for e in boundary["excluded_statements"]}
-    on_disk_and_excluded = excluded & dates
-    if not on_disk_and_excluded:
-        raise SkipCase(
-            "fixture assumption stale: no export-excluded statement's PDF is staged "
-            "in this checkout, so removing the export cannot reproduce the "
-            "unexplained-extra SystemExit this case pins")
-    msg = _with_history_csv(None, lambda: _raises(
-        B.statement_dates,
-        "do not match the statements in", "PDFs with no artifact row",
-        sorted(on_disk_and_excluded)[0]))
-    return (f"no export staged + {sorted(on_disk_and_excluded)} on disk but excluded "
-            f"from the committed artifact -> statement_dates() fails closed instead "
-            f"of silently reconciling an unchecked corpus")
+    Use a synthetic corpus so this refusal still runs when the real export
+    covers every archived statement. No statement text or private PDF is needed.
+    """
+    saved = B.DATA, B.ELEC_DIR, B.BOUNDARY_JSON
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        try:
+            B.DATA = tmp
+            B.ELEC_DIR = tmp / "bills"
+            B.ELEC_DIR.mkdir()
+            B.BOUNDARY_JSON = tmp / "bill_corpus_boundary.json"
+            B.BOUNDARY_JSON.write_text(json.dumps({"excluded_statements": [
+                {"statement_date": "2026-08-03"}]}))
+            (tmp / "bill_periods_electric.csv").write_text(
+                "statement_date,period,days,generation_provider,net_kwh,gross_kwh,"
+                "sdge_delivery,cca_generation,current_charges\n"
+                "2026-07-02,5/29/26 - 6/26/26,29,CCA,987,1934,200.59,197.97,398.56\n")
+            for date in ("2026-07-02", "2026-08-03"):
+                (B.ELEC_DIR / f"sdge_electric_{date}.pdf").touch()
+            _with_history_csv(None, lambda: _raises(
+                B.statement_dates, "do not match the statements in",
+                "PDFs with no artifact row", "2026-08-03"))
+        finally:
+            B.DATA, B.ELEC_DIR, B.BOUNDARY_JSON = saved
+    return "missing export plus an excluded PDF fails closed, independent of archive growth"
 
 
 def _printed_columns(msg):

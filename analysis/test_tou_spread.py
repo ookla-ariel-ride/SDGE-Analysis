@@ -279,7 +279,7 @@ def case_corpus_coverage_is_derived_not_hardcoded():
         f"published coverage does not match the parsed corpus ({days} d): {reason}")
     assert first.isoformat() in reason and last.isoformat() in reason, reason
     # inclusive counting, the convention the rest of the repo uses
-    assert days == 763, f"corpus span changed: {first}..{last} = {days} d"
+    assert days == 854, f"corpus span changed: {first}..{last} = {days} d"
     return f"coverage derived from the parsed corpus: {first}..{last}, {days} d"
 
 

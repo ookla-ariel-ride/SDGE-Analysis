@@ -12,7 +12,7 @@ panel-headroom check rather than re-deriving the gross-load envelope.
 AC1 -- fixed vs volumetric gas charges. Two real bill PDFs were read directly (a 9-therm
 summer statement, a 61-therm winter statement) and every line item on both is either a
 $/therm rate or a percentage of one -- see FIXED_CHARGE_EVIDENCE below. A regression of all
-25 real billed periods' own (therms, billed_amount) pairs (build()'s own `fixed_charge_
+parsed billed periods' own (therms, billed_amount) pairs (build()'s own `fixed_charge_
 regression`) puts a real dollar figure on the "near-zero" claim already in index.html rather
 than leaving it as a qualitative read of a chart: the fitted intercept is small relative to a
 typical bill and not reliably distinguishable from zero given the corpus's own scatter -- see
@@ -24,7 +24,7 @@ AC2 -- remaining gas end uses. `heat_pump_conversion.isolate_heating_therms()` i
 unmodified: space heating (HDD-regression slope, 205 therms/yr raw) plus a non-heating floor
 (HDD-regression intercept, 137 therms/yr) sum to the metered annual total by construction (a
 regression's own floor + slope explain 100% of what it fits) -- see `gas_end_use_enumeration`
-for the exact figures and the SECOND, INDEPENDENT cross-check against the trailing 12 real
+for the exact figures and the SECOND, INDEPENDENT cross-check against the pinned 12 real
 gas *bills* (not the daily meter file), which was not previously computed and agrees with the
 daily-meter annual total to within 1%.
 
@@ -76,7 +76,7 @@ correctly prices both, called with whichever quantity is being removed in its ow
 floor at the tier ladder's cheap end on the reasoning that "always-on usage occupies the cheap
 tier first" -- a real, confirmed bug, caught by adversarial review with a concrete
 counterexample and fixed; see the fuller account at `_floor_segment_total_therms`'s own
-docstring, just above `floor_savings_by_period()`.) Restricted to the same trailing-12-real-
+docstring, just above `floor_savings_by_period()`.) Restricted to the same pinned-12-real-
 bill window `heat_pump_conversion.py`'s own $416.25/yr already resolves to (see that module's
 own gas.csv coverage window), so the two figures are on the same annual basis.
 
@@ -178,6 +178,7 @@ import household as hh
 import behavior_rebuild as BR
 import heat_pump_conversion as HPC
 import service_headroom as SH
+import parse_bills as PB
 
 ROOT = HPC.ROOT
 DATA = HPC.DATA
@@ -208,9 +209,9 @@ FIXED_CHARGE_EVIDENCE = [
             "Fee: each a flat $/therm rate on every therm (page 2-3 of the "
             "PDF)",
         ],
-        "note": "the lowest-usage statement in the corpus -- if a minimum "
-                "or fixed charge existed, it would be most visible here, "
-                "and it is not present",
+        "note": "a low-usage statement from the fixed annual window -- "
+                "its printed line items contain no flat minimum or "
+                "fixed charge",
     },
     {
         "pdf": "private/1-raw-data/gas-bills/sdge_gas_2025-12-30.pdf",
@@ -233,7 +234,7 @@ FIXED_CHARGE_EVIDENCE = [
 
 
 def fixed_charge_regression():
-    """Linear regression of all 25 real billed periods' own (therms,
+    """Linear regression of all parsed billed periods' own (therms,
     billed_amount) pairs -- a real, script-computed number for index.html's
     existing qualitative "near-zero fixed floor" claim, not a restatement of
     it. Uses data/bill_periods_gas.csv directly (the same file heat_pump_
@@ -258,7 +259,11 @@ def fixed_charge_regression():
         "slope_usd_per_therm": round(float(slope), 4),
         "intercept_usd": round(float(intercept), 2),
         "intercept_std_error_usd": round(se_intercept, 2),
-        "note": ("the fitted per-statement intercept is small relative to a "
+        "note": (f"full-corpus diagnostic: all {n} parsed periods, statement dates "
+                 f"{periods['statement_date'].min()} through "
+                 f"{periods['statement_date'].max()}; newer statements extend "
+                 "this evidence without moving the fixed annual savings window. "
+                 "The fitted per-statement intercept is small relative to a "
                  "typical bill and within roughly one standard error of "
                  "zero given this corpus's own scatter -- consistent with, "
                  "not merely suggestive of, a genuinely zero fixed charge; "
@@ -424,11 +429,38 @@ def third_end_use_gap(floor_therms_yr, cooking_fuel):
     }
 
 
+def annual_gas_periods(n_trailing=12):
+    """The summary's fixed statement scope, never the newest archive rows.
+
+    Bill intake can extend the corpus while gas.csv and the electricity model
+    retain their original years. Missing or duplicated selected statements are
+    data faults, not permission to replace a month with a newer statement.
+    n_trailing selects a suffix WITHIN this explicit scope for callers that
+    price a smaller subset. A fork changes the parser's shared statement list.
+    """
+    wanted = tuple(PB.SUMMARY_STATEMENTS_GAS)
+    if not wanted or len(wanted) != len(set(wanted)):
+        raise SystemExit("all_electric_endgame.py: SUMMARY_STATEMENTS_GAS must "
+                         "contain a nonempty list of unique statement dates")
+    periods = pd.read_csv(HPC.GAS_PERIODS_CSV)
+    counts = periods["statement_date"].value_counts()
+    missing = sorted(set(wanted) - set(counts.index))
+    duplicate = sorted(s for s in wanted if counts.get(s, 0) > 1)
+    if missing or duplicate:
+        raise SystemExit(
+            "all_electric_endgame.py: fixed annual gas scope is incomplete or "
+            f"ambiguous: missing selected statements {missing}; duplicate selected "
+            f"statements {duplicate}. Restore the selected rows; newer bills "
+            "cannot replace them.")
+    return (periods[periods["statement_date"].isin(wanted)]
+            .sort_values("statement_date").tail(n_trailing).copy())
+
+
 def gas_end_use_enumeration(iso):
     """AC2: every gas end use, quantified in therms, cross-checked against
     the metered total TWO independent ways -- the daily meter file's own
     annual total (trivially exact: a regression's floor + slope explain
-    100% of what it fits) and, newly, the trailing 12 real gas BILLS'
+    100% of what it fits) and, newly, the fixed annual gas BILLS'
     own printed therms (a second, independent meter reading -- the monthly
     statement read, not the 15-minute-resolution daily export)."""
     total = iso["annual_total_therms"]
@@ -436,8 +468,7 @@ def gas_end_use_enumeration(iso):
     floor = iso["hdd_regression"]["floor_therms_yr"]
     sum_pct_of_total = round(100 * (heating + floor) / total, 2)
 
-    periods = pd.read_csv(HPC.GAS_PERIODS_CSV).sort_values("statement_date")
-    last12 = periods.tail(12)
+    last12 = annual_gas_periods()
     bill_therms_12mo = float(last12["therms"].sum())
     bill_vs_meter_pct = round(100 * abs(bill_therms_12mo - total) / total, 2)
 
@@ -459,9 +490,11 @@ def gas_end_use_enumeration(iso):
             "trailing_12_statement_therms": bill_therms_12mo,
             "daily_meter_annual_total_therms": total,
             "pct_difference": bill_vs_meter_pct,
-            "note": ("a genuinely independent check: 12 real monthly "
-                     "statement reads (data/bill_periods_gas.csv, most "
-                     "recent 12 of 25) against the daily Green Button "
+            "note": (f"an independent check: {len(last12)} monthly statement reads "
+                     f"selected by parse_bills.SUMMARY_STATEMENTS_GAS "
+                     f"({last12.iloc[0]['statement_date']} through "
+                     f"{last12.iloc[-1]['statement_date']}; statement dates) "
+                     "against the unchanged daily Green Button "
                      "export's own annual sum -- two different meter-read "
                      "processes agreeing within "
                      f"{bill_vs_meter_pct}% is real corroboration, not "
@@ -659,14 +692,15 @@ def floor_savings_by_period(iso, n_trailing=12, water_heater_share=1.0):
     module's own segment-day-range and flat-rate-segment helpers, priced for
     the non-heating FLOOR instead of the heating slice.
 
-    Restricted to the most recent `n_trailing` real statements (chronological
-    order), the SAME trailing-12-statement window this repo already uses
-    elsewhere for "current annual" gas figures (it independently reproduces
-    the existing $922.34/yr all-in total exactly -- see gas_end_use_
+    Restricted to the final `n_trailing` statements WITHIN the parser's pinned
+    SUMMARY_STATEMENTS_GAS scope, never the newest statements in the archive.
+    This is the SAME fixed annual window used for the gas figures (it
+    independently reproduces the existing $922.34/yr all-in total exactly -- see gas_end_use_
     enumeration's own bill cross-check) and the SAME window heat_pump_
     conversion.py's own $416.25/yr heating figure resolves to (every one of
-    its OWN 25-period loop's contributions outside this window is exactly
-    zero, since HDD is zero outside gas.csv's coverage). floor_savings_by_
+    its OWN full-corpus loop's contributions outside this window is exactly
+    zero: the daily allocation and capacity caps leave no removable heating
+    there). floor_savings_by_
     period() has no gas.csv dependency at all (_floor_capped_days() is a
     pure day-proportion allocation against each period's own real BILLED
     total, never the noisy daily export -- see its own docstring), so unlike
@@ -685,12 +719,11 @@ def floor_savings_by_period(iso, n_trailing=12, water_heater_share=1.0):
     exactly linear in therms, so a dollar-scaling would itself be a small
     additional approximation on top of an already-uncertain share
     assumption -- avoided here since the real re-price costs little)."""
-    periods = pd.read_csv(HPC.GAS_PERIODS_CSV)
-    periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
-    periods[["period_start", "period_end"]] = periods["period"].str.split(
+    trailing = annual_gas_periods(n_trailing)
+    trailing["statement_date"] = pd.to_datetime(trailing["statement_date"]).dt.date
+    trailing[["period_start", "period_end"]] = trailing["period"].str.split(
         " - ", expand=True).apply(lambda c: pd.to_datetime(c, format="%b %d, %Y").dt.date)
-    periods = periods.sort_values("period_start").reset_index(drop=True)
-    trailing = periods.tail(n_trailing).copy()
+    trailing = trailing.sort_values("period_start").reset_index(drop=True)
 
     gas_detail = HPC.load_gas_detail()
     floor_per_day = iso["floor_therms_per_day"] * water_heater_share
@@ -1795,19 +1828,18 @@ def tier_interaction_overstatement(iso, n_trailing=12):
     -- then summed across segments, instead of computing once per period
     against a blended rate.
 
-    Restricted to the trailing `n_trailing` real statements, the SAME
-    window floor_savings_by_period()'s own default resolves to, so this
+    Restricted to the final `n_trailing` statements in the fixed annual
+    scope, the SAME window floor_savings_by_period() resolves to, so this
     diagnostic covers exactly the periods the headline combined-savings
     figure actually uses. Gas Energy Charge and other_fees are flat
     (linear) rates with no tier interaction regardless of granularity, so
     this covers the Gas Service component only, which is where the whole
     effect lives (unchanged from the period-level version)."""
-    periods = pd.read_csv(HPC.GAS_PERIODS_CSV)
-    periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
-    periods[["period_start", "period_end"]] = periods["period"].str.split(
+    trailing = annual_gas_periods(n_trailing)
+    trailing["statement_date"] = pd.to_datetime(trailing["statement_date"]).dt.date
+    trailing[["period_start", "period_end"]] = trailing["period"].str.split(
         " - ", expand=True).apply(lambda c: pd.to_datetime(c, format="%b %d, %Y").dt.date)
-    periods = periods.sort_values("period_start").reset_index(drop=True)
-    trailing = periods.tail(n_trailing).copy()
+    trailing = trailing.sort_values("period_start").reset_index(drop=True)
 
     gas_detail = HPC.load_gas_detail()
     hdd_by_day = iso["hdd_by_day"]
@@ -2312,8 +2344,7 @@ def build():
     raw_heating_therms = iso["hdd_regression"]["heating_therms_yr"]
     unattributed_therms = round(raw_heating_therms - reconciled_heating_therms, 2)
     trailing12_billed_total = round(
-        pd.read_csv(HPC.GAS_PERIODS_CSV).sort_values("statement_date")
-        .tail(12)["billed_amount"].sum(), 2)
+        annual_gas_periods()["billed_amount"].sum(), 2)
     unattributed_usd = reconcile_unattributed_usd(
         trailing12_billed_total, floor_savings_annual, hpc_data["gas_savings_annual_usd"],
         interaction["overstatement_usd"])

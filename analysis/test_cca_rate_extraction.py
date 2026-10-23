@@ -82,20 +82,20 @@ EPS = 0.005
 def case_committed_csv_covers_every_expected_statement_and_period():
     """The committed data/cca_generation_rates.csv must name exactly the (statement_date,
     period) universe that data/bill_periods_electric.csv's CCA rows define -- currently
-    18 statements, 19 periods (the 2025-10-31 stub-cycle statement bills two periods).
+    21 statements, 22 periods (the 2025-10-31 stub-cycle statement bills two periods).
     Neither more nor fewer: a silently narrowed or silently widened corpus would defeat
     the whole point of a committed, cross-checked artifact."""
     expected = CX.cca_periods()
     expected_pairs = {(stmt, p["period"]) for stmt, ps in expected.items() for p in ps}
-    assert len(expected) == 18, f"expected 18 CCA statements, csv has {len(expected)}"
-    assert len(expected_pairs) == 19, f"expected 19 CCA periods, csv has {len(expected_pairs)}"
+    assert len(expected) == 21, f"expected 21 CCA statements, csv has {len(expected)}"
+    assert len(expected_pairs) == 22, f"expected 22 CCA periods, csv has {len(expected_pairs)}"
 
     rows = _read_csv(CX.DATA / "cca_generation_rates.csv")
     got_pairs = {(r["statement_date"], r["period"]) for r in rows}
     assert got_pairs == expected_pairs, (
         f"missing from artifact: {sorted(expected_pairs - got_pairs)}; "
         f"extra in artifact: {sorted(got_pairs - expected_pairs)}")
-    return "18 statements, 19 periods, exact set match"
+    return "21 statements, 22 periods, exact set match"
 
 
 @case
@@ -105,10 +105,10 @@ def case_committed_csv_has_a_total_printed_row_per_period():
     rows = _read_csv(CX.DATA / "cca_generation_rates.csv")
     totals = [r for r in rows if r["tou_period"] == "total_printed"]
     pairs = [(r["statement_date"], r["period"]) for r in totals]
-    assert len(pairs) == len(set(pairs)) == 19, (
-        f"expected exactly 19 total_printed rows, one per period, got {len(pairs)} "
+    assert len(pairs) == len(set(pairs)) == 22, (
+        f"expected exactly 22 total_printed rows, one per period, got {len(pairs)} "
         f"({len(set(pairs))} distinct)")
-    return "19 total_printed rows, one per period, no duplicates"
+    return "22 total_printed rows, one per period, no duplicates"
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ def case_committed_csv_has_a_total_printed_row_per_period():
 # ---------------------------------------------------------------------------
 @case
 def case_every_period_reconciles_to_bill_periods_electric_to_the_cent():
-    """For every one of the 19 periods: (sum of the per-TOU cell usd + the adders'
+    """For every one of the 22 periods: (sum of the per-TOU cell usd + the adders'
     usd, all read from the committed artifact) == the artifact's own total_printed
     row == data/bill_periods_electric.csv's committed cca_generation column. Reports
     the worst-agreeing period so a real discrepancy cannot hide behind an average."""
@@ -157,7 +157,7 @@ def case_every_period_reconciles_to_bill_periods_electric_to_the_cent():
 def case_cca_rate_is_flat_across_the_whole_corpus():
     """The module docstring's headline finding, checked mechanically rather than
     asserted in prose: CEA's own per-season x TOU-period generation rate, and its
-    Clean Impact Plus adder rate, take exactly ONE value across all 18 statements
+    Clean Impact Plus adder rate, take exactly ONE value across all 21 statements
     (Jan 2025 - Jul 2026) wherever that cell is printed. If a future statement ever
     changes it, this case (not just the docstring) will catch it."""
     rows = _read_csv(CX.DATA / "cca_generation_rates.csv")
@@ -171,7 +171,7 @@ def case_cca_rate_is_flat_across_the_whole_corpus():
     cip_rates = {r["rate_usd_per_kwh"] for r in rows if r["tou_period"] == "clean_impact_plus"}
     assert cip_rates == {"0.00100"}, f"Clean Impact Plus rate is not flat: {cip_rates}"
     flat = {"/".join(k): next(iter(v)) for k, v in by_cell.items()}
-    return f"flat across all 18 statements: {flat}, clean_impact_plus=0.001"
+    return f"flat across all 21 statements: {flat}, clean_impact_plus=0.001"
 
 
 # ---------------------------------------------------------------------------

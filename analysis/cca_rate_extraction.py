@@ -16,8 +16,8 @@ across every CCA-era statement PDF, and commits the result as
 data/cca_generation_rates.csv so later phases (the bidirectional counterfactual)
 have a real per-TOU CCA rate to reprice against instead of a period total.
 
-THE 18 STATEMENTS, THE 19 PERIODS. data/bill_periods_electric.csv carries 19 rows
-with generation_provider == "CCA", spanning 18 distinct statement_date values --
+THE 21 STATEMENTS, THE 22 PERIODS. data/bill_periods_electric.csv carries 22 rows
+with generation_provider == "CCA", spanning 21 distinct statement_date values --
 one statement (2025-10-31) bills TWO periods (9/26/25-9/30/25 and
 10/1/25-10/27/25), a stub cycle straddling SDG&E's move from the flat Monthly
 Service Fee to the per-day Base Services Charge (CLAUDE.md / issue #7). Its PDF
@@ -41,24 +41,24 @@ kWh X $0.51684 258.30") that stays contiguous on one extracted line even when
 other columns are interleaved elsewhere in the text, and the section is bounded
 by an exact string search for the section header and the "Total CCA Electric
 Generation Charges" line, neither of which the interleaving splits. Every one of
-the 18 statements parsed with the SAME regex set and the SAME section anchors --
+the 21 statements parsed with the SAME regex set and the SAME section anchors --
 no statement needed its own code path.
 
-THE FINDING: CCA'S OWN CHARGED RATE DID NOT MOVE ONCE IN 18 MONTHS. Extracted
-across all 18 statements (Jan 2025 - Jul 2026), CEA's own per-season x TOU-period
+THE FINDING: CCA'S OWN CHARGED RATE DID NOT MOVE ONCE IN THE PARSED CORPUS. Extracted
+across all 21 statements (Jan 2025 - Oct 2026), CEA's own per-season x TOU-period
 generation rate is IDENTICAL on every statement that prints that cell:
   winter   on-peak 0.2443   off-peak 0.15782   super off-peak 0.05187
   summer   on-peak 0.51684  off-peak 0.15975   super off-peak 0.04961
-and its Clean Impact Plus product-adder rate is 0.001/kWh on every one of the 18
+and its Clean Impact Plus product-adder rate is 0.001/kWh on every one of the 21
 statements. This is a real, checked finding, not an assumption this script made
 going in -- see case_cca_rate_is_flat_across_the_whole_corpus in
 test_cca_rate_extraction.py. It contrasts with data/rate_vintages.csv's
 generation_printed_comparison rows, which show SDG&E's PRINTED bundled-generation
-(EECC) comparison table changing repeatedly over the same 18 months (e.g. summer
+(EECC) comparison table changing repeatedly over the same corpus (e.g. summer
 on-peak comparison 0.38826 -> 0.40592 -> 0.47019): the bundled comparison table
 moved with the tariff vintage while the CCA's own charged rate that this
 household actually paid did not move once. Later phases should not assume this
-flatness continues; it is reported here as what the 18 statements on file show,
+flatness continues; it is reported here as what the 21 statements on file show,
 not as a property of the CCA tariff going forward.
 
 A DISCLOSED AMBIGUITY: the Clean Impact Plus line's own kWh base. CEA prints
@@ -72,7 +72,7 @@ kWh base represents -- see the clean_impact_plus rows' note field.
 Inputs   data/bill_periods_electric.csv           the expected (statement, period)
                                                    universe and the cca_generation
                                                    column this reconciles against
-         private/1-raw-data/electric-bills/*.pdf  the 18 CCA-era statement PDFs
+         private/1-raw-data/electric-bills/*.pdf  the 21 CCA-era statement PDFs
 Output   data/cca_generation_rates.csv             written atomically; run twice ->
                                                     byte-identical
 

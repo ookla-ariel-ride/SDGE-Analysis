@@ -230,22 +230,25 @@
    },
    {
     "annual_net_generator": false,
-    "annual_net_kwh_sum": 5582.0,
+    "annual_net_kwh_sum": 9383.0,
     "complete_true_up_cycle": false,
     "contiguous": true,
-    "coverage_end": "2026-06-26",
+    "coverage_end": "2026-09-25",
     "coverage_start": "2025-12-27",
     "ends_on_true_up_date": false,
-    "period_count": 6,
+    "period_count": 9,
     "statements": [
      "2026-02-02",
      "2026-03-04",
      "2026-04-02",
      "2026-05-04",
      "2026-06-03",
-     "2026-07-02"
+     "2026-07-02",
+     "2026-08-03",
+     "2026-09-01",
+     "2026-10-01"
     ],
-    "total_days": 182,
+    "total_days": 273,
     "true_up_date": "2026-12-28"
    }
   ]
@@ -304,7 +307,7 @@
    "strictly_irreducible_usd": 289.6
   }
  },
- "period_count": 26,
+ "period_count": 29,
  "periods": [
   {
    "current_charges_usd": 48.25,
@@ -877,18 +880,84 @@
    "period": "5/29/26 - 6/26/26",
    "statement_date": "2026-07-02",
    "taxes_and_fees_usd": 3.06
+  },
+  {
+   "current_charges_usd": 462.88,
+   "days": 32,
+   "fixed_charge_kind": "base_services_charge",
+   "fixed_charge_usd": 25.39,
+   "four_bucket_arithmetic_check_pass": true,
+   "four_bucket_arithmetic_diff_usd": 0.0,
+   "four_bucket_arithmetic_sum_usd": 462.88,
+   "generation_credit_cancel_pass": true,
+   "generation_credit_cancel_usd": 0.0,
+   "generation_provider": "CCA",
+   "gross_kwh": 2149.0,
+   "net_kwh": 1202.0,
+   "netted_energy_cross_check_diff_usd": 0.0,
+   "netted_energy_cross_check_pass": true,
+   "netted_energy_independent_usd": 388.55,
+   "netted_energy_usd": 388.55,
+   "non_bypassable_gross_usd": 45.11,
+   "period": "6/27/26 - 7/28/26",
+   "statement_date": "2026-08-03",
+   "taxes_and_fees_usd": 3.83
+  },
+  {
+   "current_charges_usd": 414.93,
+   "days": 29,
+   "fixed_charge_kind": "base_services_charge",
+   "fixed_charge_usd": 23.01,
+   "four_bucket_arithmetic_check_pass": true,
+   "four_bucket_arithmetic_diff_usd": 0.0,
+   "four_bucket_arithmetic_sum_usd": 414.93,
+   "generation_credit_cancel_pass": true,
+   "generation_credit_cancel_usd": 0.0,
+   "generation_provider": "CCA",
+   "gross_kwh": 1982.0,
+   "net_kwh": 1246.0,
+   "netted_energy_cross_check_diff_usd": 0.0,
+   "netted_energy_cross_check_pass": true,
+   "netted_energy_independent_usd": 346.63,
+   "netted_energy_usd": 346.63,
+   "non_bypassable_gross_usd": 41.6,
+   "period": "7/29/26 - 8/26/26",
+   "statement_date": "2026-09-01",
+   "taxes_and_fees_usd": 3.69
+  },
+  {
+   "current_charges_usd": 468.3,
+   "days": 30,
+   "fixed_charge_kind": "base_services_charge",
+   "fixed_charge_usd": 23.8,
+   "four_bucket_arithmetic_check_pass": true,
+   "four_bucket_arithmetic_diff_usd": 0.0,
+   "four_bucket_arithmetic_sum_usd": 468.3,
+   "generation_credit_cancel_pass": true,
+   "generation_credit_cancel_usd": 0.0,
+   "generation_provider": "CCA",
+   "gross_kwh": 2133.0,
+   "net_kwh": 1353.0,
+   "netted_energy_cross_check_diff_usd": 0.0,
+   "netted_energy_cross_check_pass": true,
+   "netted_energy_independent_usd": 395.57,
+   "netted_energy_usd": 395.57,
+   "non_bypassable_gross_usd": 44.78,
+   "period": "8/27/26 - 9/25/26",
+   "statement_date": "2026-10-01",
+   "taxes_and_fees_usd": 4.15
   }
  ],
  "provenance": {
   "bill_periods_electric_csv": {
    "file": "data/bill_periods_electric.csv",
-   "rows": 26
+   "rows": 29
   },
   "bill_tou_detail_csv": {
    "file": "data/bill_tou_detail.csv",
-   "rows": 216
+   "rows": 240
   },
-  "electric_statements_scanned": 25,
+  "electric_statements_scanned": 28,
   "no_pii": "account/meter numbers, name, and address appear on the source PDFs but are never read into or written to this artifact -- only dollar figures, kWh quantities, dates, and period labels are extracted",
   "package_results_json": {
    "file": "data/package_results.json"

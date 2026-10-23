@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Decompose the year-over-year change in one electric bill into its causes.
 
-THE QUESTION. Two comparable early-summer billing periods sit at opposite ends of
-the statement corpus, and the second is nearly eight times the first:
+THE QUESTION. Two fixed early-summer billing periods provide the comparison,
+and the second is nearly eight times the first:
 
     5/25/24 - 6/25/24   32 days   bundled   net  346 kWh   $48.25
     5/29/26 - 6/26/26   29 days   CCA       net  987 kWh   $398.56
@@ -209,9 +209,9 @@ HISTORY_CSV = ROOT / "private" / "1-raw-data" / "electric_billing_history_2024-2
 # never as the source of it (see statement_dates()).
 BOUNDARY_JSON = DATA / "bill_corpus_boundary.json"
 
-# The two periods being compared, and why these two: the first and last statements
-# in the corpus, both early-summer (so both straddle the 6/1 winter->summer tariff
-# boundary and carry the same seasonal mix of weather and daylight), 24 months
+# The two fixed comparison periods are both early-summer (so both straddle the
+# 6/1 winter->summer tariff boundary and carry the same seasonal mix of weather
+# and daylight), 24 months
 # apart, on opposite sides of the 12/27/24 provider break.
 BASE = {"statement": "2024-06-27", "period": "5/25/24 - 6/25/24"}
 CURRENT = {"statement": "2026-07-02", "period": "5/29/26 - 6/26/26"}
@@ -1887,9 +1887,9 @@ def like_for_like(cells, years_apart):
                 "every percentage here is the TOTAL change between two matched "
                 f"endpoints {_r(years_apart, 2)} years apart, and nothing here is a "
                 "per-year figure. Two endpoints cannot establish an annual rate path: "
-                "there is no matched observation between them — these are the first and "
-                "last statements in the corpus, and no intermediate pair of periods is "
-                "comparable on season, provider and TOU mix at once. Any per-year number "
+                "this comparison uses only the two early-summer periods and does not "
+                "estimate a matched annual path across the intervening statements. "
+                "Any per-year number "
                 "derived from these by compounding would be a transformation of two "
                 "points, not an observed yearly change, so none is published"),
             "note": ("the Laspeyres and Paasche readings straddle zero because the "
@@ -2004,7 +2004,8 @@ def build():
             "current": {k: current["meta"][k] for k in
                         ("statement_date", "period", "days", "generation_provider",
                          "net_kwh", "gross_kwh", "current_charges")},
-            "why_these_two": ("first and last statements in the corpus; both early-summer "
+            "why_these_two": ("fixed comparison statements dated 2024-06-27 and "
+                              "2026-07-02; both early-summer "
                               "periods straddling the 6/1 winter->summer tariff boundary; "
                               "24 months and one provider break apart"),
             "days_differ": {"base_usd_per_day": round(base["total_usd"]
