@@ -62,7 +62,7 @@ SC 10 measures separate-inverter storage by AC nameplate power. Solar-paired sto
 
 [CEA Personal Impact](https://thecleanenergyalliance.org/personal-impact/) accumulates generation charges and credits through the annual relevant period. Its published net-surplus rate is $0.06/kWh; direct payment starts at $100. Those terms do not establish SB 868 compensation. This study keeps avoided CEA imports, forgone existing-PV credit, and hypothetical new-export credit separate. San Diego Community Power programs do not establish this CEA household's eligibility.
 
-The tariff prices NBC from consumption net of exports within each metered interval, without cross-interval credit offsets. The canonical model instead charges NBC on its gross import channel. Its fifteen-minute channels need reconciliation with the utility's billing interval and channel definitions. They cannot resolve subinterval timing. All savings and ceilings here retain that disclosed model convention; reproduction alone does not establish its tariff accuracy. [NEM-ST, SC 1(f) and 3(d)](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE)
+The tariff prices NBC from consumption net of exports within each metered interval, without cross-interval credit offsets. The canonical model uses [`rates.nbc_kwh`](../analysis/rates.py) to sum `max(physical imports − physical exports, 0)` within each fifteen-minute interval. The [NBC reconciliation](../data/nbc_bill_reconciliation.json) supports this numerical basis across 16 covered bill periods. Exact utility interval mapping, source precision, grouped rounding, historical rate segments, and midnight cutoffs remain unresolved. Uncredited physical exports still enter modeled NBC netting; their compensation and interconnection eligibility remain separate questions. [NEM-ST, SC 1(f) and 3(d)](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE)
 
 ## 5. Exact system certification remains unproved
 
@@ -147,9 +147,9 @@ All numerical model results come from [`data/portable_solar_storage.json`](../da
 
 The comparison uses **2025-07-24 through 2026-07-23**, **35,040 meter intervals**, and frozen **June 2026 EV-TOU-5/CEA Clean Impact Plus rates**. It does not forecast 2027 prices. The unchanged-behavior modeled bill is $4,901.38; after the free fix it is $3,679.11. These are model levels, not actual billed costs.
 
-Every bill and savings figure retains the model's gross-import NBC convention. NEM-ST instead specifies consumption net of exports within each metered interval. The meter-channel interpretation remains open, as §4 explains. These calculations are conditional estimates, not an actual-bill reconciliation.
+Every bill and savings figure uses positive physical interval net for NBC, as §4 explains. Actual bills support that basis; they do not establish exact utility billing replication. These calculations remain conditional modeled estimates.
 
-The historical statement windows differ from the interval year. The documented historical residual remains unexplained; see [TECHNICAL.md, historical bill reconciliation](../TECHNICAL.md). Frozen rates also differ from historical rates. Hardware deltas compare complete bills on the same model basis; they do not repair historical reconciliation.
+The [bill corpus boundary](../data/bill_corpus_boundary.json) covers service dates from 2024-05-25 through 2026-09-25, including all 365 study days. The separate NBC comparison covers 2025-06-27 through 2026-09-25. Those broader records do not extend this model's fixed comparison year. Calendar-month model buckets differ from statement periods, and frozen rates differ from historical rates. The documented historical residual remains unexplained; see [TECHNICAL.md, historical bill reconciliation](../TECHNICAL.md). Hardware deltas compare complete modeled bills; they do not repair that residual.
 
 ### Reproduction evidence
 
@@ -158,7 +158,7 @@ The historical statement windows differ from the interval year. The documented h
 | Staged meter series | `c86bec4088e8739198402d9db5989156c2f7561aa2e6a4eaab73b8e591a450e8` |
 | SAM A | `13a4f04d28852871adaeb0de97fcefe29ef3f11e90d74bb067e273f7642cd637` |
 | SAM B | `98dd23beb5f50f2996c1c5a01ff59243bf3a333fb748bad01031f19a0353b094` |
-| Canonical rates | `cdebce2656d00a29ff9d9575a7d40ba9bfe7c677eb7b1df26ba3f73c481e804c` |
+| Canonical rates | `5db04d27ff6a960a7c0319539de1eb526cca3b3ae615a6c3922028bcaf4a3b2d` |
 | Public equipment parameters | `3a2965954f9127925edf79f7855b0e1342ad9d07fb8b25bceae80905779583b8` |
 
 The JSON also hashes both production evidence artifacts and the canonical sizing reference. Raw meter/household records stay private.
@@ -193,7 +193,7 @@ The 13.5 kWh canonical row reproduces the committed benchmark within $0.002. It 
 
 Every result below assumes access to the modeled household load. A directly connected refrigerator or office cannot claim these savings. Output/charge ratings in this table describe model inputs, not approved product installations.
 
-The annual savings and price ceilings retain the NBC convention and unresolved meter-interval interpretation stated in §§4 and 7.
+The annual savings and price ceilings use the positive physical interval-net NBC basis and retain the billing-replication limits stated in §§4 and 7.
 
 Five- and ten-year columns are **discounted break-even installed-price ceilings before unknown ownership costs**. They use 5% real discount, 1% annual savings decline, and zero real tariff escalation. Installed price, installed-price NPV, and actual asset payback remain unknown.
 
@@ -321,7 +321,7 @@ Its modeled equivalent full cycles are **1.30/day**. Its peak import rises from 
 | `nbc_usd` | $5.68 |
 | `fixed_usd` | $0.00 |
 
-PCIA is the power charge indifference adjustment. NBC means non-bypassable charges. The NBC row uses modeled gross imports; it does not establish the tariff's metered-interval energy base. The unchanged daily electric charge and gas costs do not disappear through storage.
+PCIA is the power charge indifference adjustment. NBC means non-bypassable charges. The NBC row uses positive physical interval net, including physical exports that receive no credit. Exact billing-replication limits remain as stated in §4. The unchanged daily electric charge and gas costs do not disappear through storage.
 
 ### Monthly modeled electric bills: comparison, not statement totals
 
@@ -468,7 +468,7 @@ Large DP3/Ultra X PDFs exceeded the web reader's size limit; the manufacturer PD
 
 | Issue criterion | State | Evidence or exact missing input |
 |---|---|---|
-| Baseline/reference reproduction; window, rates, hashes, limitations | **Achieved for the implemented model** | §7; artifact `baseline`, `provenance`, `canonical_no_reserve_benchmarks`; historical residual and gross-import NBC convention stay disclosed; tariff reconciliation remains open |
+| Baseline/reference reproduction; window, rates, hashes, limitations | **Achieved for the implemented model** | §7; artifact `baseline`, `provenance`, `canonical_no_reserve_benchmarks`; historical residual and exact billing-replication limits stay disclosed; bill evidence supports positive physical interval-net NBC |
 | Solar-only, storage-only, combined, selected-load, larger options; standalone/incremental savings | **Incomplete** | Generic families and increments exist; real selected-appliance/circuit interval energy, surge, access and wiring are absent |
 | Conservation, SOC/reserve, charge/discharge/shared caps, annual balance; losses/standby counted | **Achieved for stated interval assumptions** | Model and synthetic tests; measured losses, subinterval flows and real controller performance remain separate unknowns |
 | Monthly bills/flows/self-use/sources/cycles/peaks/curtailment/runtime/installed cost/payback/NPV | **Incomplete** | JSON carries modeled accounts and conditional runtime; actual circuit runtime, complete quote, ownership costs, installed payback/NPV absent |
