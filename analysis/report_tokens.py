@@ -6043,12 +6043,13 @@ def _assert_profiles_rebuild_the_year(token, subject, total):
 #                                                   in its own month and period
 #
 # THE NETTING END IS energy(), NOT allin(), because these bounds describe
-# MONTHLY ENERGY settlement only. The engine separately bills NBC on positive
-# physical interval net. Varying credited exports with physical flows fixed
-# changes energy settlement by energy() or credit(). Changing physical exports
-# can also change NBC: while an interval remains net-importing, one additional
-# physical export kWh avoids energy()+NBC; an already-exporting interval gains
-# credit(). The engine test checks all four cases without changing these bounds.
+# MONTHLY ENERGY settlement only. For changes that do not cross zero, the
+# monthly TOU bucket's net sign determines energy() versus credit(); the
+# physical interval's net sign independently determines the NBC effect.
+# Varying credited exports with physical flows fixed changes only energy
+# settlement. Increasing physical exports also reduces NBC while that interval
+# remains net-importing, regardless of its monthly bucket's sign. The test's
+# one-row probes align those two signs; they do not establish a general link.
 # See case_the_two_export_bounds_are_the_two_settlement_treatments.
 #
 # WHICH END DOMINATES, and why neither may be published alone. Imports exceed
