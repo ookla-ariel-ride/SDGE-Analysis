@@ -149,7 +149,7 @@ The base model includes 49 provisional weather hours and 0 hours with unknown we
 
 Sources: `production` and `production_sensitivities`. Intervals use the same daily-cluster method as the voltage regressions.
 **The conditional models do not establish an inverse voltage-production association at the stated uncertainty level.**
-This finding does not prove zero production loss.
+This finding does not prove no relationship or zero production loss.
 The base model's hourly mean leg voltage spans 119.483333–123.637500 V, with 0 hourly means outside Range A.
 
 The expected-power reference leaves each local date out in turn; its prediction uses weather, clock, and date controls without voltage or load.
@@ -173,13 +173,17 @@ A future priced counterfactual needs canonical rates and aligned interval re-bil
 ## Disposition and remaining acceptance evidence
 
 **Continue monitoring. Keep issue #19 open.**
-This window supplies no sampled Range A excursion to support a utility voltage complaint.
-It also cannot support closure as calibrated service within specification (`disposition`).
+This window documents no Range A excursion to support alleging a utility voltage violation.
+The conditional models also detect no inverse voltage-production association at the stated uncertainty level.
+These findings support a qualified decision now, while formal service compliance and causal loss remain unproved (`disposition`, `production`).
+The existing observation span meets AC1; no new observation window is needed to report these results.
 
 SDG&E accepts reports of suspected voltage problems through its Call Center at 1-800-411-SDGE.
-Its published process starts with an Electric Troubleshooter and service-entrance measurements with the customer's load operating.
+Suspected symptoms or later events can justify an investigation request even when this dataset shows no excursion.
+Its published process starts with an Electric Troubleshooter, who can measure service-entrance voltage with the customer's load operating.
 The process can include a recording monitor and a Field Engineer's review.
-That process can address the missing service-point evidence; this study does not establish a utility violation.
+SDG&E can supply service-point evidence during that process; customer calibration is not a prerequisite to request investigation.
+Calibration, sensing location, and event duration matter before asserting a proved compliance breach.
 [SDG&E voltage investigation process](https://www.sdge.com/businesses/savings-center/services/power-quality)
 
 The table maps every acceptance criterion from [issue #19](https://github.com/ookla-ariel-ride/SDGE-Analysis/issues/19).
@@ -189,14 +193,25 @@ The table maps every acceptance criterion from [issue #19](https://github.com/oo
 |---|---|---|
 | 1 | At least 60 days before conclusions; coverage and gaps | Complete for observation window; all-source and latest-window coverage appear above. Gaps remain explicit. |
 | 2 | Per-leg distribution and time outside cited Range A | Complete for sampled distributions and estimated represented duration. Measured sustained excursion duration remains unavailable. |
-| 3 | Correlate excursions with time, load, solar to separate causes | Partial: conditioned associations and strata exist; no sampled excursions exist. Synchronized calibrated service-point and inverter-side measurements are missing. |
-| 4 | Production impact in kWh and dollars, or a clear no-relationship finding | Partial: no inverse association is established at the stated uncertainty level. Causal kWh and dollars remain null; zero loss is unproved. |
+| 3 | Correlate excursions with time, load, solar to separate causes | Partial: conditioned associations and strata exist; no sampled excursion group exists for attribution. Two-location measurements could help answer the remaining location question. |
+| 4 | Production impact in kWh and dollars, or a clear no-relationship finding | Partial: no inverse association is detected under the tested models at the stated uncertainty level. This is not proof of no relationship; causal kWh and dollars remain null. AC4 permits a no-relationship alternative rather than requiring causal-loss proof for every outcome. It does not require proof of zero loss. |
 | 5 | Frequency as measurement-chain sanity | Complete within the stated rounding, filter, and calibration limits. |
-| 6 | Utility complaint or close as within specification | Unmet: neither requested binary outcome is proved. Continue monitoring and retain the measurement limits. |
+| 6 | Utility complaint or close as within specification | Literal binary unresolved: no documented excursion supports alleging a violation, and formal within-specification closure remains unproved. A suspected problem can still justify an investigation request. Keep #19 open unless the owner explicitly changes the acceptance scope. |
 | 7 | Explicit measurement accuracy and confidence | Complete disclosure: accuracy and physical sensing point are unknown. Confidence is moderate for samples and low for compliance or causal loss. |
 | 8 | ANSI C84.1 Range A glossary entry | Complete in [GLOSSARY.md](../GLOSSARY.md#solar--hardware), with source and sampling/calibration limits. |
 
-To resolve the open causal questions, the study needs synchronized service-point and inverter-side voltage, calibration evidence, and inverter trip or curtailment records.
-It also needs on-site irradiance/module temperature or a checked unconstrained production reference, plus resolution of the production-source disagreement.
+Further investigation can target a specific unresolved question; it is not a compulsory measurement campaign for every outcome (`missing_evidence`).
+Optional checks of existing sensor records can establish which meter/channel the collector selects and whether records identify its location or accuracy.
+Checks of source timestamps and revision histories can also test the unresolved production-source disagreement before anyone assigns it a loss mechanism.
+
+| Unresolved question | Possible evidence and its purpose |
+|---|---|
+| Does service voltage breach the applicable limits? | Service-point measurements with known accuracy and event duration can support a compliance assessment. SDG&E can collect such evidence during an investigation. |
+| Does voltage variation originate upstream or within the premises? | Synchronized service-point and inverter-side readings with known accuracy can help separate upstream variation from conductor drop or export rise. |
+| Do suspected voltage events cause inverter trips or curtailment? | Inverter event records and faster synchronized voltage/production can test event response and duration missed by five-minute samples. |
+| Is there causal production loss to quantify? | An independently checked production reference can support a counterfactual. On-site irradiance and module temperature are possible inputs. Causal loss still needs identification; dollars need aligned re-billing. |
+
+These options do not prevent the current sampled finding or a request for utility investigation.
+More data from the same measurement chain alone cannot establish the unknown sensing location, accuracy, or causal attribution.
 Raw readings, exact event times, device identifiers, and installation-specific measurement records remain private under [the intake ledger](../DATA-SOURCES-CHEATSHEET.md#e5-service-voltage-telemetry-optional).
 All external sources above were checked on 2026-10-22; their publication dates differ from this evidence date.

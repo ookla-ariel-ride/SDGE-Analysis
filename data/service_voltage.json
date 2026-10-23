@@ -5436,7 +5436,7 @@
     }
   },
   "disposition": {
-    "action": "Continue monitoring; no sampled Range A excursion supports a utility voltage complaint in this window. Formal within-specification closure remains unsupported.",
+    "action": "Continue monitoring. This window documents no Range A excursion to support alleging a utility voltage violation. Formal within-specification closure remains unsupported. SDG&E accepts suspected voltage problems and can supply service-entrance measurements. Customer calibration is not a prerequisite to request investigation.",
     "any_leg_outside_samples": 0,
     "any_voltage_outside_samples": 0,
     "causal_loss_proved": false,
@@ -7473,10 +7473,10 @@
     "sensor": "Enphase IQ Gateway selected first meter with numeric voltage; first two channels for legs"
   },
   "missing_evidence": [
-    "Calibrated voltage comparison at the utility service point and established physical sensing point/accuracy.",
-    "Inverter trip/curtailment event records and sufficiently fast synchronized voltage and production.",
-    "On-site irradiance/module-temperature evidence or a verified unconstrained production reference.",
-    "Simultaneous upstream/service and inverter-side voltage to separate utility variation from conductor drop/export rise."
+    "Service compliance: physical sensing point, voltage accuracy, and sustained event duration remain unestablished. SDG&E can supply service-entrance measurements for suspected problems; customer calibration is not a prerequisite to request investigation.",
+    "Event-related production response: inverter trip/curtailment records and faster synchronized voltage/production could test suspected events that five-minute samples miss.",
+    "Causal loss: on-site irradiance/module temperature or another independently checked production reference could strengthen attribution. The production-source disagreement needs resolution before assigning it a loss mechanism.",
+    "Location of voltage variation: synchronized service-point and inverter-side readings with known accuracy could help separate upstream variation from premise conductor drop/export rise. These follow-ups answer specific questions; they are not requirements for the current sampled finding."
   ],
   "pricing": "No identified loss or aligned counterfactual exists; no kWh or dollar estimate. Any future counterfactual needs canonical tariff re-billing of aligned interval flows.",
   "production": {
@@ -7508,7 +7508,7 @@
       "scored_hours": 452,
       "warning": "Empirical expected power is not verified uncurtailed output. Hourly sampled means are not energy meters. Do not integrate residuals as losses."
     },
-    "finding": "The conditional model does not establish an inverse voltage-production association at the stated uncertainty level. This does not prove zero production loss.",
+    "finding": "The conditional model does not establish an inverse voltage-production association at the stated uncertainty level. This does not prove no relationship or zero production loss.",
     "hourly_mean_outside_range_count": 0,
     "identifiability": "Voltage responds to generation as well as potentially affecting it. Weather resolution, changing shade/soiling, inferred-load coupling, omitted upstream conditions, and shared persistent losses limit interpretation. A coefficient or its interval does not establish a loss mechanism.",
     "interpretation": "Conditional association only. No calibrated service-point voltage, inverter event trace, or verified unconstrained production reference. Missing or sub-five-minute curtailment remains possible.",
@@ -7578,7 +7578,7 @@
         "scored_hours": 403,
         "warning": "Empirical expected power is not verified uncurtailed output. Hourly sampled means are not energy meters. Do not integrate residuals as losses."
       },
-      "finding": "The conditional model does not establish an inverse voltage-production association at the stated uncertainty level. This does not prove zero production loss.",
+      "finding": "The conditional model does not establish an inverse voltage-production association at the stated uncertainty level. This does not prove no relationship or zero production loss.",
       "hourly_mean_outside_range_count": 0,
       "identifiability": "Voltage responds to generation as well as potentially affecting it. Weather resolution, changing shade/soiling, inferred-load coupling, omitted upstream conditions, and shared persistent losses limit interpretation. A coefficient or its interval does not establish a loss mechanism.",
       "interpretation": "Conditional association only. No calibrated service-point voltage, inverter event trace, or verified unconstrained production reference. Missing or sub-five-minute curtailment remains possible.",
@@ -7647,7 +7647,7 @@
         "scored_hours": 452,
         "warning": "Empirical expected power is not verified uncurtailed output. Hourly sampled means are not energy meters. Do not integrate residuals as losses."
       },
-      "finding": "The conditional model does not establish an inverse voltage-production association at the stated uncertainty level. This does not prove zero production loss.",
+      "finding": "The conditional model does not establish an inverse voltage-production association at the stated uncertainty level. This does not prove no relationship or zero production loss.",
       "hourly_mean_outside_range_count": 0,
       "identifiability": "Voltage responds to generation as well as potentially affecting it. Weather resolution, changing shade/soiling, inferred-load coupling, omitted upstream conditions, and shared persistent losses limit interpretation. A coefficient or its interval does not establish a loss mechanism.",
       "interpretation": "Conditional association only. No calibrated service-point voltage, inverter event trace, or verified unconstrained production reference. Missing or sub-five-minute curtailment remains possible.",
@@ -7716,7 +7716,7 @@
         "scored_hours": 448,
         "warning": "Empirical expected power is not verified uncurtailed output. Hourly sampled means are not energy meters. Do not integrate residuals as losses."
       },
-      "finding": "The conditional model does not establish an inverse voltage-production association at the stated uncertainty level. This does not prove zero production loss.",
+      "finding": "The conditional model does not establish an inverse voltage-production association at the stated uncertainty level. This does not prove no relationship or zero production loss.",
       "hourly_mean_outside_range_count": 0,
       "identifiability": "Voltage responds to generation as well as potentially affecting it. Weather resolution, changing shade/soiling, inferred-load coupling, omitted upstream conditions, and shared persistent losses limit interpretation. A coefficient or its interval does not establish a loss mechanism.",
       "interpretation": "Conditional association only. No calibrated service-point voltage, inverter event trace, or verified unconstrained production reference. Missing or sub-five-minute curtailment remains possible.",
@@ -8193,7 +8193,7 @@
     }
   },
   "voltage_conditioned_associations": {
-    "interpretation": "Associations condition on same-day effects and local-clock harmonics. Solar and inferred gross load share generation data. Nighttime check reduces that coupling. Slopes cannot separate upstream impedance from premise conductor drop/rise without a calibrated service-point comparison.",
+    "interpretation": "Associations condition on same-day effects and local-clock harmonics. Solar and inferred gross load share generation data. Nighttime check reduces that coupling. These slopes do not separate upstream variation from premise conductor drop/rise. Synchronized service-point and inverter-side readings with known accuracy could help answer that location question.",
     "leg1_v": {
       "ci_method": "OLS CR1 sandwich clustered by local date; Student t, dates minus one degrees of freedom",
       "coefficients": {
