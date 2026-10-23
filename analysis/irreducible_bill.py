@@ -2,38 +2,23 @@
 """Issue #7: the irreducible bill -- the portion of the annual bill that no
 battery, no behavior change and no bigger panel can ever remove.
 
-NBC INTERVAL CLARIFICATION (2026-10-22, issue #304). Historical NBC dollars
-below come from bills. Modeled NBC uses the gross imported-energy channel.
-NEM-ST SC 1(f) instead specifies consumption net of exports within each
-metered interval, aggregated monthly. The printed NBC quantity versus period
-net-kWh check rejects billing-period netting; it does not settle meter-channel
-semantics within an interval. Keep that reconciliation open. Historical
-function/key names remain for compatibility; no billing algorithm changes here.
+NBC BASIS (NEM-ST SC 1(f)). Historical NBC dollars below come from bills.
+Modeled NBC sums max(physical import - physical export, 0) per fifteen-minute
+interval. data/nbc_bill_reconciliation.json compares that quantity with actual
+printed NBC usage. Exact utility interval mapping, precision and grouped
+rounding remain unresolved. Historical function/key names remain compatible.
 
-A CONCEPTUAL CORRECTION (issue #7, third adversarial review). An earlier
-version of this script summed TWO components -- the per-day fixed charge and
-non-bypassable charges (NBC) modeled on gross imported kWh -- into one
-"floor... these packages cannot reach below." That conflated two different
-properties. "Non-bypassable" is a regulatory term: SDG&E's non-bypassable
-charges cannot be avoided by SWITCHING GENERATION PROVIDER (they follow the
-delivery path, not the generation source). It does NOT mean the charge's
-DOLLAR AMOUNT is fixed regardless of usage -- this model prices NBC per gross-
-imported kWh, so if modeled gross imports fall (a bigger battery, more solar, a load
-reduction), the dollar amount of NBC falls too, potentially toward zero in
-the limit of eliminating grid imports entirely. This script's own
-compute_package_gross_imports() proves exactly that: MID and HIGH reduce
-gross imports relative to baseline (by roughly 244.0 kWh and 185.1 kWh --
-see data/irreducible_bill.json for the current exact figures), and
-build_package_floor_fractions() correctly recomputes a LOWER non_bypassable
-dollar figure for those packages as a direct result -- a purchase visibly
-moving a component the earlier prose called immovable.
+The fixed charge is the strict floor. NBC is usage-dependent and belongs
+beside that floor, not inside it. compute_package_gross_imports() retains raw
+import totals for physical checks and separately derives each scenario's NBC
+quantity. Timing-only shifts can preserve raw import totals while changing NBC.
 
 Only the per-day fixed charge (Base Services Charge, or the Monthly Service
 Fee it replaced 2025-10-01) is genuinely, unconditionally irreducible: it is
 billed per day regardless of consumption, even at zero kWh imported, and no
 purchase changes that. Historical NBC dollars come from bills. The tariff
 charges NBC on positive net consumption within each metered interval; the
-model uses its gross import channel pending reconciliation. NBC is NOT a
+model uses this interval-net basis; exact utility replication remains unresolved. NBC is NOT a
 fixed dollar floor. Its energy base can change under a purchase.
 
 THE QUESTION. Every payback this repo quotes (package_results.json's LOW/MID/
@@ -112,8 +97,8 @@ is actually the strict floor):
                            by exactly its own printed value on every period).
                            Historical bill dollars. The amount depends on
                            usage, so it is NOT a fixed floor. In the separate
-                           package model, reducing gross imports reduces NBC
-                           under that model's convention (see
+                           package model, reducing positive physical interval net
+                           reduces NBC (see
                            build_package_floor_fractions()'s docstring).
   3. taxes_and_fees        "Total Taxes & Fees on Electric Charges" -- mostly
                            proportional to the energy charge (franchise fee
@@ -155,12 +140,11 @@ even at zero kWh imported, and no purchase changes that.
 
 non_bypassable_gross is reported ALONGSIDE it, not summed into it, as
 non_bypassable_usd(_historical) -- historical bill dollars, separate from
-the modeled gross-import convention. NBC applies to positive net consumption
+the modeled interval-net quantity. NBC applies to positive net consumption
 within each metered interval under NEM-ST SC 1(f). It is not avoided by
 switching generation provider. In this model it is reduced by a purchase
-that reduces gross imports (see build_package_floor_fractions()'s docstring
-for how it is actually recomputed, package by package, from each package's
-own modeled gross-import kWh -- an adversarial review of this script
+that reduces positive interval net (see build_package_floor_fractions()'s docstring
+for how it is recomputed from each package's own modeled interval-net kWh -- an adversarial review of this script
 (issue #7 follow-up) found an original "held constant... conservative" claim
 was asserted, not computed, and the real direction turned out to be
 case-by-case, not one-directional; a SECOND adversarial review then found
@@ -235,10 +219,9 @@ EPS = 1e-9
 # changes on every refresh (see CLAUDE.md's own "cp ... usage.csv" command).
 # Needed only by compute_package_gross_imports() (Finding 1, issue #7 review).
 RAW_INTERVAL_GLOB = "Electric_15_Minute_*.csv"
-# A package-specific gross-import figure sanity-checked against this must sit
-# within this fraction of the household's actual historical gross-import
-# total (see compute_package_gross_imports()) or something has gone wrong
-# with the reused pipeline -- refuse rather than publish a bad recomputation.
+# Compare the modeled positive interval-net NBC baseline to printed historical
+# NBC usage as a coarse magnitude check. These use different annual windows;
+# this is not an exact reconciliation (see compute_package_gross_imports()).
 GROSS_IMPORT_SANITY_FRACTION = 0.15
 
 # Check the printed Wildfire Fund Charge quantity against the bill-derived
@@ -570,7 +553,7 @@ def build_floor(rows):
     summed into it. It is real money, actually billed over this same window,
     and it cannot be avoided by switching generation provider or NEM
     structure -- but its DOLLAR AMOUNT depends on usage. The model uses
-    gross imported kWh, which a purchase can reduce (see
+    positive physical interval-net kWh, which a purchase can reduce (see
     build_package_floor_fractions() for the per-package proof that this
     actually happens, not just could). It is therefore NOT part of
     strictly_irreducible_usd; combined_usd_historical is kept as a
@@ -752,13 +735,11 @@ def compute_package_gross_imports():
     running behavior_rebuild.py itself, which expects a literal ./usage.csv
     in its cwd, per the private/verify sandbox convention).
 
-    SANITY CHECKS (before any of this is trusted): the computed baseline
-    (package-free) gross-import total must sit within
-    GROSS_IMPORT_SANITY_FRACTION of the household's actual historical
-    gross-import total (data/bill_periods_electric.csv, summed over the same
-    12-month window build_floor() uses) -- a wildly different figure would
-    mean the interval export, the household config, or the reused pipeline
-    has drifted, not that the household's usage changed. LOW's gross imports
+    SANITY CHECKS: the modeled positive interval-net NBC baseline must sit
+    within GROSS_IMPORT_SANITY_FRACTION of printed historical NBC usage.
+    The fixed model year differs from build_floor()'s historical bill window;
+    this is a coarse magnitude guard, not a same-window reconciliation.
+    LOW's raw gross imports
     must equal the baseline's EXACTLY: both free-fix shifts only move energy
     the household already drew (and behavior_rebuild's _conserve() already
     refuses a run that drops or invents energy), so a timing-only scenario
@@ -822,12 +803,12 @@ def compute_package_gross_imports():
     # passed no charge_kw at all, silently defaulting to the OLD symmetric
     # 11.5 kW charge behavior for both -- missed entirely by issue #40's
     # original consumer audit (Codex adversarial review caught it).
-    mid_imp, _, mid_served, _ = bdp.run_batt(d, imp_sh, gen0, 13.5,
+    mid_imp, mid_exp, mid_served, _ = bdp.run_batt(d, imp_sh, gen0, 13.5,
                                              bdp.PUBLISHED_POLICY,
                                              charge_kw=bdp.CHARGE_KW)
     mid_gross_kwh = float(mid_imp.sum())
 
-    high_imp, _, high_served, _ = bdp.run_batt(d, imp_sh, gen0, 27.0,
+    high_imp, high_exp, high_served, _ = bdp.run_batt(d, imp_sh, gen0, 27.0,
                                                bdp.PUBLISHED_POLICY,
                                                charge_kw=bdp.CHARGE_KW_WITH_EXPANSION)
     high_gross_kwh = float(high_imp.sum())
@@ -836,9 +817,10 @@ def compute_package_gross_imports():
 
     return {
         "baseline_gross_kwh": round(baseline_gross_kwh, 1),
-        "LOW": {"gross_kwh": round(low_gross_kwh, 1)},
-        "MID": {"gross_kwh": round(mid_gross_kwh, 1), "kwh_served": round(mid_served, 1)},
-        "HIGH": {"gross_kwh": round(high_gross_kwh, 1), "kwh_served": round(high_served, 1)},
+        "baseline_nbc_kwh": round(float(R.nbc_kwh(imp0, gen0).sum()), 6),
+        "LOW": {"gross_kwh": round(low_gross_kwh, 1), "nbc_kwh": round(float(R.nbc_kwh(imp_sh, gen0).sum()), 6)},
+        "MID": {"gross_kwh": round(mid_gross_kwh, 1), "nbc_kwh": round(float(R.nbc_kwh(mid_imp, mid_exp).sum()), 6), "kwh_served": round(mid_served, 1)},
+        "HIGH": {"gross_kwh": round(high_gross_kwh, 1), "nbc_kwh": round(float(R.nbc_kwh(high_imp, high_exp).sum()), 6), "kwh_served": round(high_served, 1)},
         "kwh_moved_free_fix": round(moved, 1),
         "free_fix_scenario": free_fix_scenario,
         "annual_days": annual_days,
@@ -866,22 +848,22 @@ def compute_package_gross_imports():
 
 
 def _sanity_check_gross_imports(gross, floor):
-    """Refuse to use compute_package_gross_imports()'s output if the
-    baseline it computed does not resemble the household's actual historical
-    gross-import total (data/bill_periods_electric.csv, the same 12-month
-    window build_floor() sums) -- these are two different data sources (a
-    365-day interval export vs a 12-month bill-statement window) so they are
-    not expected to match exactly, only to agree in magnitude."""
+    """Coarse magnitude guard across different annual windows.
+
+    Compare modeled positive physical interval net with printed NBC usage
+    (historical_gross_kwh_window is a compatibility name). This neither checks
+    raw Consumption against the same quantity nor proves exact bill replication.
+    """
     hist = floor["historical_gross_kwh_window"]
-    baseline = gross["baseline_gross_kwh"]
+    baseline = gross["baseline_nbc_kwh"]
     if hist <= 0:
         raise SystemExit("historical_gross_kwh_window is non-positive -- cannot sanity-check")
     rel_diff = abs(baseline - hist) / hist
     if rel_diff > GROSS_IMPORT_SANITY_FRACTION:
         raise SystemExit(
-            f"compute_package_gross_imports: baseline gross imports "
+            f"compute_package_gross_imports: baseline positive interval net "
             f"({baseline} kWh, interval export) differ from the historical "
-            f"12-month bill total ({hist} kWh) by {rel_diff*100:.1f}%, more "
+            f"12-month printed NBC total ({hist} kWh) by {rel_diff*100:.1f}%, more "
             f"than the {GROSS_IMPORT_SANITY_FRACTION*100:.0f}% sanity margin "
             "-- refusing to publish a package-specific NBC recomputation "
             "built on a figure this far from what the bills actually show")
@@ -1021,10 +1003,10 @@ def build_package_floor_fractions(floor, gross):
          itself uses (days.nunique() x BSC, one month at a time, summed).
          This term does NOT vary by package: a per-day charge does not depend
          on how much energy is imported or when.
-      2. non_bypassable_usd = this package's own modeled gross-import kWh
+      2. non_bypassable_usd = this package's own modeled positive physical interval-net kWh
          (compute_package_gross_imports()) x rates.NBC -- current-vintage,
          matching the denominator, and DIFFERENT for each package because
-         gross imports differ by package.
+         positive physical interval net differs by package.
     Both terms are CURRENT-rate-vintage, matching the denominator they are
     divided into. This is DELIBERATELY DIFFERENT from twelve_month_floor
     (build_floor()), which stays entirely historical on purpose -- that
@@ -1037,10 +1019,8 @@ def build_package_floor_fractions(floor, gross):
     version of this function summed both terms into one "floor_usd" and
     called the whole thing irreducible. That is wrong for term 2:
     non_bypassable_usd is NOT held constant across packages here -- it is
-    this package's own recomputation, and on this corpus MID and HIGH's
-    gross imports (and therefore their non_bypassable_usd) come out LOWER
-    than LOW's/baseline's, proving a purchase can and does move this
-    component. Only strictly_irreducible_usd (term 1) is invariant across
+    this package's own recomputation from its positive physical interval net.
+    Its direction must be computed, not inferred from raw import totals. Only strictly_irreducible_usd (term 1) is invariant across
     packages by construction, because a per-day charge cannot depend on
     usage -- that invariance is what a genuine floor requires, and it is
     what distinguishes term 1 from term 2."""
@@ -1053,7 +1033,8 @@ def build_package_floor_fractions(floor, gross):
         if bill <= 0:
             raise SystemExit(f"package {name}: non-positive projected bill {bill}")
         pkg_gross_kwh = gross[name]["gross_kwh"]
-        non_bypassable_usd = _c(pkg_gross_kwh * R.NBC)
+        pkg_nbc_kwh = gross[name]["nbc_kwh"]
+        non_bypassable_usd = _c(pkg_nbc_kwh * R.NBC)
         combined_usd = _c(strictly_irreducible_usd + non_bypassable_usd)
         out[name] = {
             "projected_bill_current_rates_yr": bill,
@@ -1062,6 +1043,7 @@ def build_package_floor_fractions(floor, gross):
                 round(strictly_irreducible_usd / bill, 4),
             "annual_days": gross["annual_days"],
             "gross_import_kwh": pkg_gross_kwh,
+            "nbc_positive_interval_kwh": pkg_nbc_kwh,
             "gross_import_kwh_vs_baseline": _c(pkg_gross_kwh - gross["baseline_gross_kwh"]),
             "non_bypassable_usd": non_bypassable_usd,
             "non_bypassable_fraction_of_projected_bill":
@@ -1073,10 +1055,10 @@ def build_package_floor_fractions(floor, gross):
                       "across packages, a per-day charge does not depend on "
                       "how much energy is imported) -- the ONLY figure here "
                       "that is a genuine floor. non_bypassable_usd = this "
-                      "package's own modeled gross-import kWh "
+                      "package's own modeled positive physical interval-net kWh "
                       "(compute_package_gross_imports()) x rates.NBC "
                       "(current-vintage combined NBC + Wildfire Fund Charge "
-                      "rate, $/kWh) -- real money at this package's own "
+                      "rate, $/kWh) -- modeled charges at this package's own "
                       "usage, NOT held constant across packages, and NOT "
                       "itself irreducible (a different purchase would move "
                       "it further). combined_usd sums both for reference "
@@ -1108,8 +1090,8 @@ def build_baseline_floor_fraction(gross):
          every package's fixed term (all four scenarios -- baseline, LOW,
          MID, HIGH -- sit on the same 365-day interval frame,
          gross['annual_days']; a per-day charge does not depend on usage).
-      2. non_bypassable_usd = gross['baseline_gross_kwh'] (compute_package_
-         gross_imports()'s own baseline figure -- already computed and
+      2. non_bypassable_usd = gross['baseline_nbc_kwh'] (compute_package_
+         gross_imports()'s own positive-interval-net baseline figure -- already computed and
          sanity-checked there, not re-derived here) x rates.NBC.
     Both terms are current-rate-vintage, matching model_baseline_current_
     rates, the denominator they are divided into. This is DELIBERATELY
@@ -1122,7 +1104,7 @@ def build_baseline_floor_fraction(gross):
     baseline is "no package" -- not one of the three purchase options -- so
     it does not belong inside that dict."""
     strictly_irreducible_usd = _c(gross["annual_days"] * R.BSC)
-    non_bypassable_usd = _c(gross["baseline_gross_kwh"] * R.NBC)
+    non_bypassable_usd = _c(gross["baseline_nbc_kwh"] * R.NBC)
     combined_usd = _c(strictly_irreducible_usd + non_bypassable_usd)
     pkg_doc = _load_packages_doc(gross)
     bill = pkg_doc["model_baseline_current_rates"]
@@ -1135,6 +1117,7 @@ def build_baseline_floor_fraction(gross):
             round(strictly_irreducible_usd / bill, 4),
         "annual_days": gross["annual_days"],
         "gross_import_kwh": gross["baseline_gross_kwh"],
+        "nbc_positive_interval_kwh": gross["baseline_nbc_kwh"],
         "non_bypassable_usd": non_bypassable_usd,
         "non_bypassable_fraction_of_projected_bill":
             round(non_bypassable_usd / bill, 4),
@@ -1149,8 +1132,8 @@ def build_baseline_floor_fraction(gross):
             "strictly_irreducible_usd = annual_days x rates.BSC (same "
             "365-day frame as every package -- a per-day charge that does "
             "not depend on usage). non_bypassable_usd = "
-            "gross['baseline_gross_kwh'] x rates.NBC -- the household's own "
-            "modeled gross imports with no purchase applied. Both terms are "
+            "gross['baseline_nbc_kwh'] x rates.NBC -- the household's own "
+            "modeled positive physical interval net with no purchase applied. Both terms are "
             "current-vintage, matching the denominator "
             "(model_baseline_current_rates); this is a distinct question "
             "from twelve_month_floor's historical split, which stays "
@@ -1481,7 +1464,7 @@ def build_minimum_bill_provision(rows, statements):
 
 
 # ---------------------------------------------------------------------------
-# Step 6: NBC-on-gross re-verification
+# Step 6: Historical printed NBC quantity check
 # ---------------------------------------------------------------------------
 # Same defect shape as bd._LINE_PATTERNS' pre-#46 pcia/wildfire/IPA patterns (a bare
 # \$ with no tolerance for a minus sign printed BEFORE it): the wildfire rate has
@@ -1505,7 +1488,7 @@ def build_nbc_gross_check(rows):
               None)
     if row is None:
         raise SystemExit(f"{stmt}/{period}: not found in bill_periods_electric.csv -- "
-                         "the NBC-on-gross evidence statement cited by rates.py is "
+                         "the historical printed NBC evidence statement is "
                          "missing from this corpus")
     # This statement carries two periods; scope to this one exactly as
     # classify_periods() does, so the same text this script actually billed
@@ -1551,11 +1534,11 @@ CAVEAT = (
     "what the household buys or does, even at zero kWh imported. "
     "non_bypassable_usd_historical / non_bypassable_usd is a SEPARATE figure, "
     "not summed into the floor: non-bypassable charges (NBC). Historical NBC "
-    "dollars come from bills; modeled NBC uses the gross import channel. "
+    "dollars come from bills; modeled NBC uses positive physical interval net. "
     "NEM-ST SC 1(f) specifies consumption net of exports within each metered "
-    "interval, aggregated monthly. Meter-channel reconciliation remains open. "
+    "interval, aggregated monthly. Exact utility replication remains unresolved. "
     "The printed-kWh check rejects billing-period netting only. NBC's dollar "
-    "amount depends on usage; this model reduces it when gross imports fall. "
+    "amount depends on positive physical interval net, not annual gross imports. "
     "combined_usd_historical / combined_usd sums both components for "
     "reference (what they actually cost together) but is explicitly NOT "
     "itself called a floor -- only strictly_irreducible_usd is. "
@@ -1715,7 +1698,7 @@ def _assert_nbc_gross_check_confirmed(nbc_check):
     Preserve the fail-closed guard against changed or missing source evidence."""
     if not nbc_check["confirmation"].startswith("CONFIRMED"):
         raise SystemExit(
-            "NBC-on-gross re-verification did not confirm the documented "
+            "Historical printed NBC quantity check did not confirm the documented "
             f"treatment: {nbc_check['confirmation']} (statement "
             f"{nbc_check['statement']}/{nbc_check['period']}) -- refusing to "
             "publish an artifact whose historical NBC quantity check did not pass")
@@ -1808,7 +1791,7 @@ def main():
     w = result["worst_residual_period"]
     print(f"  worst per-period cross-check residual: ${w['cross_check_diff_usd']:+.2f} "
           f"({w['statement_date']} / {w['period']})")
-    print(f"  NBC-on-gross re-verification: {result['nbc_gross_reverification']['confirmation']}")
+    print(f"  Historical printed NBC quantity check: {result['nbc_gross_reverification']['confirmation']}")
     return 0
 
 

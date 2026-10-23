@@ -771,9 +771,12 @@ def floor_assumption_violations(d, consumption, generation, floor_kwh_per_interv
 
 
 def price_method_a(d, price_map, reduce_from_import, leftover):
-    """Hour-by-hour against the marginal price map -- no monthly netting, no
-    NEM aggregation: each interval's own import/export sign and its own
-    season/period cell decide its price."""
+    """Flat energy prices, with exact finite physical-interval NBC changes.
+
+    Energy uses the import/export price map without monthly netting. Remove
+    its unconditional NBC adder and price NBC from the physical before/after
+    channels instead; otherwise both-positive intervals overstate savings.
+    """
     f = d[["seas", "p"]].copy()
     f["reduce"] = reduce_from_import
     f["leftover"] = leftover
@@ -783,9 +786,18 @@ def price_method_a(d, price_map, reduce_from_import, leftover):
         for p in PERIODS:
             key = f"{s}_{p}"
             sub = f[(f.seas == s) & (f.p == p)]
-            avoided_import += sub["reduce"].sum() * price_map[key]["import"]
+            avoided_import += sub["reduce"].sum() * (price_map[key]["import"] - R.NBC)
             displaced_export += sub["leftover"].sum() * price_map[key]["export"]
+    consumption = d.Consumption.to_numpy(dtype=float)
+    generation = d.Generation.to_numpy(dtype=float)
+    after_import = consumption - np.asarray(reduce_from_import)
+    nbc0 = R.nbc_kwh(consumption, generation)
+    nbc1 = R.nbc_kwh(after_import, generation)
+    nbc2 = R.nbc_kwh(after_import, generation + np.asarray(leftover))
+    avoided_import += R.NBC * float((nbc0 - nbc1).sum())
+    displaced_export += R.NBC * float((nbc1 - nbc2).sum())
     return {
+        "nbc_saved_usd": round(R.NBC * float((nbc0 - nbc2).sum()), 2),
         "avoided_import_usd": round(float(avoided_import), 2),
         "displaced_export_usd": round(float(displaced_export), 2),
         "total_usd": round(float(avoided_import + displaced_export), 2),
@@ -794,7 +806,7 @@ def price_method_a(d, price_map, reduce_from_import, leftover):
 
 def price_method_b(d, consumption, generation, reduce_from_import, leftover):
     """Re-bill the counterfactual year with the floor removed (monthly
-    per-period NEM netting, NBC on gross imports -- rates.bill_nem, the same
+    per-period NEM netting, NBC on positive physical interval net -- rates.bill_nem, the same
     engine every published battery/behavior figure in this repo uses). The
     avoided-import and displaced-export channels are isolated by billing THREE
     series and differencing, so the split reflects the REAL netting mechanics
@@ -882,8 +894,9 @@ def gap_decomposition(d, consumption, generation, new_consumption, new_generatio
       - a bucket that stays net-NEGATIVE throughout: netting values an avoided
         -import kWh (reduce_from_import) at rates.credit() (no PCIA), since
         it is really just deepening the same net-negative export. Method (a)
-        prices every reduce_from_import kWh at rates.allin() (WITH PCIA)
-        regardless of the bucket's state -- overvaluing it by PCIA per kWh
+        prices every reduce_from_import energy kWh at rates.energy() (WITH PCIA)
+        regardless of the bucket's state; NBC is priced separately and equally
+        by both methods -- overvaluing it by PCIA per kWh
         (contributes +PCIA per kWh to gap = a - b).
     Both effects are exact and linear wherever the bucket's sign does not
     change between baseline and counterfactual (verified: CLAUDE.md section 0
@@ -1422,7 +1435,8 @@ def main():
                     "method (a)'s flat price_map prices every leftover "
                     "(displaced-export) kWh at the plain export credit rate "
                     "and every reduce (avoided-import) kWh at the full "
-                    "import rate, regardless of whether that (month, season, "
+                    "energy rate plus the exact finite interval NBC change. "
+                    "The energy rate ignores whether that (month, season, "
                     "period) bucket is a net importer or net exporter for "
                     "the month; method (b)'s monthly netting instead prices "
                     "the marginal kWh at whatever the BUCKET's own net sign "
@@ -1471,7 +1485,7 @@ def main():
         "battery_interaction": battery,
         "confidence_labels": confidence_labels(),
         "notes": {
-            "engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
+            "engine": "rates.bill_nem (monthly per-period NEM netting, NBC on positive physical interval net)",
             "quiet_night_method": (
                 "a NEW, independently-designed per-night rule (PR #77 review, "
                 "finding 3 -- an earlier version wrongly cited this as "

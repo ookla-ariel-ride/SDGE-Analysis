@@ -436,7 +436,7 @@ def case_build_floor_accepts_a_net_export_window():
             "taxes_and_fees_usd": 5.00,
             "netted_energy_usd": 10.00,
             "current_charges_usd": 50.00,   # 20 + 15 + 5 + 10 = 50
-            "gross_kwh": 300.0,
+            "gross_kwh": 300.0, "nbc_kwh": 300.0,
             "fixed_charge_kind": "base_services_charge",
         },
         {
@@ -451,7 +451,7 @@ def case_build_floor_accepts_a_net_export_window():
             "taxes_and_fees_usd": 5.00,
             "netted_energy_usd": -40.00,
             "current_charges_usd": 15.00,   # 20 + 30 + 5 - 40 = 15
-            "gross_kwh": 50.0,
+            "gross_kwh": 50.0, "nbc_kwh": 50.0,
             "fixed_charge_kind": "base_services_charge",
         },
     ]
@@ -572,7 +572,7 @@ def case_baseline_floor_matches_current_rate_split():
         "the baseline's fixed term must be priced identically to every package's " \
         "(same 365-day frame, same current BSC) -- it is the same construction, " \
         "just against a different (no-package) denominator"
-    expected_nbc = round(bf["gross_import_kwh"] * irr.R.NBC, 2)
+    expected_nbc = round(bf["nbc_positive_interval_kwh"] * irr.R.NBC, 2)
     assert _close(bf["non_bypassable_usd"], expected_nbc, eps=0.01)
     expected_combined = round(bf["strictly_irreducible_usd"] + bf["non_bypassable_usd"], 2)
     assert _close(bf["combined_usd"], expected_combined, eps=0.01)
@@ -736,7 +736,7 @@ def case_package_gross_imports_sanity_check_against_historical_bills():
     result = irr.build()
     gross = irr.compute_package_gross_imports()
     hist = result["twelve_month_floor"]["historical_gross_kwh_window"]
-    rel_diff = abs(gross["baseline_gross_kwh"] - hist) / hist
+    rel_diff = abs(gross["baseline_nbc_kwh"] - hist) / hist
     assert rel_diff <= irr.GROSS_IMPORT_SANITY_FRACTION, (gross["baseline_gross_kwh"], hist)
     return (f"interval-export baseline {gross['baseline_gross_kwh']} kWh vs "
            f"historical bill total {hist} kWh: {rel_diff*100:.1f}% apart, within "
@@ -791,12 +791,12 @@ def case_build_package_floor_fractions_direction_matches_a_synthetic_case():
         "HIGH": {"projected_bill_current_rates_yr": 1200.0},
     }}
     gross = {
-        "baseline_gross_kwh": 20000.0,
+        "baseline_gross_kwh": 20000.0, "baseline_nbc_kwh": 20000.0,
         "annual_days": 365,
         "free_fix_scenario": "a",
-        "LOW": {"gross_kwh": 20000.0},
-        "MID": {"gross_kwh": 19000.0, "kwh_served": 100.0},   # DOWN vs baseline
-        "HIGH": {"gross_kwh": 21000.0, "kwh_served": 100.0},  # UP vs baseline
+        "LOW": {"gross_kwh": 20000.0, "nbc_kwh": 20000.0},
+        "MID": {"gross_kwh": 19000.0, "nbc_kwh": 19000.0, "kwh_served": 100.0},   # DOWN vs baseline
+        "HIGH": {"gross_kwh": 21000.0, "nbc_kwh": 21000.0, "kwh_served": 100.0},  # UP vs baseline
     }
 
     class _FakePackageJson:
@@ -831,8 +831,8 @@ def case_gross_import_sanity_check_rejects_a_wild_mismatch():
     baseline gross-import figure that does not resemble the historical bill
     total -- pure-function test, no corpus needed."""
     floor = {"historical_gross_kwh_window": 20000.0}
-    gross_ok = {"baseline_gross_kwh": 21000.0}          # 5% apart: fine
-    gross_bad = {"baseline_gross_kwh": 30000.0}         # 50% apart: refuse
+    gross_ok = {"baseline_gross_kwh": 21000.0, "baseline_nbc_kwh": 21000.0}          # 5% apart: fine
+    gross_bad = {"baseline_gross_kwh": 30000.0, "baseline_nbc_kwh": 30000.0}         # 50% apart: refuse
     irr._sanity_check_gross_imports(gross_ok, floor)    # must not raise
     try:
         irr._sanity_check_gross_imports(gross_bad, floor)
@@ -1379,7 +1379,7 @@ def case_nbc_gross_reverification_is_not_hardcoded():
     bd._TEXT_CACHE.clear()
     try:
         fake_rows = [{"statement_date": "2025-10-31", "period": "9/26/25 - 9/30/25",
-                     "gross_kwh": 308.0, "net_kwh": 224.0}]
+                     "gross_kwh": 308.0, "nbc_kwh": 308.0, "net_kwh": 224.0}]
         chk = irr.build_nbc_gross_check(fake_rows)
     finally:
         bd.statement_text = real_fn
@@ -1674,11 +1674,11 @@ def _floor_fractions_under(has_ev, numerator, artifact, drop_key=False):
         "HIGH": {"projected_bill_current_rates_yr": 1200.0},
     }}
     gross = {
-        "baseline_gross_kwh": 20000.0, "annual_days": 365,
+        "baseline_gross_kwh": 20000.0, "baseline_nbc_kwh": 20000.0, "annual_days": 365,
         "free_fix_scenario": numerator,
-        "LOW": {"gross_kwh": 20000.0},
-        "MID": {"gross_kwh": 19000.0, "kwh_served": 100.0},
-        "HIGH": {"gross_kwh": 21000.0, "kwh_served": 100.0},
+        "LOW": {"gross_kwh": 20000.0, "nbc_kwh": 20000.0},
+        "MID": {"gross_kwh": 19000.0, "nbc_kwh": 19000.0, "kwh_served": 100.0},
+        "HIGH": {"gross_kwh": 21000.0, "nbc_kwh": 21000.0, "kwh_served": 100.0},
     }
 
     class _FakePackageJson:
@@ -1782,6 +1782,28 @@ def case_a_refused_package_floor_writes_nothing():
     assert after == before, "a refused run changed data/irreducible_bill.json"
     assert set(out.parent.glob("*.tmp")) == tmps_before, "a refused run left a temp file"
     return "a refused run leaves data/irreducible_bill.json unchanged (sha256 equal), no temp file"
+
+
+@case
+def case_package_nbc_uses_separate_positive_interval_quantity():
+    floor = {'historical_gross_kwh_window': 20000.}
+    gross = {'baseline_gross_kwh': 20000., 'baseline_nbc_kwh': 19000.,
+             'annual_days': 365, 'free_fix_scenario': 'a',
+             'LOW': {'gross_kwh': 20000., 'nbc_kwh': 18000.},
+             'MID': {'gross_kwh': 20000., 'nbc_kwh': 17000.},
+             'HIGH': {'gross_kwh': 20000., 'nbc_kwh': 16000.}}
+    old = irr._load_packages_doc
+    irr._load_packages_doc = lambda g: {'packages': {k: {'projected_bill_current_rates_yr': 2000.}
+                                                  for k in ('LOW', 'MID', 'HIGH')}}
+    try:
+        out = irr.build_package_floor_fractions(floor, gross)
+    finally:
+        irr._load_packages_doc = old
+    assert out['LOW']['non_bypassable_usd'] == 378.
+    assert out['MID']['non_bypassable_usd'] == 357.
+    assert out['HIGH']['non_bypassable_usd'] == 336.
+    assert all(row['gross_import_kwh'] == 20000. for row in out.values())
+    return 'NBC changes independently of conserved gross-import totals'
 
 
 def main():

@@ -986,6 +986,19 @@ def case_build_is_deterministic_on_the_real_archive():
     return "build() is deterministic end-to-end on the real archive"
 
 
+@case
+def case_nbc_diagnostic_does_not_treat_raw_consumption_as_printed_usage():
+    rows = [dict(gross_kwh_diff=10., gross_kwh_diff_pct=.9, net_kwh_diff=.2, nbc_kwh_diff=-.5),
+            dict(gross_kwh_diff=12., gross_kwh_diff_pct=.8, net_kwh_diff=-.1, nbc_kwh_diff=.25)]
+    out = rbv._kwh_reconciliation_notes(rows)
+    assert out['max_abs_gross_kwh_diff'] == 12.
+    assert out['max_abs_nbc_kwh_diff'] == .5
+    assert out['total_signed_nbc_kwh_diff'] == -.25
+    assert out['mean_abs_nbc_kwh_diff'] == .375
+    assert out['material'] is None
+    return 'unlike-candidate diagnostic stays distinct from positive-net NBC residuals'
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

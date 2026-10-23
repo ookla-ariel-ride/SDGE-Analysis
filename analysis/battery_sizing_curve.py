@@ -10,8 +10,8 @@ an ENERGY grid (5-40 kWh, holding power at 11.5 kW — the rate both shipping
 Tesla configs share) and a POWER grid (5-15 kW, holding energy at 13.5 kWh —
 the base Powerwall 3), on both current behavior and post-behavior (this
 household's own free behavior fix already applied) load, using the same
-canonical engine (rates.bill_nem, monthly per-period NEM netting, NBC on gross
-imports) and the same EV-spillover exclusion rule (>=2.5 kW outside on-peak is
+canonical engine (rates.bill_nem, monthly per-period NEM netting, NBC on positive physical
+interval net) and the same EV-spillover exclusion rule (>=2.5 kW outside on-peak is
 never battery-served) at every grid point.
 
 WHICH free fix the post-behavior sweep sits on top of is not this script's

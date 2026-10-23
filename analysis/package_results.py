@@ -458,7 +458,7 @@ evening = bp["pw3"]["evening"]["save"]               # evening-only variant
 out = {
     "basis": (f"integrated pipeline: behavior_rebuild.py {FREE_FIX_PHRASE} -> "
               "battery_dispatch_policies.py price-aware dispatch -> rates.bill_nem "
-              "(canonical bill-derived rates, NBC on gross imports); baseline "
+              "(canonical bill-derived rates, NBC on positive physical interval net); baseline "
               f"${base:,} at 6/1/2026 rates; actual 365-day billed baseline $3,282 "
               "(2025-vintage tariffs)"),
     "model_baseline_current_rates": base,

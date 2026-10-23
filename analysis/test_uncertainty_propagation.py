@@ -143,7 +143,7 @@ def case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar():
     """Issue #87: `esc` scales save1 by ONE blended factor rather than each
     TOU period's own separately-measured rate path. On-peak resolves to a
     tight, zero-excluding, POSITIVE trend in both seasons (winter
-    11.37%/yr, CI [7.75, 15.11]; summer 7.66%/yr, CI [1.73, 13.94]).
+    11.37%/yr, CI [7.75, 15.11]; summer 6.27%/yr, CI [1.77, 10.97]).
     Super-off-peak -- the charging leg, the other side of the arbitrage
     spread -- has a large NEGATIVE point estimate (~-21%/yr) but a CI wide
     enough to cross zero by a wide margin in both seasons: noisy, not
@@ -154,7 +154,7 @@ def case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar():
     structural-break test -- which differences the two legs directly, so
     that uncertainty carries through instead of hiding inside a confident
     on-peak number (see the (b) docstring above payback_of/npv_of) --
-    currently returns "not determined" in both seasons: only 3 (summer) /
+    currently returns "not determined" in both seasons: only 4 (summer) /
     4 (winter) independent post-break price levels exist, too few to both
     locate a breakpoint and estimate a slope from. A per-period model built
     from these per-cell trends would not be equivalent to esc's blended
@@ -195,7 +195,7 @@ def case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar():
     # exact figures from the prose").
     QUOTED = {
         "winter_on_peak": {"escalation_pct_yr": 11.37, "escalation_ci95_pct_yr": [7.75, 15.11], "r2": 0.973},
-        "summer_on_peak": {"escalation_pct_yr": 7.66, "escalation_ci95_pct_yr": [1.73, 13.94]},
+        "summer_on_peak": {"escalation_pct_yr": 6.27, "escalation_ci95_pct_yr": [1.77, 10.97]},
         "summer_super_off_peak": {"escalation_ci95_pct_yr": [-61.89, 62.02]},
         "winter_super_off_peak": {"escalation_ci95_pct_yr": [-49.24, 20.68]},
     }
@@ -211,7 +211,7 @@ def case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar():
                 assert abs(act_val - exp_val) < 0.01, (
                     f"{cell_name}.{field} drifted from the quoted {exp_val} "
                     f"to {act_val} -- update the docstring's cited figures")
-    QUOTED_DISTINCT_LEVELS = {"summer": 3, "winter": 4}
+    QUOTED_DISTINCT_LEVELS = {"summer": 4, "winter": 4}
     for season, expected_levels in QUOTED_DISTINCT_LEVELS.items():
         actual_levels = (spread[season].get("post_break") or {}).get("distinct_levels")
         assert actual_levels == expected_levels, (

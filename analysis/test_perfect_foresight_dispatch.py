@@ -85,6 +85,33 @@ def _synthetic_frame(n_days=4, kwh_per_interval=1.0, gen_kwh_per_interval=0.0,
     return d
 
 
+@case
+def case_lp_optimizes_corrected_nbc_across_competing_intervals():
+    # No charging is valuable; spend the inherited .5 pack-kWh. The first
+    # interval has .50 energy value but zero NBC net; the second pays .49
+    # energy + .021 NBC. Gross-NBC optimization chooses the wrong interval.
+    result = pfd._solve_lp(np.array([1., 1.]), np.array([1., 0.]),
+                           np.zeros(2, bool), np.array([0, 1]),
+                           [(.50, .50), (.49, .49)], .5, 4., ('fixed', .5))
+    discharge = result[3]
+    assert abs(discharge[0]) < EPS and abs(discharge[1] - .5*pfd.ETA) < EPS
+    expected = (1. - .5*pfd.ETA) * (.49 + R.NBC)
+    assert abs(result[-1].fun - expected) < EPS
+    return 'corrected optimum serves .511 marginal value before .50, including both-positive channels'
+
+
+@case
+def case_interval_nbc_lp_zero_capacity_retains_both_channels():
+    imp, exp = np.array([1., 1., 0.]), np.array([.6, 2., 0.])
+    result = pfd._solve_lp(imp, exp, np.zeros(3, bool), np.zeros(3, int),
+                           [(R.energy('S', 'sop'), R.credit('S', 'sop'))],
+                           0., 1., ('cyclic',))
+    assert np.max(abs(result[0] - imp)) < EPS
+    assert np.max(abs(result[1] - exp)) < EPS
+    assert abs(result[-1].fun - (-.6 * R.credit('S', 'sop') + .4 * R.NBC)) < EPS
+    return 'LP zero capacity preserves both physical channels and positive interval NBC'
+
+
 # ---------------------------------------------------------------------------
 # (a) synthetic-frame unit tests -- no archive needed at all
 # ---------------------------------------------------------------------------
@@ -224,7 +251,10 @@ def case_solve_lp_combined_power_cap_row_is_normalized_not_two_independent_rows(
     n = 1
     GT, SA, DC = 0, n, 2 * n
     # exactly one A_ub row (not zero, not two)
-    assert A_ub.shape[0] == 1, f"expected exactly one combined power-cap row, found {A_ub.shape[0]}"
+    power_rows = [row for row in A_ub if row[GT] > 0 and row[SA] > 0 and row[DC] > 0]
+    assert len(power_rows) == 1, f"expected one combined power-cap row, found {len(power_rows)}"
+    # The NBC epigraph row has negative discharge and its own auxiliary column.
+    assert A_ub.shape[0] == 2 and A_ub[1, DC] == -1.
     row = A_ub[0]
     expected_charge_coef = 4.0 / 2.0  # power_kw / charge_kw
     assert abs(row[GT] - expected_charge_coef) < 1e-9, row[GT]
@@ -838,7 +868,7 @@ def case_rolling_day_ahead_never_violates_soc_bounds():
 # (b) archive-gated cases -- need the real measured year
 # ---------------------------------------------------------------------------
 @case
-def case_lp_objective_plus_bsc_agrees_with_rates_bill_nem_within_a_dollar():
+def case_lp_objective_plus_bsc_agrees_with_rates_bill_nem_before_rounding():
     """The AC's own explicit requirement: the LP's objective (plus the
     dispatch-invariant BSC it deliberately excludes) must agree with
     rates.bill_nem, re-billing the LP's own resulting schedule, to within $1."""
@@ -853,9 +883,9 @@ def case_lp_objective_plus_bsc_agrees_with_rates_bill_nem_within_a_dollar():
     n_days = f.dt.dt.date.nunique()
     lp_bill_with_bsc = info["lp_objective_usd"] + n_days * R.BSC
     agreement = abs(lp_bill_with_bsc - true_bill)
-    assert agreement < 1.0, (
+    assert agreement < 1e-6, (
         f"LP objective + BSC (${lp_bill_with_bsc:.2f}) diverges from "
-        f"rates.bill_nem (${true_bill:.2f}) by ${agreement:.2f}, more than the $1 AC bound")
+        f"rates.bill_nem (${true_bill:.2f}) by ${agreement:.2f}, more than the unrounded numerical tolerance")
     return f"LP objective + BSC agrees with rates.bill_nem to ${agreement:.4f}"
 
 

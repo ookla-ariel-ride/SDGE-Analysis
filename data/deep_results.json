@@ -31,6 +31,6 @@
   "payback_p10": 5.0,
   "payback_p90": 6.6,
   "prob_payback_within_warranty10yr": 1.0,
-  "npv10_at_4pct_median": 7516
+  "npv10_at_4pct_median": 7497
  }
 }

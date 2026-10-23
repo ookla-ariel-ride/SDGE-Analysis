@@ -43,11 +43,11 @@ THE COUNTERFACTUAL, step by step:
      zero becomes export. Energy is conserved by construction and asserted.
 
   3. Re-bill both years through rates.bill_nem_monthly() (monthly per-period
-     NEM 2.0 netting, NBC on gross imports, BSC per day) at CONSTANT CURRENT
+     NEM 2.0 netting, NBC on positive physical interval net, BSC per day) at FROZEN JUNE 2026
      RATES. The value is the bill delta. A decomposition (kWh that net inside
      a still-net-positive bucket at rates.energy(), kWh that turn a bucket
-     net-negative and settle at rates.credit(), plus NBC saved on the offset
-     imports) is computed independently and must reproduce the engine's
+     net-negative and settle at rates.credit(), plus the finite NBC change
+     in positive physical interval net) is computed independently and must reproduce the engine's
      delta to the cent, so the artifact states WHY the number is what it is.
 
 ASSUMPTIONS, every one stated in the artifact:
@@ -388,7 +388,7 @@ def bill_delta(base_total, total):
     """The value: the year's bill before the increment minus after it.
 
     rates.bill_nem_monthly() is monotone in the netted kWh (every energy()
-    and credit() cell is positive, NBC is charged on gross imports), so added
+    and credit() cell is positive, NBC is charged on positive physical interval net), so added
     production can only lower the bill. A rise means the frame or the engine
     is broken, not a finding, and the run stops rather than publish it."""
     delta = base_total - total
@@ -413,12 +413,13 @@ def decompose(d, imp0, exp0, imp1, exp1, offset):
     In a (month, season, period) bucket the increment lowers the net by its
     whole amount, offset and export alike. While the bucket stays net-positive
     that kWh is worth rates.energy(); the part that pushes a bucket below zero
-    settles at rates.credit(); and NBC is saved only on the kWh that displaced
-    a gross import. BSC does not move. The caller asserts this reproduces
+    settles at rates.credit(); NBC savings are the finite reduction in summed
+    positive physical interval net, which can be smaller than displaced imports. BSC does not move. The caller asserts this reproduces
     rates.bill_nem_monthly()'s delta."""
     f = d[["ym", "seas", "p"]].copy()
     f["i0"], f["e0"], f["i1"], f["e1"], f["off"] = (
         list(imp0), list(exp0), list(imp1), list(exp1), list(offset))
+    f['nbc_saved'] = R.nbc_kwh(imp0, exp0) - R.nbc_kwh(imp1, exp1)
     netted_kwh = surplus_kwh = netted_usd = surplus_usd = 0.0
     flipped = []
     by_period = {}
@@ -442,14 +443,15 @@ def decompose(d, imp0, exp0, imp1, exp1, offset):
                                                   "value_usd": 0.0})
         cell["offset_kwh"] += off
         cell["export_kwh"] += drop - off
-        cell["value_usd"] += n_kwh * R.energy(s, p) + s_kwh * R.credit(s, p) + off * R.NBC
-    nbc_usd = sum(offset) * R.NBC
+        cell["value_usd"] += n_kwh * R.energy(s, p) + s_kwh * R.credit(s, p) + float(g.nbc_saved.sum()) * R.NBC
+    nbc_usd = float(f.nbc_saved.sum()) * R.NBC
     return {
         "netted_kwh": round(netted_kwh, 1),
         "netted_value_usd": round(netted_usd, 2),
         "surplus_kwh": round(surplus_kwh, 1),
         "surplus_value_usd": round(surplus_usd, 2),
         "nbc_saved_on_offset_imports_usd": round(nbc_usd, 2),
+        "nbc_basis": "Legacy field nbc_saved_on_offset_imports_usd now measures the finite change in positive physical interval net; raw import offset alone does not determine NBC.",
         "buckets_pushed_net_negative": flipped,
         "total_usd": netted_usd + surplus_usd + nbc_usd,
         "by_period": {k: {kk: round(vv, 2 if kk.endswith("usd") else 1)
@@ -651,7 +653,7 @@ def build():
         "verdict_check": verdict_check(delta, kw_dc, ADDED_KW_DC),
         "notes": {
             "engine": "rates.bill_nem_monthly (monthly per-period NEM 2.0 netting, NBC "
-                      "on gross imports, BSC per day), the engine behind every other "
+                      "on positive physical interval net, BSC per day), the engine behind every other "
                       "published battery and behaviour figure",
             "rates": "constant current rates (rates.py, bill-derived); the historical "
                      "bills were partly on older tariffs, so this is a modeled delta, "

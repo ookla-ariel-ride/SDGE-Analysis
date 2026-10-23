@@ -47,67 +47,68 @@
   "import_offset_pct": 15.8,
   "exported_kwh": 1379.6,
   "exported_pct": 84.2,
-  "bill_before_usd": 4904.13,
-  "bill_after_usd": 4421.58,
-  "bill_delta_usd_yr": 482.54,
-  "value_per_added_kwh_cents": 29.46,
+  "bill_before_usd": 4901.38,
+  "bill_after_usd": 4420.02,
+  "bill_delta_usd_yr": 481.36,
+  "value_per_added_kwh_cents": 29.39,
   "monthly_delta_usd": {
-   "2025-07": 16.62,
-   "2025-08": 56.95,
-   "2025-09": 46.08,
-   "2025-10": 39.22,
-   "2025-11": 19.98,
-   "2025-12": 17.63,
-   "2026-01": 20.71,
-   "2026-02": 26.03,
-   "2026-03": 43.17,
-   "2026-04": 45.83,
-   "2026-05": 47.44,
-   "2026-06": 58.62,
-   "2026-07": 44.27
+   "2025-07": 16.59,
+   "2025-08": 56.84,
+   "2025-09": 45.96,
+   "2025-10": 39.12,
+   "2025-11": 19.94,
+   "2025-12": 17.59,
+   "2026-01": 20.65,
+   "2026-02": 25.99,
+   "2026-03": 43.09,
+   "2026-04": 45.7,
+   "2026-05": 47.28,
+   "2026-06": 58.46,
+   "2026-07": 44.17
   },
   "settlement_decomposition": {
    "netted_kwh": 1555.5,
    "netted_value_usd": 438.62,
    "surplus_kwh": 82.2,
    "surplus_value_usd": 38.5,
-   "nbc_saved_on_offset_imports_usd": 5.42,
+   "nbc_saved_on_offset_imports_usd": 4.23,
+   "nbc_basis": "Legacy field nbc_saved_on_offset_imports_usd now measures the finite change in positive physical interval net; raw import offset alone does not determine NBC.",
    "buckets_pushed_net_negative": [
     "2026-02:W:off",
     "2026-04:W:off",
     "2026-05:W:off"
    ],
-   "total_usd": 482.54,
+   "total_usd": 481.36,
    "by_period": {
     "S:off": {
      "offset_kwh": 33.9,
      "export_kwh": 215.5,
-     "value_usd": 122.55
+     "value_usd": 122.38
     },
     "S:on": {
      "offset_kwh": 53.5,
      "export_kwh": 55.5,
-     "value_usd": 93.46
+     "value_usd": 93.31
     },
     "S:sop": {
      "offset_kwh": 57.5,
      "export_kwh": 371.0,
-     "value_usd": 45.75
+     "value_usd": 45.45
     },
     "W:off": {
      "offset_kwh": 34.4,
      "export_kwh": 216.4,
-     "value_usd": 123.69
+     "value_usd": 123.53
     },
     "W:on": {
      "offset_kwh": 28.7,
      "export_kwh": 37.7,
-     "value_usd": 39.38
+     "value_usd": 39.24
     },
     "W:sop": {
      "offset_kwh": 50.1,
      "export_kwh": 483.5,
-     "value_usd": 57.72
+     "value_usd": 57.44
     }
    },
    "reconciles_to_engine_delta_within_usd": 0.0
@@ -131,7 +132,7 @@
    "hours_clipped": 0,
    "clipped_kwh": 0.0,
    "added_production_kwh": 1637.7,
-   "bill_delta_usd_yr": 482.54,
+   "bill_delta_usd_yr": 481.36,
    "import_offset_pct": 15.8
   },
   "fixed_ceiling": {
@@ -140,18 +141,18 @@
    "hours_clipped": 12,
    "clipped_kwh": 1.3,
    "added_production_kwh": 1636.4,
-   "bill_delta_usd_yr": 482.4,
+   "bill_delta_usd_yr": 481.22,
    "import_offset_pct": 15.8
   }
  },
  "payback_sensitivity": {
   "assumption": "retrofit dollars per DC watt is ASSUMED at each rung, not a quote and not collected by this repo; read the years off the rung nearest a real quote",
-  "annual_value_usd": 482.54,
+  "annual_value_usd": 481.36,
   "ladder": [
    {
     "assumed_usd_per_w": 2.0,
     "cost_usd": 2000,
-    "simple_payback_years": 4.1
+    "simple_payback_years": 4.2
    },
    {
     "assumed_usd_per_w": 2.5,
@@ -180,8 +181,8 @@
   "cap_rule": "greater of 10% of the array's DC nameplate or 1 kW (Schedule NEM, Special Condition 7(b))",
   "added_kw_within_cap": true,
   "grandfathering_at_risk_usd_yr": {
-   "low": 2103.58,
-   "high": 2455.64,
+   "low": 2106.33,
+   "high": 2458.39,
    "source": "data/nem3_grandfathering.json"
   },
   "grandfathering_over_added_kw_value": {
@@ -190,7 +191,7 @@
   }
  },
  "notes": {
-  "engine": "rates.bill_nem_monthly (monthly per-period NEM 2.0 netting, NBC on gross imports, BSC per day), the engine behind every other published battery and behaviour figure",
+  "engine": "rates.bill_nem_monthly (monthly per-period NEM 2.0 netting, NBC on positive physical interval net, BSC per day), the engine behind every other published battery and behaviour figure",
   "rates": "constant current rates (rates.py, bill-derived); the historical bills were partly on older tariffs, so this is a modeled delta, not a bill forecast",
   "confidence": "modeled",
   "method": "interval-level counterfactual: the increment is placed into each real 15-minute interval (import offset first, export after) and the whole year is re-billed; the value is the bill delta, never a rate times a quantity",

@@ -338,7 +338,7 @@ def case_unsourceable_components_fail_closed():
     (new charge vs renamed line vs parser gap is OPEN — never a silent 0)."""
     rs = H.rates_on(dt.date(2025, 3, 10))
     _raises(rs.pcia, "PCIA", "not parsed")
-    _raises(rs.nbc, "GROSS")
+    _raises(rs.nbc, "positive physical interval-net")
     _raises(lambda: rs.cca_generation("winter", "on_peak"), "CCA")
     _raises(rs.bsc_per_day, "2025-03-10", "OPEN")
     got = H.rates_on(dt.date(2025, 10, 5)).bsc_per_day()

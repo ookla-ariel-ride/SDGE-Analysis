@@ -248,7 +248,7 @@ a positive OR a zero-floored distribution.
   ISSUE #87 RESOLUTION: investigated implementing the per-TOU-period model.
   data/tou_spread.json's own delivery_cell_escalation resolves ON-PEAK to a
   tight, zero-excluding, POSITIVE trend in both seasons (winter 11.37%/yr,
-  CI [7.75, 15.11], r-squared 0.973; summer 7.66%/yr, CI [1.73, 13.94]).
+  CI [7.75, 15.11], r-squared 0.973; summer 6.27%/yr, CI [1.77, 10.97]).
   SUPER-OFF-PEAK -- the charging leg, and the other side of the arbitrage
   spread a battery captures -- has a large NEGATIVE point estimate in both
   seasons (~-21%/yr) but a CI so wide it crosses zero by a wide margin
@@ -264,7 +264,7 @@ a positive OR a zero-floored distribution.
   common-mode shocks cancel and the wide super-off-peak uncertainty carries
   straight through rather than getting hidden inside a confident-looking
   on-peak number -- is the honest version of this same question, and it
-  already can't resolve a trend from the same underlying data (only 3
+  already can't resolve a trend from the same underlying data (only 4
   independent post-break price levels in summer, 4 in winter; too few to
   both locate a breakpoint and estimate a slope). A per-period model built
   from these per-cell trends would not be mathematically equivalent to

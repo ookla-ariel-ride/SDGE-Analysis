@@ -1,13 +1,13 @@
 {
  "baseline": {
-  "bill_usd": 4904.13,
+  "bill_usd": 4901.38,
   "import_co2_kg": 5402.4,
   "export_co2_avoided_kg": 915.1,
   "net_co2_kg": 4487.2
  },
  "cross_check": {
-  "battery_dispatch_policies_json_pw3_published_save_usd": 2466,
-  "run_a_computed_save_usd": 2466,
+  "battery_dispatch_policies_json_pw3_published_save_usd": 2464,
+  "run_a_computed_save_usd": 2464,
   "tolerance_usd": 5,
   "note": "Run A calls battery_dispatch_policies.run_batt() directly (the same function/policy/capacity the committed battery_dispatch_policies.json's published pw3 figure comes from), so the two savings figures must agree within rounding -- a real cross-check, not a coincidence."
  },
@@ -36,45 +36,45 @@
  },
  "policies": {
   "A_cost_min": {
-   "bill_usd": 2438.39,
-   "savings_vs_baseline_usd": 2465.74,
+   "bill_usd": 2437.12,
+   "savings_vs_baseline_usd": 2464.25,
    "import_co2_kg": 5762.3,
    "export_co2_avoided_kg": 832.2,
    "net_co2_kg": 4930.2,
    "co2_avoided_vs_baseline_kg": -442.9,
    "kwh_served": 4709.9,
    "kwh_cycled_thru": 4957.9,
-   "usd_saved_per_kwh_cycled": 0.4973,
+   "usd_saved_per_kwh_cycled": 0.497,
    "co2_avoided_per_kwh_cycled_kg": -0.0893
   },
   "B_carbon_min": {
-   "bill_usd": 4758.94,
-   "savings_vs_baseline_usd": 145.19,
+   "bill_usd": 4756.79,
+   "savings_vs_baseline_usd": 144.58,
    "import_co2_kg": 4979.2,
    "export_co2_avoided_kg": 736.0,
    "net_co2_kg": 4243.1,
    "co2_avoided_vs_baseline_kg": 244.1,
    "kwh_served": 2264.5,
    "kwh_cycled_thru": 2393.7,
-   "usd_saved_per_kwh_cycled": 0.0607,
+   "usd_saved_per_kwh_cycled": 0.0604,
    "co2_avoided_per_kwh_cycled_kg": 0.102
   },
   "C_union": {
-   "bill_usd": 2967.5,
-   "savings_vs_baseline_usd": 1936.63,
+   "bill_usd": 2966.59,
+   "savings_vs_baseline_usd": 1934.79,
    "import_co2_kg": 4941.7,
    "export_co2_avoided_kg": 627.2,
    "net_co2_kg": 4314.6,
    "co2_avoided_vs_baseline_kg": 172.7,
    "kwh_served": 3708.7,
    "kwh_cycled_thru": 3902.6,
-   "usd_saved_per_kwh_cycled": 0.4962,
+   "usd_saved_per_kwh_cycled": 0.4958,
    "co2_avoided_per_kwh_cycled_kg": 0.0442
   }
  },
  "tradeoff": {
-  "cost_penalty_of_clean_policy_usd": 2320.55,
-  "cost_penalty_of_clean_policy_usd_per_kwh_cycled": 0.6313,
+  "cost_penalty_of_clean_policy_usd": 2319.67,
+  "cost_penalty_of_clean_policy_usd_per_kwh_cycled": 0.6311,
   "co2_penalty_of_cheap_policy_kg": 687.0,
   "co2_penalty_of_cheap_policy_kg_per_kwh_cycled": 0.1869,
   "normalization_note": "both penalty figures are normalized by the MEAN kWh cycled of runs A and B: they are two different dispatch schedules with different total throughput, so there is no single denominator that is 'the' right one; the mean is used and stated explicitly here rather than silently picking one run's throughput. CO2 figures are NET (import minus this policy's own export-avoided), not gross import -- see policies.*.net_co2_kg.",
@@ -84,9 +84,9 @@
  "run_c_analysis": {
   "meaningfully_differs_from_a_and_b": true,
   "meaningful_threshold_pct": 0.02,
-  "pct_diff_bill_vs_a": 0.217,
+  "pct_diff_bill_vs_a": 0.2173,
   "pct_diff_co2_vs_a": 0.1249,
-  "pct_diff_bill_vs_b": 0.3764,
+  "pct_diff_bill_vs_b": 0.3763,
   "pct_diff_co2_vs_b": 0.0168,
   "note": "Run C is judged to NOT meaningfully differ from A (or B) when BOTH its $ and its CO2 are within 2% of that policy's own figures; otherwise it is reported as a genuinely distinct outcome."
  },

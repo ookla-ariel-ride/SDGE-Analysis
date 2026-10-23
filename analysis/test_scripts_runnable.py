@@ -127,6 +127,7 @@ RAW_DATA_EXCLUDE = ("sdge_nbt_export_rates", "panel", "superseded")
 # by others and must import cleanly with no side effects; "retired" is kept for
 # provenance and must refuse to run.
 MANIFEST = {
+    "nbc_bill_reconciliation.py": "generator",
     "rates.py": "library",
     "rates_history.py": "generator",
     "household.py": "library",
@@ -198,6 +199,7 @@ MANIFEST = {
 # whose seven artifacts (six bill CSVs plus bill_corpus_boundary.json) have their own
 # transactional gate and test suite.
 OWNS = {
+    "nbc_bill_reconciliation.py": [("data", "nbc_bill_reconciliation.json")],
     "service_voltage.py": [("data", "service_voltage.json")],
     "rates_history.py":             [("data", "rate_vintages.csv"),
                                      ("data", "rate_rebilling_residuals.csv")],
@@ -466,6 +468,7 @@ CI_RUNNABLE = {
 # stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run
 # only where that archive exists, and the reason is recorded rather than implied.
 NEEDS_PRIVATE_ARCHIVE = {
+    "nbc_bill_reconciliation.py": "preserved overlapping raw exports and actual statement PDFs",
     "service_voltage.py": "the frozen private/1-raw-data/service-telemetry snapshot and manifest",
     "parse_bills.py": "the bill PDF corpus (private/1-raw-data/*-bills/)",
     "bill_decomposition.py": ("the bill PDF corpus (the charged CEA per-TOU rates and "
@@ -1198,7 +1201,7 @@ def case_the_real_archive_copy_excludes_unread_raw_data_subdirs():
     with tempfile.TemporaryDirectory() as td:
         src = pathlib.Path(td) / "src"
         dst = pathlib.Path(td) / "dst"
-        for name in RAW_DATA_EXCLUDE + ("electric-bills", "gas-bills"):
+        for name in RAW_DATA_EXCLUDE + ("electric-bills", "gas-bills", "sdge-downloads-20261022"):
             d = src / name
             d.mkdir(parents=True)
             (d / "placeholder.txt").write_text("x")
@@ -1208,12 +1211,12 @@ def case_the_real_archive_copy_excludes_unread_raw_data_subdirs():
         assert not leaked, (
             f"RAW_DATA_EXCLUDE did not keep {sorted(leaked)} out of the "
             "real-archive sandbox copy")
-        for kept in ("electric-bills", "gas-bills"):
+        for kept in ("electric-bills", "gas-bills", "sdge-downloads-20261022"):
             assert (dst / kept).is_dir(), (
                 f"the ignore pattern also dropped {kept}/, which parse_bills.py "
                 "and other generators genuinely read")
     return ("the real-archive copytree's ignore pattern drops "
-            f"{', '.join(RAW_DATA_EXCLUDE)} and keeps electric-bills/ and gas-bills/")
+            f"{', '.join(RAW_DATA_EXCLUDE)} and keeps bill directories and the October interval archive")
 
 
 def case_the_real_archive_sandbox_is_removed_even_when_a_generator_run_raises():

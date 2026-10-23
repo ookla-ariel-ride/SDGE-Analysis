@@ -1114,18 +1114,12 @@ def electric_cost_scenarios(d, iso):
     """{cop_key: {dist_key: annual electric cost increase usd}}, every kWh
     total verified to conserve against ann_heat_kwh before being trusted.
 
-    Added load is netted against that SAME interval's own solar Generation
-    before it ever becomes new Consumption (Codex adversarial review, issue
-    #1, pass 2, matching the established solar_absorbed_i convention
-    perfect_foresight_dispatch.py already uses): a real house's added
-    electric load is served first by whatever solar is being generated in
-    that instant, and only spills into new grid import once that interval's
-    export is exhausted. Adding the load straight into Consumption while
-    leaving Generation untouched would manufacture simultaneous gross
-    import AND export the household never actually has, and rates.py's own
-    non-bypassable charge (NBC) is billed on GROSS imports under NEM
-    (CLAUDE.md's own documented lesson) -- so an unnetted interval would
-    overstate NBC on import that never happened.
+    Added load consumes available exports first, then raises imports. This
+    retains the physical flow convention used by the storage models. Both
+    this allocation and adding the same load directly to Consumption produce
+    the same signed interval net, so the corrected NEM bill is identical.
+    Export absorption remains a modeled interval allocation, not evidence of
+    subinterval timing or instantaneous simultaneous flow.
     """
     base_bill = R.bill_nem(d, imp="Consumption", exp="Generation")
     out = {}

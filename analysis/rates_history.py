@@ -90,7 +90,7 @@ WHAT SOURCES WHAT (requirement: name the artifact column behind each component)
         "Rate/kWh" lines; the PCIA and non-bypassable-charge bill lines are not
         parsed into any committed artifact. RateSet.pcia() / RateSet.nbc()
         fail closed and point at rates.py for the current-vintage values and
-        the mechanics to preserve (PCIA on net kWh, NBC on gross imports,
+        the mechanics to preserve (PCIA on net kWh, NBC on positive physical interval net,
         BSC per day).
 
 HOW A CELL'S TIMELINE IS BUILT
@@ -861,7 +861,7 @@ class RateSet:
 
     def nbc(self):
         raise SystemExit("NBC on " + str(self.date) + ": " + _ABSENT_PCIA_NBC.format(
-            name="non-bypassable-charge", mech="NBC applies to GROSS imported kWh"))
+            name="non-bypassable-charge", mech="NBC applies to positive physical interval-net kWh"))
 
     def bsc_per_day(self):
         """Base Services Charge $/day = the covering period's printed total ÷ days."""

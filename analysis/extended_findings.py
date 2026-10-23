@@ -424,8 +424,8 @@ out["weekend_sop"] = {
     "method": ("physically moved: weekend non-EV import in hours >=14 relocated "
                "into the same day's 0-14 super-off-peak intervals (uniform "
                "spread), baseline and shifted series both billed with "
-               "rates.bill_nem (monthly per-period NEM netting, NBC on gross "
-               "imports); deltas, not kWh x rate-difference"),
+               "rates.bill_nem (monthly per-period NEM netting, NBC on positive physical interval "
+               "net); deltas, not kWh x rate-difference"),
     "note": ("weekend 0-14 window is super-off-peak year-round; realistic capture "
              "is a fraction (laundry/dish/pool timing), so half-shift is quoted. "
              "'Weekend' means every day taking weekend TOU windows, which under "
@@ -496,7 +496,7 @@ else:
 
 # ---------- H. 2039 NBT transition ------------------------------------------
 def bill_flat_export(dd, imp, exp, credit):
-    """Monthly netting replaced by flat export credit; NBC on gross imports."""
+    """Monthly netting replaced by flat export credit; NBC on positive physical interval net."""
     f = dd.copy(); f["I"] = imp; f["E"] = exp
     tot = 0.0
     for _, mo in f.groupby("ym"):

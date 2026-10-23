@@ -3,12 +3,13 @@
 
 Provenance: every value below was read off the detailed SDG&E bills
 (EV-TOU-5 delivery + CEA "Clean Impact Plus" generation, effective 6/1/2026)
-and matches the billed line items to the penny. Import THIS module; do not
+and matches those June 2026 billed line items. Later bill vintages differ;
+these frozen constants do not claim to be the latest available tariff. Import THIS module; do not
 re-declare rate constants in analysis scripts. (analyze.py, the legacy
 cross-plan ranking model, retains published rate-table values for all plans —
 fine for RANKING, not for absolute dollars; see TECHNICAL.md.)
 
-Billing mechanics (NEM 2.0 model; NBC interval interpretation remains unresolved):
+Billing mechanics (NEM 2.0 model; exact utility replication remains unresolved):
   * energy charges netted per (month, season, TOU period): positive net billed
     at UDC+CEA+PCIA; negative net credited at UDC+CEA
   * PCIA is applied to NET kWh — bill evidence: the same statement charges
@@ -18,15 +19,16 @@ Billing mechanics (NEM 2.0 model; NBC interval interpretation remains unresolved
     buckets; every month of the audit year was net-positive, so the treatment of
     PCIA in a net-NEGATIVE period is untested against a bill (not determinable
     from available statements; bounded ambiguity only if a month goes negative)
-  * non-bypassable charges (NBC) use the imported-energy channel in this model.
-    NEM-ST SC 1(f) specifies consumption net of exports within each metered
-    interval, aggregated monthly. The 308-versus-224-kWh example rules out
-    billing-period netting, but does not settle within-interval channel semantics.
-    This convention needs meter/bill reconciliation; see TECHNICAL.md and issue #304.
+  * non-bypassable charges (NBC) use max(physical import - physical export, 0)
+    in each fifteen-minute interval, then sum across the month. NEM-ST SC 1(f)
+    and data/nbc_bill_reconciliation.json support this basis. Exact utility
+    interval mapping, precision and grouped rounding remain unresolved.
+    Export compensation eligibility does not change physical exports in this
+    model; callers with uncredited exports must supply physical_exp explicitly.
   * Base Services Charge per day
 TOU windows as implemented here: on-peak 16-21 daily; super-off-peak 0-6 + 10-14
-weekdays, 0-14 weekends; off-peak otherwise. This is the CURRENT tariff, which is
-what a projection at constant current rates needs, and analysis/tou_audit.py
+weekdays, 0-14 weekends; off-peak otherwise. These are the frozen June 2026 tariff windows used
+for the model projection, and analysis/tou_audit.py
 reconciles it against the three most recent statements to within 0.5 kWh.
 
 APPLICABILITY (read before reusing for your own house): the netting STRUCTURE
@@ -41,7 +43,7 @@ actual bills before any absolute dollar is quoted.
 
 Two things it deliberately does not do, both established by that audit:
   * The weekday 10-14 super-off-peak window took effect 2026-03-01; before that
-    those hours were off-peak. Applying today's window to earlier dates is correct
+    those hours were off-peak. Applying the frozen June 2026 window to earlier dates is correct
     for a forward projection and wrong for reproducing a historical statement,
     where it misallocates 250-360 kWh per period between off-peak and
     super-off-peak while leaving the period total right. Anything re-billing
@@ -54,6 +56,8 @@ Two things it deliberately does not do, both established by that audit:
 """
 import datetime as _dt
 
+import numpy as np
+
 UDC = {"S": {"on": 0.30203, "off": 0.30203, "sop": 0.02606},
        "W": {"on": 0.31174, "off": 0.31174, "sop": 0.02606}}
 CEA = {"S": {"on": 0.51684, "off": 0.15975, "sop": 0.04961},
@@ -63,7 +67,7 @@ SUMMER_MONTHS = {6, 7, 8, 9, 10}   # tariff season; import this, never re-list t
 
 energy = lambda s, p: UDC[s][p] + CEA[s][p] + PCIA      # netted energy rate
 credit = lambda s, p: UDC[s][p] + CEA[s][p]             # export credit
-allin  = lambda s, p: UDC[s][p] + CEA[s][p] + PCIA + NBC  # marginal gross import
+allin  = lambda s, p: UDC[s][p] + CEA[s][p] + PCIA + NBC  # upper marginal import rate (positive interval net)
 
 def holidays(years):
     """The eight tariff holidays that take weekend TOU windows.
@@ -221,13 +225,26 @@ def validate_interval_coverage(pairs, start, end):
         raise SystemExit("malformed interval days: " + "; ".join(bad[:5]))
 
 
-def bill_nem_monthly(frame, imp="Consumption", exp="Generation"):
-    """{month: $} via monthly per-period NEM netting + NBC on import channel + BSC.
-    NBC follows the current model convention; see the module's interval caveat.
-    frame needs columns: dt, seas ('S'/'W'), p ('on'/'off'/'sop'), ym, imp, exp."""
+def nbc_kwh(imports, physical_exports):
+    """Positive physical net per interval; preserve the two source channels.
+
+    Accept scalar/array-like kWh. Compensation eligibility is separate: never
+    substitute credited exports when some physical exports receive no credit.
+    """
+    return np.maximum(np.asarray(imports) - np.asarray(physical_exports), 0.)
+
+
+def bill_nem_monthly(frame, imp="Consumption", exp="Generation", *, physical_exp=None):
+    """Monthly energy netting plus positive physical interval NBC and daily BSC.
+
+    exp names credited exports; physical_exp names physical exports. Omit the
+    latter only when every physical export is credited (the existing callers).
+    Frame needs dt, seas, p, ym, imp, exp and any distinct physical_exp column.
+    """
+    physical_exp = exp if physical_exp is None else physical_exp
     out = {}
     for ym, m in frame.groupby("ym"):
-        tot = m.dt.dt.date.nunique() * BSC + m[imp].sum() * NBC
+        tot = m.dt.dt.date.nunique() * BSC + nbc_kwh(m[imp], m[physical_exp]).sum() * NBC
         for s in ("S", "W"):
             for p in ("on", "off", "sop"):
                 sub = m[(m.seas == s) & (m.p == p)]
@@ -236,6 +253,6 @@ def bill_nem_monthly(frame, imp="Consumption", exp="Generation"):
         out[str(ym)] = tot
     return out
 
-def bill_nem(frame, imp="Consumption", exp="Generation"):
+def bill_nem(frame, imp="Consumption", exp="Generation", *, physical_exp=None):
     """Annual $ (sum of bill_nem_monthly)."""
-    return sum(bill_nem_monthly(frame, imp, exp).values())
+    return sum(bill_nem_monthly(frame, imp, exp, physical_exp=physical_exp).values())

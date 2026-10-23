@@ -82,7 +82,7 @@ printf 'pid=%s started=%s data=%s\n' "$$" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$COV
 rm -f "$COVERAGE_FILE" "$COVERAGE_FILE".*
 
 # 1) the test suites, in-process
-for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
+for t in test_nbc_bill_reconciliation test_rates test_report_consistency test_tou_audit test_parse_bills \
          test_carbon_fullyear test_carbon_dispatch_tradeoff test_household test_publish \
          test_service_headroom test_service_voltage test_irreducible_bill test_privacy_tiers test_bill_decomposition \
          test_rates_history test_tou_spread test_scripts_runnable test_nem3_grandfathering \
@@ -106,7 +106,7 @@ done
 cd private/verify
 cp "$ROOT"/analysis/*.py .
 cp "$ROOT"/data/pvoutput_daily.csv "$ROOT"/data/enphase_daily_production.csv .
-for g in behavior_rebuild battery_dispatch_policies battery_plan_matrix \
+for g in nbc_bill_reconciliation behavior_rebuild battery_dispatch_policies battery_plan_matrix \
          package_results extended_findings report_data deep_analyses \
          battery_backup_sims analyze analyze_norelief carbon_fullyear \
          carbon_dispatch_tradeoff tou_audit lifetime_payback soiling_analysis \
