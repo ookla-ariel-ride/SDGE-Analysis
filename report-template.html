@@ -218,7 +218,7 @@
   <div class="meta-row"><span class="meta-k">Household</span><span class="meta-v">{{HOME_DESCRIPTION}} · {{UTILITY_NAME}} {{CLIMATE_ZONE}} climate zone · {{SYSTEM_SIZE_KW_DC}} kW solar + {{OTHER_MAJOR_LOADS}} · {{NEM_STATUS}} · {{GENERATION_PROVIDER}} generation</span></div>
   <div class="meta-row"><span class="meta-k">Window</span><span class="meta-v"><b>{{ANALYSIS_START_DATE}} → {{ANALYSIS_END_DATE}}</b> · rates effective {{RATES_EFFECTIVE_DATE}}</span></div>
   <div class="meta-row"><span class="meta-k">Version</span><span class="meta-v" id="report-version">{{REPORT_VERSION}}</span></div>
-  <div class="meta-row"><span class="meta-k">Sources</span><span class="meta-v">{{DATA_SOURCES_SUMMARY}} <!-- TODO: one-line inventory of every source actually used, e.g. "utility Green Button 15-min interval data · N detailed bill PDFs · inverter-platform hourly consumption + daily production · weather/precipitation records · grid-operator CO2 + demand history · solar install invoice" --></span></div>
+  <div class="meta-row"><span class="meta-k">Sources</span><div class="meta-v"><details id="source-inventory"><summary>Full source inventory</summary>{{DATA_SOURCES_SUMMARY}} <!-- TODO: one-line inventory of every source actually used, e.g. "utility Green Button 15-min interval data · N detailed bill PDFs · inverter-platform hourly consumption + daily production · weather/precipitation records · grid-operator CO2 + demand history · solar install invoice" --></details></div></div>
 </div>
 
 
@@ -255,29 +255,23 @@
 <div class="progress" id="progress"></div>
 </nav>
 
-<div class="purpose">
-<b>Purpose.</b> This report is a decision document for one household: given a full year of measured energy data, what should this home do about its rate plan, its behavior, storage, and its solar array? Calculations use the listed data sources. Equipment specifications and estimated inputs carry separate limits. The report answers these questions:
-
-<ol class="hang">
-<li><b>Am I on the best electric rate plan?</b> (§3)</li>
-<li><b>Does adding a battery change which plan is best?</b> (§4)</li>
-<li><b>What behavior changes are worth real money?</b> (§5, §9, §13)</li>
-<li><b>Does a home battery pay: which one, dispatched how, at what payback?</b> (§6, §7)</li>
-<li><b>Should I add/upgrade panels or microinverters?</b> (§8)</li>
-<li><b>Should I electrify gas appliances?</b> (§10)</li>
-<li><b>Has the solar system paid for itself?</b> (§11)</li>
-<li><b>Is panel cleaning worth it — cadence and month?</b> (§12)</li>
-<li><b>When is grid power cheapest and cleanest — do they align?</b> (§13)</li>
-<li><b>What is NEM grandfathering worth per year?</b> (§13)</li>
-</ol>
-<!-- TODO: adapt the question list to the analyses actually run (drop solar/gas questions if not applicable). Keep the evidence-label sentence. -->
-Every answer carries its evidence: <span class="pill g">measured</span>, <span class="pill y">modeled</span>, or <span class="pill r">estimated</span> (§14 legend). Actual costs come from bills; projected costs come from models with a stated rate basis.
-</div>
-
+<!-- TODO: adapt the study description to the analyses actually run; the fixed description below already states the two study tracks. -->
 <h2 id="s0">Bottom line</h2>
 <p class="verdict">{{S0_VERDICT}}</p>
 <div class="rec">
-<b>The actual electric bill was {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo)</b> across a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods<!-- NOTE: give the exact service dates for the annual bill audit -->). Savings below compare modeled cases at {{RATES_EFFECTIVE_DATE}} rates. The model moves energy between intervals and re-bills the result (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). <!-- NOTE: state the unresolved absolute-bill gap and link to the bill section. --><br><br>
+<p><!-- TODO: state the cheapest rate-plan action from {{S0_VERDICT}} and {{BEST_PLAN}}, and the free change named by {{S0_FREE_WIN_CARD_LABEL}}. Give its own modeled saving and compliance condition first. Do not assume an EV. --></p>
+<p><!-- TODO: lead the purchase comparison with additional battery savings AFTER the free change ({{BATTERY_MARGINAL_SAVINGS}}), the estimated installed cost ({{BATTERY_COST}}), and the matching post-change hardware-alone payback already stated by {{S0_VERDICT}}. Do not use the pre-change range as the purchase headline. State the expansion's marginal saving and payback separately. --></p>
+<p><!-- TODO: state {{RATES_EFFECTIVE_DATE}}, battery ownership, the unresolved absolute-bill gap, and the quote, electrical, backup-circuit and controller checks beside the purchase estimate. Keep savings conditional on those checks. --></p>
+</div>
+<p>The actual electric bill was <b>{{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo)</b> across a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods<!-- NOTE: exact service dates appear below -->). That historical bill is not the baseline for subtracting modeled savings. The <a href="#s7">package comparison</a> uses one rate date throughout; <a href="#s10">the bill analysis</a> explains the remaining gap.</p>
+<p><!-- TODO: state exact bill service dates and their older rate basis. --> The model moves energy between intervals and re-bills the result (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>).</p>
+<div class="purpose">
+<p>This report compares free changes to energy use with a proposed home battery for the existing rooftop solar system. Actual costs come from bills. Savings and future bills come from models at a stated rate date.</p>
+<p>A separate <a href="research/sb868-portable-solar-storage.md">balcony solar and portable storage study</a> covers different equipment and connection rules. SB 868 qualification alone does not switch tariffs or establish export compensation. Do not add its standalone savings to the home-battery case.</p>
+<p>Evidence labels distinguish <span class="pill g">measured</span> meter and bill records, <span class="pill y">modeled</span> simulations, and <span class="pill r">estimated</span> approximate inputs. The <a href="#s14">methodology</a> states their limits. The <a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/blob/main/GLOSSARY.md">glossary</a> explains billing and energy terms.</p>
+</div>
+
+<details id="s0-support"><summary>Supporting findings: plan, charging, solar, and other studies</summary>
 <ol class="hang">
 <li><!-- TODO item 1 — PLAN VERDICT: which rate plan the artifacts price cheapest, with and without a battery; this house's margin against the runner-up; note whether the utility's own comparison tool agrees. THE STANDING IS NOT YOURS TO ASSERT. S0_BEST_PLAN_CARD and S0_VERDICT are among the values above and they state it — this house's plan may be the cheapest priced, may tie, may be beaten — so follow them, and never recommend staying on a plan the card says is beaten. The margin is SIGNED: a lead only where it is positive, and the amount this plan is behind where it is negative, so "clear of the runner-up" and "widens its lead" are claims to check before writing, not phrases to reuse. Reference voice for a house whose card says its plan is cheapest in every scenario tested: "Plan: stay on {{BEST_PLAN}} — cheapest with or without a battery ({{PLAN_MARGIN_VS_RUNNER_UP}}/yr against the runner-up), and a battery does not change that." Where the card or the verdict says otherwise, invert that sentence rather than softening it: name the plan, say plainly that it is not the cheapest priced here, keep the same signed margin figure, and send the reader to §3 for the ranking. Keep actual bill costs separate from modeled savings. State the exact service dates for the annual bill audit from bill evidence, distinct from the interval-analysis dates. State any unresolved absolute-bill gap and link to the bill section; do not call the billing model fully reconciled while that gap remains. --></li>
 <li><!-- TODO item 2 — FREE BEHAVIOR FIX: EV/large-load charging timing; session counts and kWh from session-level detection; savings at 100% and 80% compliance ({{EV_FIX_SAVINGS_100}} / {{EV_FIX_SAVINGS_80}}); call out where the money actually is (which TOU windows). THE HOUSEHOLD MAY HAVE NO EV. Both savings tokens then render behavior_rebuild.py's own "not applicable — household.has_ev is false" instead of a figure, and so do the session count and every other EV token: read them before writing, and never weld a unit ("/yr") onto a token that can render a sentence. The free fix on such a household is the one section 0's own card and verdict line name — shifting flexible house load — so write THAT item, cite the card's figure ({{S0_FREE_WIN_CARD_FIGURE}}) rather than an EV saving, and mention no charger. --></li>
@@ -287,21 +281,24 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><!-- TODO item 6 — LIFETIME PAYBACK + CLEANING: whether the system has paid for itself ({{SYSTEM_GROSS_COST}} crossed ~{{PAYBACK_CROSSOVER_DATE}}); current value {{SOLAR_ANNUAL_VALUE}}/yr; estimated cleaning effect and whether future paid cleanings pencil. --></li>
 <li><!-- TODO item 7 — STRUCTURAL TARIFF WINDOW: the tariff's cheap window ({{CHEAP_WINDOW}}), what to run in it, and the grid-carbon co-benefit from real grid-operator data. --></li>
 </ol>
-</div>
+</details>
 
+<details id="s0-cards"><summary>At a glance: results across the report</summary>
 <div class="cards">
   <div class="card"><div class="big">{{BEST_PLAN}}</div><div class="lbl">{{S0_BEST_PLAN_CARD}}</div></div>
   <div class="card"><div class="big blue">~{{ACTUAL_MONTHLY_BILL}}/mo</div><div class="lbl">Actual electric bill: {{ACTUAL_ANNUAL_BILL}}/yr from a complete {{ANALYSIS_DAYS}}-day bill audit</div></div>
   <div class="card"><div class="big">{{S0_FREE_WIN_CARD_FIGURE}}</div><div class="lbl">{{S0_FREE_WIN_CARD_LABEL}}</div></div>
-  <div class="card"><div class="big warn">{{BATTERY_PAYBACK_RANGE}}</div><div class="lbl">Modeled battery-alone payback; price-aware controls and installed price need checks ({{BATTERY_PAYBACK_EVENING_ONLY}} evening-only)</div></div>
+  <div class="card"><div class="big warn">{{BATTERY_PAYBACK_RANGE}}</div><div class="lbl">Modeled battery-alone payback across before/after free-change cases; price-aware controls and installed price need checks ({{BATTERY_PAYBACK_EVENING_ONLY}} evening-only)</div></div>
   <div class="card"><div class="big">{{PAYBACK_STATUS_SHORT}}</div><div class="lbl">{{SYSTEM_GROSS_COST}} install recovered in the lifetime model ~{{PAYBACK_CROSSOVER_DATE}}; modeled value {{SOLAR_ANNUAL_VALUE}}/yr</div></div>
   <div class="card"><div class="big blue">{{CHEAP_WINDOW}}</div><div class="lbl">Weekday super-off-peak: {{SUPER_OFF_PEAK_RATE}} midday power, year-round. Run everything flexible here</div></div>
 </div>
 
+</details>
+
 <h2 id="s1">1 · Data sources and checks</h2>
 <p class="verdict">{{S1_VERDICT}}</p>
 <!-- TODO: one paragraph — interval coverage, import/export totals from the utility meter, whole-home load from the stated source with its sensing-point limits, and production compared across sources with agreement stats and an explicit check of measurement independence; close with the model-validation result (bill reconstruction error, plan-ranking agreement with the utility's tool). Name the utility meter and its {{ANNUAL_IMPORT_KWH}} kWh imports and {{ANNUAL_EXPORT_KWH}} kWh exports; state load calculations and their gap without assuming acquisition independence. Compare production across {{PRODUCTION_SOURCE_COUNT}} sources agreeing within {{PRODUCTION_AGREEMENT_PCT}}, with each source's limits. -->
-<p>Every 15-minute interval in the stated {{ANALYSIS_DAYS}}-day analysis window was analyzed. <!-- Source-specific meter and production comparison continues here. --></p>
+<p><!-- TODO: state the meter coverage and energy balance in short connected sentences. Name the saved SAM load total, difference and unestablished sensing independence separately. Do not turn arithmetic agreement into a claim of independent instruments. --></p>
 
 <h2 id="s2">2 · Your solar system today</h2>
 <p class="verdict">{{S2_VERDICT}}</p>
@@ -378,8 +375,8 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <h2 id="s6">6 · Possible batteries — savings, cost, and backup</h2>
 <p class="verdict">{{S6_VERDICT}}</p>
 <p class="sub"><!-- TODO: framing — the two questions (annual savings, outage endurance); system context; whether storage affects NEM grandfathering; current incentive status ({{INCENTIVE_STATUS}}, a KNOWN_GAPS token: the CA program side is committed research, the federal residential storage credit's current status is not, so this block needs a human-supplied, dated answer). --></p>
-<div class="grid2">
-<div>
+<p>The purchase comparison uses the battery added after the free change: <b>{{BATTERY_MARGINAL_SAVINGS}}/yr</b> in modeled savings at an estimated installed cost of <b>{{BATTERY_COST}}</b>. The <a href="#s7">packages</a> give the matching payback. The other battery figures below answer separate questions.</p>
+<details id="s6-hardware"><summary>Supporting comparison: hardware with on-peak-only operation</summary>
 <h3>On-peak-only simulation (current behavior) <span class="pill y">modeled</span></h3>
 <p class="small">This table uses interval-valued savings from <code>analysis/battery_backup_sims.py</code> → <code>data/battery_sim.json</code>. The dispatch comparison below re-bills the full year through the NEM engine; its savings are a different calculation.</p>
 <table>
@@ -389,8 +386,10 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <!-- TODO: one <tr> per alternative config evaluated (smaller/larger packs, other ecosystems). -->
 </tbody>
 </table>
-</div>
-<div>
+</details>
+<h3 id="s6-controls">How the battery saves money</h3>
+<p>The model stores solar surplus only when its later value exceeds the export credit given up. It tops up from cheap grid power. It then serves eligible house demand during expensive hours, including the morning and late-evening shoulders.</p>
+<details id="s6-dispatch"><summary>Supporting calculation: dispatch policies and stored-energy costs</summary>
 <h3>Dispatch policy: price-aware saves more in the billing model <span class="pill y">modeled</span></h3>
 <p><!-- TODO: the stored-kWh cost from solar surplus ({{STORED_KWH_COST_SOLAR}}, averaged over ALL the surplus this dispatch stores) vs the midday cell alone ({{STORED_KWH_COST_SOLAR_MIDDAY}}, which is only {{STORED_KWH_MIDDAY_SHARE}} of it -- say which is which, they are not interchangeable) vs grid top-up ({{STORED_KWH_COST_GRID}}), the import prices it competes against by window, and why the modeled price-aware policy differs from evening-only. Describe the conservative (energy + NBC) / RTE finite charge bound, the minimum eligible credit floor and maximum eligible all-in best reference. State that the ledger updates running monthly positions and prices finite monthly-energy and physical interval NBC changes separately. Lot comparisons describe decision-time choices, not guaranteed final settled lot profit; keep whole-stream counterfactual reconciliation separate. --></p>
 <p><!-- TODO: deliberate exclusions (e.g. EV-spillover intervals the behavior fix moves for free) and why the battery does not serve them. Describe threshold-based EV classification as a model assumption, not proof of appliance identity. --></p>
@@ -403,6 +402,9 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </table>
 <p class="small"><!-- TODO: simulation assumptions — charge order, round-trip efficiency, power cap, rate basis, warranty/throughput note; check whether actual controller settings support the modeled rules rather than assuming they do; cite the dispatch script ({{DISPATCH_SCRIPT}}). Note the charge/discharge asymmetry too — the bare {{BATTERY_MODEL}} unit charges at {{BATTERY_CHARGE_KW}} kW vs its {{BATTERY_KW}} kW discharge rating; {{BATTERY_EXPANDED_MODEL}} raises the charge input to {{BATTERY_EXPANDED_CHARGE_KW}} kW (discharge unchanged), relevant to any co-scheduling caution (e.g. simultaneous EV charging on the same circuit). State the outage simulation horizon from the cited model, mark capped results, and keep the full-charge and demand-cap assumptions beside the endurance comparison. --></p>
 
+</details>
+
+
 <h3>Outage endurance (simulated, 6pm start, solar recharge)</h3>
 <p class="small">These simulations start with a full battery and allow solar recharge. The table shows median duration across the tested starts. <!-- NOTE: state the simulation horizon and mark capped results. --> The model caps demand at each battery's discharge rating, so it does not establish that every peak load receives power. <code>analysis/battery_backup_sims.py</code> → <code>data/backup_endurance.json</code>.</p>
 <table>
@@ -412,9 +414,16 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <!-- TODO: one <tr> per config from the arbitrage table. The second load column's heading is one token because its LABEL varies with the household as well as its figure ({{HOUSE_LOAD_COLUMN_HEADER}}, built on the kWh/day figure {{HOUSE_KWH_DAY}}): "House minus EV" is a false claim over a house with no EV to subtract. -->
 </tbody>
 </table>
-</div>
-</div>
 <p class="small"><!-- TODO: pricing footnote (get quotes), hardware trade-off notes between ecosystems, and any config to skip. Do not claim a power rating starts every appliance or establishes connection compatibility. Keep starting loads, backed-up circuits, and controller support as installer checks. For VPP backtests, label revenue modeled even when inputs are measured; state calendar scope, dispatch basis, reserve assumptions, and enrollment limits. --></p>
+
+<details id="s6-sizing"><summary>Supporting analysis: controller limits and battery sizing</summary>
+<p><!-- TODO: retain controller-optimality evidence, forecast limits, capacity and power sweeps, sizing tables, derivative method, steady-state boundary conditions, costs and source citations here. State conclusions first; put detailed calculation methods after them. Do not omit unique figures or qualifications from the source report. --></p>
+</details>
+<h3 id="s6-programs">Optional program revenue and backup value</h3>
+<p>The battery payback above excludes virtual power plant revenue. A virtual power plant pays participating homes for power during program events. <!-- TODO: state the backtest's partial-season scope, unresolved household enrollment and backup configuration checks. --></p>
+<details id="s6-vpp"><summary>Supporting analysis: program terms, event backtest, and resilience value</summary>
+<p><!-- TODO: preserve every unique program and resilience fact, figure, citation and assumption. Keep the per-aggregation dispatch basis, event-calendar scope, reserve conventions, pre-staging notice assumption, annualization limit, eligibility and tariff conditions. Do not treat measured inputs as an achieved household result. --></p>
+</details>
 
 <h2 id="s7">7 · The decision: three packages</h2>
 <p class="verdict">{{S7_VERDICT}}</p>
@@ -437,7 +446,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <ul>
 <li><!-- TODO: combined savings from the one integrated pipeline (EV shift first, then battery, re-billed end-to-end). --></li>
 <li><!-- TODO: projected bill at constant current rates vs no-changes counterfactual; note rate-vintage caveat vs last year's actual. --></li>
-<li><!-- TODO: battery-alone payback under each dispatch policy, {{BATTERY_PAYBACK_RANGE}} headline, and the value of the dispatch-policy choice itself. --></li>
+<li><!-- TODO: post-free-change battery-alone payback as the purchase headline. Label the pre-change payback {{BATTERY_PAYBACK_RANGE}} and evening-only comparison separately. Put uncertainty methods in a named supporting detail within this package; keep the controller and cost conditions visible. --></li>
 <li><!-- TODO: backup sizing honesty — SOC-at-outage-start assumption, how to read multi-day endurance figures. --></li>
 </ul>
 </div>
@@ -827,8 +836,9 @@ function openHashTarget(){
  if(!el)return;
  let opened=false;
  if(adv.contains(el)&&!adv.open){adv.open=true;opened=true;}
- const det=el.closest('details');
- if(det&&det!==adv&&!det.open){det.open=true;opened=true;}
+ for(let det=el.closest('details');det;det=det.parentElement?.closest('details')){
+  if(!det.open){det.open=true;opened=true;}
+ }
  if(opened){runLazyCharts();el.scrollIntoView();}
 }
 addEventListener('hashchange',openHashTarget);
@@ -869,7 +879,7 @@ adv.addEventListener('toggle',()=>{syncTier();if(adv.open)markScrollables();});
 syncTier();
 // Printing must emit the full report: force-open the tier and every inner details
 // (CSS alone cannot open a <details>); matchMedia('print') is the beforeprint fallback.
-const openForPrint=()=>{adv.open=true;document.querySelectorAll('details.sec').forEach(s=>s.open=true);runLazyCharts()};
+const openForPrint=()=>{document.querySelectorAll('details').forEach(s=>s.open=true);runLazyCharts()};
 addEventListener('beforeprint',openForPrint);
 matchMedia('print').addEventListener('change',e=>{if(e.matches)openForPrint()});
 // Collapse/expand the audit <details> sections from the nav.

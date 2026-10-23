@@ -20,7 +20,7 @@ PARSING
   instructions, which mentions the word TODO in passing but is not a
   fill-in site -- see report-template.html's own header comment). Each
   block gets a stable id of the form "<section>#<n>" where <section> is the
-  nearest preceding <h2 id="..."> (or "top" for the three blocks that sit
+  nearest preceding <h2 id="..."> (or "top" for the source/season/study-description blocks that sit
   before s0, in the header/meta/day-band/purpose area) and <n> counts
   occurrences within that section in document order. This id is stable
   under any edit that doesn't reorder or add/remove TODO blocks, which is
@@ -219,14 +219,15 @@ CLASSIFICATION = {
     # --- header / meta / day-band / purpose (before s0) -------------------
     "top#1": "data",    # sources summary -- already fully rendered by {{DATA_SOURCES_SUMMARY}}
     "top#2": "data",    # day-band season caption -- already rendered by {{DAYBAND_SEASON_LABEL}}
-    "top#3": "data",    # "adapt the question list" -- static list outside any TODO splice point
+    "top#3": "data",    # study description already lives in fixed markup
 
-    # --- s0 Bottom line (7 items, all reference-voice prose with tokens) --
+    # --- s0 Bottom line: opening decision, bill dates, supporting findings --
     "s0#1": "prose", "s0#2": "prose", "s0#3": "prose", "s0#4": "prose",
     "s0#5": "prose", "s0#6": "prose", "s0#7": "prose",
+    "s0#8": "prose", "s0#9": "prose", "s0#10": "prose", "s0#11": "prose",
 
     # --- s1 The data ---------------------------------------------------
-    "s1#1": "prose",
+    "s1#1": "prose", "s1#2": "prose",
 
     # --- s2 Your solar system today --------------------------------------
     "s2#1": "prose",   # gateway/metering configuration -- DATA_SOURCES_SUMMARY/DETAIL cover it
@@ -264,6 +265,9 @@ CLASSIFICATION = {
     "s6#6": "prose",   # simulation assumptions, cites DISPATCH_SCRIPT
     "s6#7": "data",    # one <tr> per config -- backup_endurance.json
     "s6#8": "human",   # "get quotes" pricing footnote -- hardware price quotes
+    "s6#9": "prose",   # controller and sizing supporting explanation
+    "s6#10": "prose",  # partial-season program scope and enrollment limits
+    "s6#11": "prose",  # program and resilience supporting explanation
 
     # --- s7 The decision: three packages ---------------------------------
     "s7#1": "prose", "s7#2": "prose", "s7#3": "prose", "s7#4": "prose",

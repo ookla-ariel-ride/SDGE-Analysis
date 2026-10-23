@@ -536,7 +536,7 @@ def case_sizing_curve_table_matches_the_artifact_row_by_row():
     assert cur_rows.keys() == post_rows.keys(), "current/post-behavior grids diverge"
 
     start = HTML.index("Sizing as a curve")
-    end = HTML.index("Outage endurance (simulated", start)
+    end = HTML.index("</table>", start) + len("</table>")
     table_html = HTML[start:end]
     tr_re = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
     td_re = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
@@ -935,8 +935,8 @@ def case_prestaging_paragraph_says_what_is_measured_and_what_is_assumed():
     The paragraph must say both halves; "nothing measured behind it" denied
     the measured inputs (Codex adversarial review, PR #259, pass 2)."""
     para = _dsgs_prestaging_paragraph()
-    for phrase in ("Modeled from measured load and the real event calendar",
-                   "with the battery and the notice assumed"):
+    for phrase in ("The load and event calendar are measured",
+                   "the battery and same-day household notice are assumed"):
         assert phrase in para, f"the pre-staging paragraph no longer says {phrase!r}"
     return "the pre-staging paragraph names its measured inputs and its assumed ones"
 
@@ -976,7 +976,7 @@ def case_dsgs_prestaged_sensitivity_matches_the_artifact():
         f"+{discharge_pct:.1f}%",
         f"{ps['reserve_frac'] * 100:.0f}%",
         f"{ps['miss_rate']['misses']} of {ps['miss_rate']['total']}",
-        f"{dsgs['miss_rate']['reserve_20pct']['misses']} reactive",
+        f"versus {dsgs['miss_rate']['reserve_20pct']['misses']} without it",
         f"{ps['miss_rate']['rate'] * 100:.1f}%",
         f"−${abs(reactive_rev['opportunity_cost_usd']):,.2f}",
         f"${ps['opportunity_cost_usd']:,.2f}",
@@ -2233,14 +2233,14 @@ def case_irreducible_bill_figures_match_the_artifact():
     pf = ib["package_floor_fractions"]
 
     m = re.search(
-        r'<p class="small"><b>The audited year\x27s fixed charge was \$264\.10.*?</p>\s*<p class="small">Modeled at each package.*?</p>',
+        r'<p class="small"><b>The audited year\x27s fixed charge was \$264\.10.*?</p>\s*<p class="small">At June 1, 2026 rates.*?</p>\s*<p class="small">Together these charges.*?</p>',
         HTML, re.S)
     assert m, "§7 irreducible-bill-floor paragraphs not found in index.html"
     section = m.group(0)
 
     checks = [
         _fmt_usd2(base["strictly_irreducible_usd"]),
-        f"{round(pf['LOW']['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}% of LOW's bill",
+        f"{round(pf['LOW']['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}% of LOW's projected bill",
         f"{round(pf['MID']['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}% of MID's",
         f"{round(pf['HIGH']['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}% of HIGH's",
         f"{_fmt_usd2(pf['LOW']['non_bypassable_usd'])} for LOW",
@@ -5029,8 +5029,8 @@ def case_s0_more_solar_bullet_keeps_the_two_shares_apart():
     export_pct = _export_share_pct()
     midday_pct = _midday_export_share_pct()
 
-    for value in (f"{export_pct}% exported",
-                  f"{midday_pct}% of that in the {_MIDDAY_WINDOW_WORDS[0]} window"):
+    for value in (f"exports {export_pct}% of production",
+                  f"{midday_pct}% of those exports leave in the {_MIDDAY_WINDOW_WORDS[0]} window"):
         assert value in item, f"§0's 'more solar' bullet: {value!r} not found in it"
     _assert_the_two_shares_stay_apart(item, "§0's 'more solar' bullet",
                                       export_pct, midday_pct)
@@ -7742,7 +7742,7 @@ def case_stored_kwh_costs_match_the_dispatch_artifact():
     # appears in the caveat below it.
     for value, pattern, what in (
         (sop["cost_per_kwh_delivered"],
-         r"A stored kWh costs <b>([\d.]+)¢</b> when it comes from midday solar surplus",
+         r"A stored kWh costs <b>([\d.]+)¢</b> from midday solar surplus",
          "midday solar stored-kWh cost (section 6 lead)"),
         (cost["grid_topup"]["cost_per_kwh_delivered"],
          r"or <b>([\d.]+)¢</b> from a super-off-peak grid top-up",
@@ -7789,8 +7789,8 @@ def case_stored_kwh_costs_match_the_dispatch_artifact():
             f"the artifact says {share * 100:.1f}% of stored surplus is super-off-peak, "
             f"but its blended cost {blended} and its midday cell "
             f"{sop['cost_per_kwh_delivered']} disagree -- one of the two is wrong")
-        pattern = (r"all ([\d,.]+) kWh of it, ([\d.]+)% of what it stores from the sun, "
-                   r"at ([\d.]+)¢ delivered")
+        pattern = (r"All ([\d,.]+) kWh stored from solar comes from midday super-off-peak surplus: "
+                   r"([\d.]+)%, at ([\d.]+)¢ delivered")
         m = re.search(pattern, HTML)
         assert m, (
             "the sentence publishing the stored-surplus quantity, share and cost "

@@ -5610,9 +5610,8 @@ def _s0_verdict(ctx):
     #
     # Three-way, because the ranking has three outcomes and each of them is a
     # true sentence about some household: sole cheapest, tied for cheapest,
-    # beaten. The clause is the same length either way (5-6 words), which is
-    # what keeps every branch inside section 10's density cap on a sentence
-    # that already spends 34 of its 35 words.
+    # beaten. Each claim has its own sentence, so the conclusion stays plain
+    # without packing plan choice and purchase evidence into one lead.
     standing, plan, _plan_total, _cheapest, winners = _plan_standing(ctx, "S0_VERDICT")
     if standing == "win":
         plan_clause = "the rate plan is right"
@@ -5628,9 +5627,7 @@ def _s0_verdict(ctx):
     # -$0.37 saving into the loss branch to render "costs a modeled $-0/yr".
     # The fix is NAMED from the scenario packages.LOW actually prices, not
     # asserted: "the free EV-charging fix" over a house with no EV is a claim
-    # about hardware it does not own (issue #147). Every name the map can
-    # return is four words or fewer in this clause, so no branch moves the
-    # sentence off the 34 words it already spends.
+    # about hardware it does not own (issue #147).
     _saved, low, free_fix_saves, (fix_name, move_noun, _ev, _short) = \
         _free_fix_saving("S0_VERDICT")
     fix_clause = _free_fix_clause(
@@ -5640,9 +5637,10 @@ def _s0_verdict(ctx):
     # scenario, shared with section 7 and with the payback card -- the three
     # used to read the package independently and could publish opposite
     # verdicts on the same battery in the same report. _battery_alone carries
-    # the artifact-consistency refusals; the span below is over the paybacks
-    # that exist, never over a cost divided by a loss.
-    repays, _post, _pb_post, quotable = _battery_alone("S0_VERDICT")
+    # the artifact-consistency refusals. S0 compares the purchase AFTER the
+    # free change; its saving, displayed payback and warranty judgment must
+    # all use that scenario. The separate card retains the labeled range.
+    repays, _post, pb_post, _quotable = _battery_alone("S0_VERDICT")
     # "SOUND OPTIONAL BUY" IS A MAGNITUDE CLAIM, NOT A SIGN CLAIM.
     #
     # It used to be selected by `repays` alone -- battery_alone_post_ev_fix_yr
@@ -5660,29 +5658,24 @@ def _s0_verdict(ctx):
     # stops at. So the branch turns on a committed figure, and a household
     # whose battery repays only past that term gets the true sentence (its
     # payback, and that it lands past the warranty) rather than either a
-    # confident "sound" or a withheld report. Every payback the range prints
-    # is tested, not just the friendliest one: the claim is made about the
-    # whole span the reader is shown.
+    # confident "sound" or a withheld report. Compare the post-change
+    # payback the sentence prints, never the pre-change alternative.
     if repays:
         warranty = _battery_warranty_years("S0_VERDICT")
-        span = _payback_span(quotable)
-        if max(quotable) <= warranty:
+        if pb_post <= warranty:
             battery_clause = (f"a {_battery_model_short()} has a conditional "
-                              f"{span}-year modeled hardware-alone payback")
+                              f"{pb_post:.1f}-year modeled hardware-alone payback after that free change")
         else:
-            battery_clause = (f"a {_battery_model_short()} repays in {span} years, past "
-                              f"its {warranty:g}-year warranty")
+            battery_clause = (f"a {_battery_model_short()} repays in {pb_post:.1f} years "
+                              f"after that free change, past its {warranty:g}-year warranty")
     else:
-        # Left at six words on purpose. Naming the post-fix basis in the
-        # clause itself ("... once the charging fix is in") reads better and
-        # puts this sentence at 36 words, over CLAUDE.md section 10's cap on
-        # a lead that already spends 35 -- and the cap governs every branch,
-        # not just the one that renders today. Section 7 states the basis in
-        # full, where the tier has room for it.
-        battery_clause = f"a {_battery_model_short()} does not repay its own cost"
+        # A non-positive post-change saving has no purchase payback, even
+        # when the battery would repay against the unshifted baseline.
+        battery_clause = (f"a {_battery_model_short()} does not repay its own cost "
+                          "after that free change")
     # "hardware-alone" is deliberate: CLAUDE.md section 2 forbids crediting
-    # the free behavior saving to the hardware, and both ends of this range
-    # are package_results.json's OWN battery-alone paybacks.
+    # the free behavior saving to the hardware. Both warranty branches and
+    # the no-payback branch state the same post-change purchase basis.
     #
     # This clause used to read "the biggest win costs nothing". On the plain
     # reading -- the largest saving available is the free one -- that is
@@ -5695,7 +5688,9 @@ def _s0_verdict(ctx):
     # depend on buying anything -- so the sentence says exactly that and
     # ranks nothing. No guard can fix a superlative that no artifact
     # supports; the honest fix is to stop claiming it.
-    return f"{VERDICT_STEM}{plan_clause}, {fix_clause}, and {battery_clause}."
+    return (f"{fix_clause[0].upper() + fix_clause[1:]}. "
+            f"For this house, {plan_clause}. "
+            f"{battery_clause[0].upper() + battery_clause[1:]}.")
 
 
 _tok("S0_VERDICT", phrase=True, kind="derived", get=_s0_verdict,
@@ -6545,10 +6540,10 @@ def _s6_verdict(ctx):
     # come back negative on another household's dispatch run, which _usd0
     # would print as "$-120/yr" (issue #131 review round 2, finding 5's
     # sweep). Identical output at every non-negative value.
-    return (f"{VERDICT_STEM}one hypothetical {_battery_model_short()} models "
+    return (f"Before the free change, one hypothetical {_battery_model_short()} models "
             f"{_usd0_signed(published)}/yr with the published policy versus "
-            f"{_usd0_signed(evening)} with evening-only dispatch; "
-            f"{tail}; check controller support.")
+            f"{_usd0_signed(evening)} with evening-only dispatch. "
+            f"{tail[0].upper() + tail[1:]}. Check controller support.")
 
 
 _tok("S6_VERDICT", phrase=True, kind="derived", get=_s6_verdict,
@@ -6658,7 +6653,8 @@ def _s7_verdict(ctx):
         tail = "and the expansion pack pays back at the same rate"
     else:
         tail = "and the expansion pack pays back faster than that"
-    return f"{VERDICT_STEM}{fix_clause}; {battery_clause}, {tail}."
+    return (f"{fix_clause[0].upper() + fix_clause[1:]}. After that change, {battery_clause}, "
+            f"{tail}.")
 
 
 _tok("S7_VERDICT", phrase=True, kind="derived", get=_s7_verdict,
