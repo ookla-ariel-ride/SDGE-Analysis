@@ -445,8 +445,10 @@ Mono data — with system fallbacks).
   Calibration: the report's structural em dashes (day-band labels, table cells, meta
   rows, heading verdicts) are the design language and stay; the rule targets running
   prose. See TECHNICAL.md §8 for the full LLM configuration.
-- No paragraph over ~800 characters. Findings use the .finding pattern: one bold claim
-  sentence → a compact table.evidence (source | value | agreement) → a .small caveat line.
+- No paragraph over ~800 characters. Use connected paragraphs with one main claim each.
+  Use .finding with table.evidence when a source/value/agreement comparison helps the reader.
+  Keep methods in named supporting details within their section. Preserve every unique fact,
+  citation, number, and material condition. Collapse does not replace a plain-language edit.
 - **BASIC-tier density cap (issue #68):** every finding's FIRST claim sentence — a
   `.finding .claim`, a `.verdict` line or `<summary>` `.teaser`, or, absent a separate claim
   ahead of it, a `.small`/`.note` methodology block's own opening sentence — must state the
@@ -455,9 +457,9 @@ Mono data — with system fallbacks).
   `$264.10` or `91.5%` — a human reader skips those too), with **at most one parenthetical
   or em-dash aside** before that break. Formula names, derivative/elasticity mechanics,
   confound explanations, and multi-term decomposition arithmetic move AFTER the lead: into
-  the ONE `.small`/`.note` block immediately following it (that single block is exempt from
-  the cap and may run as dense as the evidence requires — not an open-ended chain of further
-  blocks), a trailing caveat sentence in the same block, or a "see TECHNICAL.md §N" pointer.
+  connected explanatory sentences after the lead, a clearly named supporting detail, or a
+  "see TECHNICAL.md §N" pointer. Supporting paragraphs still need plain language and short
+  sentences. A collapsed block must not hide a condition needed to assess the conclusion.
   Checkable by inspection: count words to the first real sentence break and count asides
   before it; if either cap is blown on a LEAD sentence, split it and move the excess after
   the break. Governs ONLY the basic tier (§0–§7, "What to do Monday"); the ADVANCED tier
@@ -468,9 +470,11 @@ Mono data — with system fallbacks).
   ways: (a) the verdict written INTO the heading itself ({{S4_VERDICT_SHORT}},
   {{S8_VERDICT_SHORT}}, {{S11_VERDICT_SHORT}}); (b) for the three collapsible sections
   (§9, §12, §13), the `<span class="teaser">` inside their `<summary>`; (c) everywhere
-  else, a `<p class="verdict">` line directly after the h2, opening "In one sentence: ".
-  Every (c) line is token-owned ({{S0_VERDICT}} … {{S15_VERDICT}}) — the token supplies
-  the whole sentence including every sigil and unit, and index.html must carry it verbatim
+  else, a `<p class="verdict">` directly after the h2. Start with one clear conclusion.
+  Follow it with connected explanatory sentences when needed; the label "In one sentence:"
+  is optional and must not describe a multi-sentence verdict.
+  Every (c) paragraph is token-owned ({{S0_VERDICT}} … {{S15_VERDICT}}) — the token supplies
+  the whole paragraph including every sigil and unit, and index.html must carry it verbatim
   (as rendered — token values are HTML-escaped on the way in). Never give one section two of
   these; a section with none is a bug.
 - Every "§N" reference in prose is a real <a href="#sN"> link.

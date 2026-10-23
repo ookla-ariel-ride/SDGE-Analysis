@@ -1793,7 +1793,7 @@ def _sec9_teaser(ctx):
         lead = f"{sessions} EV charging sessions detected"
     cost, = _amounts("SEC9_TEASER", "what the always-on overnight floor costs",
                      price_map_usd=_night_floor_pricing()["method_a_price_map"]["total_usd"])
-    return (f"{lead}; an always-on overnight floor of "
+    return (f"{lead}; a quiet-night floor implies a modeled "
             f"{_night_floor_annual_kwh(ctx)}, about ${cost:,.0f}"
             f"{'/yr' if covers else ''}")
 
@@ -1839,7 +1839,7 @@ def _sec12_teaser(ctx):
                      known_cleaning_gain_pct=sc["known_cleaning_gain_pct"])
     return (f"The {sc['cleaning_date']} study estimates {_a_or_an(gain)} {gain}% "
             "production gain relative to control years. Future cleaning payback "
-            "and optimal cadence are not determined; the archived cadence "
+            "and the best interval remain undetermined; the archived cadence "
             "calculation is not reproduced.")
 
 
@@ -1880,11 +1880,11 @@ def _sec13_teaser(ctx):
             "SEC13_TEASER", "how much dirtier overnight grid power is than midday",
             sop_overnight_00_06=windows["sop_overnight_00_06"],
             solar_midday_10_14=windows["solar_midday_10_14"])
-        return (f"NEM 2.0 worth ${low:,.0f}–{high:,.0f}/yr; overnight grid power "
+        return (f"Modeled NEM 2.0 value is ${low:,.0f}–{high:,.0f}/yr; overnight grid power "
                 f"runs {night - midday:,.0f} kg CO₂/MWh dirtier than midday")
     swing, = _figures("SEC13_TEASER", "how much dirtier overnight grid power is",
                       midday_cleaner_than_overnight_by=swing)
-    return (f"NEM 2.0 worth ${low:,.0f}–{high:,.0f}/yr; overnight grid "
+    return (f"Modeled NEM 2.0 value is ${low:,.0f}–{high:,.0f}/yr; overnight grid "
             f"power runs {swing:.0f} kg CO₂/yr dirtier than midday for the same load")
 
 
@@ -4380,7 +4380,7 @@ def _s8_verdict_short(ctx):
     # Keep export fraction separate from timing and defer the purchase until
     # the proposed tariff path and installed price can settle its economics.
     return ("Defer rooftop expansion pending connection, settlement, and installed "
-            f"price; keep healthy hardware — {exp_pct}% of production is exported, with "
+            f"price; keep healthy hardware. The array exports {exp_pct}% of production, with "
             f"{bracket} of NEM 2.0 grandfathering")
 
 
@@ -4395,7 +4395,7 @@ def _expansion_verdict_short(ctx):
     # no. Only the midday slice, not exports/production, describes timing.
     share = _midday_export_share(ctx, "EXPANSION_VERDICT_SHORT")
     return ("Defer purchase pending connection, settlement, and installed "
-            f"price — {round(share * 100)}% of the year's exports leave in the "
+            f"price. About {round(share * 100)}% of the year's exports leave in the "
             f"{_cheap_window()} window")
 
 
@@ -5610,9 +5610,8 @@ def _s0_verdict(ctx):
     #
     # Three-way, because the ranking has three outcomes and each of them is a
     # true sentence about some household: sole cheapest, tied for cheapest,
-    # beaten. The clause is the same length either way (5-6 words), which is
-    # what keeps every branch inside section 10's density cap on a sentence
-    # that already spends 34 of its 35 words.
+    # beaten. Each claim has its own sentence, so the conclusion stays plain
+    # without packing plan choice and purchase evidence into one lead.
     standing, plan, _plan_total, _cheapest, winners = _plan_standing(ctx, "S0_VERDICT")
     if standing == "win":
         plan_clause = "the rate plan is right"
@@ -5628,9 +5627,7 @@ def _s0_verdict(ctx):
     # -$0.37 saving into the loss branch to render "costs a modeled $-0/yr".
     # The fix is NAMED from the scenario packages.LOW actually prices, not
     # asserted: "the free EV-charging fix" over a house with no EV is a claim
-    # about hardware it does not own (issue #147). Every name the map can
-    # return is four words or fewer in this clause, so no branch moves the
-    # sentence off the 34 words it already spends.
+    # about hardware it does not own (issue #147).
     _saved, low, free_fix_saves, (fix_name, move_noun, _ev, _short) = \
         _free_fix_saving("S0_VERDICT")
     fix_clause = _free_fix_clause(
@@ -5640,9 +5637,10 @@ def _s0_verdict(ctx):
     # scenario, shared with section 7 and with the payback card -- the three
     # used to read the package independently and could publish opposite
     # verdicts on the same battery in the same report. _battery_alone carries
-    # the artifact-consistency refusals; the span below is over the paybacks
-    # that exist, never over a cost divided by a loss.
-    repays, _post, _pb_post, quotable = _battery_alone("S0_VERDICT")
+    # the artifact-consistency refusals. S0 compares the purchase AFTER the
+    # free change; its saving, displayed payback and warranty judgment must
+    # all use that scenario. The separate card retains the labeled range.
+    repays, _post, pb_post, _quotable = _battery_alone("S0_VERDICT")
     # "SOUND OPTIONAL BUY" IS A MAGNITUDE CLAIM, NOT A SIGN CLAIM.
     #
     # It used to be selected by `repays` alone -- battery_alone_post_ev_fix_yr
@@ -5660,29 +5658,24 @@ def _s0_verdict(ctx):
     # stops at. So the branch turns on a committed figure, and a household
     # whose battery repays only past that term gets the true sentence (its
     # payback, and that it lands past the warranty) rather than either a
-    # confident "sound" or a withheld report. Every payback the range prints
-    # is tested, not just the friendliest one: the claim is made about the
-    # whole span the reader is shown.
+    # confident "sound" or a withheld report. Compare the post-change
+    # payback the sentence prints, never the pre-change alternative.
     if repays:
         warranty = _battery_warranty_years("S0_VERDICT")
-        span = _payback_span(quotable)
-        if max(quotable) <= warranty:
+        if pb_post <= warranty:
             battery_clause = (f"a {_battery_model_short()} has a conditional "
-                              f"{span}-year modeled hardware-alone payback")
+                              f"{pb_post:.1f}-year modeled hardware-alone payback after that free change")
         else:
-            battery_clause = (f"a {_battery_model_short()} repays in {span} years, past "
-                              f"its {warranty:g}-year warranty")
+            battery_clause = (f"a {_battery_model_short()} repays in {pb_post:.1f} years "
+                              f"after that free change, past its {warranty:g}-year warranty")
     else:
-        # Left at six words on purpose. Naming the post-fix basis in the
-        # clause itself ("... once the charging fix is in") reads better and
-        # puts this sentence at 36 words, over CLAUDE.md section 10's cap on
-        # a lead that already spends 35 -- and the cap governs every branch,
-        # not just the one that renders today. Section 7 states the basis in
-        # full, where the tier has room for it.
-        battery_clause = f"a {_battery_model_short()} does not repay its own cost"
+        # A non-positive post-change saving has no purchase payback, even
+        # when the battery would repay against the unshifted baseline.
+        battery_clause = (f"a {_battery_model_short()} does not repay its own cost "
+                          "after that free change")
     # "hardware-alone" is deliberate: CLAUDE.md section 2 forbids crediting
-    # the free behavior saving to the hardware, and both ends of this range
-    # are package_results.json's OWN battery-alone paybacks.
+    # the free behavior saving to the hardware. Both warranty branches and
+    # the no-payback branch state the same post-change purchase basis.
     #
     # This clause used to read "the biggest win costs nothing". On the plain
     # reading -- the largest saving available is the free one -- that is
@@ -5695,7 +5688,9 @@ def _s0_verdict(ctx):
     # depend on buying anything -- so the sentence says exactly that and
     # ranks nothing. No guard can fix a superlative that no artifact
     # supports; the honest fix is to stop claiming it.
-    return f"{VERDICT_STEM}{plan_clause}, {fix_clause}, and {battery_clause}."
+    return (f"{fix_clause[0].upper() + fix_clause[1:]}. "
+            f"For this house, {plan_clause}. "
+            f"{battery_clause[0].upper() + battery_clause[1:]}.")
 
 
 _tok("S0_VERDICT", phrase=True, kind="derived", get=_s0_verdict,
@@ -6545,10 +6540,10 @@ def _s6_verdict(ctx):
     # come back negative on another household's dispatch run, which _usd0
     # would print as "$-120/yr" (issue #131 review round 2, finding 5's
     # sweep). Identical output at every non-negative value.
-    return (f"{VERDICT_STEM}one hypothetical {_battery_model_short()} models "
+    return (f"Before the free change, one hypothetical {_battery_model_short()} models "
             f"{_usd0_signed(published)}/yr with the published policy versus "
-            f"{_usd0_signed(evening)} with evening-only dispatch; "
-            f"{tail}; check controller support.")
+            f"{_usd0_signed(evening)} with evening-only dispatch. "
+            f"{tail[0].upper() + tail[1:]}. Check controller support.")
 
 
 _tok("S6_VERDICT", phrase=True, kind="derived", get=_s6_verdict,
@@ -6658,7 +6653,8 @@ def _s7_verdict(ctx):
         tail = "and the expansion pack pays back at the same rate"
     else:
         tail = "and the expansion pack pays back faster than that"
-    return f"{VERDICT_STEM}{fix_clause}; {battery_clause}, {tail}."
+    return (f"{fix_clause[0].upper() + fix_clause[1:]}. After that change, {battery_clause}, "
+            f"{tail}.")
 
 
 _tok("S7_VERDICT", phrase=True, kind="derived", get=_s7_verdict,
@@ -6739,8 +6735,8 @@ def _s10_verdict(ctx):
         tail = f", but {size} means the whole-household answer is not fully settled."
     else:
         tail = ", with no net-export credit excluded from it."
-    return (f"{VERDICT_STEM}on the net-import energy this analysis can price, staying on "
-            f"the CCA ({cca_name}) would have cost this household about "
+    return (f"{VERDICT_STEM}on the net-import energy this analysis can price, "
+            f"the CCA ({cca_name}) costs "
             f"{comparison} "
             f"({a['confidence']} · same-date bill rates, {a['days']} days){tail}")
 
@@ -6763,9 +6759,8 @@ def _s14_verdict(ctx):
     # deltas, which is what section 14's own package-math paragraph says
     # ("absolute bills anchored to the ... actual"); the verdict summarises
     # that methodology rather than widening it to every dollar on the page.
-    return (f"{VERDICT_STEM}absolute bills are anchored to the actual statements, savings are "
-            f"model deltas at {d.month}/{d.day}/{d.year} rates, and each figure carries a "
-            "confidence label with the few non-artifact-backed items named as such.")
+    return (f"{VERDICT_STEM}actual statements set bill spending; savings compare model runs "
+            f"at {d.month}/{d.day}/{d.year} rates, with evidence limits stated beside the findings.")
 
 
 _tok("S14_VERDICT", phrase=True, kind="derived", get=_s14_verdict,

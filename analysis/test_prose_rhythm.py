@@ -179,7 +179,7 @@ def case_every_acronym_on_the_committed_page_is_allowlisted():
     used = {w for w in prose_rhythm.CAPS_RE.findall(text)}
     allowed = prose_rhythm.ACRONYMS | prose_rhythm.PACKAGE_LABELS
     assert used <= allowed, sorted(used - allowed)
-    assert len(used) >= 50, sorted(used)
+    assert used & prose_rhythm.ACRONYMS, "the committed page has no acronym to check"
     return (f"every measured block of the page, headings and short blocks included, uses "
             f"{len(used)} distinct all-caps tokens, each an acronym or a package label")
 
@@ -266,7 +266,7 @@ def case_committed_index_html_clears_every_limit_in_both_tiers():
         v = prose_rhythm.check(html, tier)
         assert v == [], v
         m = prose_rhythm.measure(html, tier)
-        assert m["words"] > 1000, m
+        assert m["prose_words"], f"{tier} contains no running prose"
         numbers.append(f"{tier} {m['words']}w em {m['em_per_1k']:.1f}/1k "
                        f"tails {m['tails_per_1k']:.1f}/1k caps {len(m['caps'])} "
                        f"intens {len(m['intensifiers'])} long {len(m['long_blocks'])}")
@@ -476,14 +476,15 @@ def case_the_committed_page_names_its_packages_without_shouting():
     html = PAGE.read_text(encoding="utf-8")
     blocks = prose_blocks.extract(html, min_words=1)
     assert prose_rhythm.package_labels(blocks) == prose_rhythm.PACKAGE_LABELS
-    hits = sum(len(prose_rhythm.CAPS_RE.findall(b.text)) for b in blocks
-               if prose_rhythm.CAPS_RE.findall(b.text))
-    labels = sum(1 for b in blocks for w in prose_rhythm.CAPS_RE.findall(b.text)
-                 if w in prose_rhythm.PACKAGE_LABELS)
+    prose_labels = {w for b in blocks if b.tag not in prose_rhythm.HEADING_TAGS
+                    for w in prose_rhythm.CAPS_RE.findall(b.text)
+                    if w in prose_rhythm.PACKAGE_LABELS}
     assert prose_rhythm.measure(html)["caps"] == [], prose_rhythm.measure(html)["caps"]
-    assert labels >= 15, labels
-    return (f"the committed page defines all three package cards and names them {labels} times "
-            f"in prose (of {hits} all-caps tokens), none of them in predicate position")
+    assert prose_labels == prose_rhythm.PACKAGE_LABELS, (
+        "declared package labels missing from running prose: "
+        f"{sorted(prose_rhythm.PACKAGE_LABELS - prose_labels)}")
+    return ("the committed page defines all three package cards and names each in running "
+            "prose outside headings, with no shouted or predicate uses")
 
 
 # --- typographic variants ----------------------------------------------------

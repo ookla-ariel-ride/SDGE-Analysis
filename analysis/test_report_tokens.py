@@ -910,8 +910,8 @@ def _assert_verdict_matches_index(name, index_html):
     (issue #131 review round 6, finding 8). "Section 7's conclusion appears
     somewhere on the page" is not the claim this case is making."""
     value = rt.resolve_token(name)
-    assert value.startswith("In one sentence: "), (
-        f"{name} must open with the same stem the other section verdicts use, got: {value!r}")
+    assert value.strip() and value.endswith("."), (
+        f"{name} must carry a complete conclusion, got: {value!r}")
     assert not (set("<>") & set(value)), (
         f"{name} contains markup characters; these tokens carry plain text only: {value!r}")
     rendered = _htmllib.escape(value, quote=True)
@@ -1617,8 +1617,8 @@ def case_s7_verdict_refuses_a_battery_payback_its_own_artifact_contradicts():
 def case_battery_verdicts_say_plainly_when_the_battery_never_repays():
     """Sections 0 and 7 both sell the battery off packages.MID, and both used
     to raise SystemExit when its own savings stopped repaying it -- section 0
-    on the payback RANGE it publishes, section 7 on the single payback it
-    quotes. A household whose battery never pays back is as legitimate a
+    on its former before/after payback range, section 7 on the post-change
+    payback it quotes. A household whose battery never pays back is as legitimate a
     reproducer as one on the wrong tariff, and it is the household most in
     need of being told; refusing there withheld all fifteen sections to avoid
     printing one clause the other way.
@@ -2053,8 +2053,8 @@ def case_plan_verdicts_invert_rather_than_refusing_when_the_household_plan_loses
     Every branch of the ranking is driven, for both tokens together (which is
     what proves they share one ranking rather than two that can drift):
     sole cheapest, an exact tie, and beaten by a cheaper plan. Each rendering
-    is held to CLAUDE.md section 10's density cap, since section 0's published
-    branch already spends 34 of its 35 words.
+    is held to CLAUDE.md section 10's lead-sentence density cap, including
+    section 0's connected explanation after the opening conclusion.
 
     The two genuine fail-closed paths are driven too -- no priced rows for the
     household's provider, and no priced row for the household's own plan --
@@ -4260,11 +4260,11 @@ def _s8_scaffolds():
     return {
         "S8_VERDICT_SHORT": (
             "Defer rooftop expansion pending connection, settlement, and installed "
-            f"price; keep healthy hardware — {exp_pct}% of production is exported, with "
+            f"price; keep healthy hardware. The array exports {exp_pct}% of production, with "
             f"{rt._grandfathering_bracket('S8_VERDICT_SHORT')} of NEM 2.0 grandfathering"),
         "EXPANSION_VERDICT_SHORT": (
             "Defer purchase pending connection, settlement, and installed "
-            f"price — {midday_pct}% of the year's exports leave in the {window} window"),
+            f"price. About {midday_pct}% of the year's exports leave in the {window} window"),
     }
 
 
@@ -4548,7 +4548,7 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
     # inside "22.9¢"). It has to frame the figure as a range: a sentence naming
     # both bounds without "between" can still be reporting one of them as the
     # answer and the other as a foil.
-    claim = re.search(r"an exported kWh on this profile.*?\.(?=\s|<|$)", html, re.S)
+    claim = re.search(r"[Aa]n exported kWh on this profile.*?\.(?=\s|<|$)", html, re.S)
     assert claim, ("index.html no longer says what an exported kWh on this profile is "
                    "worth, so the range this pair of tokens publishes cannot be found")
     assert re.search(r"monthly energy settlement value between\b", claim.group(0)), (
@@ -4558,7 +4558,7 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
         assert rendered in claim.group(0), (
             f"the valuation sentence names only one end of the range: "
             f"{claim.group(0)!r} does not carry {rendered}")
-    assert "This range excludes changes to NBC from changed physical interval flows" in html
+    assert ("It excludes changes in non-bypassable charges (NBC). Those charges depend separately on each interval's physical flows; monthly energy credits do not erase them.") in html
     return (f"monthly energy export value is the range {surplus}-{netting}, ordered "
             "and separated by PCIA; fixed-physical credit changes yield energy/credit, "
             "while changed physical exports separately avoid NBC only in a positive interval")
@@ -4990,7 +4990,7 @@ def case_s6_verdict_ranks_the_larger_gain_whenever_one_option_really_gains():
         expected = ("modeled dispatch changes are worth more than a bigger pack"
                     if policy_gap > capacity_gap else
                     "a bigger pack is worth more than the modeled dispatch changes")
-        assert expected in value, (
+        assert expected in value.lower(), (
             f"S6_VERDICT ranks the wrong side at policy gap {policy_gap} vs capacity gap "
             f"{capacity_gap}: {value}")
         widths[f"{policy_gap:+d}/{capacity_gap:+d}"] = _assert_within_density_cap(
@@ -5050,7 +5050,7 @@ def case_s6_verdict_does_not_sell_the_better_of_two_losing_options():
         assert "are worth the same" not in value, (
             f"S6_VERDICT calls two non-gains equal marginal value at "
             f"{policy_gap:+d}/{capacity_gap:+d}: {value}")
-        assert "neither modeled dispatch changes nor a bigger pack adds any saving" in value, (
+        assert "neither modeled dispatch changes nor a bigger pack adds any saving" in value.lower(), (
             f"S6_VERDICT must say neither option adds anything at "
             f"{policy_gap:+d}/{capacity_gap:+d}: {value}")
         widths[f"{policy_gap:+d}/{capacity_gap:+d}"] = _assert_within_density_cap(
@@ -5121,9 +5121,9 @@ def _battery_reading(s0, s7):
     two words a reader would take away."""
     def read(value, sells, denies):
         # Section 0's selling clause has TWO shapes since round 6's finding 6
-        # -- a conditional modeled hardware-alone payback where every
-        # payback lands inside the warranted life, and "repays in N years,
-        # past its 10-year warranty" where it does not. Both say the battery
+        # -- a conditional modeled hardware-alone payback where the
+        # post-change payback lands inside the warranty, and an explicit
+        # repayment beyond the warranty where it does not. Both say the battery
         # repays; only one lands inside the warranty. This helper checks
         # repayment, not whether the purchase is recommended.
         if any(s in value for s in sells):
@@ -5183,6 +5183,8 @@ def case_a_battery_worth_less_after_the_free_fix_still_gets_a_report():
                 s0_at = rt.resolve_token("S0_VERDICT")
                 s7_at = rt.resolve_token("S7_VERDICT")
             pair = _battery_reading(s0_at, s7_at)
+            assert "after that free change" in s0_at, (
+                f"S0_VERDICT does not state its post-change basis at {label}: {s0_at}")
             expected = "repays" if post > 0 else "does not repay"
             assert pair == (expected, expected), (
                 f"at {label} the two sections read {pair}, which is neither one verdict "
@@ -10278,7 +10280,7 @@ def case_every_token_in_the_report_resolves_on_a_complete_no_ev_artifact_set():
         f"SEC13_TEASER does not state the measured overnight-vs-midday grid gap "
         f"({gap_kg_mwh:,.0f} kg CO₂/MWh, from carbon_fullyear_results.json:"
         f"intensity_kg_per_mwh.window_means_annual): {sec13!r}")
-    assert re.search(r"NEM 2\.0 worth \$[\d,]+–[\d,]+/yr", sec13), (
+    assert re.search(r"Modeled NEM 2\.0 value is \$[\d,]+–[\d,]+/yr", sec13), (
         f"SEC13_TEASER lost the NEM clause, which never depended on an EV: {sec13!r}")
     assert "not applicable" not in sec13 and "does not apply" not in sec13, (
         f"SEC13_TEASER degraded section 13's ONE permitted conclusion into a "
@@ -12338,16 +12340,28 @@ def case_a_battery_repaying_past_its_warranty_is_not_called_a_sound_buy():
             widths[label] = _assert_within_density_cap("S0_VERDICT", value, label)
             seen[label] = value
 
-        # And it is the WHOLE printed range that has to clear the term, not
-        # the friendlier end of it.
-        fast, slow_save = cost / (warranty - 2), cost / (warranty + 5)
-        with _mid_battery_at(mid, fast, slow_save):
-            mixed = rt.resolve_token("S0_VERDICT")
-        assert "has a conditional" not in mixed, (
-            f"S0_VERDICT calls the purchase sound while the top of the range it prints "
-            f"is past the warranty: {mixed}")
-        widths["range straddling"] = _assert_within_density_cap(
-            "S0_VERDICT", mixed, "a range straddling the warranty term")
+        # S0's purchase comparison is after the free change. The earlier
+        # scenario must affect neither the displayed payback nor the warranty
+        # judgment, including when the two scenarios straddle the warranty.
+        for label, pre_years, post_years in (
+                ("slow before, inside after", warranty + 5, warranty - 2),
+                ("inside before, slow after", warranty - 2, warranty + 5),
+                ("both slow, different", warranty + 5, warranty + 8)):
+            with _mid_battery_at(mid, cost / pre_years, cost / post_years):
+                value = rt.resolve_token("S0_VERDICT")
+            assert ("has a conditional" in value) is (post_years <= warranty), (
+                f"S0_VERDICT judges the post-change purchase using another scenario "
+                f"(pre {pre_years:g}, post {post_years:g} years): {value}")
+            assert "after that free change" in value, value
+            expected = (f"{post_years:.1f}-year modeled hardware-alone payback"
+                        if post_years <= warranty else
+                        f"repays in {post_years:.1f} years after that free change")
+            assert expected in value, (
+                f"S0_VERDICT does not state its post-change payback ({expected!r}): "
+                f"{value}")
+            assert "–" not in value.split("For this house,", 1)[-1], (
+                f"S0_VERDICT still prints a range across purchase baselines: {value}")
+            widths[label] = _assert_within_density_cap("S0_VERDICT", value, label)
 
         # A warranty term the artifact cannot state is a refusal, not a
         # silently-assumed number.
@@ -12363,8 +12377,8 @@ def case_a_battery_repaying_past_its_warranty_is_not_called_a_sound_buy():
                     assert "S0_VERDICT" in str(e) and "warrant" in str(e), e
         assert rt.resolve_token("S0_VERDICT") == published, (
             "the substituted battery figures leaked out of this case")
-    return ("section 0 states a conditional modeled payback only where every payback "
-            f"it prints lands inside the {warranty:g}-year warranted life "
+    return ("section 0 compares and prints only the post-free-change payback against "
+            f"the {warranty:g}-year warranted life "
             f"(at {warranty:g} yr: sound; at {warranty + 0.1:g} yr: not), and states the "
             "payback plainly otherwise: "
             + seen["past warranty"].split("and a ")[-1].rstrip("."))
@@ -12764,7 +12778,7 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     A short repeated number is not flagged, and neither is a figure repeated
 #     in a DIFFERENT CONTAINER. The live example of the latter is the lifetime
 #     table, which prints the first year's value in both the annual and the
-#     cumulative cell (report-template.html:561) -- and be precise about WHICH
+#     cumulative cell (report-template.html:570) -- and be precise about WHICH
 #     rule spares it, because there are two and only one of them is load-
 #     bearing. Today's FIRST_YEAR_VALUE happens to be 7 characters, one under
 #     _SEAM_MIN_ECHO, so the length floor would exclude it anyway; that is an
@@ -13113,7 +13127,7 @@ _SEAM_INLINE_TAGS = frozenset((
 # or list items are not one run of text however few characters of markup the
 # author put between them, so the echo rule does not compare ACROSS one at all
 # -- not "at a distance", not at all. That is what spares the lifetime table's
-# cumulative column (report-template.html:561, which prints FIRST_YEAR_VALUE in
+# cumulative column (report-template.html:570, which prints FIRST_YEAR_VALUE in
 # both the annual and the cumulative cell) no matter how long that value grows,
 # and it does so without a second threshold to tune.
 #
@@ -13283,7 +13297,7 @@ _SEAM_CLASSES = ("doubled-sigil", "missing-unit", "echoed-phrase")
 #
 # ONE STATED LIMIT: a marker cannot separate two occurrences of the SAME token
 # on the SAME line. Several template lines print a token twice -- the lifetime
-# table's row (report-template.html:561, FIRST_YEAR_VALUE in both the annual
+# table's row (report-template.html:570, FIRST_YEAR_VALUE in both the annual
 # and the cumulative cell) is the one this file has reason to name elsewhere --
 # and none of them is allowlisted, so an entry for one would excuse both.
 # Line numbers are the next granularity down and they do not help here either.
@@ -13307,13 +13321,13 @@ _SEAM_ALLOWLIST = {
         "by construction -- the figure it qualifies, the agreement percentage, "
         "carries its own sign two tokens later.",
     ("BILL_COUNT", "missing-unit",
-     "The annual baseline uses {{BILL_COUNT}} detailed electric statements"):
+     "The actual baseline uses {{BILL_COUNT}} detailed electric statements"):
         "the same statement COUNT at its second occurrence, on the bills "
         "section's opening line. A separate entry on purpose: the two "
         "occurrences are excused one at a time, so a lost unit at either one "
         "is still reported at the other.",
     ("BILLING_PERIOD_COUNT", "missing-unit",
-     "The annual baseline uses {{BILL_COUNT}} detailed electric statements ({{BILLING_PERIOD_COUNT}} billing periods)"):
+     "The actual baseline uses {{BILL_COUNT}} detailed electric statements covering {{BILLING_PERIOD_COUNT}} billing periods"):
         "a COUNT of billing periods. One statement PDF can carry two periods, "
         "which is why this count differs from BILL_COUNT and why neither is a "
         "quantity with a unit.",
@@ -16067,14 +16081,14 @@ def case_the_lifetime_tables_cumulative_cell_is_not_an_echo():
     clear the floor, and a case that passed only because of the floor fails.
 
     The line number is pinned too. Three contextual comments in this file name
-    report-template.html:561 as this row. Keep those citations synchronized
+    report-template.html:570 as this row. Keep those citations synchronized
     when template edits move it."""
     text = rt.TEMPLATE.read_text()
     row = _seam_template_line("FIRST_YEAR_VALUE", text)
     lineno = text.splitlines().index(row) + 1
-    assert lineno == 561, (
+    assert lineno == 570, (
         f"the lifetime table's repeated-value row is report-template.html:{lineno}, "
-        "not 561. Update the three contextual comments that name that line -- "
+        "not 570. Update the three contextual comments that name that line -- "
         "the class 3 explanation, container-boundary policy, and allowlist "
         "limitation -- in the same edit, which is what this assertion exists to force")
     assert row.count("{{FIRST_YEAR_VALUE}}") == 2, (
@@ -17548,14 +17562,14 @@ def case_the_soiling_bracket_matches_the_published_report():
     published = (rt.ROOT / "index.html").read_text()
     # The paragraph opens on the bracket sentence the template emits from this
     # token (issue #217); the study it rests on follows inside the paragraph.
-    para = re.search(r"<p>The defensible soiling rate here is the full bracket.*?</p>",
+    para = re.search(r"<p>The evidence supports a broad soiling estimate.*?</p>",
                      published, re.S)
     assert para, "§12's soiling-range paragraph not found in index.html"
     para = para.group(0)
-    assert f"~{expected}" in para, (
+    assert f"<b>{expected}</b>" in para, (
         f"§12 does not state the soiling bracket as ~{expected}; the token and the "
         f"published report must agree (CLAUDE.md §9, artifact-prose diff): {para[-320:]}")
-    assert f"~{min(lo, hi):.1f}–" not in para, (
+    assert f"{min(lo, hi):.1f}–" not in para, (
         f"§12 still carries the one-decimal low end {min(lo, hi):.1f}, which understates "
         f"the artifact's {min(lo, hi)}%/month")
     return (f"SOILING_RATE_RANGE = {rendered}, matching soiling_results.json's scenario "
@@ -17920,7 +17934,7 @@ def case_archived_cleaning_cadence_does_not_support_a_purchase_verdict():
     with _example_household([{"date": cleaning_date, "cost_usd": 150}]):
         with _patched(rt, "_json", _stub_for("extra_results.json", expensive)):
             text = _renders("SEC12_TEASER")
-    assert "not determined" in text.lower(), text
+    assert "future cleaning payback and the best interval remain undetermined" in text.lower(), text
     assert "covers the" not in text and "modeled schedule" not in text, text
     assert "production gain" in text, text
 
