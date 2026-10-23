@@ -19,6 +19,10 @@ The schedule charges from permitted solar surplus and/or super-off-peak grid,
 and serves imports in off/on-peak intervals. No foresight or optimality claim.
 Hardware support, circuit coverage, phase controls, and grid-parallel eligibility
 remain unknown. Constant-load backup calculations assume no outage solar recharge.
+Billing preserves the canonical engine's gross-import NBC convention. NEM-ST
+instead specifies consumption net of exports within each metered interval; the
+meter-channel/billing-interval reconciliation remains open. Reproduction does
+not establish tariff accuracy. See research/sb868-portable-solar-storage.md.
 """
 from dataclasses import asdict, dataclass
 import hashlib
@@ -591,7 +595,7 @@ def build_study(inputs, *, include_references=True):
                                                   'economics': economics(comp['savings_usd']),
                                                   'dispatch': 'fixed simple schedule; same physical flows, both baseline and hardware re-billed'})
     return {'schema_version': 1, 'issue': 304, 'study_date': '2026-10-22',
-            'status': 'exploratory; no purchase or household-wiring approval',
+            'status': 'exploratory; no purchase recommendation or authorization for household wiring',
             'provenance': dict(inputs['provenance'], rate_snapshot='June 2026 EV-TOU-5 / CEA Clean Impact Plus; canonical analysis/rates.py',
                                baseline_repository_commit='05f4c8c', confidence='modeled deltas; estimated portable PV shape'),
             'installed_baseline': {'battery_count': 0, 'battery_ownership_evidence': 'owner confirmation 2026-10-22',
@@ -617,7 +621,7 @@ def build_study(inputs, *, include_references=True):
                 'economics': '5% real discount, 1% annual savings decline, zero real tariff escalation; no replacement/subscription/maintenance cost assumed because quote unknown; ceilings before those costs',
                 'equipment_price': '$1399 per 1.92kWh unit from supplied issue snapshot, observation date 2026-10-22; equipment-only marginal illustration, not installed price or available-stock claim',
                 'backup': 'constant-load conditional runtime only; known product/circuit surge limits absent; no existing Enphase outage production or solar recharge assumed',
-                'bill_limitations': 'calendar-month model differs from statement windows; frozen rate vintage differs from historical bills; documented historical residual remains unexplained. Absolute modeled bills are not actual bills; use deltas.',
+                'bill_limitations': 'calendar-month model differs from statement windows; frozen rate vintage differs from historical bills; documented historical residual remains unexplained. NBC uses gross imported energy, while NEM-ST specifies consumption net of exports within each metered interval; meter-channel/billing-interval reconciliation remains open. Absolute modeled bills are not actual bills; deltas retain this NBC convention.',
                 'fixed_costs': 'electric daily charge unchanged; gas unchanged and excluded from electric model',
                 'incentives': 'zero homeowner federal25D credit; other incentive/VPP eligibility and monetary backup value unknown'},
             'canonical_no_reserve_benchmarks': reference_rows, 'scenarios': scenarios,
@@ -625,14 +629,14 @@ def build_study(inputs, *, include_references=True):
             'unavailable_scenarios': {
                 'selected_loads': {'annual_savings_usd': None, 'reason': 'No real selected-circuit/appliance interval energy, surge or supported wiring evidence. Illustrative runtime is not household selected-load savings.'},
                 'daylight_ev_or_flexible_load': {'annual_savings_usd': None, 'reason': 'Daylight vehicle presence and appliance flexibility unmeasured; existing free overnight EV shift already in baseline.'},
-                'post_nem_adoption': {'annual_savings_usd': None, 'reason': 'Future post-grandfathering tariff and supported configuration unknown; NEM2 engine cannot price NEM3 by changing constants.'},
+                'post_nem_adoption': {'annual_savings_usd': None, 'reason': 'Future post-grandfathering tariff and supported configuration unknown; NEM2 engine cannot price NEM3 by changing constants. A separately modeled present-NBT counterfactual could support sensitivity analysis.'},
                 'measured_standby_and_controls': {'annual_savings_usd': None, 'reason': 'Exact US hardware manual/firmware, standby, minimum-load thresholds, cloud-independent schedules and control responses unverified.'},
                 'whole_home_or_multiday_backup': {'runtime_hours': None, 'reason': 'Essential-circuit energy/startup records, transfer isolation, grid-forming compatibility and outage weather evidence absent.'}},
             'unresolved_inputs': ['exact U.S. certification and connection eligibility', 'NEM/CEA incremental and displaced rooftop export treatment',
-                                  'original utility-approved capacity and NEM-preservation evidence', 'phase/CT layout and controllable circuit coverage',
+                                  'conventional expansion only: original capacity for the percentage limit, prior expansion and onsite-load evidence; not SB 868 eligibility conditions', 'phase/CT layout and controllable circuit coverage',
                                   'site placement/shading and permitted mounting', 'full installed quote with panels/mounts/wiring/transfer/permits/tax/labor/subscriptions/replacement',
                                   'measured standby, usable capacity, supported reserve/charge control and warranty throughput',
-                                  '2030 compliance path and cost; future tariff after NEM grandfathering']}
+                                  '2030 transition and future tariff scenarios; no known extra approval or compliance cost established']}
 
 
 def _rounded(value):

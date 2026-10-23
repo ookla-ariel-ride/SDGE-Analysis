@@ -2,15 +2,23 @@
 """Issue #7: the irreducible bill -- the portion of the annual bill that no
 battery, no behavior change and no bigger panel can ever remove.
 
+NBC INTERVAL CLARIFICATION (2026-10-22, issue #304). Historical NBC dollars
+below come from bills. Modeled NBC uses the gross imported-energy channel.
+NEM-ST SC 1(f) instead specifies consumption net of exports within each
+metered interval, aggregated monthly. The printed NBC quantity versus period
+net-kWh check rejects billing-period netting; it does not settle meter-channel
+semantics within an interval. Keep that reconciliation open. Historical
+function/key names remain for compatibility; no billing algorithm changes here.
+
 A CONCEPTUAL CORRECTION (issue #7, third adversarial review). An earlier
 version of this script summed TWO components -- the per-day fixed charge and
-non-bypassable charges (NBC) billed on GROSS imported kWh -- into one
+non-bypassable charges (NBC) modeled on gross imported kWh -- into one
 "floor... these packages cannot reach below." That conflated two different
 properties. "Non-bypassable" is a regulatory term: SDG&E's non-bypassable
 charges cannot be avoided by SWITCHING GENERATION PROVIDER (they follow the
 delivery path, not the generation source). It does NOT mean the charge's
-DOLLAR AMOUNT is fixed regardless of usage -- NBC is billed per gross-
-imported kWh, so if gross imports fall (a bigger battery, more solar, a load
+DOLLAR AMOUNT is fixed regardless of usage -- this model prices NBC per gross-
+imported kWh, so if modeled gross imports fall (a bigger battery, more solar, a load
 reduction), the dollar amount of NBC falls too, potentially toward zero in
 the limit of eliminating grid imports entirely. This script's own
 compute_package_gross_imports() proves exactly that: MID and HIGH reduce
@@ -23,20 +31,20 @@ moving a component the earlier prose called immovable.
 Only the per-day fixed charge (Base Services Charge, or the Monthly Service
 Fee it replaced 2025-10-01) is genuinely, unconditionally irreducible: it is
 billed per day regardless of consumption, even at zero kWh imported, and no
-purchase changes that. NBC is real, currently owed on whatever the household
-does import, and cannot be avoided by switching generation provider or NEM
-structure -- but it is NOT a fixed dollar floor. It is a rate applied to a
-quantity purchases can and do move.
+purchase changes that. Historical NBC dollars come from bills. The tariff
+charges NBC on positive net consumption within each metered interval; the
+model uses its gross import channel pending reconciliation. NBC is NOT a
+fixed dollar floor. Its energy base can change under a purchase.
 
 THE QUESTION. Every payback this repo quotes (package_results.json's LOW/MID/
 HIGH) is against a PROJECTED ANNUAL BILL. This script states the STRICT,
 unconditional floor (the fixed charge alone) in dollars and as a percentage
 of the 12-month billed total and of each package's projected bill; it also
 reports non-bypassable charges as a separate, clearly-labeled figure --
-real money, currently owed at today's or each package's own modeled usage,
+historical bill dollars or conditional package-model estimates,
 but not part of the "no purchase can ever remove this" claim -- so a reader
 can see how much of a package's headline saving is actually reachable, and
-how much of what's left is a movable-but-currently-real charge rather than
+how much of what's left depends on usage rather than being
 a structural floor.
 
 STEP 1 FINDING (does the two-period 2025-10-31 statement need an allocation?).
@@ -95,18 +103,17 @@ is actually the strict floor):
                            bucket that is a genuine, unconditional floor: a
                            per-day charge with no usage dependence at all.
   2. non_bypassable_gross  "Non-Bypassable Charges" + "Wildfire Fund Charge",
-                           BOTH billed on GROSS imported kWh. Both are
+                           BOTH extracted from the bill. Both are
                            necessary: on every period in this corpus, Total
                            Electric Charges only reconciles to the cent when
                            both lines are summed (proven by the independent
                            cross-check below on all 26 periods; omitting
                            Wildfire Fund Charge understates non_bypassable_gross
                            by exactly its own printed value on every period).
-                           REAL money, currently owed, and cannot be avoided
-                           by switching generation provider -- but its DOLLAR
-                           AMOUNT scales with gross imported kWh, so it is NOT
-                           a fixed floor: a purchase that reduces gross
-                           imports reduces this bucket too (see
+                           Historical bill dollars. The amount depends on
+                           usage, so it is NOT a fixed floor. In the separate
+                           package model, reducing gross imports reduces NBC
+                           under that model's convention (see
                            build_package_floor_fractions()'s docstring).
   3. taxes_and_fees        "Total Taxes & Fees on Electric Charges" -- mostly
                            proportional to the energy charge (franchise fee
@@ -147,10 +154,10 @@ ONLY figure this script calls a floor: it accrues per day no matter what,
 even at zero kWh imported, and no purchase changes that.
 
 non_bypassable_gross is reported ALONGSIDE it, not summed into it, as
-non_bypassable_usd(_historical) -- real money, currently owed, billed on
-GROSS imported kWh, which persists even under heavy solar/battery/behavior
-use as long as the household ever imports anything, and which cannot be
-avoided by switching generation provider. But it IS reduced by a purchase
+non_bypassable_usd(_historical) -- historical bill dollars, separate from
+the modeled gross-import convention. NBC applies to positive net consumption
+within each metered interval under NEM-ST SC 1(f). It is not avoided by
+switching generation provider. In this model it is reduced by a purchase
 that reduces gross imports (see build_package_floor_fractions()'s docstring
 for how it is actually recomputed, package by package, from each package's
 own modeled gross-import kWh -- an adversarial review of this script
@@ -234,8 +241,8 @@ RAW_INTERVAL_GLOB = "Electric_15_Minute_*.csv"
 # with the reused pipeline -- refuse rather than publish a bad recomputation.
 GROSS_IMPORT_SANITY_FRACTION = 0.15
 
-# The Wildfire Fund Charge evidence the docstring in rates.py cites (NBC on
-# GROSS kWh, not net) -- re-verified independently in build_nbc_gross_check().
+# Check the printed Wildfire Fund Charge quantity against the bill-derived
+# CSV fields. This rejects billing-period netting, not within-interval netting.
 _NBC_EVIDENCE_STATEMENT = "2025-10-31"
 _NBC_EVIDENCE_PERIOD = "9/26/25 - 9/30/25"
 
@@ -562,8 +569,8 @@ def build_floor(rows):
     non_bypassable_usd_historical (bucket 2) is reported ALONGSIDE it, not
     summed into it. It is real money, actually billed over this same window,
     and it cannot be avoided by switching generation provider or NEM
-    structure -- but its DOLLAR AMOUNT is billed on GROSS imported kWh, which
-    a purchase that reduces gross imports DOES reduce (see
+    structure -- but its DOLLAR AMOUNT depends on usage. The model uses
+    gross imported kWh, which a purchase can reduce (see
     build_package_floor_fractions() for the per-package proof that this
     actually happens, not just could). It is therefore NOT part of
     strictly_irreducible_usd; combined_usd_historical is kept as a
@@ -995,7 +1002,7 @@ def build_package_floor_fractions(floor, gross):
     (data/package_results.json, current-rate model) is the STRICT floor
     (fixed charge alone), reported with full confidence -- and, SEPARATELY,
     what fraction is non-bypassable charges AT THIS PACKAGE'S OWN MODELED
-    USAGE -- real money, currently owed, but NOT itself irreducible, since a
+    USAGE -- a conditional model estimate, NOT an actual amount owed, since a
     different or larger purchase would move it further. combined_usd /
     combined_fraction_of_projected_bill is kept too (both added together)
     but is explicitly not itself the answer to "how much can never be
@@ -1327,9 +1334,9 @@ def build_minimum_bill_provision(rows, statements):
         applicable minimum charges for the current 'Relevant Period'. If you
         are a net generator for the year, these basic service fees and any
         applicable taxes will represent all you have to pay." Note this
-        names basic service fees + taxes, not NBC by name -- NBC is billed
-        on gross imports regardless of net position, so it can apply even in
-        a year this provision would otherwise floor the bill at fees+taxes.
+        names basic service fees + taxes, not NBC by name. NEM-ST SC 1(f)
+        bases NBC on positive net consumption within each metered interval,
+        so annual net generation alone does not establish zero NBC.
         No statement in the corpus ever prints this as a dollar LINE ITEM
         (only the glossary sentence) -- confirmed by regex scan of every
         statement's text, not by inspection of one.
@@ -1488,13 +1495,11 @@ _WILDFIRE_LINE = re.compile(
 
 
 def build_nbc_gross_check(rows):
-    """Fresh re-derivation of rates.py's documented claim -- 'NBC on gross
-    imported kWh, never netted (bill evidence: wildfire charged on 308 gross
-    kWh vs 224 net)' -- from THIS script's own regex over the statement text,
-    not a citation of that docstring. Locates the exact statement/period,
-    re-reads the printed Wildfire Fund Charge kWh figure, and compares it
-    against that period's gross_kwh AND net_kwh from
-    data/bill_periods_electric.csv."""
+    """Check printed NBC kWh against the bill-derived gross_kwh and net_kwh.
+    This rejects billing-period netting for the checked statement. Both the
+    printed NBC quantity and CSV gross_kwh originate in bill evidence; their
+    agreement does not independently establish metered-interval semantics.
+    The historical function/key names remain for compatibility."""
     stmt, period = _NBC_EVIDENCE_STATEMENT, _NBC_EVIDENCE_PERIOD
     row = next((r for r in rows if r["statement_date"] == stmt and r["period"] == period),
               None)
@@ -1529,12 +1534,13 @@ def build_nbc_gross_check(rows):
         "csv_net_kwh": row["net_kwh"],
         "printed_kwh_matches_gross_kwh": matches_gross,
         "printed_kwh_matches_net_kwh": matches_net,
-        "confirmation": ("CONFIRMED: the printed Wildfire Fund Charge is billed on "
-                        "GROSS imported kWh, not net -- it matches gross_kwh and "
-                        "differs from net_kwh"
+        "confirmation": ("CONFIRMED: printed Wildfire Fund Charge kWh matches the "
+                        "bill-derived gross_kwh and differs from billing-period "
+                        "net_kwh. This rejects billing-period netting; it does not "
+                        "establish within-meter-interval import/export semantics."
                         if matches_gross and not matches_net else
                         "NOT CONFIRMED -- printed kWh does not match gross_kwh as "
-                        "rates.py's docstring claims; re-examine"),
+                        "the historical bill check expects; re-examine"),
     }
 
 
@@ -1544,10 +1550,12 @@ CAVEAT = (
     "genuine, unconditional floor: the per-day fixed charge, billed no matter "
     "what the household buys or does, even at zero kWh imported. "
     "non_bypassable_usd_historical / non_bypassable_usd is a SEPARATE figure, "
-    "not summed into the floor: non-bypassable charges (NBC), billed on GROSS "
-    "imported kWh. NBC cannot be avoided by switching generation provider or "
-    "NEM structure -- but its DOLLAR AMOUNT is not fixed; it scales with gross "
-    "imports, and a purchase that reduces gross imports reduces it too. "
+    "not summed into the floor: non-bypassable charges (NBC). Historical NBC "
+    "dollars come from bills; modeled NBC uses the gross import channel. "
+    "NEM-ST SC 1(f) specifies consumption net of exports within each metered "
+    "interval, aggregated monthly. Meter-channel reconciliation remains open. "
+    "The printed-kWh check rejects billing-period netting only. NBC's dollar "
+    "amount depends on usage; this model reduces it when gross imports fall. "
     "combined_usd_historical / combined_usd sums both components for "
     "reference (what they actually cost together) but is explicitly NOT "
     "itself called a floor -- only strictly_irreducible_usd is. "
@@ -1701,20 +1709,16 @@ def _assert_periods_reconcile(rows):
 
 
 def _assert_nbc_gross_check_confirmed(nbc_check):
-    """Finding 2's second half (Codex's addition, confirmed worth doing): the
-    NBC-on-gross re-verification exists to PROVE the documented NBC-on-gross
-    treatment is real, re-derived from statement text rather than cited from
-    rates.py's docstring. A run where it silently fails to confirm (a bill
-    template change, a corrupted statement, a regex that stopped matching)
-    must not publish either -- the artifact would otherwise carry an
-    unconfirmed claim that reads exactly like a confirmed one everywhere else
-    it is used."""
+    """Refuse publication when the historical printed-kWh check fails.
+    This checks agreement between the printed NBC quantity and the bill-derived
+    CSV quantity. It does not prove within-meter-interval billing semantics.
+    Preserve the fail-closed guard against changed or missing source evidence."""
     if not nbc_check["confirmation"].startswith("CONFIRMED"):
         raise SystemExit(
             "NBC-on-gross re-verification did not confirm the documented "
             f"treatment: {nbc_check['confirmation']} (statement "
             f"{nbc_check['statement']}/{nbc_check['period']}) -- refusing to "
-            "publish an artifact whose NBC-on-gross proof did not check out")
+            "publish an artifact whose historical NBC quantity check did not pass")
 
 
 def build():

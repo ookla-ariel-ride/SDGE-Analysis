@@ -13,6 +13,21 @@ Alliance (CEA) generation on the EV-TOU-5 rate. Analysis window: the 365 days 20
 2026-07-23. All raw inputs containing personal identifiers live in `private/` (gitignored); only
 de-identified aggregates are committed under `data/`.
 
+<a id="nbc-meter-interval-clarification"></a>
+**NBC clarification, 2026-10-22.** The current engine charges non-bypassable charges (NBC)
+on its gross imported-energy channel. [NEM-ST SC 1(f), Sheet 6](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE)
+instead specifies consumption net of exports within each metered interval, aggregated
+over the monthly billing period. A printed NBC quantity above monthly net usage proves
+that the tariff does not use monthly net usage. It does not establish the treatment of
+separate import/export channels within a meter interval.
+
+The utility's billing interval and channel definitions still need reconciliation with the
+fifteen-minute source records and actual bills. References below to NBC on gross imports
+describe the implemented model, not a rule that the tariff prohibits all netting. Existing
+results remain conditional on that convention. Preserving physical channels is separate
+from choosing the billing energy base. Artifact reproduction and model-to-model agreement
+do not settle this tariff question.
+
 ---
 
 ## 1. Pipeline overview
@@ -75,7 +90,7 @@ Two things to understand about the flow:
    the `D` block and the prose figures (see `CLAUDE.md` §3 on keeping figures consistent).
 2. **Two generations of billing model coexist.** `analyze*.py` price every 15-minute interval
    independently (interval netting). `billing_model_nem.py` implements true NEM 2.0 monthly
-   per-TOU-period netting with non-bypassable charges on gross imports, and was validated
+   per-TOU-period netting with the model's gross-import NBC convention, and was compared
    against the 12 actual bills; the two methods agree to ~0.5% on this dataset ($4,882 vs
    $4,904, §6). Plan *rankings* and battery/behavior *deltas* come from the interval models;
    absolute dollar levels in the report are anchored to actual bills, and forward projections
@@ -555,10 +570,11 @@ committed artifact from §3.6/§3.8 results as above).
 
 **Run:** `python3 deep_analyses.py` next to the three inputs.
 
-### 3.6 `analysis/billing_model_nem.py` — bill-validated NEM 2.0 monthly netting
+### 3.6 `analysis/billing_model_nem.py` — NEM 2.0 monthly netting with bill comparison
 
-**Purpose.** Replace the interval-netting approximation with the netting SDG&E actually
-performs under NEM 2.0, and reconcile the model against the 12 real bills.
+**Purpose.** Model monthly per-TOU-period NEM 2.0 energy netting and compare against the
+12 real bills. The NBC energy base remains subject to the
+[meter-interval clarification](#nbc-meter-interval-clarification).
 
 **Rates (read off the detailed bills, EV-TOU-5 + CEA "Clean Impact Plus", 6/1/2026).** UDC:
 summer on/off 0.30203, winter on/off 0.31174, super-off-peak 0.02606 both seasons; CEA
@@ -568,19 +584,21 @@ UDC + CEA` (exports are credited at delivery + generation only; PCIA and NBC are
 refunded).
 
 **Algorithm (`bill()`).** For each billing month (calendar month here): add `days × BSC` plus
-NBC × gross imported kWh for the month: non-bypassable charges (~$0.021/kWh incl. the
-wildfire fund) are levied on gross imports and are not netted against exports, matching the
-bills' line items (e.g. a "Wildfire Fund Charge 308 kWh" line on a period with 224 kWh net
-usage). Then for each (season, period) cell within the month compute `net = Σ imports −
+NBC × gross imported kWh for the month. This is the implemented convention. The bill's
+"Wildfire Fund Charge 308 kWh" line on a period with 224 kWh net usage rules out monthly
+net usage as the NBC base. It does not establish the treatment within each metered interval.
+Then for each (season, period) cell within the month compute `net = Σ imports −
 Σ exports`; if `net ≥ 0` charge `net × energy(s,p)`, else credit `net × credit(s,p)`. Sum
 across months. This is the "monthly per-TOU-period NEM netting" referred to throughout the
 report. An earlier revision netted the NBC along with the energy charges, a
 code-vs-docstring bug caught by the `CLAUDE.md` §9 gate; the correction adds
 NBC × (gross imports − Σ positive period nets) ≈ **+$208/yr** on this dataset.
+That historical correction compared gross imports with monthly TOU nets; it did not test
+the tariff's separate metered-interval rule.
 
 **Output.** Prints the modeled annual baseline **$4,904** at 6/1/2026 rates against the actual billed $3,282 (365-day audit); the
 reconciliation of that gap is §6.3. Adapt `bill()` (it accepts arbitrary import/export column
-names) to re-score behavior or battery scenarios on the validated netting.
+names) to re-score behavior or battery scenarios under the implemented billing assumptions.
 
 **Run:** `python3 billing_model_nem.py` next to `usage.csv`.
 
@@ -679,9 +697,11 @@ subtraction anywhere. This script's evening-only overlap figures remain only as 
 workpaper illustration of *why* behavior and hardware must be simulated in one pipeline.
 
 **Output `data/behavior_rebuild.json`.** Keys: `window`; `baseline` (`model_bill` $4,904.13
-on the canonical NBC-on-gross engine, matching §3.6's **$4,904**; the scenario *deltas* do
-not depend on the NBC treatment, because load shifts preserve gross imports, so the NBC
-term cancels; `actual_billed` $3,282, so use deltas, per the in-file note;
+on the canonical NBC-on-gross engine, matching §3.6's **$4,904**; load shifts preserve gross
+imports, so NBC cancels under this convention. That cancellation does not establish
+independence from the tariff's metered-interval rule: a shift can change import/export
+overlap. See the [NBC clarification](#nbc-meter-interval-clarification).
+`actual_billed` $3,282, so use conditional deltas, per the in-file note;
 `month_min/max`;
 `imports_kwh`, `exports_kwh`, `onpeak_import_kwh`); `detection` (rule string, `sessions`,
 `ev_kwh_total/expected/onpeak/offpeak/sop_already`, `avg_session_kwh`); `scenarios.a–d`
@@ -2455,7 +2475,9 @@ dispatch directly, as a linear program. That is a different thing from a heurist
 naive price arbitrage: `rates.bill_nem_monthly` nets import against export per (month,
 season, TOU-period) bucket, charging the bucket's net position at the higher "energy" rate
 if positive or crediting it at the lower "credit" rate if negative, and separately charges
-non-bypassable costs (NBC) on gross monthly imports regardless of netting. An optimizer
+non-bypassable costs (NBC) on gross monthly imports regardless of monthly energy netting.
+This optimizer minimizes the implemented model's bill. Its NBC convention retains the
+[unresolved meter-interval interpretation](#nbc-meter-interval-clarification). An optimizer
 that just chases the biggest per-interval price spread can bill worse, because it ignores
 which side of zero a bucket's net position lands on, or that NBC keeps accruing on gross
 imports even when energy nets to zero.
@@ -2488,7 +2510,7 @@ to the signed net `imp0_i - gen0_i`, with `discharge_i` bounded only by power/SO
 tied to `imp0_i`), is wrong for two compounding reasons. (1) It silently discards the
 ~6.3% of real intervals that carry both gross import and gross export simultaneously (per
 `battery_dispatch_policies.py`'s own count): collapsing them to a signed net erases that
-gross import for free, understating the NBC owed on it, with no battery action required to
+gross import for free, understating NBC under the implemented model, with no battery action required to
 "earn" that saving. (2) It lets the optimizer manufacture brand-new export beyond what the
 house ever generated, a capability the shipping policy's own discharge cap
 (`min(imp[i], soc·ETA, pwrq)`) never uses, breaking the "same hardware, same envelope"
@@ -2508,8 +2530,9 @@ $217.24/yr gap, 9.3% of greedy's own saving, at that same $2,329/yr greedy figur
 both sides of this comparison again, and issue #240's priced charge rule moved the
 heuristic side once more; see that paragraph below for the current $2,545.39/yr /
 $79.39/yr / 3.2% figures against today's $2,466/yr published saving.) Over $1,283/yr of the
-signed-net "optimum" was non-physical: free NBC relief from collapsed simultaneous flows,
-and export the battery never had anything to back. This is the difference between "the
+signed-net "optimum" violated the comparison's constraints: NBC relief from collapsed
+channels under the model's convention, and unsupported manufactured exports. The NBC
+component is not independent proof of the tariff's billing base. This is the difference between "the
 shipping policy leaves most of the value on the table" and the finding this section
 reports, "the shipping policy is already close to the ceiling for this hardware."
 
@@ -4969,12 +4992,17 @@ intentionally export. The optional shared AC cap includes added PV and every bat
 discharge. This AC-coupled model does not capture DC production above the cap. The
 annual SOC vector iterates to a `1e-8` kWh tolerance; nonconvergence raises an error.
 
-Every bill uses `rates.bill_nem_monthly()`, including NBC on gross imports, PCIA,
+Every bill uses `rates.bill_nem_monthly()`, including the model's gross-import NBC convention, PCIA,
 delivery, CEA generation, and fixed charges. Credited, zero-credit, and incremental
 zero-export cases use separate physical and billing accounts. Zero-credit removes
 compensation for incremental meter exports, including displaced rooftop exports.
 Zero-export curtails only new residual PV. These are disclosed counterfactual accounts;
 they do not establish legal settlement or prove perfect device export control.
+
+NEM-ST specifies NBC on consumption net of exports within each metered interval. The
+fifteen-minute channel/billing-interval reconciliation remains open. Every portable savings
+figure and price ceiling retains the model convention; exact reproduction does not establish
+tariff accuracy. See the [NBC clarification](#nbc-meter-interval-clarification).
 
 **Interpretation limits.** The schedule uses permitted solar surplus and super-off-peak
 grid charging, with off/on-peak discharge. It makes no optimality claim. The base reserve,
@@ -5631,8 +5659,10 @@ coverage.
       constant needs editing; just run it after step 3;
    5. `billing_model_nem.py` → compare its output to your actual bills before quoting any
       absolute dollar figure (per `CLAUDE.md` §1; expect it to read high if it prices
-      history at current rates). Verify against a bill line that non-bypassable charges
-      are billed on gross imported kWh, and that the code does the same (`CLAUDE.md` §9);
+      history at current rates). Check the tariff's NBC billing interval and energy base
+      against source-meter definitions and bill quantities. A bill total above monthly net
+      usage alone cannot establish the within-interval rule
+      ([NBC clarification](#nbc-meter-interval-clarification));
    6. `behavior_rebuild.py` → session-based shift ladder (imported by the integrated
       battery pipeline; its standalone evening-only overlap figures are workpaper-only);
    7. `battery_dispatch_policies.py` → the three-policy comparison whose **price-aware**
@@ -5902,10 +5932,11 @@ The error was inert: no analysis script reads this file (it is reference evidenc
 - *Periods, not files* (§1). One statement can hold two billing periods when a rate change
   splits it: the Oct 2025 statement yields `9/26/25 - 9/30/25` and `10/1/25 - 10/27/25`.
   26 electric periods come from 25 statements. Duplicate periods raise `SystemExit`.
-- *Gross vs net.* `net_kwh` is the bill's "Total Usage"; `gross_kwh` is its "Non
-  Bypassable Charges Usage", the gross imported kWh that NBCs are levied on (987 net vs
-  1,934 gross on the Jun 2026 period). This is the per-bill evidence behind the netting
-  model's NBC-on-gross treatment (§14).
+- *Bill quantities.* `net_kwh` is the bill's "Total Usage"; the legacy field `gross_kwh`
+  holds its "Non Bypassable Charges Usage" (987 net vs 1,934 NBC kWh on the Jun 2026 period).
+  The field name does not establish whether the utility nets directional channels within
+  each metered interval. This evidence rules out monthly net usage as the NBC base;
+  see the [NBC clarification](#nbc-meter-interval-clarification).
 - *Generation provider changes mid-corpus.* Through the 11/26/24 - 12/26/24 period the
   account was on SDG&E bundled generation with no CCA pages, so generation is inside
   `sdge_delivery` and `cca_generation` is 0. From 12/27/24 - 1/27/25 onward CEA bills
@@ -6557,12 +6588,14 @@ per-day fixed charge (Base Services Charge, or the Monthly Service Fee it replac
 script states that strict floor in dollars, as a share of the trailing 12 months of actual
 bills and of each `package_results.json` package's own projected bill.
 
-Non-bypassable charges (NBC), billed on gross imported kWh, are reported alongside it as a
+Non-bypassable charges (NBC) from the bills are reported alongside it as a
 **separate** figure (real money, currently owed, that cannot be avoided by switching
 generation provider or NEM structure) and are not summed into the floor. NBC "cannot be
 avoided by switching provider" does not mean its dollar amount is fixed regardless of
-usage. NBC is billed *per gross-imported kWh*, so a purchase that reduces gross imports (a
-bigger battery, more solar, a load reduction) reduces the dollar amount too; this script's
+usage. NBC depends on the applicable imported-energy base. The model uses gross imports,
+while the tariff specifies metered-interval net consumption; see the
+[NBC clarification](#nbc-meter-interval-clarification). Under the model's convention, a
+purchase that reduces gross imports reduces modeled NBC too; this script's
 own `compute_package_gross_imports()` shows it: MID and HIGH import less gross power than
 the baseline, and `build_package_floor_fractions()` recomputes a *lower* NBC dollar figure
 for both as a direct result. Only the fixed charge is invariant under every purchase, by
@@ -6587,7 +6620,7 @@ sanity check. The actual independent verification is the cross-check described n
 | bucket | source | irreducible? |
 |---|---|---|
 | `fixed_charge` | `bill_periods_electric.fixed_charge_total` — whichever of Base Services Charge or the Monthly Service Fee it replaced that period actually billed | **yes** — accrues per day regardless of usage; this is the only bucket the artifact calls a floor |
-| `non_bypassable_gross` | printed "Non-Bypassable Charges" + "Wildfire Fund Charge", both billed on **gross** imported kWh | no — real, currently owed, and cannot be avoided by switching generation provider, but its dollar amount scales with gross imports and a purchase that reduces them reduces this bucket too |
+| `non_bypassable_gross` | printed "Non-Bypassable Charges" + "Wildfire Fund Charge"; the legacy field name does not determine the metered-interval billing rule | no — real, currently owed, and cannot be avoided by switching generation provider; its amount depends on the tariff's energy base, which a purchase can change |
 | `taxes_and_fees` | printed "Total Taxes & Fees on Electric Charges" | no — its two largest components (Franchise Fee Equivalent Surcharge, State Regulatory Fee) are levied on the energy charge or on kWh counted elsewhere, so they shrink roughly in proportion to whatever a purchase reduces |
 | `netted_energy` | the residual: `current_charges − fixed_charge − non_bypassable_gross − taxes_and_fees` | no — the bucket a battery, behavior change or bigger panel can most directly touch, though `non_bypassable_gross` also moves under those same purchases |
 
@@ -6692,7 +6725,7 @@ Services Charge, and using it here would mix a third rate vintage into a fractio
 other term and denominator are current-vintage, which CLAUDE.md §9 forbids. And the two
 terms are never summed into one `floor_usd`: "non-bypassable" means a charge cannot be
 avoided by switching generation provider, and says nothing about its dollar amount being
-fixed regardless of usage. NBC is billed per gross-imported kWh, and `non_bypassable_usd`
+fixed regardless of usage. The model prices NBC per gross-imported kWh, and `non_bypassable_usd`
 is a per-package recomputation that, on this corpus, comes out lower for MID and HIGH than
 for LOW/the baseline, so a purchase moves it. `strictly_irreducible_usd` and
 `non_bypassable_usd` are therefore reported as separate figures, with only the former
@@ -6786,14 +6819,15 @@ statement's own "Rate: Time of Use - EVTOU5-Residential" header. No EV-TOU-5-spe
 minimum-bill dollar figure was found anywhere in the bills or in
 `research/rates-reference.md`.
 
-**NBC-on-gross re-verification.** `rates.py`'s docstring already claims NBC is billed on
-gross imported kWh, never netted. This script re-derives that claim independently: it
-locates the printed Wildfire Fund Charge line on the 9/26/25 – 9/30/25 period of the
+**NBC bill-quantity cross-check.** This script locates the printed Wildfire Fund Charge
+line on the 9/26/25 – 9/30/25 period of the
 2025-10-31 statement (`Wildfire Fund Charge 308 kWh x $.00595 1.83`) and confirms the
 printed 308 kWh matches `bill_periods_electric.csv`'s `gross_kwh` (308) for that period
-and differs from its `net_kwh` (224): confirmed. `test_irreducible_bill.py` proves this is
-a live re-derivation by feeding a fabricated statement text with a different kWh figure
-and checking the reported value moves with it.
+and differs from its `net_kwh` (224). This proves the printed NBC base differs from the
+period's net usage. It does not prove the tariff prohibits netting within each metered
+interval, or resolve the source channels' relationship to that interval.
+`test_irreducible_bill.py` checks the live extraction with fabricated statement text whose
+kWh value differs. See the [NBC clarification](#nbc-meter-interval-clarification).
 
 **Output** `data/irreducible_bill.json`, written atomically; run twice → byte-identical.
 Registered in `test_scripts_runnable.py` under `NEEDS_PRIVATE_ARCHIVE` (it needs the bill PDF
@@ -6813,7 +6847,7 @@ covering the most days) and no true-up-year groups at all (`no_true_up_date_foun
 remaining thirty (the four-bucket arithmetic check, the netted-energy cross-check, the
 dual-period-statement scoping proof, the strict-floor, package-fraction and baseline-floor
 consistency checks, the minimum-bill-provision and true-up-year-grouping checks against
-the real corpus, the NBC-on-gross re-derivation, and the byte-identical regeneration case)
+the real corpus, the NBC bill-quantity cross-check, and the byte-identical regeneration case)
 need the private bill PDF corpus and skip by name (`SkipCase`) when it is absent, matching
 `test_bill_decomposition.py`'s own guard.
 

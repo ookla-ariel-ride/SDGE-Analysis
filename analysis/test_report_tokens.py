@@ -4247,9 +4247,9 @@ def case_s2_verdict_refuses_to_time_exports_it_cannot_rebuild():
 
 
 # The §8 tokens keep export fraction separate from export timing. Their
-# purchase deferral must also survive regeneration: original approval,
-# connection, settlement, and installed price remain missing inputs. A known
-# cap or automatic loss of existing grandfathering cannot support a blanket no.
+# purchase deferral must also survive regeneration: connection, settlement,
+# and installed price remain missing inputs. Original capacity affects the
+# percentage-based allowance, not every small-addition screening decision.
 def _s8_scaffolds():
     """{token: the sentence it must render}, from the helpers the tokens read."""
     exp_pct = rt._all_hours_export_pct(rt.CTX)
@@ -4257,11 +4257,11 @@ def _s8_scaffolds():
     window = rt._cheap_window()
     return {
         "S8_VERDICT_SHORT": (
-            "Defer expansion pending original approval, connection, settlement, and installed "
+            "Defer rooftop expansion pending connection, settlement, and installed "
             f"price; keep healthy hardware — {exp_pct}% of production is exported, with "
             f"{rt._grandfathering_bracket('S8_VERDICT_SHORT')} of NEM 2.0 grandfathering"),
         "EXPANSION_VERDICT_SHORT": (
-            "Defer purchase pending original approval, connection, settlement, and installed "
+            "Defer purchase pending connection, settlement, and installed "
             f"price — {midday_pct}% of the year's exports leave in the {window} window"),
     }
 
@@ -4488,10 +4488,10 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
          AGAINST THE ENGINE, not argued from the constants: one more exported
          kWh in a netting cell moves rates.bill_nem() by exactly energy(), and
          in a surplus cell by exactly credit(). allin() = energy() + NBC is
-         what a GROSS import costs, and bill_nem_monthly() bills NBC on gross
-         imports before any netting, so an export never avoids it. Pricing an
-         export at allin() re-commits the NBC-netting error CLAUDE.md section 9
-         records;
+         what a GROSS import costs in the model. bill_nem_monthly() bills NBC
+         on gross imports before energy netting, so an export never avoids it
+         in this engine. This check pins the model convention; it does not
+         establish tariff-correct meter-interval netting;
       4. NEITHER END IS PUBLISHED AS THE VALUE. index.html must state both, and
          must say the settlement lies between them. A page that names one and
          drops the other, or names both and calls either one the answer, fails
@@ -4540,8 +4540,9 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
         "the high end of the published range is not the engine's own netting value")
     assert abs(netting_delta - rt.R.allin("S", "sop")) > 1e-6, (
         "an exported kWh in a netting cell is worth rates.allin() to this engine, so "
-        "NBC is being netted away by an export; CLAUDE.md section 9 records that "
-        "defect and bill_nem_monthly() is supposed to bill NBC on GROSS imports")
+        "NBC is netted away by an export, inconsistent with the current "
+        "gross-import convention in bill_nem_monthly(); tariff reconciliation "
+        "must update the model and its bounds together")
     surplus_frame = frame.copy()
     surplus_frame.loc[0, "Generation"] = 200.0
     bumped = surplus_frame.copy()

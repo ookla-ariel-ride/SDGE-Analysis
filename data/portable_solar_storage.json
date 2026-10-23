@@ -2,7 +2,7 @@
   "schema_version": 1,
   "issue": 304,
   "study_date": "2026-10-22",
-  "status": "exploratory; no purchase or household-wiring approval",
+  "status": "exploratory; no purchase recommendation or authorization for household wiring",
   "provenance": {
     "input_sha256": {
       "usage.csv": "c86bec4088e8739198402d9db5989156c2f7561aa2e6a4eaab73b8e591a450e8",
@@ -10,7 +10,7 @@
       "samB.csv": "98dd23beb5f50f2996c1c5a01ff59243bf3a333fb748bad01031f19a0353b094"
     },
     "public_evidence_sha256": {
-      "analysis/rates.py": "22a24dc3e3edef224e9725caf9b417ab41927265f68f2576eb144a831035fd8f",
+      "analysis/rates.py": "cdebce2656d00a29ff9d9575a7d40ba9bfe7c677eb7b1df26ba3f73c481e804c",
       "data/threeway_production_validation.csv": "56f24b5c8ab2fb98ebe2829c68250f88d2a400566524b261fed4a69ebddec0eb",
       "data/enphase_daily_production.csv": "51f3c0feedac839cb41264598c5877a322483f402d8366e00703af7ca7c74faf",
       "data/battery_sizing_curve.json": "b71574fdeaf2266e37ca7a833d1306d59e4680fbcb04590b2026979afdf93fcb"
@@ -420,7 +420,7 @@
     "economics": "5% real discount, 1% annual savings decline, zero real tariff escalation; no replacement/subscription/maintenance cost assumed because quote unknown; ceilings before those costs",
     "equipment_price": "$1399 per 1.92kWh unit from supplied issue snapshot, observation date 2026-10-22; equipment-only marginal illustration, not installed price or available-stock claim",
     "backup": "constant-load conditional runtime only; known product/circuit surge limits absent; no existing Enphase outage production or solar recharge assumed",
-    "bill_limitations": "calendar-month model differs from statement windows; frozen rate vintage differs from historical bills; documented historical residual remains unexplained. Absolute modeled bills are not actual bills; use deltas.",
+    "bill_limitations": "calendar-month model differs from statement windows; frozen rate vintage differs from historical bills; documented historical residual remains unexplained. NBC uses gross imported energy, while NEM-ST specifies consumption net of exports within each metered interval; meter-channel/billing-interval reconciliation remains open. Absolute modeled bills are not actual bills; deltas retain this NBC convention.",
     "fixed_costs": "electric daily charge unchanged; gas unchanged and excluded from electric model",
     "incentives": "zero homeowner federal25D credit; other incentive/VPP eligibility and monetary backup value unknown"
   },
@@ -48633,7 +48633,7 @@
     },
     "post_nem_adoption": {
       "annual_savings_usd": null,
-      "reason": "Future post-grandfathering tariff and supported configuration unknown; NEM2 engine cannot price NEM3 by changing constants."
+      "reason": "Future post-grandfathering tariff and supported configuration unknown; NEM2 engine cannot price NEM3 by changing constants. A separately modeled present-NBT counterfactual could support sensitivity analysis."
     },
     "measured_standby_and_controls": {
       "annual_savings_usd": null,
@@ -48647,11 +48647,11 @@
   "unresolved_inputs": [
     "exact U.S. certification and connection eligibility",
     "NEM/CEA incremental and displaced rooftop export treatment",
-    "original utility-approved capacity and NEM-preservation evidence",
+    "conventional expansion only: original capacity for the percentage limit, prior expansion and onsite-load evidence; not SB 868 eligibility conditions",
     "phase/CT layout and controllable circuit coverage",
     "site placement/shading and permitted mounting",
     "full installed quote with panels/mounts/wiring/transfer/permits/tax/labor/subscriptions/replacement",
     "measured standby, usable capacity, supported reserve/charge control and warranty throughput",
-    "2030 compliance path and cost; future tariff after NEM grandfathering"
+    "2030 transition and future tariff scenarios; no known extra approval or compliance cost established"
   ]
 }
