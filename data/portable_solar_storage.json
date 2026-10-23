@@ -10,7 +10,7 @@
       "samB.csv": "98dd23beb5f50f2996c1c5a01ff59243bf3a333fb748bad01031f19a0353b094"
     },
     "public_evidence_sha256": {
-      "analysis/rates.py": "6c43dc342b77dfa756573eb751b5f9481ca791ea20560f0a63e3eaada15c2d38",
+      "analysis/rates.py": "5db04d27ff6a960a7c0319539de1eb526cca3b3ae615a6c3922028bcaf4a3b2d",
       "data/threeway_production_validation.csv": "56f24b5c8ab2fb98ebe2829c68250f88d2a400566524b261fed4a69ebddec0eb",
       "data/enphase_daily_production.csv": "51f3c0feedac839cb41264598c5877a322483f402d8366e00703af7ca7c74faf",
       "data/battery_sizing_curve.json": "0b2fb897796de511dcd43b136a6da52ad2cf294a109caedb06aa397a1025c68f"
