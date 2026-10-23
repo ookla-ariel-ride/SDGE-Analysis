@@ -2417,8 +2417,9 @@ fi
 # $SRC reaches the child through the ENVIRONMENT rather than being interpolated
 # into the -c program: a source path containing a quote, a backslash or a
 # newline would otherwise be read as Python source instead of as data.
+# -B keeps this read-only probe from creating bytecode in the source tree.
 if ! HAS_GAS=$(PYTHONPATH="$SRC/analysis" STAGE_SRC_ROOT="$SRC" \
-  "$SRC/.venv/bin/python" -c \
+  "$SRC/.venv/bin/python" -B -c \
   "import os, pathlib, household as hh
 _src = pathlib.Path(os.environ['STAGE_SRC_ROOT'])
 hh.ROOT = _src
