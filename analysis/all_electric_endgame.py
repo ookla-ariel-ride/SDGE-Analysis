@@ -94,23 +94,16 @@ gets priced twice. `complete_transition_payback` quantifies and discloses this g
 (`tier_interaction_overstatement_usd`) rather than silently presenting the summed figure as
 exact -- see that field's own note for the real-data magnitude.
 
-The SAME non-additivity problem exists on the ELECTRIC side, independently of the gas-side
-fix above, and was missed by the first version of this correction (Codex adversarial review,
-issue #20 round 2, Finding 1): `wh_electric_cost_scenarios()` and `heat_pump_conversion.
-electric_cost_scenarios()` each net their OWN added load against the household's FULL solar
-Generation before billing, so two independently-computed electric-cost increases both let
-their own conversion claim first dibs on the SAME exported kWh in the SAME interval, which
-cannot really happen once both loads are real -- `rates.bill_nem()`'s own per-(month, TOU
-bucket) netting is not additive across two separately-billed scenarios either. Fixed by
-`joint_electric_cost_scenario()`: the furnace's and the water heater's own added-load series
-(each built by the SAME functions their independent scenarios already use, `heat_pump_
-conversion.build_hp_load_series` / `build_wh_load_series`, not reimplemented) are SUMMED into
-one combined series, netted against solar ONCE, and re-billed ONCE -- the correct joint
-electric-cost delta for the complete-transition scenario. `electric_interaction_
-overstatement()` quantifies the gap between that joint figure and the naive sum of the two
-independent figures, exactly mirroring `tier_interaction_overstatement()`'s own role on the
-gas side, and `complete_transition_payback` nets BOTH corrections out of its own headline
-combined savings, not just the gas one.
+The electric side needs one joint rebill of the combined added-load series.
+`joint_electric_cost_scenario()` sums the series from the same furnace and water-heater
+placement functions used by the independent scenarios, absorbs solar once, and bills once.
+Physical overlap alone does not imply a positive dollar interaction: billing is additive
+while monthly energy buckets and physical interval nets remain in the same linear regions.
+For nonnegative added loads, convex monthly energy and interval NBC charges make the joint
+increase at least the independent sum before display rounding. A strict gap needs a zero
+boundary crossing in monthly energy or physical interval NBC. `electric_interaction_
+overstatement()` quantifies that gap, and `complete_transition_payback` subtracts both
+this electric correction and the separate gas-tier correction from combined savings.
 
 Electric load placement mirrors `heat_pump_conversion.build_hp_load_series` /
 `electric_cost_scenarios` exactly (absorb existing solar first, spill into new grid import
@@ -145,10 +138,9 @@ consequence of the Finding-1 pricing fix): summing each step's own INDEPENDENTLY
 marginal GAS savings overstates the true joint savings whenever both reach into the same
 period's nonbaseline tier, since that shared marginal region gets priced twice (`tier_
 interaction_overstatement()`); summing each step's own INDEPENDENTLY-rebilled ELECTRIC cost
-increase similarly understates the true joint electric cost, since both independent rebills
-let their own added load claim the SAME exported solar kWh (`electric_interaction_
-overstatement()`, backed by one joint rebill of the combined added-load series, `joint_
-electric_cost_scenario()`). Both corrections are quantified and netted out of the headline
+increase can understate the true joint electric cost when a monthly-energy or interval-NBC
+zero boundary is crossed (`electric_interaction_overstatement()`, backed by one joint
+rebill of the combined added-load series, `joint_electric_cost_scenario()`). Both corrections are quantified and netted out of the headline
 combined savings, never left silently in it (CLAUDE.md section 9). Every water-heater-derived
 payback in this section (this one and `final_step_alone_payback` when the water heater is
 last) is the PURE 100%-floor-is-water-heater basis and carries a `not_verified_caveat`
@@ -981,21 +973,12 @@ def joint_electric_cost_scenario(d, furnace_iso, furnace_cop, ann_wh_kwh):
     `sequencing_and_paybacks`'s own complete-transition scenario (Finding 1,
     Codex adversarial review, issue #20 round 2).
 
-    `wh_electric_cost_scenarios()` and `heat_pump_conversion.electric_cost_
-    scenarios()` each independently net their OWN added load against the
-    household's FULL solar Generation (CLAUDE.md section 1b) before
-    billing. Summing their two independently-computed electric-cost
-    increases silently lets BOTH conversions claim the SAME exported solar
-    kWh in the SAME interval -- physically impossible once both loads are
-    real, and `rates.bill_nem()`'s own per-(month, TOU bucket) NEM netting
-    is not additive across two separately-billed scenarios either. This
-    function builds each conversion's own uniform-distribution added-load
-    series with the SAME functions their independent scenarios already use
-    (`heat_pump_conversion.build_hp_load_series` for the furnace, `build_wh_
-    load_series` for the water heater -- not reimplemented), SUMS them into
-    ONE combined series, then runs the SAME solar-absorb-first-then-grid-
-    import netting and `rates.bill_nem()` re-bill ONCE against that combined
-    series.
+    Independently billed loads can count the same physical export absorption twice.
+    That physical overlap does not alone imply a dollar gap: billing remains additive
+    inside fixed-sign monthly-energy and interval-NBC regions. This function sums
+    the added-load series from `heat_pump_conversion.build_hp_load_series` and
+    `build_wh_load_series`, absorbs solar once, and calls `rates.bill_nem()` once.
+    It therefore preserves both physical allocation and any billing-boundary interaction.
 
     Neither `build_hp_load_series()` nor `build_wh_load_series()` enforces
     a per-interval kW/circuit-amperage cap -- each only allocates a day's
@@ -1053,24 +1036,16 @@ def electric_interaction_overstatement(wh_electric_increase_usd, furnace_electri
     overstatement()`'s gas-side correction; same CLAUDE.md section 9
     requirement, "one pipeline per package figure").
 
-    `rates.bill_nem()`'s own NEM netting absorbs added load against that
-    SAME interval's solar Generation first (CLAUDE.md section 1b); when the
-    water heater's and furnace's added loads are rebilled independently
-    (`wh_electric_cost_scenarios`, `heat_pump_conversion.electric_cost_
-    scenarios`), each one separately gets first claim on the household's
-    FULL solar export in every interval -- both cannot actually do that at
-    once. `joint_electric_cost_scenario()`'s own combined rebill is
-    therefore always >= the sum of the two independent electric_cost_
-    increase_usd figures: less solar is really available to each load once
-    both draw on the same panel, so the true combined bill rises by at
-    least as much as the two independent estimates suggest. This is a
-    structural, not a coincidental, result: for any nonnegative solar-
-    export quantity g and any two nonnegative added loads a, b,
-    min(g, a) + min(g, b) >= min(g, a + b) (the "how much of a fixed
-    export can a load absorb" function is concave and therefore
-    subadditive), and rates.bill_nem() prices additional grid import at a
-    non-decreasing marginal rate, so more combined import never bills for
-    less."""
+    For a monthly energy bucket with net n, cost is
+    energy * max(n, 0) - credit * max(-n, 0). Physical interval NBC adds
+    NBC * max(interval_net, 0). Both are convex because energy >= credit
+    and NBC >= 0. For nonnegative added loads a and b, each convex cost F
+    satisfies F(n+a+b)-F(n) >= F(n+a)-F(n)+F(n+b)-F(n).
+    The full-precision joint increase is therefore at least the independent
+    sum. Equality holds inside linear regions; a strict gap needs a monthly
+    energy or physical interval NBC zero boundary. Physical overlap alone
+    does not establish a positive dollar interaction. Displayed inputs and
+    this returned difference are rounded to cents."""
     independent_sum = round(wh_electric_increase_usd + furnace_electric_increase_usd, 2)
     overstatement = round(joint_electric_increase_usd - independent_sum, 2)
     return {
@@ -1079,16 +1054,12 @@ def electric_interaction_overstatement(wh_electric_increase_usd, furnace_electri
         "independent_sum_electric_increase_usd": independent_sum,
         "joint_electric_increase_usd": joint_electric_increase_usd,
         "overstatement_usd": overstatement,
-        "note": ("Positive means summing each conversion's own "
-                 "independently-rebilled electric-cost increase "
-                 "UNDERSTATES the true combined electric cost (equivalently "
-                 "OVERSTATES combined net savings), because each "
-                 "independent rebill lets that conversion's own added load "
-                 "claim first dibs on the household's FULL solar export in "
-                 "every interval -- both cannot do that simultaneously. "
-                 "Structurally >= 0 whenever the two loads' own placements "
-                 "ever compete for the same interval's export; see this "
-                 "function's own docstring for why."),
+        "note": ("Positive means the independent electric-cost increases understate "
+                 "the joint increase and overstate combined savings. Convex monthly "
+                 "energy and physical interval NBC charges give a nonnegative "
+                 "interaction before display rounding. A strict gap needs a zero "
+                 "boundary; shared physical export absorption alone is insufficient. "
+                 "The combined loads are physically netted and rebilled once."),
     }
 
 
@@ -1982,10 +1953,9 @@ def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
     return value, Finding 1, Codex adversarial review, issue #20 round 2)
     corrects the SAME combined savings for the mirror-image problem on the
     ELECTRIC side: summing the water heater's and the furnace's own
-    INDEPENDENTLY-rebilled electric-cost increases UNDERSTATES the true
-    combined electric cost, since both independent rebills let their own
-    added load claim the SAME exported solar kWh -- which cannot really
-    happen once both loads are real. Both corrections are applied here,
+    INDEPENDENTLY-rebilled electric-cost increases can UNDERSTATE the true
+    combined electric cost when the added loads cross a monthly-energy or
+    physical interval NBC zero boundary. Physical overlap alone is insufficient. Both corrections are applied here,
     never left as a footnote next to an uncorrected headline number."""
     fixed_charge_release_usd = 0.0 if fixed_charge_verdict_is_zero else None
     if fixed_charge_release_usd is None:
@@ -2075,10 +2045,9 @@ def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
                 "correction -- see electric_interaction_overstatement() "
                 "(Finding 1, Codex adversarial review, issue #20 round 2): "
                 "summing each step's own independently-rebilled electric-"
-                "cost increase understates the true combined electric "
-                "cost, since both conversions' independent rebills let "
-                "their own added load claim the SAME exported solar kWh, "
-                "which cannot really happen once both loads are real."),
+                "cost increase can understate the joint cost across monthly-energy "
+                "or physical interval NBC zero boundaries. Physical overlap "
+                "alone does not imply a positive dollar interaction."),
             **complete_transition,
         },
         "final_step_alone_payback": {

@@ -114,7 +114,7 @@
      state in both sections IS tr.win, which carries no badge to be wrong. */
   .pill{display:inline-block;font-family:var(--mono);font-size:.64rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;padding:2px 8px;border-radius:3px;border:1.5px solid;vertical-align:middle}
   .pill.g{color:var(--sop);border-color:var(--sop)} .pill.y{color:var(--offpeak);border-color:var(--offpeak)} .pill.r{color:var(--onpeak);border-color:var(--onpeak)}
-  .chartbox{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin:16px 0}
+  .chartbox{position:relative;height:clamp(320px,40vw,420px);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin:16px 0}
   .note{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--offpeak);padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0;font-size:.93rem}
   .rec{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--sop);padding:13px 18px;border-radius:0 8px 8px 0;margin:14px 0}
   .purpose{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--sop);padding:13px 18px;border-radius:0 8px 8px 0;margin:14px 0;font-size:.95rem}
@@ -360,10 +360,13 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <p>The charts compare grid flows by hour, season, and month. <!-- NOTE: label battery profiles as simulated, and distinguish measured equipment from proposed equipment. --></p>
 <p class="small"><!-- TODO: which data feeds the charts (meter vs inverter-platform). Label battery profiles as simulated, and distinguish measured equipment from proposed equipment. --></p>
 <div class="chartbox"><canvas id="hourly" height="110"></canvas></div>
+<p class="small">{{CHART_TITLE_HOURLY}}.</p>
 <div class="chartbox"><canvas id="battery" height="110"></canvas></div>
-<p class="small"><!-- TODO: battery-chart caption — explain what the dispatch policy does to the grid profile, on-peak import reduction percentages for each config, and any deliberately unserved load (e.g. EV spillover awaiting the free schedule fix). --></p>
+<p class="small"><!-- TODO: battery-chart caption — carry {{CHART_TITLE_BATTERY}} as the derived finding; explain what the dispatch policy does to the grid profile, on-peak import reduction percentages for each config, and any deliberately unserved load (e.g. EV spillover awaiting the free schedule fix). --></p>
 <div class="chartbox"><canvas id="monthly" height="110"></canvas></div>
+<p class="small">Asterisks mark partial months. Costs use the modeled {{BEST_PLAN}} tariff.</p>
 <div class="chartbox"><canvas id="periods" height="90"></canvas></div>
+<p class="small">Super off-peak accounts for {{SOP_IMPORT_SHARE_PCT}}% of imports, off-peak {{OFFPEAK_IMPORT_SHARE_PCT}}%, and {{PEAK_WINDOW}} on-peak {{ONPEAK_IMPORT_SHARE_PCT}}%. {{CHART_TITLE_PERIODS}}.</p>
 <p>These four load patterns overlap. Use the integrated package results in §7 for savings; do not add the examples below together:</p>
 <ul>
 <li><!-- TODO behavior 1: large loads in the on-peak window — kWh/yr and $ at stake. --></li>
@@ -389,7 +392,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </div>
 <div>
 <h3>Dispatch policy: price-aware saves more in the billing model <span class="pill y">modeled</span></h3>
-<p><!-- TODO: the stored-kWh cost from solar surplus ({{STORED_KWH_COST_SOLAR}}, averaged over ALL the surplus this dispatch stores) vs the midday cell alone ({{STORED_KWH_COST_SOLAR_MIDDAY}}, which is only {{STORED_KWH_MIDDAY_SHARE}} of it -- say which is which, they are not interchangeable) vs grid top-up ({{STORED_KWH_COST_GRID}}), the import prices it competes against by window, and why the economically correct policy is price-aware rather than evening-only. --></p>
+<p><!-- TODO: the stored-kWh cost from solar surplus ({{STORED_KWH_COST_SOLAR}}, averaged over ALL the surplus this dispatch stores) vs the midday cell alone ({{STORED_KWH_COST_SOLAR_MIDDAY}}, which is only {{STORED_KWH_MIDDAY_SHARE}} of it -- say which is which, they are not interchangeable) vs grid top-up ({{STORED_KWH_COST_GRID}}), the import prices it competes against by window, and why the modeled price-aware policy differs from evening-only. Describe the conservative (energy + NBC) / RTE finite charge bound, the minimum eligible credit floor and maximum eligible all-in best reference. State that the ledger updates running monthly positions and prices finite monthly-energy and physical interval NBC changes separately. Lot comparisons describe decision-time choices, not guaranteed final settled lot profit; keep whole-stream counterfactual reconciliation separate. --></p>
 <p><!-- TODO: deliberate exclusions (e.g. EV-spillover intervals the behavior fix moves for free) and why the battery does not serve them. Describe threshold-based EV classification as a model assumption, not proof of appliance identity. --></p>
 <table>
 <thead><tr><th>Dispatch policy</th><th>1 × {{BATTERY_MODEL}} ({{BATTERY_KWH}} kWh)</th><th>{{BATTERY_EXPANDED_MODEL}} ({{BATTERY_EXPANDED_KWH}} kWh)</th></tr></thead>
@@ -546,7 +549,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <p><!-- TODO: annual therms, seasonal shape, heating/non-heating split, actual annual gas $ ({{ACTUAL_ANNUAL_GAS_BILL}}), combined household energy total. --></p>
 
 <h3>Should you electrify? {{ELECTRIFICATION_VERDICT_SHORT}}</h3>
-<p><!-- TODO: the appliance-by-appliance electrification math. EVERY water-heater figure here rests on an assumption about this household's gas appliance mix that was never verified, so the caveat is not optional: lead the whole passage with it ({{HPWH_SHARE_CAVEAT}}) and do NOT assert a definitive cost-effective sequence — {{ELECTRIFICATION_SEQUENCE}} states the order together with the share at which it reverses, and must be carried as a conditional, not a recommendation. Then the figures, each with its own qualifier: the water heater at {{HPWH_INSTALL_COST}} — {{HPWH_COST_BASIS}} — for {{HPWH_NET_SAVINGS}}, a {{HPWH_PAYBACK}} payback that moves to {{HPWH_PAYBACK_SENSITIVITY}} across the illustrative share scenarios, on a gas saving that is itself {{HPWH_SAVINGS_BOUND}}; the furnace at {{HEAT_PUMP_INSTALL_COST}} — {{HEAT_PUMP_COST_BASIS}} — for {{HEAT_PUMP_PAYBACK}}; both together, {{ELECTRIFICATION_COMBINED_PAYBACK}}, which inherits the same unverified assumption — and which is NOT a confirmed gas-meter removal: {{ELECTRIFICATION_METER_REMOVAL_CAVEAT}}. State what incentives are actually claimable and when that was checked ({{ELECTRIFICATION_INCENTIVES}}). Close on replace-on-failure, and price it with the branch that actually prices it: at the moment the air conditioner needs replacing anyway, the furnace conversion costs only the difference, {{HEAT_PUMP_MARGINAL_INSTALL_COST}} for a {{HEAT_PUMP_MARGINAL_PAYBACK}} payback, against {{HEAT_PUMP_INSTALL_COST}} / {{HEAT_PUMP_PAYBACK}} standalone. That gap IS the argument for waiting rather than acting now — make it explicitly, and do not support the recommendation with the standalone figures. --></p>
+<p><!-- TODO: the appliance-by-appliance electrification math. EVERY water-heater figure here rests on an assumption about this household's gas appliance mix that was never verified, so the caveat is not optional: lead the whole passage with it ({{HPWH_SHARE_CAVEAT}}) and do NOT assert a definitive cost-effective sequence — {{ELECTRIFICATION_SEQUENCE}} states the order together with the share at which it reverses, and must be carried as a conditional, not a recommendation. Then the figures, each with its own qualifier: the water heater at {{HPWH_INSTALL_COST}} — {{HPWH_COST_BASIS}} — for {{HPWH_NET_SAVINGS}}, a {{HPWH_PAYBACK}} payback that moves to {{HPWH_PAYBACK_SENSITIVITY}} across the illustrative share scenarios, on a gas saving that is itself {{HPWH_SAVINGS_BOUND}}; the furnace at {{HEAT_PUMP_INSTALL_COST}} — {{HEAT_PUMP_COST_BASIS}} — for {{HEAT_PUMP_PAYBACK}}; both together, {{ELECTRIFICATION_COMBINED_PAYBACK}}, which inherits the same unverified assumption — and which is NOT a confirmed gas-meter removal: {{ELECTRIFICATION_METER_REMOVAL_CAVEAT}}. Explain that combined electric costs come from one joint physical allocation and rebill. Convex monthly-energy and physical interval NBC charges give a nonnegative interaction before display rounding; strict dollar interaction needs a zero boundary, not physical solar overlap alone. State what incentives are actually claimable and when that was checked ({{ELECTRIFICATION_INCENTIVES}}). Close on replace-on-failure, and price it with the branch that actually prices it: at the moment the air conditioner needs replacing anyway, the furnace conversion costs only the difference, {{HEAT_PUMP_MARGINAL_INSTALL_COST}} for a {{HEAT_PUMP_MARGINAL_PAYBACK}} payback, against {{HEAT_PUMP_INSTALL_COST}} / {{HEAT_PUMP_PAYBACK}} standalone. That gap IS the argument for waiting rather than acting now — make it explicitly, and do not support the recommendation with the standalone figures. --></p>
 <p><!-- TODO: what the gas bills show about fixed vs volumetric charges and what that means for eventually closing the gas account. --></p>
 
 <h2 id="s11">11 · Lifetime value: {{S11_VERDICT_SHORT}}</h2>
@@ -586,7 +589,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <p>Short workups pricing the context around everything above: when grid power is cleanest, what NEM grandfathering is worth, how rate escalation moves battery payback, what the always-on floor is made of, and what a single kWh costs hour by hour.</p>
 <h3>Grid-carbon timing <span class="pill y">modeled · {{CARBON_SAMPLE_DESCRIPTION}}</span></h3>
 <div class="chartbox"><canvas id="carbon" height="110"></canvas></div>
-<p><!-- TODO: overnight vs midday grid CO2 intensity from grid-operator data; the household's current import emissions; the emissions swing from retiming flexible load; the price-and-carbon alignment (or tension) of the cheap window; sampling caveats. --></p>
+<p><!-- TODO: overnight vs midday grid CO2 intensity from grid-operator data ({{CHART_TITLE_CARBON}}); the household's current import emissions; the emissions swing from retiming flexible load; the price-and-carbon alignment (or tension) of the cheap window; sampling caveats. --></p>
 <h3>What NEM 2.0 grandfathering is worth: {{NEM_GRANDFATHER_VALUE_RANGE}}/yr <span class="pill y">modeled</span></h3>
 <p><!-- TODO: re-bill the year with successor-tariff export credits vs current NEM netting; the annual delta is conditional on the stated export components and tariff treatment of the proposed addition. --></p>
 <h3>Battery payback vs rate escalation <span class="pill y">modeled</span></h3>
@@ -604,7 +607,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
      difference between charging and discharging value, so level and spread need separate checks. State the corpus behind the gap
      (priced cells, billing periods, statements, date range) from data/tou_spread.json. --></p>
 <div class="chartbox"><canvas id="spread" height="110"></canvas></div>
-<p class="small"><!-- TODO: caption — one point per rate segment, dated at the segment midpoint;
+<p class="small"><!-- TODO: caption — carry {{CHART_TITLE_SPREAD}} as the derived finding; one point per rate segment, dated at the segment midpoint;
      what the dashed spans mean (pre-structural-break, excluded from the reported fit). --></p>
 <p><!-- TODO: per season, EITHER the surviving trend (escalation %/yr, 95% CI, r², span in days,
      distinct rate LEVELS, %/yr) OR "not determined" with the reason. Three rules decide it, all of
@@ -720,6 +723,8 @@ const V=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()
 const A=(hex,a)=>{const h=hex.replace('#','');return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${a})`};
 const PAL={ink:V('--ink'),sub:V('--sub'),line:V('--line'),on:V('--onpeak'),off:V('--offpeak'),sop:V('--sop'),solar:V('--solar')};
 Chart.defaults.color=PAL.sub; Chart.defaults.borderColor=PAL.line;
+Chart.defaults.maintainAspectRatio=false;
+Chart.defaults.animation=false;
 Chart.defaults.font.family='"IBM Plex Mono",ui-monospace,monospace'; Chart.defaults.font.size=11;
 // Signature: shade the tariff's on-peak window on every time-axis chart.
 // TARIFF DATA, not design: ONPEAK_START/ONPEAK_END are the tariff's on-peak hours
@@ -736,26 +741,26 @@ new Chart(document.getElementById('hourly'),{type:'line',data:{labels:hrs,datase
  {label:'Summer solar export (avg kW)',data:D.hourlyS_exp,borderColor:PAL.solar,borderDash:[6,3],tension:.3},
  {label:'Winter import (avg kW)',data:D.hourlyW_imp,borderColor:PAL.sub,backgroundColor:A(PAL.sub,.08),fill:true,tension:.3},
  {label:'Winter solar export (avg kW)',data:D.hourlyW_exp,borderColor:PAL.sop,borderDash:[6,3],tension:.3}]},
- // Title should state the finding, not just the axis — e.g. "Average demand by hour — the overnight charging block, and the evening peak inside the expensive window".
- options:{plugins:{title:{display:true,text:'{{CHART_TITLE_HOURLY}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'avg kW'}}}},plugins:[onpeakBand]});
+ // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
+ options:{plugins:{title:{display:true,text:'Hourly grid flows',color:PAL.ink}},scales:{y:{title:{display:true,text:'avg kW'}}}},plugins:[onpeakBand]});
 new Chart(document.getElementById('battery'),{type:'line',data:{labels:hrs,datasets:[
  {label:'Grid import now (summer, avg kW)',data:D.bat_now_S,borderColor:PAL.on,backgroundColor:A(PAL.on,.10),fill:true,tension:.3},
  {label:'With 1 × {{BATTERY_MODEL}}',data:D.bat_pw3_S,borderColor:PAL.sop,borderWidth:2,tension:.3},
  {label:'With {{BATTERY_EXPANDED_MODEL}} ({{BATTERY_EXPANDED_KWH}} kWh)',data:D.bat_pw3x_S,borderColor:PAL.off,borderDash:[5,3],tension:.3}]},
- // e.g. "Projected grid import with a battery — the evening peak (red) is erased; overnight rises slightly as the battery tops up on cheap power".
- options:{plugins:{title:{display:true,text:'{{CHART_TITLE_BATTERY}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'grid import avg kW'}}}},plugins:[onpeakBand]});
+ // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
+ options:{plugins:{title:{display:true,text:'Summer grid imports',color:PAL.ink}},scales:{y:{title:{display:true,text:'grid import avg kW'}}}},plugins:[onpeakBand]});
 new Chart(document.getElementById('monthly'),{data:{labels:D.mLabels,datasets:[
  {type:'bar',label:'Grid imports (kWh)',data:D.mImp,backgroundColor:A(PAL.sub,.55)},
  {type:'bar',label:'Solar exports (kWh)',data:D.mExp,backgroundColor:A(PAL.solar,.75)},
  {type:'line',label:'Modeled energy cost ($, {{BEST_PLAN}})',data:D.mCost,borderColor:PAL.on,yAxisID:'y2',tension:.3}]},
- options:{plugins:{title:{display:true,text:'Monthly energy flows and modeled cost (* partial months)',color:PAL.ink}},
+ options:{plugins:{title:{display:true,text:'Monthly energy and cost',color:PAL.ink}},
  scales:{y:{title:{display:true,text:'kWh'}},y2:{position:'right',grid:{display:false},title:{display:true,text:'$'}}}}});
 new Chart(document.getElementById('periods'),{type:'bar',data:{
- labels:['Super off-peak ({{SOP_IMPORT_SHARE_PCT}}% of imports)','Off-peak ({{OFFPEAK_IMPORT_SHARE_PCT}}%)','On-peak {{PEAK_WINDOW}} ({{ONPEAK_IMPORT_SHARE_PCT}}%)'],
+ labels:['Super off-peak','Off-peak','On-peak'],
  datasets:[{label:'Annual import kWh',data:[/* 3 values: kWh by TOU period */],backgroundColor:A(PAL.sub,.55)},
   {label:'Annual import cost $',data:[/* 3 values: gross import $ by TOU period */],backgroundColor:A(PAL.on,.75)}]},
- // e.g. "X% of imports happen on-peak, driving Y% of gross import cost".
- options:{indexAxis:'y',plugins:{title:{display:true,text:'{{CHART_TITLE_PERIODS}}',color:PAL.ink}}}});
+ // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
+ options:{indexAxis:'y',plugins:{title:{display:true,text:'Imports by TOU period',color:PAL.ink}}}});
 // LAZY CHART REGISTRY — keep this generic; do not special-case a single canvas.
 // A Chart.js canvas built while any ancestor <details> is closed measures 0x0 and never
 // recovers, so every canvas inside a collapsible section (the advanced tier, or any
@@ -778,9 +783,9 @@ const runLazyCharts=()=>{for(const c of lazyCharts){
  if(el&&revealed(el)){c.build(el);c.built=true;}
 }};
 lazyChart('carbon',el=>new Chart(el,{type:'line',data:{labels:hrs,datasets:[
- {label:'Grid CO₂ intensity (annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3}]},
- // e.g. "Grid carbon by hour (real grid-operator data) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest".
- options:{plugins:{title:{display:true,text:'{{CHART_TITLE_CARBON}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]}));
+ {label:'Annual mean',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3}]},
+ // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
+ options:{plugins:{title:{display:true,text:'Grid carbon by hour',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]}));
 // onpeakBand is deliberately NOT applied below: this chart's x-axis is calendar dates, not
 // hours of the day, so a 4-9pm band would shade arbitrary dates. The shading rule in
 // CLAUDE.md §10 applies to the hour-axis charts.
@@ -789,8 +794,8 @@ lazyChart('spread',el=>new Chart(el,{type:'line',data:{labels:D.spLabels,dataset
   segment:{borderDash:c=>c.p1DataIndex<=D.spBreak.summer?[5,3]:undefined}},
  {label:'Winter on-peak − super-off-peak ($/kWh)',data:D.spWinter,borderColor:PAL.sub,spanGaps:true,tension:0,pointRadius:2,
   segment:{borderDash:c=>c.p1DataIndex<=D.spBreak.winter?[5,3]:undefined}}]},
- // e.g. "Delivery spread by rate segment — dashed spans precede each structural break".
- options:{plugins:{title:{display:true,text:'{{CHART_TITLE_SPREAD}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'$/kWh spread'}}}}}));
+ // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
+ options:{plugins:{title:{display:true,text:'Delivery rate spread',color:PAL.ink}},scales:{y:{title:{display:true,text:'$/kWh spread'}}}}}));
 document.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',runLazyCharts));
 runLazyCharts();
 

@@ -333,13 +333,14 @@ def case_missing_rate_cells_raise_naming_date_and_cell():
 
 
 def case_unsourceable_components_fail_closed():
-    """PCIA and NBC are not in any committed artifact; the CCA's own per-TOU
-    rates exist only as period totals; BSC exists only from the 10/1/25 period
+    """This API does not integrate the separate NBC and charged CCA artifacts;
+    PCIA is absent from its inputs; BSC exists only from the 10/1/25 period
     (new charge vs renamed line vs parser gap is OPEN — never a silent 0)."""
     rs = H.rates_on(dt.date(2025, 3, 10))
     _raises(rs.pcia, "PCIA", "not parsed")
     _raises(rs.nbc, "positive physical interval-net")
-    _raises(lambda: rs.cca_generation("winter", "on_peak"), "CCA")
+    _raises(lambda: rs.cca_generation("winter", "on_peak"),
+            "CCA", "data/cca_generation_rates.csv", "does not integrate")
     _raises(rs.bsc_per_day, "2025-03-10", "OPEN")
     got = H.rates_on(dt.date(2025, 10, 5)).bsc_per_day()
     assert abs(got - 21.42 / 27) < 1e-12, got
@@ -365,8 +366,8 @@ def case_generation_refuses_on_cca_dates_and_only_the_diagnostic_answers():
         assert rs.provider == "CCA"
         _raises(lambda r=rs, s=season: r.generation(s, "on_peak"),
                 f"generation/{season}/on_peak", str(day), period, "CCA", billed,
-                "COMPARISON", "not the tariff charged",
-                "generation_comparison_table")
+                "COMPARISON", "not the tariff charged", "data/cca_generation_rates.csv",
+                "does not integrate", "generation_comparison_table")
         # and the diagnostic answers, with the printed value
         assert rs.generation_comparison_table(season, "on_peak") == printed
     # the printed CCA comparison rate is NOT the same number as the delivery rate
@@ -1579,7 +1580,8 @@ def case_bill_nem_prices_bundled_dates_and_refuses_cca_ones():
                        ym=["2025-08"] * 2)
     for fn in (H.bill_nem, H.bill_nem_monthly):
         _raises(lambda f=fn: f(cca), "2025-08-01", "7/29/25 - 8/26/25", "CCA",
-                "comparison", "cca_generation", "delivery_only=True")
+                "comparison", "cca_generation", "delivery_only=True",
+                "data/cca_generation_rates.csv", "does not integrate")
     # the last bundled day still prices, the first CCA day does not
     last_bundled = frame.assign(dt=[pd.Timestamp("2024-12-26 17:00")] * 2,
                                seas=["W"] * 2, ym=["2024-12"] * 2)

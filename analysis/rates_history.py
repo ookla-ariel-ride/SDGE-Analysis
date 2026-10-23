@@ -35,9 +35,9 @@ WHAT SOURCES WHAT (requirement: name the artifact column behind each component)
         RateSet.generation_comparison_table(), whose only legitimate use is
         reconstructing PRINTED statement lines (the re-billing, holdout and
         CCA-gap checks say so in their own docstrings). The CCA's own per-TOU
-        rates appear only on the CCA pages, which parse_bills.py does not
-        extract, so RateSet.cca_generation() fails closed too: on a CCA date
-        this module has NO generation tariff to offer, by either name.
+        rates are committed separately in data/cca_generation_rates.csv by
+        cca_rate_extraction.py. This API does not integrate that source, so
+        RateSet.cca_generation() still fails closed on a CCA date.
 
         THE SAME BOUNDARY HOLDS AT EVERY OTHER EXIT, not just the single-cell
         accessor. The aggregations that hand out many cells at once —
@@ -55,9 +55,9 @@ WHAT SOURCES WHAT (requirement: name the artifact column behind each component)
           - current_vintage() returns VintageEntry objects with the same two
             value slots and the same authority field. On this corpus, which ends
             inside the CCA era, EVERY generation entry is comparison-only:
-            from bill evidence alone there is no current charged generation
-            tariff, and the function says so instead of returning the last
-            printed comparison number as one.
+            this API's input artifacts do not supply the charged CCA generation
+            tariff. The separate cca_generation_rates.csv owner does, but this
+            API does not integrate it or substitute a printed comparison.
           - data/rate_vintages.csv splits every generation span at the provider
             break and publishes the CCA side under a different section name
             (generation_printed_comparison), with rate_per_kwh EMPTY and the
@@ -641,8 +641,9 @@ def _load():
 # Delivery (UDC) is the charged tariff in both provider eras. Generation printed
 # on a bundled statement is also what SDG&E charged. Generation printed on a CCA
 # statement is SDG&E's bundled-generation (EECC) comparison table beside a bill
-# the CCA charged at rates no committed artifact carries — a number, but not a
-# tariff. Every aggregation in this module labels which of the two it is holding,
+# the CCA charged at different rates. data/cca_generation_rates.csv carries the
+# charged rates, but this API does not integrate that separate owner. Every
+# aggregation in this module labels which of the two it is holding,
 # so no caller can read the second as the first.
 CHARGED_TARIFF = "charged_tariff"
 COMPARISON_ONLY = "printed_comparison_only"
@@ -657,7 +658,8 @@ COMPARISON_SECTION = "generation_printed_comparison"
 _COMPARISON_NOTE = (
     "SDG&E's bundled-generation (EECC) COMPARISON printed beside a statement whose "
     "generation the CCA charged — NOT a tariff and NOT what was billed; the CCA's "
-    "own per-TOU rates are in no committed artifact (RateSet.generation and "
+    "own per-TOU rates are in data/cca_generation_rates.csv, which this API "
+    "does not integrate (RateSet.generation and "
     "RateSet.cca_generation both refuse here, and cca_generation_gap measures how "
     "far this printed table is from the charge actually billed)")
 
@@ -809,8 +811,8 @@ class RateSet:
         printed on a CCA statement is SDG&E's bundled-generation (EECC)
         comparison, not the tariff that was charged, so there is no charged
         generation rate for this module to return (cca_generation() refuses for
-        the complementary reason — the CCA's per-TOU rates are not in any
-        committed artifact). To reconstruct the PRINTED line instead of the
+        the complementary reason — this API does not integrate the charged
+        rates from data/cca_generation_rates.csv). To reconstruct the PRINTED line instead of the
         charged tariff, ask for that by name: generation_comparison_table()."""
         if self.provider == "CCA":
             billed = self._period["cca_total"]
@@ -822,9 +824,9 @@ class RateSet:
                 "(EECC) COMPARISON, not the tariff charged — the CCA charged "
                 + (f"${billed:.2f}" if billed else
                    "an amount bill_periods_electric.csv does not carry")
-                + " of generation for the period, and its per-TOU rates appear "
-                "only on the CCA bill pages, which parse_bills.py does not "
-                "extract (RateSet.cca_generation refuses for that reason; "
+                + " of generation for the period. Its charged per-TOU rates are in "
+                "data/cca_generation_rates.csv, which this API does not integrate "
+                "(RateSet.cca_generation refuses for that reason; "
                 "cca_generation_gap measures how far the printed table is from "
                 "the charge). Returning the printed comparison rate as the tariff "
                 "would be a plausible-looking wrong number, so this refuses. To "
@@ -839,8 +841,9 @@ class RateSet:
         On a BUNDLED date that is also what SDG&E charged, and generation()
         returns the same number. On a CCA date it is SDG&E's bundled-generation
         (EECC) comparison, printed for reference beside a bill whose generation
-        the CCA charged at rates no committed artifact carries: Σ kWh × these
-        rates does not reproduce the CCA charge, and cca_generation_gap()
+        the CCA charged at rates in data/cca_generation_rates.csv, a separate
+        owner this API does not integrate: Σ kWh × these comparison rates
+        does not reproduce the CCA charge, and cca_generation_gap()
         measures by how much (1/28/26-2/26/26 prints $116.09 against a $56.82
         charge). The only legitimate use is reconstructing PRINTED statement
         lines — which is what the re-billing, holdout and CCA-gap checks do, and
@@ -851,9 +854,9 @@ class RateSet:
     def cca_generation(self, season, tou_period):
         raise SystemExit(
             f"cca_generation/{season}/{tou_period} on {self.date}: the CCA's own "
-            "per-TOU rates appear only on the CCA bill pages, which parse_bills.py "
-            "does not extract — only the period total (bill_periods_electric."
-            "cca_generation) is committed. Not sourceable; refusing to guess.")
+            "per-TOU rates are in data/cca_generation_rates.csv, owned by "
+            "cca_rate_extraction.py. This historical-rate API does not integrate "
+            "that source. Refusing to substitute the printed comparison tariff.")
 
     def pcia(self):
         raise SystemExit("PCIA on " + str(self.date) + ": " + _ABSENT_PCIA_NBC.format(
@@ -1325,9 +1328,9 @@ def _refuse_cca_dates(frame, caller):
     delivery + generation is a real tariff only while SDG&E was the bundled
     provider. From 12/27/24 the generation TOU table on the statement is SDG&E's
     bundled-generation (EECC) COMPARISON, not the CEA rates that were charged;
-    the committed artifacts carry only the CCA period TOTAL
-    (bill_periods_electric.cca_generation), never per-TOU CCA rates, which is why
-    RateSet.cca_generation() also refuses. Also raises (via rates_on) on any date
+    this API reads the CCA period total (bill_periods_electric.cca_generation)
+    but does not integrate the charged per-TOU rates in the separate
+    data/cca_generation_rates.csv artifact. RateSet.cca_generation() also refuses. Also raises (via rates_on) on any date
     outside the corpus."""
     for day in sorted({d for d in frame["dt"].dt.date.unique()}):
         rs = rates_on(day)                              # off-corpus raises here
@@ -1337,10 +1340,11 @@ def _refuse_cca_dates(frame, caller):
                 f"{caller}: {day} falls in the CCA period {p['period']} (provider "
                 f"{rs.provider}) — the generation TOU table printed on a CCA "
                 "statement is SDG&E's bundled-generation comparison, not the CEA "
-                "tariff that was charged, and the committed artifacts carry only "
-                "that period's CCA generation TOTAL (bill_periods_electric."
-                f"cca_generation = ${p['cca_total']:.2f}), not per-TOU CCA rates "
-                "(RateSet.cca_generation refuses for the same reason). Adding "
+                "tariff that was charged. This API reads that period's CCA total "
+                f"(bill_periods_electric.cca_generation = ${p['cca_total']:.2f}) "
+                "but does not integrate the charged rates in "
+                "data/cca_generation_rates.csv (RateSet.cca_generation refuses "
+                "for the same reason). Adding "
                 "printed delivery + printed generation "
                 "here would return a plausible-looking wrong number, so this engine "
                 "refuses. Bundled dates (through 2024-12-26) price normally; pass "

@@ -186,7 +186,7 @@
   "complete_transition_payback": {
    "combined_annual_net_savings_usd": 193.81,
    "combined_install_usd": 18729,
-   "electric_interaction_note": "combined_annual_net_savings_usd also subtracts this correction -- see electric_interaction_overstatement() (Finding 1, Codex adversarial review, issue #20 round 2): summing each step's own independently-rebilled electric-cost increase understates the true combined electric cost, since both conversions' independent rebills let their own added load claim the SAME exported solar kWh, which cannot really happen once both loads are real.",
+   "electric_interaction_note": "combined_annual_net_savings_usd also subtracts this correction -- see electric_interaction_overstatement() (Finding 1, Codex adversarial review, issue #20 round 2): summing each step's own independently-rebilled electric-cost increase can understate the joint cost across monthly-energy or physical interval NBC zero boundaries. Physical overlap alone does not imply a positive dollar interaction.",
    "electric_interaction_overstatement_usd": 0.08,
    "naive_summed_annual_net_savings_usd": 222.63,
    "npv": {

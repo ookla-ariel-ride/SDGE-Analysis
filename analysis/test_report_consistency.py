@@ -681,8 +681,12 @@ def case_optimality_gap_table_matches_the_artifact():
     # underperform a simpler real-time reactive heuristic (a real, disclosed
     # finding on this house's data: day-ahead $1,711.28 < greedy $2,329),
     # so asserting an ordering here would encode a false assumption.
-    assert abs(pfd["verification"]["agreement_usd"]) < 1.0, (
-        "the LP's own required $1 agreement with rates.bill_nem is not met")
+    assert "$0.000001 bound" in section, "§6 must state the actual LP guard"
+    residual = pfd["verification"]["agreement_usd"]
+    assert f"${residual / 1e-12:.1f}×10<sup>−12</sup>" in section, (
+        "§6 must state the current LP residual at its displayed precision")
+    assert abs(pfd["verification"]["agreement_usd"]) <= 1e-6, (
+        "the LP's own required $0.000001 agreement with rates.bill_nem is not met")
     return ("the §6 controller-quality subsection's own figures match the live "
             "perfect-foresight artifact")
 
@@ -3095,47 +3099,39 @@ def case_sec12_teaser_is_rendered_verbatim():
     return f"index.html's §12 teaser is SEC12_TEASER rendered verbatim: {rendered}"
 
 
-_CHART_TITLE_PERIODS_LINE_RE = re.compile(
-    r"options:\{indexAxis:'y',plugins:\{title:\{display:true,text:'\{\{CHART_TITLE_PERIODS\}\}',"
-    r"color:PAL\.ink\}\}\}\}\);")
+_CHART_PERIODS_CAPTION_RE = re.compile(
+    r'<p class="small">Super off-peak accounts for .*?\{\{CHART_TITLE_PERIODS\}\}\.</p>')
 
 
 def case_chart_title_periods_matches_its_token():
-    """Found by a separate review of the same file family as issue #276: the
-    §5 periods chart's title read "17% of the energy causes ~42% of gross
-    import cost -- the on-peak problem in one picture" while CHART_TITLE_
-    PERIODS renders "17% of imports happen on-peak, driving 42% of gross
-    import cost" from the SAME report_data.json figures -- a paraphrase that
-    had drifted off the token's own current wording.
+    """The chart keeps a terse title; its adjacent caption retains derived facts.
 
-    This line lives inside a <script> block, which
-    case_template_fixed_prose_lines_all_appear_in_the_published_page's fixed-
-    prose gate strips out entirely before it ever looks for drift (see that
-    gate's own _FIXED_PROSE_SCRIPT_STYLE_RE) -- so a chart-title token can
-    drift with nothing else in this suite catching it. This is a direct pin
-    on that one line instead."""
-    m = _CHART_TITLE_PERIODS_LINE_RE.search(TEMPLATE_HTML)
-    assert m, ("report-template.html's periods-chart title line was not found by "
-               "this pin's regex -- its markup changed; re-anchor the pin")
-    line = m.group(0)
+    The old long title compressed on mobile screens. Keep every import share
+    and the artifact-derived cost-share finding pinned after moving them into
+    the caption, rather than dropping their source check with the title.
+    """
+    m = _CHART_PERIODS_CAPTION_RE.search(TEMPLATE_HTML)
+    assert m, "periods caption must retain its derived finding and import shares"
+    short_title = "options:{indexAxis:'y',plugins:{title:{display:true,text:'Imports by TOU period',color:PAL.ink}}}});"
+    assert short_title in TEMPLATE_HTML and short_title in HTML, (
+        "periods chart must retain the terse title in report and template")
     if str(ROOT / "analysis") not in sys.path:
         sys.path.insert(0, str(ROOT / "analysis"))
     import household
     archive, loader = household.PATH.is_file(), household.__file__
     rt = _report_tokens()
     try:
-        rendered = line.replace("{{CHART_TITLE_PERIODS}}", rt.resolve_token("CHART_TITLE_PERIODS"))
+        rendered = re.sub(r"\{\{([A-Z0-9_]+)\}\}",
+                          lambda match: rt.resolve_token(match.group(1)), m.group(0))
     except BaseException as e:                    # noqa: BLE001 - archive-gated
         assert _missing_archive_exit(e, archive, loader), (
-            f"the periods-chart title could not be rendered, and NOT because this "
-            f"checkout lacks the private archive (present: {archive}): "
-            f"{type(e).__name__}: {e}")
-        return f"periods-chart title not rendered: this checkout has no private archive ({e})"
-    assert rendered in HTML, (
-        f"index.html's periods chart title is not CHART_TITLE_PERIODS rendered:\n"
-        f"  template renders: {rendered}\n"
-        "the chart title has to match the token's current render, not an old paraphrase")
-    return f"index.html's periods chart title is CHART_TITLE_PERIODS rendered verbatim: {rendered}"
+            f"periods caption could not render despite available inputs: {type(e).__name__}: {e}")
+        return f"periods caption not rendered: this checkout has no private archive ({e})"
+    start = HTML.index('<canvas id="periods"')
+    caption = HTML[HTML.index('</div>', start) + len('</div>'):].split('</p>', 1)[0] + '</p>'
+    assert rendered == caption.strip(), (
+        f"adjacent periods caption must match its artifact-derived tokens: {rendered}")
+    return "periods chart retains a short title and its adjacent artifact-derived shares/cost caption"
 
 
 def case_cleaning_gain_is_not_determined_when_no_entry_matches():

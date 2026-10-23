@@ -61,7 +61,7 @@ SUITES = [
     "test_extra_results", "test_generate_report", "test_gross_import_decomposition",
     "test_heat_pump_conversion", "test_household", "test_irreducible_bill",
     "test_lifetime_payback", "test_llm_providers", "test_marginal_capacity_value",
-    "test_nem3_grandfathering",
+    "test_nbc_bill_reconciliation", "test_nem3_grandfathering",
     "test_package_results", "test_parse_bills", "test_perfect_foresight_dispatch",
     "test_portable_solar_storage",
     "test_privacy_tiers", "test_private_egress", "test_prose_blocks",

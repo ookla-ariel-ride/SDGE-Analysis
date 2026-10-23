@@ -994,13 +994,14 @@ issue #40, see research/battery-research-notes.md; 90% RTE): **evening-only**
 **price-aware with an unconditional charge** (`"greedy"`: discharge against every
 non-super-off-peak import; top-up toward full in any super-off-peak gap; store every kWh
 of surplus there is room for), and **`"value"`, the published policy** (`PUBLISHED_POLICY`),
-which adds the same price test to the charge side. Rationale, established by re-billing
+which adds a conservative finite charge-cost gate. Rationale, established by re-billing
 each policy's whole modified year rather than by a per-import threshold: stored energy
 costs 11.7¢/kWh from solar surplus (100% of which the published rule takes from the
-midday super-off-peak cell) to 14.0¢ (grid top-up) while all non-super-off-peak imports
-price at 51–87¢, so every such import is worth serving — and a kWh whose forgone export,
-divided by the round trip, costs more than the import it could serve is worth exporting
-instead, which is the half `"greedy"` cannot see (issue #240). Ordering matters: solar surplus charges before the
+midday super-off-peak cell) to 14.0¢ (grid top-up), against table import rates of
+51–87¢ outside super-off-peak. The current policy checks eligible imports against decision-time
+lot costs and applies the conservative gate described below before charging.
+The whole-stream rebill establishes savings; this price range alone does not prove
+final settled profit for every stored lot. Ordering matters: solar surplus charges before the
 grid (10am–2pm is both super-off-peak and peak solar). EV-spillover intervals (≥2.5 kW
 outside on-peak) are excluded from service. Results
 (`data/battery_dispatch_policies.json`): 1×PW3 $1,718 / $1,952 / $2,327 / **$2,464** per
@@ -1033,28 +1034,22 @@ is computed on `PUBLISHED_POLICY`, so `share_of_surplus_kwh` there reads 1.0 and
 off-peak cell is absent -- which is the whole result of this issue, and the reason the
 `"greedy"` numbers are quoted here rather than cited to a field that no longer holds
 them.) `"greedy"`
-cannot see that because it prices neither side: it stores every kWh it has room for, in
-time order. `run_batt(..., "value")` prices both sides with the one test `bill_nem_monthly()`
-bills by. Each interval's (month, season, TOU period) bucket is signed on the pre-battery
-frame (`bucket_net_sign()`, `net >= 0`); a forgone export is worth `energy()` in a
-net-import bucket and `credit()` in a net-export one, a displaced or added import that
-plus NBC. A kWh of surplus is stored only when its forgone value divided by the round trip
-is below the reference import for its season, and every kWh in the pack carries its
-delivered cost as a lot: an import may be served only from lots cheaper than it, most
-expensive eligible lot first. So no served import is ever cheaper than the energy serving
-it, by construction; `run_batt`'s optional `trace` records every charge, skip and
-discharge with the two figures compared, and `test_battery_dispatch_policies.py` checks
-the invariant on a synthetic shoulder day and on every discharge of the measured year.
-The reference import is a choice (`VALUE_CHARGE_REF`), taken over the season's
-discharge-window intervals whether or not an import occurs in them: "floor", the smallest
-import value among them, stores nothing that would have to wait for a better import;
-"best", the largest, stores shoulder surplus and holds it for the evening. Both read only
-the tariff and the bucket signs known from the pre-battery frame. Everything else matches
-`"greedy"`:
-the same discharge window and EV-spillover gate, the same both-flows rule, the same
-super-off-peak top-up toward full, and super-off-peak imports still never served (a
-11.7c midday lot would clear a 12.5c import by 0.8c and the 14.0c top-up that refilled
-the pack would lose the round trip).
+cannot see that because it prices neither side: it stores every kWh it has room for.
+The current `"value"` policy uses `(energy + NBC) / RTE` as a conservative finite
+charge-cost bound for both solar storage and grid top-up. `VALUE_CHARGE_REF="floor"`
+uses the season's minimum eligible credit rate; `"best"` uses its maximum eligible
+all-in rate. These references cover eligible discharge-window intervals, whether or
+not an import occurs there.
+
+The lot ledger starts with the complete baseline monthly positions and updates them
+for accepted actions. It prices actual finite monthly-energy changes separately from
+physical interval NBC changes, splitting at either zero boundary. Discharge uses the
+most expensive eligible lot whose recorded delivered cost is below the import's
+finite avoided cost. Trace comparisons are decision-time evidence, not a guarantee
+of final settled profit for each lot: subsequent actions can change monthly settlement.
+The final whole-stream counterfactual rebill supplies the policy's savings result.
+The discharge window, EV-spillover exclusion, both-flows rule and super-off-peak
+exclusion remain; grid top-up also passes the conservative charge gate.
 
 The committed current-year policy comparison is `data/battery_dispatch_policies.json`.
 For one Powerwall 3, evening-only saves $1,718/yr, two-window saves $1,952/yr,
@@ -1904,19 +1899,18 @@ present, `data/dsgs_event_calendar_2025.csv`).
 ### 3.20 `analysis/cca_rate_extraction.py` — CEA's own charged per-TOU generation rates, extracted from every CCA-era bill (`data/cca_generation_rates.csv`)
 
 **Purpose (issue #11, Phase 1).** `rates_history.py`'s `RateSet.cca_generation()` fails
-closed by design on every CCA-era date, because CEA's own per-(season, TOU) rates are
-printed only on the CCA bill pages, which `parse_bills.py` does not extract; only the
-period total (`bill_periods_electric.cca_generation`) is committed. Until now the only
-place those per-TOU CCA rates had ever been parsed was `bill_decomposition.py`'s private
-`cca_block()`, used for exactly one hardcoded statement (2026-07-02, its current
-comparison date, §10 below). This script generalizes that same parsing approach (the same
+closed by design on every CCA-era date: that API does not integrate the separate
+`data/cca_generation_rates.csv` artifact, which now carries CEA's charged per-TOU rates.
+`parse_bills.py` supplies only the period total (`bill_periods_electric.cca_generation`).
+This owner extends `bill_decomposition.py`'s single-statement `cca_block()` parsing
+approach (the same
 section anchors, the same per-line regex, the same kWh-rounding tolerance, the same
-"named lines must sum to the printed total" gate) across all 18 CCA-era statement PDFs,
+"named lines must sum to the printed total" gate) across all 21 CCA-era statement PDFs,
 so later phases (§3.21) have a per-TOU CCA rate to reprice against instead of a
 period total.
 
 **The 21 statements, the 22 periods.** `data/bill_periods_electric.csv` carries 22 rows
-with `generation_provider == "CCA"`, spanning 18 distinct statement dates; one statement
+with `generation_provider == "CCA"`, spanning 21 distinct statement dates; one statement
 (2025-10-31) bills two periods (a stub cycle straddling SDG&E's move from the flat Monthly
 Service Fee to the per-day Base Services Charge, issue #7), printing two separate CCA
 generation-charge sections, each with its own "Billing Period" line. The script does not
@@ -2440,8 +2434,9 @@ null-handling when there is no finite power sensitivity to divide by.
 ### 3.23 `analysis/perfect_foresight_dispatch.py` — how much is a smarter controller worth? (`data/perfect_foresight_dispatch.json`)
 
 **Purpose (issue #13).** The published price-aware policy (§3.13) is a threshold
-heuristic: store surplus only where its forgone export is cheaper than the import it can
-serve, and serve every import priced above the stored energy's own cost. Nobody had checked how
+heuristic: apply a conservative charge-cost bound, then serve eligible imports whose
+finite avoided cost exceeds the lot's recorded decision-time cost (§3.13). This does not
+guarantee final settled profit for each lot. This study checks how
 close that gets to the best any controller could do on this house's own measured year, at
 identical hardware (13.5 kWh, 11.5 kW discharge / 5 kW charge, Tesla's own datasheet,
 issue #40; 90% round-trip) and the identical EV-spillover exclusion (≥2.5 kW outside
@@ -2519,9 +2514,9 @@ reports, "the shipping policy is already close to the ceiling for this hardware.
 
 **Verification (the AC's own explicit requirement).** The LP's objective, plus the BSC it
 deliberately excludes, is re-billed through `rates.bill_nem` directly and must agree to
-within $1, enforced with a `SystemExit` inside the generator itself, in addition to the
+within $0.000001, enforced with a `SystemExit` inside the generator itself, in addition to the
 separate test, since "verified" has to mean a property the artifact-producing script
-checks every run. Observed agreement: **$0.0017**. Comparing the LP objective directly
+checks every run. Observed agreement: **$5.9 × 10^-12**. Comparing the LP objective directly
 against `rates.bill_nem`'s output (which includes BSC) shows a $289.60 discrepancy,
 exactly `365 × $0.79343` (BSC) and not a modeling bug; the check adds BSC back to the LP
 objective before comparing.
@@ -2727,7 +2722,7 @@ contribution to a bucket the next day also touches, `perfect=True` reporting exa
 forecast error and reacting to a same-day spike a persistence forecast would have missed,
 and the real EV-exclusion rule enforced at execution even when a forecast-based plan,
 blind to a real future spillover spike, would otherwise have discharged into it) need no
-private archive at all; cases requiring the $1 agreement with `rates.bill_nem`, the real
+private archive at all; cases requiring the $0.000001 agreement with `rates.bill_nem`, the real
 annual solve's conservation and cyclic closure, the
 day-ahead-never-beats-perfect-foresight bound (day-ahead vs the shipping policy is deliberately not
 asserted either way; it is a disclosed finding, not a test assumption), the
@@ -2861,12 +2856,12 @@ correction, confirming the boundary artifact was real but immaterial to every pu
 dollar figure in this section.
 
 **Result: a counterintuitive finding, checked against the physical data.** On-peak
-shifting later hurts most (**+$136.27/yr** even after the EV shift and battery): the
+shifting later hurts most (**+$136.25/yr** even after the EV shift and battery): the
 newly-captured evening hour (9-10pm) is pure grid import with no solar to offset it (731.8
 kWh imported, 0 kWh exported in that slot across the measured year, every day of the week;
 the on-peak window applies daily, weekends included). Widening on-peak and narrowing the
-midday super-off-peak window each lower this household's bill (−$522.94/yr and
-−$1,398.88/yr): both reclassify hours when this household is a heavy net exporter
+midday super-off-peak window each lower this household's bill (−$522.93/yr and
+−$1,397.77/yr): both reclassify hours when this household is a heavy net exporter
 (10am-4pm weekday: 6,508 kWh exported vs 459 kWh imported across the 10am-4pm weekday
 window in the measured year) into periods with a materially higher export credit rate, a
 windfall a grid-dependent household would not see. This inverts the naive "wider/narrower
@@ -4405,12 +4400,12 @@ federal minimum UEF for a residential gas storage water heater (0.60, the low en
 convention `FURNACE_AFUE`'s own comment establishes.
 
 At the headline UEF (3.88), `uniform` distribution, 100%-floor basis: electric cost
-increase **$224.11/yr**, net savings **$136.27/yr**, central-install ($4,200) payback
-**30.8 yr** (20.5 yr low / 58.7 yr high install). At the more conservative 72.3%-share
-basis: net savings $101.80/yr, central payback 41.3 yr. At the 21.2%-share basis: net
-savings $32.32/yr, central payback 130.0 yr. The `super_off_peak` lean is far better on
-the 100% basis ($72.18/yr electric increase, net $288.20/yr) and the `on_peak` lean erases
-savings entirely ($432.86/yr electric increase, net **negative**), the same
+increase **$224.41/yr**, net savings **$135.97/yr**, central-install ($4,200) payback
+**30.9 yr** (20.6 yr low / 58.8 yr high install). At the more conservative 72.3%-share
+basis: net savings $101.57/yr, central payback 41.4 yr. At the 21.2%-share basis: net
+savings $32.25/yr, central payback 130.2 yr. The `super_off_peak` lean is far better on
+the 100% basis ($72.35/yr electric increase, net $288.03/yr) and the `on_peak` lean erases
+savings entirely ($433.20/yr electric increase, net **negative**), the same
 real-interval-billing sensitivity `heat_pump_conversion.py` already established for the
 furnace, now shown for the water heater too. Install-cost bracket ($2,800–$8,000, central
 $4,200) is general contractor-pricing guidance (Angi/Fixr/HomeGuide/hotwater.com, 2026)
@@ -4474,8 +4469,8 @@ for the same figures at the more conservative shares.
 
 Complete-transition payback carries two corrections, both a direct consequence of fixing
 the tier-pricing direction and both required by CLAUDE.md §9 once found: naively summing
-the water heater's own $136.27/yr and the furnace's own $86.88/yr independently-computed
-marginal savings (plus the $0 release) gives $223.15/yr, but each is computed as if it
+the water heater's own $135.97/yr and the furnace's own $86.66/yr independently-computed
+marginal savings (plus the $0 release) gives $222.63/yr, but each is computed as if it
 alone were removed from the same original bill and rebilled against the same original
 solar.
 
@@ -4514,27 +4509,20 @@ data, a small divergence confirmed by `test_all_electric_endgame.py`'s own regre
 tests (a hand-worked two-segment synthetic fixture, and an end-to-end real-archive
 comparison against the retired period-level formula, both showing the two bases disagree).
 
-*Electric-side correction: the electric side has the same non-additivity problem.*
-`wh_electric_cost_scenarios()` and `heat_pump_conversion.electric_cost_scenarios()` each
-net their own added load against the household's full solar Generation before billing.
-Summing their two independently-rebilled electric-cost increases silently lets both
-conversions claim the same exported solar kWh in the same interval, which cannot happen
-once both loads are real, and `rates.bill_nem()`'s own per-(month, TOU bucket) NEM netting
-is not additive across two separately-billed scenarios either.
-`joint_electric_cost_scenario()` handles this: the furnace's and the water heater's own
-uniform-distribution added-load series (built with the same functions their independent
-scenarios already use, `heat_pump_conversion.build_hp_load_series` and
-`build_wh_load_series`) are summed into one combined series, netted against solar once,
-and re-billed once with `rates.bill_nem()`. `electric_interaction_overstatement()`
-quantifies the gap between that joint figure and the naive sum of the two independent
-figures, mirroring `tier_interaction_overstatement()`'s own role: **$0.13/yr**
-overstatement on this household's real data. The figure is structurally non-negative (the
-"how much of a fixed solar export can a load absorb" function is concave, so
-`min(g,a) + min(g,b) >= min(g,a+b)` for any export `g` and loads `a, b`), and it is small
-because this household's furnace load concentrates in winter while its water-heater load
-spreads uniformly across the whole year, so the two rarely compete for the same exported
-solar interval. A household whose two added loads overlap more in time would see a larger
-correction.
+*Electric-side correction: one joint physical allocation and rebill.*
+`joint_electric_cost_scenario()` sums the furnace and water-heater added-load series
+from their existing placement functions, absorbs solar once, and calls `rates.bill_nem()`
+once. `electric_interaction_overstatement()` compares this joint increase with the two
+independent increases: the current correction is **$0.08/yr**.
+
+For monthly bucket net `n`, energy cost is `E*max(n,0) - C*max(-n,0)`, where
+`E = energy()` and `C = credit()`. NBC separately adds `NBC*max(interval_net,0)`.
+Both costs are convex (`E >= C`, `NBC >= 0`). For nonnegative loads `a` and `b`,
+`F(n+a+b)-F(n) >= F(n+a)-F(n)+F(n+b)-F(n)`, so the joint increase is at least
+the independent sum before display rounding. A strict gap needs a monthly-energy or
+physical interval NBC zero boundary. Shared solar absorption alone is insufficient;
+inside fixed linear regions, the dollar increases add exactly despite physical overlap.
+The tests retain that zero-gap case and independently derive a boundary-crossing gap.
 
 **Basis match between `furnace_headline` and the joint rebill (issue #127).** Issue #119
 moved `furnace_headline["annual_electric_cost_increase_usd"]` (the term this function
@@ -4555,9 +4543,9 @@ threaded into `furnace_iso["capped_heat_by_day"]` before
 `joint_electric_cost_scenario()`'s own call. An assert (tolerance derived from the
 recomputed period count, same formula as issue #119's own reconciliation check) fails
 closed if a future private-data refresh regenerates one artifact but not the other. With
-both bases consistent, `electric_interaction_overstatement_usd` is $0.13/yr, close to the
+both bases consistent at issue #127, `electric_interaction_overstatement_usd` was $0.13/yr, close to the
 pre-#119 $0.14/yr; #119 itself slightly changed the furnace's own headline electric cost.
-`complete_transition_payback`'s own combined figures move as a result (unlike under issue
+`complete_transition_payback`'s own combined figures then moved as a result (unlike under issue
 #119 itself, whose combined figures happened to net out unaffected): $191.67/yr →
 $194.28/yr, 97.7 yr → 96.4 yr, a small improvement. The pre-#127 figures were internally
 consistent given the joint rebill's own then-current inputs; they priced the furnace's own
@@ -4570,10 +4558,10 @@ billing purposes does not interact with the panel-level cumulative-headroom chec
 
 Both corrections are netted out of the headline figure ("one pipeline per package
 figure... never by adding numbers from different models," CLAUDE.md §9). Combined install
-$18,729, combined net savings **$194.28/yr** (naive sum $223.15/yr minus the $28.74/yr
-segment-level gas correction minus the $0.13/yr electric correction), **96.4 yr** payback.
+$18,729, combined net savings **$193.81/yr** (naive sum $222.63/yr minus the $28.74/yr
+segment-level gas correction minus the $0.08/yr electric correction), **96.6 yr** payback.
 Final step alone (furnace, the longer-payback step and so ordered last): standalone
-payback **167.2 yr**, identical with and without the credit (the furnace's own figure has
+payback **167.7 yr**, identical with and without the credit (the furnace's own figure has
 no interaction term of its own; it is a single-conversion computation). Neither payback
 represents a confirmed meter removal: whether a third end use (AC2) remains unpriced and
 unconverted is not determined.
@@ -4581,12 +4569,12 @@ unconverted is not determined.
 **The sequencing order is checked against the share uncertainty
 `water_heater_share_sensitivity()` (above) establishes** (issue #20). At a low-enough,
 still-plausible share, the water heater's own payback could exceed the furnace's own
-167.2-year standalone payback, reversing the published order, so a single order derived
+167.7-year standalone payback, reversing the published order, so a single order derived
 from the 100%-water-heater-share basis alone would be unchecked.
 `sequencing_share_robustness()` reuses `sequencing_and_paybacks()` itself to probe the
 order at each of the three named share scenarios above, and bisects for the numeric share
 at which the water heater's own central-install payback first reaches the furnace's own
-167.2-year target (`_crossover_water_heater_share()`, reusing `HPC.payback_and_npv()` and
+167.7-year target (`_crossover_water_heater_share()`, reusing `HPC.payback_and_npv()` and
 a leaner single-scenario version of the water-heater rebill, `_wh_net_savings_at_share()`,
 the same `floor_savings_by_period()` and `build_wh_load_series()` calls
 `wh_electric_cost_scenarios()` already makes, restricted to the one (headline UEF,
@@ -4597,7 +4585,7 @@ the search's own dozens of trials). On this household's real data the published 
 (water heater first) **holds at every one of the three named scenarios** (100%/72.3%/21.2%
 all keep the water heater first) **on the furnace's own standalone install-cost basis**
 (the basis `complete_transition_payback`'s own `combined_install` uses, CLAUDE.md §2), and
-the numeric crossover sits at **16.32% water-heater share** on that basis, below the
+the numeric crossover sits at **16.30% water-heater share** on that basis, below the
 lowest illustrative scenario shown (21.2%), so the order does not flip anywhere this
 report illustrates on that basis, though a lower, unruled-out true share could still flip
 it. The result is wired into `sequencing_and_paybacks()`'s own output as a
@@ -4606,15 +4594,15 @@ it. The result is wired into `sequencing_and_paybacks()`'s own output as a
 
 **The order check runs on both install-cost bases this report publishes for the furnace**
 (issue #20). `heat_pump_conversion.json` and this report's own furnace section also
-publish a marginal-over-AC-replacement basis ($4,098 installed, 47.2-yr payback, the more
+publish a marginal-over-AC-replacement basis ($4,098 installed, 47.3-yr payback, the more
 realistic basis for a homeowner already due for an AC replacement, and the one this report
 elsewhere calls more realistic), which `sequencing_share_robustness()`'s own
 `combined_install` does not use, so a claim checked on the standalone basis alone would be
 incomplete about which basis it was checked against. On this household's real data the
 order does not survive on the marginal basis: the 21.2%-share water-heater scenario's own
-130.0-yr payback loses to the 47.2-yr marginal-basis furnace, reversing the order at a
+130.2-yr payback loses to the 47.3-yr marginal-basis furnace, reversing the order at a
 scenario this report explicitly illustrates, and the marginal-basis crossover sits at
-**62.66% water-heater share**, well above every scenario this report considers plausible.
+**62.69% water-heater share**, above the 21.2% scenario but below the 72.3% and 100% scenarios.
 The same check therefore runs twice: `sequencing_share_robustness()` takes an optional
 `furnace_payback_years_marginal` argument and, when supplied, runs the identical named-
 scenario probe and crossover bisection a second time via a factored-out helper
@@ -4623,14 +4611,14 @@ field (`furnace_payback_years_basis`, `furnace_payback_years`, `named_scenarios`
 `robust_across_named_scenarios`, `crossover_water_heater_share`, `crossover_note`).
 `combined_install` itself stays on the standalone basis throughout (CLAUDE.md §2's
 one-basis-per-projection rule); this reversal is a caveat on how far the sequencing
-conclusion generalizes, and the published $194.28/yr combined savings figure stands.
+conclusion generalizes, and the published $193.81/yr combined savings figure stands.
 
 **AC8 — reconciliation.** The furnace figures are cited directly from
 `heat_pump_conversion.json` without recomputation, so they agree exactly by construction.
 The water heater figure (100%-share basis) is compared against
 `extended_results.json -> gas_decomposition`'s own older `hpwh_saving_yr` ($205/yr, a flat
 "midday solar timer" rate estimate): this script's own real-interval-billed net savings
-($136.27/yr at the headline UEF/uniform basis) is $68.73/yr lower, as expected, since the
+($135.97/yr at the headline UEF/uniform basis) is $69.03/yr lower, as expected, since the
 two price the same conversion by different methods, one at this repo's own real-interval
 rigor and one at a flat-rate proxy. A third reconciliation: `heat_pump_conversion.py`'s
 own module docstring already documents that its day-level capacity cap excludes 59.81
@@ -4651,7 +4639,7 @@ corrected figure is credited to neither conversion step, matching
 
 **Reproduction.** `all_electric_endgame.json` is written directly to `data/` (repo-root
 discovery via `heat_pump_conversion.ROOT`, atomic tmp-then-replace, the same convention
-every other generator in this section uses); `test_all_electric_endgame.py` (61 cases)
+every other generator in this section uses); `test_all_electric_endgame.py`
 covers every pure function against synthetic fixtures, including several "tests must fail
 on the defect they name" positive controls: a synthetic corpus with a $15 fixed charge the
 regression must recover; the top-of-ladder fix's own hand-worked counterexample,
@@ -4661,7 +4649,10 @@ correction; and the electric-side interaction correction (`joint_electric_cost_s
 / `electric_interaction_overstatement()`), backed by a hand-derivable synthetic-frame
 example where two loads that would each independently claim a household's entire real
 solar export (48.0 kWh across a 10-day window) are shown to jointly claim only that same
-48.0 kWh once; the reconciliation's own `unattributed_usd` correction (checked end-to-end
+48.0 kWh once while their dollar increases remain additive. A second fixture starts
+at -0.75 kWh interval net and adds 0.5 kWh per load: its independently derived gap is
+`sum(0.25 * (energy - credit + NBC)) = $11.8272` across 960 intervals. This case fails
+if joint cost is replaced by the independent sum. The reconciliation's own `unattributed_usd` correction (checked end-to-end
 against the real archive: `naive + tier_interaction_overstatement_usd`); a naming/mask
 check on `build_wh_load_series`'s sop-targeting scenario (`super_off_peak`, confirmed to
 place load only in `p == "sop"` intervals); `water_heater_share_sensitivity()` reporting

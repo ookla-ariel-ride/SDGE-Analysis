@@ -666,8 +666,9 @@ def main():
         "nem2": {
             "annual_bill_usd_modeled": round(nem2_model_bill, 2),
             "label": "modeled (rates.bill_nem, the canonical NEM 2.0 engine; see "
-                     "actual_billed_anchor for the audited total over the same "
-                     "window -- the model runs high, use the DELTA below)",
+                     "actual_billed_anchor for the separate 2025-06-27 through 2026-06-26 "
+                     "bill-audit window; this model uses 2025-07-24 through 2026-07-23. "
+                     "Use the modeled DELTA below, not an identity with that audit)",
         },
         "nbt_counterfactual": nbt_bills,
         "grandfathering_value_range_usd_per_yr": {

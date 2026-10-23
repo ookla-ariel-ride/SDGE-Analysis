@@ -28,8 +28,9 @@ Billing mechanics (NEM 2.0 model; exact utility replication remains unresolved):
   * Base Services Charge per day
 TOU windows as implemented here: on-peak 16-21 daily; super-off-peak 0-6 + 10-14
 weekdays, 0-14 weekends; off-peak otherwise. These are the frozen June 2026 tariff windows used
-for the model projection, and analysis/tou_audit.py
-reconciles it against the three most recent statements to within 0.5 kWh.
+for the model projection. analysis/tou_audit.py checks historical windows over
+13 fully covered billing periods from 2025-06-27 through 2026-06-26, using its
+printed-kWh rounding tolerances; newer incomplete periods remain excluded.
 
 APPLICABILITY (read before reusing for your own house): the netting STRUCTURE
 above is NEM 2.0 -- monthly per-period netting with retail-rate export credit.
