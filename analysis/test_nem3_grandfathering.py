@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Behavioural tests for nem3_grandfathering.py (issue #9, Phase 1).
 
-nem3_grandfathering.py imports behavior_rebuild.py at module top level, which
-reads private/household.yaml at ITS OWN module top level and fails closed
-(SystemExit) if that file is absent -- the same situation
-test_carbon_dispatch_tradeoff.py and test_carbon_fullyear.py already solved.
-Applied here too: point household.PATH at a synthetic, invented household
-BEFORE importing, so this whole file imports cleanly on any checkout, private/
-or not. Cases that need the REAL measured Green Button year (byte-identical
+The public NBT billing API needs no household intake. This suite also imports
+behavior_rebuild.py for archive tests; that module reads private/household.yaml
+at import and fails closed without it. Point household.PATH at a synthetic,
+invented household BEFORE that import so the suite runs on public checkouts. Cases that need the REAL measured Green Button year (byte-identical
 regeneration) or the REAL raw MIDAS archive (rate-table traceability) still
 gate on their own precondition and SKIP rather than fail when this checkout
 lacks them, matching test_carbon_dispatch_tradeoff.py's SkipCase convention.
@@ -539,6 +536,35 @@ def case_build_rate_table_reproduces_the_committed_csv():
         NG.RATE_CSV = real_path
         tmp.unlink(missing_ok=True)
     return "rebuilding from the raw MIDAS archive reproduces the committed CSV byte-for-byte"
+
+
+
+@case
+def case_rate_loader_refuses_duplicate_nonnumeric_nonfinite_and_invalid_domains():
+    """A duplicate cannot be averaged; invalid keys cannot masquerade as complete coverage."""
+    original = NG.RATE_CSV
+    tab = pd.read_csv(original)
+    variants = [('duplicate', pd.concat([tab, tab.iloc[:1]]))]
+    for field, value in [('month', 'Bad'), ('day_type', 'Holiday'), ('hour', 24), ('hour', .5),
+                         ('rate_name', 'NBT99'), ('component', 'other'), ('value_usd_per_kwh', float('inf')),
+                         ('value_usd_per_kwh', float('nan')), ('value_usd_per_kwh', 'bad')]:
+        bad = tab.copy(); bad[field] = bad[field].astype(object); bad.loc[0, field] = value
+        variants.append((f'{field}={value}', bad))
+    for field, value in [('rate_name', 'NBT26'), ('component', 'generation')]:
+        variants.append((f'missing {value}', tab[tab[field] != value]))
+    with tempfile.TemporaryDirectory() as directory:
+        NG.RATE_CSV = pathlib.Path(directory)/'rates.csv'
+        try:
+            for label, bad in variants:
+                bad.to_csv(NG.RATE_CSV, index=False)
+                try:
+                    NG.load_rate_table()
+                except SystemExit:
+                    continue
+                raise AssertionError(f'malformed rate input accepted: {label}')
+        finally:
+            NG.RATE_CSV = original
+    return 'all malformed domains, duplicate keys, nonfinite/nonnumeric rates and missing components/vintages refused'
 
 
 def main():
