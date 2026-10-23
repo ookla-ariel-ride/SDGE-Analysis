@@ -824,7 +824,7 @@ MOVERS_FLOOR = frozenset({
 # impossible without the other.
 # ===========================================================================
 DECLARED_IGNORE_PATHS = ("private/1-raw-data", "private/verify", "private/household.yaml")
-DECLARED_SUBTREES = ("electric-bills", "gas-bills", "caiso_raw", "service-telemetry")
+DECLARED_SUBTREES = ("electric-bills", "sdge-downloads-20261022", "gas-bills", "caiso_raw", "service-telemetry")
 DECLARED_LEAVES = (
     "private/household.yaml",
     "private/verify/usage.csv",
@@ -834,6 +834,7 @@ DECLARED_LEAVES = (
     "private/1-raw-data/electric_billing_history_2024-2026.csv",
     "private/1-raw-data/Electric_15_Minute_*.csv",
     "private/1-raw-data/enphase_sam8760_*.csv",
+    "private/1-raw-data/sdge-downloads-20261022/Electric_15_Minute_*.csv",
     "private/1-raw-data/service-telemetry/manifest.json",
     "private/1-raw-data/service-telemetry/meter.csv",
     "private/1-raw-data/service-telemetry/mirror.csv",
@@ -945,6 +946,8 @@ def _synthetic_src(td, telemetry=False):
                  "enphase_sam8760_2026.csv"):
         (raw / name).touch()
     (raw / "electric-bills").mkdir()
+    (raw / "sdge-downloads-20261022").mkdir()
+    (raw / "sdge-downloads-20261022" / "Electric_15_Minute_october.csv").touch()
     if telemetry:
         subtree, leaves = _shell_fixed_snapshot(SCRIPT.read_text())
         (raw / subtree).mkdir()

@@ -26,6 +26,8 @@
 # What the pipeline needs and why:
 #   private/household.yaml                    intake file (analysis/household.py)
 #   private/1-raw-data/Electric_15_Minute_*.csv  Green Button 15-min interval data
+#   private/1-raw-data/sdge-downloads-20261022/Electric_15_Minute_*.csv
+#                                             preserved October NBC evidence (exactly one)
 #   private/1-raw-data/enphase_sam8760_*.csv  Enphase SAM hourly load, one file per
 #                                             calendar year (glob-copied, so a future
 #                                             year's export needs no script change)
@@ -2518,6 +2520,42 @@ if [ "$_n_interval" -gt 1 ]; then
     "them under superseded/) and re-run."
 fi
 
+# NBC needs one separately preserved October export. Check every source parent
+# before glob selection, including dangling links; unrelated archive entries are
+# not inputs and never join the copy set.
+_nbc_archive="$SRC/private/1-raw-data/sdge-downloads-20261022"
+for _dir in "$SRC/private" "$SRC/private/1-raw-data" "$_nbc_archive"; do
+  if [ -L "$_dir" ] || [ ! -d "$_dir" ]; then
+    _refuse "the NBC archive source path is not an ordinary directory" \
+      "source:      $_dir" \
+      "archive:     private/1-raw-data/sdge-downloads-20261022" \
+      "expected:    real source directories, without symbolic links"
+  fi
+done
+_nbc_inputs=()
+for _f in "$SRC"/private/1-raw-data/sdge-downloads-20261022/Electric_15_Minute_*.csv; do
+  [ -e "$_f" ] || [ -L "$_f" ] || continue
+  _nbc_inputs[${#_nbc_inputs[@]}]="$_f"
+done
+[ ${#_nbc_inputs[@]} -eq 1 ] || \
+  _refuse "the NBC archive needs exactly one October interval export" \
+    "source:      $_nbc_archive" \
+    "found:       ${#_nbc_inputs[@]} matches for Electric_15_Minute_*.csv" \
+    "expected:    exactly one ordinary, singly-linked interval file"
+_nbc_interval="${_nbc_inputs[0]}"
+if [ -L "$_nbc_interval" ] || [ ! -f "$_nbc_interval" ]; then
+  _refuse "the NBC archive source input is unsafe" \
+    "source:      $_nbc_interval" \
+    "expected:    an ordinary file without symbolic links"
+fi
+if ! _shared=$(find "$_nbc_interval" -type f -links +1 -print); then
+  _refuse "the NBC archive source link count could not be read" \
+    "source:      $_nbc_interval" "expected:    a readable, singly-linked file"
+fi
+[ -z "$_shared" ] || _refuse "the NBC archive source input is a hard link" \
+  "source:      $_nbc_interval" "expected:    a file with exactly one name"
+_nbc_basename=${_nbc_interval##*/}
+
 # The CAISO day-cache is OPTIONAL, so its absence is not a refusal -- but the
 # decision is a source-side one and is taken here, once, so the path scan below
 # and the copy further down are driven by the same answer. Scanning a subtree
@@ -3113,6 +3151,7 @@ _check_dir_slot "$DST_REAL/private/verify"
 # this run will not write is not scanned for links it will never follow. A
 # gas-bills/ left in a has_gas:false destination is stale, not a hazard.
 _scanned_subtrees="electric-bills"
+_scanned_subtrees="$_scanned_subtrees sdge-downloads-20261022"
 [ "$HAS_GAS" != True ] || _scanned_subtrees="$_scanned_subtrees gas-bills"
 [ "$STAGE_CAISO" != 1 ] || _scanned_subtrees="$_scanned_subtrees caiso_raw"
 [ "$STAGE_SERVICE_TELEMETRY" != 1 ] || _scanned_subtrees="$_scanned_subtrees service-telemetry"
@@ -3130,9 +3169,10 @@ _dst_leaves=("$DST_REAL/private/household.yaml"
              "$DST_REAL/private/1-raw-data/gas.csv"
              "$DST_REAL/private/1-raw-data/electric_billing_history_2024-2026.csv")
 for _srcfile in "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv \
-                "$SRC"/private/1-raw-data/enphase_sam8760_*.csv; do
+                "$SRC"/private/1-raw-data/enphase_sam8760_*.csv \
+                "$SRC"/private/1-raw-data/sdge-downloads-20261022/Electric_15_Minute_*.csv; do
   [ -e "$_srcfile" ] || continue
-  _dst_leaves[${#_dst_leaves[@]}]="$DST_REAL/private/1-raw-data/$(basename -- "$_srcfile")"
+  _dst_leaves[${#_dst_leaves[@]}]="$DST_REAL/private/1-raw-data/${_srcfile#"$SRC/private/1-raw-data/"}"
 done
 if [ "$STAGE_SERVICE_TELEMETRY" = 1 ]; then
   for _file in $_SERVICE_TELEMETRY_FILES; do
@@ -3168,6 +3208,17 @@ elif [ -d "$_telemetry_dst" ]; then
       manifest.json|meter.csv|mirror.csv|eagle.csv|generation.csv|weather.csv) ;;
       *) _note_stale "private/1-raw-data/service-telemetry/$_rel" ;;
     esac
+  done
+fi
+# This archive has one managed child, even when source extras exist.
+_nbc_dst="$DST_REAL/private/1-raw-data/sdge-downloads-20261022"
+if [ -d "$_nbc_dst" ]; then
+  for _entry in "$_nbc_dst"/* "$_nbc_dst"/.[!.]* "$_nbc_dst"/..?*; do
+    [ -e "$_entry" ] || [ -L "$_entry" ] || continue
+    _rel=${_entry#"$_nbc_dst/"}
+    if [ "$_rel" != "$_nbc_basename" ]; then
+      _note_stale "private/1-raw-data/sdge-downloads-20261022/$_rel"
+    fi
   done
 fi
 _collect_stale_glob "Electric_15_Minute_*.csv"
@@ -3624,6 +3675,11 @@ cp "$SRC/private/household.yaml"                      "$_STAGE_HH/household.yaml
   || _copy_failed "private/household.yaml"
 cp "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv "$_STAGE_RAW/" \
   || _copy_failed "private/1-raw-data/Electric_15_Minute_*.csv"
+mkdir -- "$_STAGE_RAW/sdge-downloads-20261022" \
+  || _copy_failed "private/1-raw-data/sdge-downloads-20261022"
+cp -P -- "$SRC"/private/1-raw-data/sdge-downloads-20261022/Electric_15_Minute_*.csv \
+  "$_STAGE_RAW/sdge-downloads-20261022/" \
+  || _copy_failed "private/1-raw-data/sdge-downloads-20261022/$_nbc_basename"
 cp "$SRC"/private/1-raw-data/enphase_sam8760_*.csv    "$_STAGE_RAW/" \
   || _copy_failed "private/1-raw-data/enphase_sam8760_*.csv"
 cp "$SRC/private/1-raw-data/gas.csv"                  "$_STAGE_RAW/" \
