@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Battery arbitrage + backup endurance simulations (as run Jul 24, 2026).
 Inputs: usage.csv (SDGE Green Button 15-min), samA.csv/samB.csv (Enphase SAM 8760
-hourly consumption 2026/2025). Rates: EV-TOU-5 + CEA eff. 6/1/2026, PCIA 2023 vintage.
+hourly load series 2026/2025; the saved single-column exports do not establish
+independent consumption CTs or the installed sensing configuration). Rates: EV-TOU-5 + CEA eff. 6/1/2026, PCIA 2023 vintage.
 Outputs: battery_sim.json (arbitrage), backup_endurance.json (outage endurance).
 
 Beside usage.csv/samA.csv/samB.csv this needs ROOT/private/household.yaml, for the

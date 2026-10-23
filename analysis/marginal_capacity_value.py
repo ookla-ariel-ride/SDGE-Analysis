@@ -16,12 +16,12 @@ THE COUNTERFACTUAL, step by step:
 
   1. Marginal generation profile -- PRODUCTION-SHAPED, and its source named.
      No hourly production feed is committed (data/enphase_daily_production.csv
-     is daily), so the hourly series is derived from two independent meters
+     is daily), so the hourly series is derived from the SAM load and utility meter series
      with the identity
 
          pv_hour = max(sam_hour - import_hour + export_hour, 0)
 
-     where sam_hour is the Enphase SAM 8760 whole-home consumption CT's gross
+     where sam_hour is the saved SAM 8760 hourly
      load (private/1-raw-data/enphase_sam8760_*.csv, staged as samA.csv /
      samB.csv, loaded by threeway_production_validation.load_sam_hourly()) and
      import/export are the SDG&E revenue meter's own 15-minute columns
@@ -32,7 +32,7 @@ THE COUNTERFACTUAL, step by step:
      anything is priced: day by day against the committed meter_derived
      column (same identity, must agree to the rounding of that file), and as
      an annual total against the Enphase production CT's own daily record
-     over the window (an independent instrument; the ratio is published).
+     over the window (a reference series with unresolved acquisition independence; the ratio is published).
 
   2. The increment. Adding ADDED_KW_DC of panels to a kw_dc array scales the
      derived hourly production by (kw_dc + added) / kw_dc, so the increment
@@ -299,7 +299,7 @@ def load_enphase_daily():
 
 def reconcile_with_meter_record(pv, dates, excluded_days):
     """The derived annual total against the Enphase production CT's daily
-    record over the same window: an independent instrument, so this is a
+    record over the same window: a reference series with unresolved acquisition independence, so this is a
     reconciliation (published), not an identity (asserted)."""
     if not ENPHASE_CSV.is_file():
         raise SystemExit(f"marginal_capacity_value.py: {ENPHASE_CSV} is missing")

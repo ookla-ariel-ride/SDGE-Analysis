@@ -28,7 +28,7 @@
   "n_away": 11,
   "away_median_import_kwh_day": 19.5,
   "occupied_median_import_kwh_day": 63.5,
-  "note": "away-day import is grid import only; unattended LOAD also eats solar midday, so this is a lower bound on unattended consumption",
+  "note": "Compatibility keys away_days/n_away/implied_unattended_kw describe days with detected EV energy <0.5 kWh and imports <40% of the median. Occupancy is not established. These are grid imports from the same meter series, not an independently measured unattended load.",
   "implied_unattended_kw": 0.81
  },
  "supercharge_delta": {

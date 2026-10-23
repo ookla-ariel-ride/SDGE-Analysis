@@ -94,7 +94,7 @@ def case_bill_periods_match_the_issues_own_ground_truth():
     delta_gross = p26["gross_kwh"] - p24["gross_kwh"]
     delta_net = p26["net_kwh"] - p24["net_kwh"]
     assert delta_gross == 496.0 and delta_net == 641.0, (delta_gross, delta_net)
-    return "bill_periods_electric.csv reproduces the issue's cited 1438/1934 gross and 346/987 net figures exactly"
+    return "bill_periods_electric.csv reproduces the issue's cited 1438/1934 printed NBC and 346/987 net figures exactly"
 
 
 @case
@@ -332,7 +332,7 @@ def case_build_output_is_json_serializable_on_pure_data_alone():
 
 
 # ---------------------------------------------------------------------------
-# (b) archive-gated: exercise the real CT + Green Button data
+# (b) archive-gated: exercise the saved SAM + Green Button data
 # ---------------------------------------------------------------------------
 @case
 def case_hourly_reconstruction_cross_validates_against_the_bill():
@@ -354,15 +354,15 @@ def case_consumption_reconstruction_ct_agrees_with_bill_plus_production_identity
     cons = gi.consumption_block(bill, prod)
     assert cons["period_2026_ct_vs_identity_agreement_pct_diff"] < 5.0, cons
     assert cons["period_2026_ct_measured_kwh"] > cons["period_2024_estimated_kwh"], (
-        "the whole point of the issue: 2026 consumption should measure higher than the 2024 estimate")
-    return (f"CT-measured 2026 gross load agrees with the Net+Production bill identity within "
+        "the whole point of the issue: the 2026 SAM load input should exceed the modeled 2024 estimate")
+    return (f"The 2026 SAM load series agrees with the Net+Production bill identity within "
             f"{cons['period_2026_ct_vs_identity_agreement_pct_diff']}%")
 
 
 @case
 def case_decomposition_sums_within_5_pct_of_observed_change():
     """AC4, the load-bearing test: the consumption term and production term
-    must sum to within 5% of the OBSERVED (bill-exact) gross-import change."""
+    must sum to within 5% of the OBSERVED (bill-exact) printed NBC-usage change."""
     _require_archive()
     bill = gi.load_bill_periods()
     prod = gi.production_block()
@@ -403,7 +403,7 @@ def case_decomposition_attributes_the_increase_mostly_to_consumption():
 def case_identifiability_robustness_check_reports_an_alternative_shape_honestly():
     """Adversarial review pass 2, finding 1: back-solving production_scale to
     hit the 2024 bill exactly makes the endpoint agreement tautological, not
-    a validation, because no 2024 hourly shape exists to independently pin
+    a validation, because the fixed study inputs provide no 2024 hourly shape to independently pin
     down HOW consumption grew across hours. This case exercises the
     companion identifiability check under a materially different,
     data-grounded shape assumption (EV-charging-concentrated growth) and
@@ -430,7 +430,7 @@ def case_identifiability_robustness_check_reports_an_alternative_shape_honestly(
     assert -100.0 <= robust["implied_ev_reduction_pct_2026_vs_template"] <= 100.0
     assert -100.0 <= robust["implied_ev_reduction_pct_2024_vs_template"] <= 100.0
     # This alternative scenario's own terms must sum to the SAME observed
-    # gross-import change the baseline scenario does -- the back-solve
+    # printed NBC-usage change the baseline scenario does -- the back-solve
     # guarantees this by construction, and it is the property that makes
     # the two scenarios' terms meaningfully comparable in the first place
     # (Codex's own explicit request after finding 1 of this pass).
@@ -474,7 +474,7 @@ def case_ev_attribution_uses_real_detection_and_states_its_own_limits():
     assert ev["n_sessions_detected"] > 0, "expected real EV sessions in a 2-EV household's 29-day window"
     assert ev["period_2026_ev_kwh_detected"] > 0
     assert ev["true_share_of_increase"] == "NOT DETERMINED"
-    assert "2024" in ev["caveat"] and "archive" in ev["caveat"]
+    assert "2024" in ev["caveat"] and "usage.csv" in ev["caveat"]
     return (f"detect_sessions found {ev['n_sessions_detected']} real sessions "
             f"({ev['period_2026_ev_kwh_detected']} kWh) for the 2026 window; the 2024-side "
             "share is explicitly reported as not determined, not guessed")

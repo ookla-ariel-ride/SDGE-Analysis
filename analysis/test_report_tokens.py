@@ -4466,38 +4466,11 @@ def case_each_export_bound_prices_the_whole_export_profile_not_one_period():
 
 @case
 def case_the_two_export_bounds_are_the_two_settlement_treatments():
-    """issue #182, the finding this pair of tokens exists to answer: one
-    profile-weighted figure was published as "what an exported kWh earns" when
-    it was only the ALL-SURPLUS end of the answer.
-
-    rates.bill_nem_monthly() settles NEM 2.0 by monthly per-period netting, so
-    an exported kWh either cancels an import inside its own month and period or
-    is paid the surplus credit. Two treatments, two prices, and the artifacts
-    do not resolve which one any individual month took -- so both are
-    published, and neither may be published as the settled value.
-
-    Four pins, and the fourth is the one that fails if a bound is dressed up as
-    the value:
-
-      1. the ORDER is right: surplus is the low end, netting the high end. A
-         swap of the two rate functions renders the range backwards, and pins
-         1-3 of the sibling case survive it, since each end would still be a
-         valid profile weighting of a real price map;
-      2. the gap between them IS the difference between the two rates -- PCIA,
-         the only term rates.energy() adds to rates.credit() -- rather than
-         some other quantity that happens to sit between the two figures;
-      3. the netting end is rates.energy() and NOT rates.allin(). MEASURED
-         AGAINST THE ENGINE, not argued from the constants: one more exported
-         kWh in a netting cell moves rates.bill_nem() by exactly energy(), and
-         in a surplus cell by exactly credit(). allin() = energy() + NBC is
-         what a GROSS import costs in the model. bill_nem_monthly() bills NBC
-         on gross imports before energy netting, so an export never avoids it
-         in this engine. This check pins the model convention; it does not
-         establish tariff-correct meter-interval netting;
-      4. NEITHER END IS PUBLISHED AS THE VALUE. index.html must state both, and
-         must say the settlement lies between them. A page that names one and
-         drops the other, or names both and calls either one the answer, fails
-         here -- which is the whole failure class this issue closes."""
+    """The two bounds describe monthly ENERGY settlement, not the full bill
+    impact of changing physical export. Pin ordering, the PCIA gap, both real
+    engine settlement treatments with fixed physical flows, and the separate
+    NBC effect when physical exports change. The report must name the range's
+    energy-only scope and keep both ends together."""
     import pandas as pd
 
     surplus = rt.resolve_token("EXPORT_VALUE_SURPLUS_BOUND")
@@ -4529,32 +4502,37 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
         f"adds only PCIA ({rt.R.PCIA:.6f}) to rates.credit() -- one of the ends is not "
         "the price map it claims to be")
 
-    # 3. The netting end, measured against the billing engine itself.
+    # 3. Credit treatment and physical flow are separate engine inputs.
+    # Hold physical exports fixed while varying credited exports, so this
+    # probe isolates exactly the monthly ENERGY bounds published above.
     frame = pd.DataFrame([
         dict(dt=pd.Timestamp("2025-07-10 12:00"), seas="S", p="sop", ym="2025-07",
-             Consumption=100.0, Generation=40.0)])
-    bumped = frame.copy()
-    bumped.loc[0, "Generation"] += 1.0
-    netting_delta = rt.R.bill_nem(frame) - rt.R.bill_nem(bumped)
-    assert abs(netting_delta - rt.R.energy("S", "sop")) < 1e-9, (
-        f"one more exported kWh in a NETTING cell moves rates.bill_nem() by "
-        f"{netting_delta:.6f}, not rates.energy() ({rt.R.energy('S', 'sop'):.6f}) -- "
-        "the high end of the published range is not the engine's own netting value")
-    assert abs(netting_delta - rt.R.allin("S", "sop")) > 1e-6, (
-        "an exported kWh in a netting cell is worth rates.allin() to this engine, so "
-        "NBC is netted away by an export, inconsistent with the current "
-        "gross-import convention in bill_nem_monthly(); tariff reconciliation "
-        "must update the model and its bounds together")
-    surplus_frame = frame.copy()
-    surplus_frame.loc[0, "Generation"] = 200.0
-    bumped = surplus_frame.copy()
-    bumped.loc[0, "Generation"] += 1.0
-    surplus_delta = rt.R.bill_nem(surplus_frame) - rt.R.bill_nem(bumped)
-    assert abs(surplus_delta - rt.R.credit("S", "sop")) < 1e-9, (
-        f"one more exported kWh in a SURPLUS cell moves rates.bill_nem() by "
-        f"{surplus_delta:.6f}, not rates.credit() "
-        f"({rt.R.credit('S', 'sop'):.6f}) -- the low end of the published range is "
-        "not the engine's own surplus value")
+             Consumption=100.0, Generation=40.0, PhysicalExport=40.0)])
+    for netting_cell, credited_export, expected_energy in (
+            (True, 40.0, rt.R.energy("S", "sop")),
+            (False, 200.0, rt.R.credit("S", "sop"))):
+        credited = frame.copy()
+        credited.loc[0, "Generation"] = credited_export
+        bumped = credited.copy()
+        bumped.loc[0, "Generation"] += 1.0
+        energy_delta = (rt.R.bill_nem(credited, physical_exp="PhysicalExport")
+                        - rt.R.bill_nem(bumped, physical_exp="PhysicalExport"))
+        assert abs(energy_delta - expected_energy) < 1e-9, (
+            f"fixed physical flows, netting={netting_cell}: changing credited "
+            f"export moves energy settlement by {energy_delta}, expected "
+            f"{expected_energy}")
+        # Now vary physical exports with the credited exports. A positive
+        # interval loses one NBC kWh; an already-exporting interval has none.
+        physical_delta = rt.R.bill_nem(credited) - rt.R.bill_nem(bumped)
+        expected_physical = (rt.R.allin("S", "sop") if netting_cell
+                             else rt.R.credit("S", "sop"))
+        assert abs(physical_delta - expected_physical) < 1e-9, (
+            f"changed physical flows, netting={netting_cell}: bill difference "
+            f"{physical_delta}, expected {expected_physical}")
+        assert abs((physical_delta - energy_delta)
+                   - (rt.R.NBC if netting_cell else 0.0)) < 1e-9, (
+            "the physical-flow difference must be exactly the positive-interval "
+            "NBC effect, separate from the monthly energy credit")
 
     # 4. The page publishes the range, not one end of it.
     html = (rt.ROOT / "index.html").read_text()
@@ -4573,18 +4551,17 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
     claim = re.search(r"an exported kWh on this profile.*?\.(?=\s|<|$)", html, re.S)
     assert claim, ("index.html no longer says what an exported kWh on this profile is "
                    "worth, so the range this pair of tokens publishes cannot be found")
-    assert re.search(r"is worth between\b", claim.group(0)), (
-        "section 8 no longer frames the export value as a range between two "
+    assert re.search(r"monthly energy settlement value between\b", claim.group(0)), (
+        "section 8 no longer frames monthly energy export value as a range between two "
         f"settlement treatments: {claim.group(0)!r}")
     for rendered in (surplus, netting):
         assert rendered in claim.group(0), (
             f"the valuation sentence names only one end of the range: "
             f"{claim.group(0)!r} does not carry {rendered}")
-    return (f"the export value is published as the range {surplus}-{netting}, the two "
-            f"NEM 2.0 settlement treatments, ordered low-to-high and separated by "
-            f"exactly PCIA; the netting end is the engine's own marginal value for an "
-            f"export that cancels an import, measured against rates.bill_nem() rather "
-            f"than assumed, and is rates.energy() rather than rates.allin()")
+    assert "This range excludes changes to NBC from changed physical interval flows" in html
+    return (f"monthly energy export value is the range {surplus}-{netting}, ordered "
+            "and separated by PCIA; fixed-physical credit changes yield energy/credit, "
+            "while changed physical exports separately avoid NBC only in a positive interval")
 
 
 def _export_bound_recomputed_on_the_weekday_schedule(rate_name):
@@ -10752,13 +10729,15 @@ _EV_VOCABULARY = re.compile(r"\bEVs?\b(?!-TOU)|\bcharger\b|\bcharging\b|"
 # EV_FIX_SAVINGS_80 read the same behavior_rebuild.json scenario field at the
 # same precision and were already bare. The token now renders bare too, so
 # this control literal is bare to match -- an intentional presentation
-# change, not a figure drift (the digits, 1,221, are unchanged).
+# change, not a figure drift at that issue. Task 2's interval-net NBC
+# regeneration later moved behavior_rebuild.scenarios.a.saved to $1,222.26;
+# the same whole-dollar control now reads $1,222.
 # The first Monday instruction now asks for a charging check; the report
 # review removed the unsupported assumption that a schedule change is feasible.
 # The success-metrics heading separates that check from hypothetical batteries.
 _EV_HOUSEHOLD_LITERALS = (
     ("section 0's free-win card",
-     '<div class="card"><div class="big">$1,221/yr</div><div class="lbl">Free win: '
+     '<div class="card"><div class="big">$1,222/yr</div><div class="lbl">Free win: '
      'fully super-off-peak EV charging (session-level, 100% compliance)</div></div>'),
     ("the Monday appendix's first instruction",
      "<h3>1 · Check EV charging ($0)</h3>"),
@@ -17927,6 +17906,19 @@ def main():
             raise SystemExit(1)
     tail = f" ({skipped} skipped)" if skipped else ""
     print(f"\n{ran}/{len(CASES)} passed{tail}")
+
+
+@case
+def case_archived_cleaning_cadence_does_not_support_a_purchase_verdict():
+    """Frozen cadence observations cannot establish reproduced purchase economics."""
+    def expensive(doc):
+        for row in doc["cleaning"].values():
+            row["save1"] = 100000
+    with _patched(rt, "_json", _stub_for("extra_results.json", expensive)):
+        text = _renders("SEC12_TEASER")
+    assert "not determined" in text.lower(), text
+    assert "covers the" not in text and "modeled schedule" not in text, text
+    assert "production gain" in text, text
 
 
 if __name__ == "__main__":

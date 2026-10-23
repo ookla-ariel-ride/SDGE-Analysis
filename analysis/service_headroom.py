@@ -46,8 +46,8 @@ combined instead:
 
   * the SDG&E revenue meter, 15-minute import and export (the only 15-minute
     series);
-  * the Enphase consumption CT (`enphase_sam8760_*.csv`), an INDEPENDENT
-    whole-home GROSS load reading, hourly. Its alignment is evidence, not
+  * the SAM hourly load series (`enphase_sam8760_*.csv`), a saved
+    hourly load series with unresolved physical provenance, hourly. Its alignment is evidence, not
     assumption: dark-hour (00-04) correlation against metered net import is
     0.995 at zero offset and collapses at +/-1 h, so row 0 is 00:00 local wall
     clock of the file's year, and no timezone conversion is applied;
@@ -111,7 +111,7 @@ max_upper_bound_kw and the ceiling it took -- because what would settle a
 covered hour, 15-minute production data (never metered here) would settle it.
 Where it sits in an hour the production export does not cover, 15-minute data
 would settle nothing: there is no measurement of that hour at any resolution,
-and what is needed is a consumption-CT export pulled through the end of the
+and what is needed is a SAM hourly load export pulled through the end of the
 meter window. The artifact names the right remedy rather than the usual one,
 and it names the binding interval beside it.
 
@@ -147,7 +147,7 @@ The no-solar path
 ------------------
 Everything above exists to solve one problem: a net-recording revenue meter
 hides self-consumed production, so gross load has to be reconstructed from an
-independent instrument. A household with `has_new_load_interest: true` and no
+SAM reference series with unresolved sensing provenance. A household with `has_new_load_interest: true` and no
 `solar:` block in its intake (has_solar is answered by the shape of the file,
 DATA-SOURCES-CHEATSHEET.md -- there is no `household.has_solar` boolean) does
 not have that problem: with nothing on the roof, gross load IS the metered
@@ -158,7 +158,7 @@ not a conditional threaded through the first. It shares every panel/busbar/
 case primitive with the solar path (`load_panel()`, `nec_220_87_steps()`,
 `busbar_120_percent()`, `panel_occupancy()`, `existing_ac_ocpd()`,
 `sum_of_breakers_rule()`, `ampacity_verdict()`, `physical_fit()`) and reads
-neither the Enphase consumption-CT exports nor the PVOutput/threeway
+neither the SAM hourly load exports nor the PVOutput/threeway
 production references: there is nothing for either to corroborate. Every
 interval is point-determined, so every case verdict on this path is
 two-valued (pass/fail, never not_determined) and the PV ceiling, the daylight
@@ -175,14 +175,14 @@ Two contradictions between this branch and the data stop the run rather
 than being netted through silently: a nonzero meter export (nothing should
 be backfeeding a service with no array), and an enphase_sam8760_*.csv file
 sitting in private/1-raw-data/ at all (a household rarely holds a genuine
-Enphase consumption-CT export without an array behind it). The second check
+SAM hourly load export without an array behind it). The second check
 lists filenames with glob() and opens none of them, so it costs this path
 nothing of the "reads no Enphase file" property it exists to protect.
 
 What is computed
 ----------------
   1. the 15-minute gross-load envelope and its energy-conservation residual
-     against the two independent production references, gated: the residual,
+     against the two production reference series, gated: the residual,
      the day-by-day error, the correlation and the overlap length are each
      checked against a stated threshold, and a breach stops the run instead of
      publishing a reassuring sentence the numbers did not produce. The two
@@ -674,7 +674,7 @@ CONSERVATION_MAX_MAE_KWH_PER_DAY = 5.0
 # total, so correlation catches what the ratio cannot.
 CONSERVATION_MIN_CORRELATION = 0.95
 
-# How far the meter window may run past the last hour the Enphase consumption-CT
+# How far the meter window may run past the last hour the SAM hourly load
 # export covers. Every interval in that lag has NO production measurement behind
 # it and takes the bare nameplate PV cap, and on this window one of them is what
 # sets the conservative basis -- so the lag is not a detail, it is the thing the
@@ -930,7 +930,7 @@ def not_applicable():
         "inputs_read": (
             "None beyond the flag itself. It is checked before the panel "
             "intake, the Green Button 15-minute export and the Enphase "
-            "consumption-CT files are touched, so a household with none of "
+            "SAM hourly load files are touched, so a household with none of "
             "them on hand still gets this artifact instead of an error."),
         "flag_contract": NEW_LOAD_FLAG_CONTRACT,
     }
@@ -951,7 +951,7 @@ def not_applicable():
 # module docstring, kw_ac, the Enphase/PVOutput reconstruction, the
 # conservation gates -- exists to solve one problem: a net-recording revenue
 # meter hides self-consumed production, so gross load has to be reconstructed
-# from an independent instrument. Remove the array and the problem is gone:
+# from a reference series with unresolved acquisition independence. Remove the array and the problem is gone:
 # the meter's own import IS the gross load, exactly, at every interval. That
 # is a second, simpler path through the same NEC 220.87 calculation, not a
 # conditional bolted onto the first -- see build_no_solar().
@@ -964,8 +964,8 @@ NO_SOLAR_REASON = (
     "generation, so there is nothing for the revenue meter's import to net "
     "out: gross load IS the metered import, exactly, at every interval. The "
     "reconstruction the solar path performs -- deriving PV from the Enphase "
-    "consumption CT, bounding daylight intervals against an inverter AC "
-    "nameplate, closing energy conservation against two independent "
+    "SAM hourly load series, bounding daylight intervals against an inverter AC "
+    "nameplate, checking energy consistency against two "
     "production references -- exists only to solve a measurement problem this "
     "household does not have, so it does not run here.")
 
@@ -2163,11 +2163,11 @@ UNCOVERED_WHY = {
         "meter x Enphase computation because the flat 8760-row Enphase grid "
         "cannot be aligned to a 23- or 25-hour day"),
     UNCOVERED_AFTER: (
-        "it falls after the last hour the Enphase consumption-CT export "
+        "it falls after the last hour the SAM hourly load export "
         "measured: the meter window runs on past the end of the production "
         "record"),
     UNCOVERED_BEFORE: (
-        "it falls before the first hour the Enphase consumption-CT export "
+        "it falls before the first hour the SAM hourly load export "
         "covers"),
     UNCOVERED_GAP: (
         "its hour is missing from the middle of the Enphase coverage -- the "
@@ -2219,14 +2219,14 @@ def coverage_lag(env, sam, lag_intervals):
         ENPHASE_COVERAGE_MAX_LAG_HOURS, hours <= ENPHASE_COVERAGE_MAX_LAG_HOURS,
         f"the meter window may run at most "
         f"{ENPHASE_COVERAGE_MAX_LAG_HOURS:.0f} h past the last hour the "
-        f"Enphase consumption-CT export measured",
+        f"SAM hourly load export measured",
         "a STALE Enphase export left in place beside a fresh meter export, "
         "which hands a growing tail of the window to the bare nameplate PV cap "
         "-- the loosest bound this analysis draws, and the one the "
         "conservative verdicts are computed on")
     if not gate["passed"]:
         raise SystemExit(
-            "service_headroom.py: the Enphase consumption-CT export stops "
+            "service_headroom.py: the SAM hourly load export stops "
             f"{_r(hours, 2)} h before the end of the meter window, past the "
             f"{ENPHASE_COVERAGE_MAX_LAG_HOURS:.0f} h limit. Those "
             f"{lag_intervals} intervals carry the bare nameplate PV cap with "
@@ -2247,7 +2247,7 @@ def coverage_lag(env, sam, lag_intervals):
             f"behind them. Each is bounded by the inverters' AC nameplate "
             f"alone, which is the loosest bound in the envelope."),
         "what_would_close_it": (
-            "An Enphase consumption-CT export pulled through the end of the "
+            "An SAM hourly load export pulled through the end of the "
             "meter window, so the tail has hourly production behind it like "
             "the rest of the record."),
     }
@@ -2366,14 +2366,14 @@ def what_would_settle_it(binding, lag):
     if binding["hour_has_a_production_measurement"]:
         return (
             "15-minute PV production, which was never metered here. The "
-            "consumption CT reads hourly, so each quarter-hour inside a "
+            "SAM export supplies hourly values, so each quarter-hour inside a "
             "producing hour is reported as a bound whose upper end credits a "
             "whole hour's production to one interval. A 15-minute production "
             "series would collapse the bound to a point and decide this case "
             f"either way. The interval that sets the conservative basis "
             f"({binding['timestamp_local']}) is one of those.")
     return (
-        f"An Enphase consumption-CT export pulled through the end of the meter "
+        f"An SAM hourly load export pulled through the end of the meter "
         f"window. The interval that sets the conservative basis "
         f"({binding['timestamp_local']}) sits in an hour the current export "
         f"does not cover -- it stops at {lag['enphase_coverage_last_hour']}, "
@@ -3631,9 +3631,9 @@ def _gate(name, observed, comparison, threshold, passed, requirement, catches):
 
 
 def conservation_check(pv, excluded_days):
-    """Daily derived PV against the two independent production references, GATED.
+    """Daily derived PV against the two production reference series, GATED.
 
-    This is the AC-1 closure: the revenue meter and the Enphase consumption CT
+    This is the AC-1 closure: the revenue meter and the SAM hourly load series
     together imply a production series, and the Enphase production CT and
     PVOutput each measured one. Three instruments, one quantity.
 
@@ -3821,7 +3821,7 @@ def conservation_check(pv, excluded_days):
 
 
 def enphase_peak_invariant(sam_max_kw, sam_max_at, peak_kw, envelope_max_kw):
-    """The Enphase consumption CT's hourly maximum, checked rather than claimed.
+    """The SAM hourly load series's hourly maximum, checked rather than claimed.
 
     Two statements, of different strength, both enforced.
 
@@ -3849,14 +3849,14 @@ def enphase_peak_invariant(sam_max_kw, sam_max_at, peak_kw, envelope_max_kw):
               _r(envelope_max_kw, 3), sam_max_kw <= envelope_max_kw + 1e-9,
               "the hourly gross maximum cannot exceed the top of the "
               "15-minute gross-load envelope",
-              "a shifted, rescaled or wrong-year consumption-CT export -- this "
+              "a shifted, rescaled or wrong-year SAM hourly load export -- this "
               "one is physics, not a convention"),
         _gate("enphase_hourly_max_within_the_headline_peak", _r(sam_max_kw, 3),
               "<=", _r(peak_kw, 3), sam_max_kw <= peak_kw + 1e-9,
               "the hourly gross maximum must not exceed the point-determined "
               "15-minute maximum this artifact publishes as maximum demand",
               "a headline maximum demand contradicted from above by an "
-              "independent instrument, which would make every headroom figure "
+              "SAM reference series with unresolved sensing provenance, which would make every headroom figure "
               "and every case verdict optimistic"),
     ]
     failed = [c for c in checks if not c["passed"]]
@@ -3867,11 +3867,11 @@ def enphase_peak_invariant(sam_max_kw, sam_max_at, peak_kw, envelope_max_kw):
                 f"{c['gate']}: Enphase hourly maximum {c['observed']} kW at "
                 f"{sam_max_at}, must be {c['comparison']} {c['threshold']} kW"
                 for c in failed) +
-            ". The consumption CT and the reconstruction disagree in the "
+            ". The SAM series and the reconstruction disagree in the "
             "direction that would make this answer optimistic; nothing was "
             "written.")
     return {
-        "instrument": "Enphase consumption CT, hourly whole-home gross",
+        "instrument": "SAM hourly load series; sensing point and acquisition independence unresolved",
         "max_hourly_mean_kw": _r(sam_max_kw, 3),
         "at": sam_max_at,
         "checks": checks,
@@ -3883,7 +3883,7 @@ def enphase_peak_invariant(sam_max_kw, sam_max_at, peak_kw, envelope_max_kw):
             f"15-minute maximum and {_r(envelope_max_kw - sam_max_kw, 3)} kW "
             f"below the top of the envelope, which is the direction "
             f"consistency requires. Both comparisons are enforced: a "
-            f"consumption CT reading above either one stops the run rather "
+            f"SAM load value above either one stops the run rather "
             f"than being published beside a sentence saying the instruments "
             f"agree."),
     }
@@ -3917,7 +3917,7 @@ def build_no_solar():
     existing_ac_ocpd(), sum_of_breakers_rule(), ampacity_verdict(),
     physical_fit()) and diverging only where the solar path's actual work
     is: the gross-load RECONSTRUCTION. With no array to net out of the
-    revenue meter, that whole apparatus -- the Enphase consumption CT, the
+    revenue meter, that whole apparatus -- the SAM hourly load series, the
     inverter AC nameplate ceiling, the PVOutput/threeway corroboration, the
     energy-conservation gates -- does not apply, and none of it is read: no
     enphase_sam8760_*.csv, no threeway_production_validation.csv, no
@@ -3940,7 +3940,7 @@ def build_no_solar():
 
     raw = only_match("Electric_15_Minute_*.csv", "Green Button 15-minute export")
 
-    # A stray Enphase consumption-CT export sitting beside the meter file is a
+    # A stray SAM hourly load export sitting beside the meter file is a
     # second, independent contradiction of the branch this function is on --
     # a household rarely has one on hand without an array behind it -- so it
     # is checked for and stops the run rather than being silently ignored.
@@ -3954,7 +3954,7 @@ def build_no_solar():
             f"{len(stray_sam)} enphase_sam8760_*.csv file(s) in {RAW_DIR} "
             f"({', '.join(p.name for p in stray_sam)}) but "
             f"private/household.yaml carries no solar: block. A household "
-            f"with a genuine Enphase consumption-CT export on hand almost "
+            f"with a genuine SAM hourly load export on hand almost "
             f"certainly has an array; either the intake is missing its "
             f"solar: block or a stale export from a prior system is sitting "
             f"in private/1-raw-data/ by mistake. Neither file's contents are "
@@ -4650,7 +4650,7 @@ def build_no_solar():
                 "omitted_relative_to_the_solar_path": [
                     "pv_ac_ceiling", "pv_ceiling_basis_split",
                     "max_upper_bound_binding_interval",
-                    "independent_corroboration (Enphase consumption CT / "
+                    "independent_corroboration (SAM hourly load series / "
                     "PVOutput 5-minute sample)"],
                 "why_omitted": (
                     "These fields describe a reconstruction this household's "
@@ -4843,7 +4843,7 @@ def build():
     case_settle = what_would_settle_it(
         binding, ceiling_split["enphase_coverage_lag"])
 
-    # Independent corroboration: the Enphase consumption CT is a direct gross
+    # Independent corroboration: the SAM hourly load series is a direct gross
     # reading. Both comparisons are enforced, not asserted -- see
     # enphase_peak_invariant().
     day_set = set(days)

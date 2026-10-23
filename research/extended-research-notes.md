@@ -31,7 +31,7 @@ Captured 2026-07-25. Supports `analysis/extended_findings.py` → `data/extended
 | Tesla–SDCP VPP ($4,725 + 10¢/kWh) | Ineligible (CEA customer; new installs only) | $0 |
 | SGIP general market | **Closed 12/31/2025** (supersedes earlier "waitlisted" status) | $0 |
 | SGIP RSSE ($1.10/Wh) | Income-qualified only; fully reserved waitlist | $0 unless eligible |
-| CEA storage programs | None exist (Battery Bonus Connect is income-qualified new-install) | $0 |
+| CEA storage programs | Battery Bonus serves eligible homeowners with solar and no battery; Battery Bonus Connect is separate | Quote needed; not included in purchase payback |
 - DSGS explicitly permits TOU-arbitrage compensation alongside (rate-plan carve-out from
   the double-dip ban); events overlap the on-peak window the battery discharges anyway.
 - NEM 2.0 (tariff checked 2026-10-22): storage-only additions ordinarily retain the
@@ -68,3 +68,9 @@ Captured 2026-07-25. Supports `analysis/extended_findings.py` → `data/extended
   VM-1, 2024); EPA MY2024 new-vehicle real-world 27.2 mpg. 23.4 is the conservative
   citable figure.
 - Supercharger price **$0.45/kWh** is an estimate (typical CA $0.40–0.50), labeled as such.
+
+CEA [Battery Bonus](https://thecleanenergyalliance.org/battery-bonus-program/), checked October 22, 2026,
+quotes no upfront cost and $50–115 per battery per month. Site assessment and customer quote set terms.
+CEA/Participate Energy reserve VPP/DER access. Household acceptance, net savings, dispatch terms, and NEM treatment remain undetermined.
+[SGIP announcements](https://www.selfgenca.com/home/about/) distinguish closed ratepayer budgets from open AB209 budgets
+(December 15, 2025 and January 21, 2026 notices, checked October 22, 2026). This analysis assumes no SGIP incentive.

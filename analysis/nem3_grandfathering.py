@@ -87,8 +87,9 @@ IMPORT-SIDE RATE (NEM 3.0/NBT customers under a CCA): rates.py does not define a
 separate "NBT import rate" because none is needed -- what changes under NBT is the
 NETTING STRUCTURE (no monthly per-period netting of imports against exports at
 retail rate), not the per-kWh import PRICE. A CCA customer still pays the same TOU
-delivery+generation+PCIA+NBC schedule per kWh of gross import regardless of NEM
-version; rates.allin(season, period) already IS that gross per-kWh price. This
+delivery+generation+PCIA+NBC schedule per kWh of gross import in this NBT
+proxy. This is a separate assumption from NEM-ST interval netting;
+rates.allin(season, period) supplies the gross per-kWh price. This
 script reuses the SAME assumption extended_findings.py's existing bill_flat_export()
 already encodes for its own (battery-marginal-only) NBT proxy: import billed GROSS
 at rates.allin() per (month, season, TOU period), no netting; export credited

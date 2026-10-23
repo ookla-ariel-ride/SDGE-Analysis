@@ -1829,48 +1829,7 @@ def _a_or_an(n):
 
 
 def _sec12_teaser(ctx):
-    """Section 12's own one-line conclusion: what the measured cleaning
-    recovered, AND whether paying for a routine one still pencils -- or, for
-    a household that never had a measured cleaning, that it is not determined
-    and why.
-
-    ISSUE #167. This used to subscript the sanity-check block for
-    known_cleaning_gain_pct. soiling_analysis.py writes that block in TWO
-    shapes, and the other one -- the ordinary outcome for any household whose
-    cleaning_history does not contain the dated event the gain was measured on
-    -- carries a `status` string and no gain at all. The subscript raised
-    KeyError, resolve_all() failed, and the household lost the WHOLE report
-    over one <summary> line.
-
-    So it reads through _measured_cleaning(), the same binding CLEANING_EFFECT_
-    PCT uses, and for the same reason: the teaser states a figure and names the
-    event beside it, so both halves come off one record. When that binding
-    cannot be made the answer is rendered, not raised -- _claim(...,
-    NOT_DETERMINED, ...) is a SystemExit and would reproduce the total failure
-    this fix removes.
-
-    ISSUE #276. A <summary> teaser is section 12's own one-line CONCLUSION
-    (CLAUDE.md section 10), and the section asks two questions -- did the
-    measured cleaning work, and does paying for a future one still pencil --
-    so the teaser is wrong stating only the first half's figure while the
-    page beside it prints a full verdict sentence covering both. The second
-    half is read off the same cadence model CLEANING_SINGLE_VALUE_RANGE
-    already publishes (data/extra_results.json:cleaning[*].save1): the best a
-    modeled cleaning is worth in ANY scenario is compared against what this
-    entry's own cleaning actually cost, so the verdict is computed, not
-    asserted -- a household whose cadence model clears its own cleaning price
-    gets the opposite sentence rather than a copy-pasted one.
-
-    ROUND 1 (parent meaning-check): the first draft dropped the tariff the
-    payback is priced at and the cadence timing, and read as a sentence
-    fragment (lowercase open, "a 11.8%", "modelled" beside 56 uses of
-    "modeled" elsewhere in the page). Fixed: a capitalized, complete verdict
-    sentence; _CURRENT_TARIFF_YEAR names the tariff; the cadence clause is
-    read from data/extra_results.json:cleaning[*].best1 (never a literal like
-    "early-to-mid July") and is only stated when every soiling scenario
-    modeled agrees on one month -- when they do not, the sentence stops
-    after the pay/no-pay verdict rather than picking one scenario's date to
-    state as if it were the only one."""
+    """Report the reproducible event estimate and the archived cadence limit."""
     entry, why = _measured_cleaning()
     if entry is None:
         return (f"What a cleaning recovers on this array is "
@@ -1878,24 +1837,10 @@ def _sec12_teaser(ctx):
     sc = _cleaning_sanity_check()
     gain, = _figures("SEC12_TEASER", "how much production the cleaning recovered",
                      known_cleaning_gain_pct=sc["known_cleaning_gain_pct"])
-    price, = _amounts("SEC12_TEASER", "what the measured cleaning cost",
-                       cleaning_price=entry["cost_usd"])
-    cad, keys = _cleaning_cadence()
-    best_case, = _amounts(
-        "SEC12_TEASER", "the most a modeled cleaning is worth in any scenario",
-        best_case_save1=max(cad[k]["save1"] for k in keys))
-    if best_case >= price:
-        verdict = (f"at least one modeled scenario covers the ${price:,.0f} "
-                   "routine cleaning cost")
-    else:
-        verdict = (f"the most any modeled routine cleaning recovers is "
-                   f"${best_case:,.0f}/yr, below the ${price:,.0f} cost")
-    months = {cad[k]["best1"] for k in keys}
-    cadence = (f"; the modeled schedule is at most once a year, near {next(iter(months))}"
-               if len(months) == 1 else "")
     return (f"The {sc['cleaning_date']} study estimates {_a_or_an(gain)} {gain}% "
-            "production gain relative to control years. "
-            f"Under the {_CURRENT_TARIFF_YEAR} TOU, {verdict}{cadence}.")
+            "production gain relative to control years. Future cleaning payback "
+            "and optimal cadence are not determined; the archived cadence "
+            "calculation is not reproduced.")
 
 
 _tok("SEC12_TEASER", phrase=True, kind="derived", get=_sec12_teaser,
@@ -6097,16 +6042,14 @@ def _assert_profiles_rebuild_the_year(token, subject, total):
 #   NETTING  rates.energy()  = UDC + CEA + PCIA  -- a kWh that cancels an import
 #                                                   in its own month and period
 #
-# THE NETTING END IS energy(), NOT allin(), under the current engine's
-# gross-channel NBC convention. allin() = energy() + NBC; bill_nem_monthly()
-# charges NBC on m[imp].sum() before energy netting. Its model therefore does
-# not credit an export with avoiding NBC. This is not proof of the tariff's
-# treatment: NEM-ST SC 1(f) uses consumption net of exports within each metered
-# interval, and meter-interval/channel reconciliation remains open. The engine
-# check adds 1 kWh of export to a netting cell and moves rates.bill_nem() by
-# exactly energy(), and to a surplus cell by exactly credit(). The case
-# case_the_two_export_bounds_are_the_two_settlement_treatments in
-# test_report_tokens.py re-runs that model probe.
+# THE NETTING END IS energy(), NOT allin(), because these bounds describe
+# MONTHLY ENERGY settlement only. The engine separately bills NBC on positive
+# physical interval net. Varying credited exports with physical flows fixed
+# changes energy settlement by energy() or credit(). Changing physical exports
+# can also change NBC: while an interval remains net-importing, one additional
+# physical export kWh avoids energy()+NBC; an already-exporting interval gains
+# credit(). The engine test checks all four cases without changing these bounds.
+# See case_the_two_export_bounds_are_the_two_settlement_treatments.
 #
 # WHICH END DOMINATES, and why neither may be published alone. Imports exceed
 # exports in all six season/period cells of data/report_data.json:period_split,
@@ -6129,7 +6072,7 @@ def _assert_profiles_rebuild_the_year(token, subject, total):
 # section 8 states the import side separately as SUPER_OFF_PEAK_RATE.
 # ---------------------------------------------------------------------------
 def _export_value_bound(token, subject, rate, rate_name):
-    """The year's exports priced hour by hour through `rate`, in $/kWh.
+    """The year's monthly energy export value through `rate`, in $/kWh.
 
     `rate_name` is the rates.py function's own name, carried in rather than
     read off `rate.__name__`: the rate map entries are lambdas, so the
@@ -6201,7 +6144,7 @@ _EXPORT_BOUND_SOURCES = [
 _tok("EXPORT_VALUE_SURPLUS_BOUND", kind="derived", fmt="cents1",
      get=lambda ctx: _export_value_bound(
          "EXPORT_VALUE_SURPLUS_BOUND",
-         "the surplus end of what an exported kWh is worth", R.credit, "credit"),
+         "the surplus end of monthly energy export value", R.credit, "credit"),
      sources=["analysis/rates.py:credit() (UDC+CEA, what NEM 2.0 pays a surplus "
               "export -- the LOW end, every exported kWh settled as surplus)"]
              + _EXPORT_BOUND_SOURCES)
@@ -6209,12 +6152,12 @@ _tok("EXPORT_VALUE_SURPLUS_BOUND", kind="derived", fmt="cents1",
 _tok("EXPORT_VALUE_NETTING_BOUND", kind="derived", fmt="cents1",
      get=lambda ctx: _export_value_bound(
          "EXPORT_VALUE_NETTING_BOUND",
-         "the netting end of what an exported kWh is worth", R.energy, "energy"),
+         "the netting end of monthly energy export value", R.energy, "energy"),
      sources=["analysis/rates.py:energy() (UDC+CEA+PCIA, the netted energy rate an "
               "export cancels inside its own month and period -- the HIGH end, "
               "every exported kWh netted against an import; NOT allin(), because "
-              "rates.bill_nem_monthly() uses gross-import NBC as a model convention; "
-              "NEM-ST SC 1(f) meter-interval netting needs reconciliation)"]
+              "rates.bill_nem_monthly() prices NBC on positive physical interval net; "
+              "monthly credited exports do not automatically avoid that separate charge)"]
              + _EXPORT_BOUND_SOURCES)
 
 

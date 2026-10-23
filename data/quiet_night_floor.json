@@ -2503,7 +2503,7 @@
   "source": "Enphase SAM 8760 whole-home consumption (samA.csv/samB.csv)",
   "midday_10to14_p10_kw": 0.9455,
   "sam_night_1to5_median_kw_for_reference_only": 5.6285,
-  "note": "the midday p10 (a low percentile of whole-home consumption when solar is most abundant) is the day-side analog of the night-import floor, and is the ONLY figure here used as corroboration; the two independent instruments agreeing supports (but does not prove) that the load runs continuously rather than only at night. sam_night_1to5_median_kw_for_reference_only is the SAME SAM instrument's own 1-5am median, shown for reference only (PR #77 review nitpick: an earlier version placed this next to the corroboration note in a way that could be misread as a second, independent corroborating figure -- it is not; it is just the SAM meter's own night reading, not a cross-instrument comparison)."
+  "note": "The midday p10 summarizes the saved SAM hourly load series. Agreement with the utility night floor is arithmetic corroboration. The SAM sensing point and acquisition independence are unresolved. The night median is another summary of the same SAM series; neither summary establishes occupancy or the load's cause."
  },
  "pricing": {
   "floor_kw_priced": 1.03,
@@ -2829,7 +2829,7 @@
   "caveat": "small confound (PR #77 review nitpick): run_batt's published EV-spillover gate (kw = imp*4 >= 2.5 kW is treated as non-battery-servable house/EV load) is evaluated on EACH series' OWN import values, so some intervals become servable ONLY in the floor-removed counterfactual purely because subtracting the floor pushed their import under 2.5 kW -- not because of any real behavioral change. Freezing the gate on the baseline series instead moves this delta by roughly $26/yr in the conservative direction (a smaller magnitude reduction in the battery's marginal saving); not corrected here since the gate is run_batt's own shared, unmodified logic."
  },
  "confidence_labels": {
-  "load_magnitude": "measured -- night_floor is read directly from 15-minute Green Button import data (no solar to mask it); hour_of_day is read directly from the Enphase SAM 8760 whole-home consumption meter, an independent instrument that sees self-consumed solar and so is the only one that can see a daytime floor",
+  "load_magnitude": "measured utility night imports; SAM daytime load is a separate saved series with unresolved sensing point and acquisition independence",
   "load_cause": "attested, not measured -- the owner identifies the floor as home-lab computer systems (report prose, index.html section 13; NOT independently recorded in any structured data file or TECHNICAL.md -- corrected citation, PR #77 review finding 3 caught an earlier version wrongly pointing this at TECHNICAL.md 3.11, which contains no such attribution either); this script does not verify that with a plug-meter study or device-level monitoring, and reports the load's cost regardless of cause",
   "pricing": "modeled -- both pricing methods apply the measured floor_kw as a CONSTANT across all 8,760 hours of the year, an assumption (continuous compute load) that is plausible but not separately verified outside the measured 1-5am night window and the SAM hour-of-day cross-check",
   "battery_interaction": "modeled -- battery_dispatch_policies.run_batt, the same engine behind every published battery figure in this repo, applied to a counterfactual load series"

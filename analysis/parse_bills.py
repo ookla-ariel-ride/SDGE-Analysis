@@ -233,7 +233,7 @@ any other account's bills; every assumption below is load-bearing in a regex.
        with the "Detail of Current Charges" / "Total Electric Service" /
        "Total Gas Service" section layout SDG&E prints.
     2. NEM billing: every electric period must print BOTH a "Total Usage" (net) line
-       and a "Non Bypassable Charges Usage" (gross) line. A non-NEM bill has no NBC
+       and a "Non Bypassable Charges Usage" (legacy gross_kwh) line. A non-NEM bill has no NBC
        usage line and fails closed.
     3. A 3-period TOU plan: "SUMMER USAGE" / "WINTER USAGE" tables anchored on an
        "On-Peak" header, with exactly three columns (On-Peak, Off-Peak,
@@ -477,7 +477,7 @@ def parse_electric(path):
             return _f(hit.group(1))
 
         net = one(r"Total Usage:\s*(" + _NUM + r")", "net usage")
-        gross = one(r"Non Bypassable Charges Usage:\s*(" + _NUM + r")", "gross (NBC) usage")
+        gross = one(r"Non Bypassable Charges Usage:\s*(" + _NUM + r")", "printed NBC usage (legacy gross_kwh)")
         delivery = one(r"Total Electric Service\s*\$(" + _NUM + r")", "Total Electric Service")
         bsc = one(r"Base Services Charge\s*\$[\d.]+\s*x\s*\d+\s*days\s*(" + _NUM + r")",
                   "Base Services Charge", required=False)

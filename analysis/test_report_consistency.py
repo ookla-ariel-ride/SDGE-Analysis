@@ -122,7 +122,6 @@ RETIRED_FIGURES = [
     "$1,982",                  # TOU-DR1 margin (now $1,990)
     "$2,329",                  # TOU-DR2 margin (now $2,338)
     "$1,609",                  # EV-TOU-2 margin, with battery (now $1,612)
-    "$2,782",                  # TOU-ELEC margin, with battery (now $2,785)
     "8.5 yr",                  # evening-only battery payback (now 8.4 yr)
     # Issue #189. The grid top-up cost stopped being an asserted constant and
     # became a DERIVED figure, currently 14.023¢. It belongs in this group and
@@ -485,7 +484,7 @@ def case_cca_cheaper_period_count_matches_the_artifact():
     for r in ccj["direction_a_cca_repriced_at_bundled"]["priced_detail"]:
         by_period[(r["statement_date"], r["period"])] += r["provider_delta_usd"]
     n_cheaper = sum(1 for v in by_period.values() if v < 0)
-    assert f"{n_cheaper} of the 19 priced periods" in HTML or f"{n_cheaper} of 19" in HTML, (
+    assert f"{n_cheaper} of the {len(by_period)} priced periods" in HTML or f"{n_cheaper} of {len(by_period)}" in HTML, (
         f"the artifact shows {n_cheaper} CEA-cheaper periods, but the report's own "
         "count phrase doesn't match it")
     assert "the one period in the sample" not in HTML, (
@@ -1699,7 +1698,7 @@ def case_ev_fleet_fuel_cost_matches_extended_results():
     ed = er["electrification_dividend"]
     sc = er["supercharge_delta"]
 
-    m = re.search(r"<p>The fleet.s ~34,000 mi/yr costs.*?</p>", HTML, re.S)
+    m = re.search(r"<p>The fleet.s annualized ownership-period mileage.*?</p>", HTML, re.S)
     assert m, "§9 electrification-dividend paragraph not found in index.html"
     para = m.group(0)
     checks = [
@@ -1808,25 +1807,13 @@ def case_nbt_flat_credit_sensitivity_matches_the_artifacts():
 
 
 def case_extra_results_cleaning_cadence_matches_the_artifact():
-    """issue #112: the §12 cleaning-cadence paragraph is hand-written, not
-    templated -- lock its second-cleaning marginal-value range and its
-    full-blended-value best case against the live artifact.
-    Spans the lead paragraph plus the 1 consecutive <p> its split
-    produced (issue #255)."""
-    xr_path = ROOT / "data" / "extra_results.json"
-    assert xr_path.exists(), f"{xr_path} is committed public data and must exist"
-    xr = json.loads(xr_path.read_text())
-    cleaning = xr["cleaning"]
-    marginals = [v["marginal2nd"] for v in cleaning.values()]
-    best_case = cleaning["2.4"]["save1"]
-
-    m = re.search(r"<p>Modeling soiling accumulation over the Apr–Nov dry season.*?</p>(?:\s*<p>.*?</p>){1}", HTML, re.S)
-    assert m, "§12 cleaning-cadence paragraph not found in index.html"
-    para = m.group(0)
-    assert f"${min(marginals)}–{max(marginals)}/yr" in para, (
-        f"second-cleaning marginal range ${min(marginals)}-{max(marginals)}/yr not found")
-    assert f"${best_case}/yr" in para, f"best-case cleaning save1 (${best_case}/yr) not found"
-    return "the §12 cleaning-cadence paragraph's marginal range and best case match extra_results.json's cleaning"
+    """The frozen cadence block cannot support an unqualified purchase verdict."""
+    section = HTML[HTML.index('<h2 id="s12"'):HTML.index('<h2 id="s13"')]
+    assert "extra_results.json" in section and "does not reproduce the original calculation" in section
+    assert "optimal date" in section and "does not establish" in section
+    for unsupported in ("$7–52", "350–450", "approximately paid for itself", "bi-annual is not justified"):
+        assert unsupported not in section, unsupported
+    return "the cleaning section labels the frozen estimate and excludes unsupported purchase conclusions"
 
 
 def case_extra_results_trueup_ledger_matches_the_artifact():
@@ -2178,33 +2165,18 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
 
 
 def case_away_days_finding_matches_the_artifact():
-    """issue #113: the 'Away-days corroborate the baseload floor' bullet
-    said 12 strictly-away days while extended_results.json's away_days.
-    n_away has always said 11 (confirmed byte-identical on regeneration,
-    so this was never a stale artifact, only a hand-typed prose count that
-    drifted from it) -- a plain transcription error, since the bullet's
-    own median/occupied/implied-kW figures already matched the artifact
-    exactly. Pins the count, and joins the two same-shaped 'N kWh/day'
-    median figures with their own away/occupied labels so they can't
-    silently swap (the same defect class issue #112's own review found
-    repeatedly elsewhere in this file)."""
-    er_path = ROOT / "data" / "extended_results.json"
-    assert er_path.exists(), f"{er_path} is committed public data and must exist"
-    er = json.loads(er_path.read_text())
-    aw = er["away_days"]
-
-    m = re.search(r"<li><b>Away-days corroborate the baseload floor.*?</li>", HTML, re.S)
-    assert m, "'Away-days corroborate the baseload floor' bullet not found in index.html"
+    """Pin low-import selections without treating them as occupancy evidence."""
+    aw = json.loads((ROOT / "data/extended_results.json").read_text())["away_days"]
+    m = re.search(r"<li><b>Low-import days.*?</li>", HTML, re.S)
+    assert m, "low-import selection bullet missing"
     bullet = m.group(0)
-
-    assert f"the {aw['n_away']} strictly-away days" in bullet, (
-        f"away_days.n_away ({aw['n_away']}) not cited as 'the N strictly-away days'")
-    assert (f"import a median <b>{aw['away_median_import_kwh_day']} kWh/day "
-            f"≈ {aw['implied_unattended_kw']} kW of unattended draw</b> "
-            f"(occupied days: {aw['occupied_median_import_kwh_day']} kWh/day)") in bullet, (
-        "the away/occupied median kWh-day figures and implied unattended kW "
-        "not found together in their own ordered clause -- may be stale or swapped")
-    return "the away-days finding's day count and median figures match extended_results.json"
+    assert f"{aw['n_away']} days with little detected EV charging" in bullet
+    assert f"median imports of <b>{aw['away_median_import_kwh_day']} kWh/day</b>" in bullet
+    assert f"other days: {aw['occupied_median_import_kwh_day']} kWh/day" in bullet
+    assert "Occupancy is not established" in bullet
+    assert "does not measure unattended load" in bullet
+    assert "strictly-away" not in bullet and "independent corroboration" not in bullet
+    return "low-import count and medians match the artifact; occupancy remains undetermined"
 
 
 def case_gross_import_decomposition_section_matches_the_artifact():
@@ -2221,7 +2193,7 @@ def case_gross_import_decomposition_section_matches_the_artifact():
     dec = gd["decomposition"]
     robust = gd["decomposition_identifiability_robustness_check"]
 
-    m = re.search(r"<h3>Two tested load-shape assumptions attribute most of the import increase to consumption</h3>.*?</p>(?:\s*<p>.*?</p>){4}", HTML, re.S)
+    m = re.search(r"<h3>Two modeled load shapes attribute most of the printed NBC-usage increase to consumption</h3>.*?</p>(?:\s*<p>.*?</p>){4}", HTML, re.S)
     assert m, "§9 load-shape decomposition subsection not found in index.html"
     section = m.group(0)
 
@@ -2232,9 +2204,9 @@ def case_gross_import_decomposition_section_matches_the_artifact():
         # subsection). Joined into the one ordered "2024-figure ... to
         # 2026-figure" clause the report actually prints.
         (f"{bgt['period_2024']['gross_kwh']:,.0f} kWh "
-         f"({bgt['period_2024']['period'].replace(' - ', '–')}, {bgt['period_2024']['days']} days) to "
+         f"({bgt['period_2024']['period'].replace(' - ', '–')}, {bgt['period_2024']['days']} days) and "
          f"{bgt['period_2026']['gross_kwh']:,.0f} kWh"),
-        f"{bgt['period_2024']['net_kwh']:,.0f} → {bgt['period_2026']['net_kwh']:,.0f} kWh",
+        f"{bgt['period_2024']['net_kwh']:,.0f} to {bgt['period_2026']['net_kwh']:,.0f} kWh",
         f"{bgt['observed_delta_gross_kwh']:,.0f} kWh",
         f"+{dec['consumption_term_kwh']:,.0f} kWh consumption against +{dec['production_term_kwh']:,.0f} kWh production",
         (f"+{round(robust['consumption_term_kwh_this_scenario']):,} kWh consumption against "
@@ -2284,7 +2256,7 @@ def case_irreducible_bill_figures_match_the_artifact():
     for value in checks:
         assert value in section, f"§7 irreducible-bill paragraphs: {value!r} not found in it"
 
-    m2 = re.search(r'<p class="small"><b>That \$4,904/yr already includes the floor.*?</p>', HTML, re.S)
+    m2 = re.search(r'<p class="small"><b>That \$[\d,]+/yr already includes the floor.*?</p>', HTML, re.S)
     assert m2, "§7 baseline-floor recap sentence not found in index.html"
     recap = m2.group(0)
     # issue #112 Codex review round 2: each amount/percentage pair was
@@ -2515,7 +2487,7 @@ def case_soiling_rate_bracket_matches_the_token_that_renders_it():
 _CLEANING_HEADING_RE = re.compile(
     r"<h3>The [^<]*?cleaning \([^)]*\): ([-+]?[\d.]+%) production gain")
 # The section's own conclusion, three lines below that heading.
-_CLEANING_DIFF_IN_DIFF_RE = re.compile(r"Difference-in-differences: <b>([-+]?[\d.]+%)</b>")
+_CLEANING_DIFF_IN_DIFF_RE = re.compile(r"(?:Difference-in-differences: |difference-in-differences estimate is )<b>([-+]?[\d.]+%)</b>")
 # The cleaned year's row in the per-year windows table -- the OTHER statistic,
 # each year's own raw post ÷ pre ratio.
 _CLEANING_RAW_RATIO_RE = re.compile(
@@ -3304,36 +3276,16 @@ def case_cleaning_gain_is_not_determined_when_two_entries_share_the_date():
 
 
 def case_weather_regression_paragraph_matches_the_artifact():
-    """issue #112: the §9 weather-regression paragraph is hand-written, not
-    templated -- lock its base load, cooling-degree-day coefficient, annual
-    cooling kWh, and pre-cooling/setpoint dollar values against the live
-    artifact."""
-    wr_path = ROOT / "data" / "weather_results.json"
-    assert wr_path.exists(), f"{wr_path} is committed public data and must exist"
-    wr = json.loads(wr_path.read_text())
-
-    m = re.search(r"<p>Regressing daily non-EV load against local daily temperatures.*?</p>", HTML, re.S)
-    assert m, "§9 weather-regression paragraph not found in index.html"
+    """Pin the retained archived estimate and its missing-owner limitation."""
+    wr = json.loads((ROOT / "data/weather_results.json").read_text())
+    m = re.search(r"<p><code>data/weather_results.json</code>.*?</p>", HTML, re.S)
+    assert m, "archived weather estimate paragraph missing"
     para = m.group(0)
-
-    def round10(v):
-        return int(round(v / 10.0)) * 10
-
-    checks = [
-        f"~{round(wr['base_kwh_day'])} kWh/day",
-        f"{wr['kwh_per_cdd65']} kWh per cooling-degree-day",
-        f"{round10(wr['annual_cooling_kwh']):,} kWh/yr",
-        # issue #112 Codex review: two bare "$X/yr" values (pre-cooling vs
-        # setpoint) with no label of their own baked in would still pass
-        # if swapped. Joined into the ordered "Pre-cooling ... $A/yr; ...
-        # setpoint ... $B/yr" clause the report actually prints.
-        (f"Pre-cooling in the 10am–2pm super-off-peak window (shifting ~half of "
-         f"on-peak cooling) is worth ≈ <b>${round10(wr['precool_shift_value'])}/yr</b>; "
-         f"a modest efficiency/setpoint improvement another ≈ <b>${round10(wr['setpoint_value'])}/yr"),
-    ]
-    for value in checks:
-        assert value in para, f"§9 weather-regression paragraph: {value!r} not found in it"
-    return "the §9 weather-regression paragraph matches weather_results.json"
+    value = int(round(wr['annual_cooling_kwh'] / 10)) * 10
+    assert f"{value:,} kWh/yr" in para
+    assert "does not contain a generator" in para and "not metered A/C consumption" in para
+    assert "780" not in para and "is worth" not in para
+    return "the retained weather estimate matches its archive and states the missing calculation"
 
 
 # ---------------------------------------------------------------------------
@@ -6376,12 +6328,13 @@ GLOSSARY = (ROOT / "GLOSSARY.md").read_text()
 _CARBON_RATIO_RE = re.compile(r"([\d.]+)× cleaner")
 # The two whole-home-load figures §1 reconciles, and the gap it states.
 _LOAD_BALANCE_RE = re.compile(r"Whole-home load is <b>([\d,]+) kWh/yr</b>")
-_LOAD_CT_RE = re.compile(r"totals ([\d,]+) kWh: ([\d.]+)% below the energy balance")
-# The naive degradation band, at both of the places §9 prints it.
+_LOAD_CT_RE = re.compile(r"SAM8760 load series totals ([\d,]+) kWh, 57 kWh \(([\d.]+)%\) below")
+# The naive degradation band appears in two separate report sentences.
 _NAIVE_BAND_RES = (
     re.compile(r"naïve fit reads ~([\d.]+)–([\d.]+)%/yr"),
     re.compile(r"~([\d.]+)–([\d.]+)%/yr naïve band"),
 )
+
 
 
 def case_midday_vs_overnight_carbon_ratio_is_one_comparison_in_both_documents():
@@ -6449,13 +6402,13 @@ def case_whole_home_load_names_both_derivations_and_states_their_gap():
     """issue #166: ANNUAL_LOAD_KWH resolved to 29,914 while index.html §2
     published 29,857, and neither derivation was named.
 
-    They are two independent measurements of one quantity. 29,914 is the
+    They are two compared calculations; acquisition independence remains unresolved. 29,914 is the
     utility-meter energy balance -- imports + (production − exports), every
     term from a committed artifact (data/report_data.json:totals and
-    data/enphase_daily_production.csv). 29,857 is the Enphase consumption CT's
-    own annual total, which no committed artifact carries; it lives in the
-    gitignored SAM 8760 export. Both are right, and their 0.2% agreement is
-    evidence, so the report publishes the artifact-backed one and states the
+    data/enphase_daily_production.csv). 29,857 is the saved SAM hourly-load series'
+    annual total, which no committed artifact carries; it lives in the
+    gitignored SAM 8760 export. Their 0.2% agreement checks arithmetic consistency
+    without establishing independent sensing, so the report publishes the artifact-backed one and states the
     other as corroboration.
 
     This pins the published figure to the token that derives it, the balance's
@@ -6874,22 +6827,11 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
                   for t in ("STORED_KWH_COST_SOLAR_MIDDAY", "STORED_KWH_COST_GRID"))
         pins.append(("Arbitrage", f"storing ~{lo}–{hi}¢ energy",
                      "STORED_KWH_COST_SOLAR_MIDDAY and STORED_KWH_COST_GRID"))
-    # The clipping entry restates §9's sentence (see the docstring): peak from
-    # the page, ceiling from the token, the headroom computed from the two.
-    clip = _CLIPPING_SENTENCE_RE.search(HTML)
-    assert clip, ("§9 no longer states the sampled peak power and AC ceiling on the "
-                  "cited spring day -- that sentence is the glossary clipping entry's basis")
-    peak_kw, ceiling_kw = float(clip.group(1)), float(clip.group(2))
+    # The unarchived spring peak cannot be used as evidence. Pin the hardware ceiling only.
     if "AC_CEILING_KW" in resolved:
-        assert f"{ceiling_kw:.2f}" == resolved["AC_CEILING_KW"], (
-            f"§9 states a {clip.group(2)} kW AC ceiling but AC_CEILING_KW renders "
-            f"{resolved['AC_CEILING_KW']} from household.yaml:solar.kw_ac")
-    pins += [
-        ("Clipping", f"{clip.group(1)} kW", "index.html §9's peak-power sentence (no artifact)"),
-        ("Clipping", f"{clip.group(2)} kW AC ceiling", "index.html §9 / AC_CEILING_KW"),
-        ("Clipping", f"about {round((1 - peak_kw / ceiling_kw) * 100)}% below",
-         "1 − peak ÷ ceiling, from the two figures above"),
-    ]
+        pins.append(("Clipping", f"{resolved['AC_CEILING_KW']} kW AC ceiling",
+                     "household.yaml:solar.kw_ac via AC_CEILING_KW"))
+    assert "8.52 kW" not in GLOSSARY and "8,520 W" not in HTML
     # NIGHT_FLOOR_ANNUAL_COST renders both pricings in one sentence; the
     # glossary spreads them across its own. Pin the amounts, not the wording.
     if "NIGHT_FLOOR_ANNUAL_COST" in resolved:

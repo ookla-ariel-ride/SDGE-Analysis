@@ -26,22 +26,22 @@
    }
   },
   "seed_source": "battery_dispatch_policies.json post_behavior.mid.battery_marginal",
-  "seed_year1_saving_usd": 2380,
+  "seed_year1_saving_usd": 2378,
   "uniform_ladder": {
    "12%": {
-    "npv10": 14821,
+    "npv10": 14797,
     "payback_yr": 4.9
    },
    "3%": {
-    "npv10": 5439,
+    "npv10": 5422,
     "payback_yr": 5.8
    },
    "5%": {
-    "npv10": 7173,
+    "npv10": 7155,
     "payback_yr": 5.6
    },
    "8%": {
-    "npv10": 10126,
+    "npv10": 10105,
     "payback_yr": 5.3
    }
   }

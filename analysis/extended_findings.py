@@ -6,7 +6,7 @@ Computes, from data already in the archive plus cited public constants:
      (the BSC is ALREADY in rates.py: BSC $0.79343/day = $24.15/mo, live Oct 2025 —
       CPUC D.24-05-028, Res E-5355; EV-TOU-5's $16 basic service fee was REPLACED).
   B. Electrification dividend: measured EV charging cost vs gasoline counterfactual.
-  C. Away-day natural experiment: unattended baseload from low-use days.
+  C. Low-import/low-EV selection; occupancy is not established.
   D. Supercharging vs home delta: value of topping up at home before trips.
   E. Weekend super-off-peak exploitation: weekend non-EV load in hours >=14 is
      physically moved into the same day's 0-14 sop window and the year re-billed
@@ -367,8 +367,10 @@ out["away_days"] = {
     "n_away": int(len(away)),
     "away_median_import_kwh_day": round(float(away.imp.median()), 1) if len(away) else None,
     "occupied_median_import_kwh_day": round(float(occ.imp.median()), 1),
-    "note": ("away-day import is grid import only; unattended LOAD also eats solar "
-             "midday, so this is a lower bound on unattended consumption"),
+    "note": ("Compatibility keys away_days/n_away/implied_unattended_kw describe days "
+             "with detected EV energy <0.5 kWh and imports <40% of the median. "
+             "Occupancy is not established. These are grid imports from the same "
+             "meter series, not an independently measured unattended load."),
     "implied_unattended_kw": (round(float(away.imp.median()) / 24, 2)
                               if len(away) else None),
 }
@@ -496,7 +498,8 @@ else:
 
 # ---------- H. 2039 NBT transition ------------------------------------------
 def bill_flat_export(dd, imp, exp, credit):
-    """Monthly netting replaced by flat export credit; NBC on positive physical interval net."""
+    """NBT proxy: gross imports pay allin, including NBC; exports earn a flat credit.
+    This preserves a separate NBT assumption, not NEM-ST interval netting."""
     f = dd.copy(); f["I"] = imp; f["E"] = exp
     tot = 0.0
     for _, mo in f.groupby("ym"):

@@ -2,8 +2,8 @@
 """Reprice the 13-period billed year at its own tariff vintages (issue #30).
 
 THE QUESTION. billing_model_nem.py prices the household's trailing 365-day
-window (2025-07-25..2026-07-23) entirely at frozen 6/1/2026 rates and prints
-roughly $4,904/yr. The bills for a DIFFERENT, bill-aligned 365-day window
+window (2025-07-24..2026-07-23) entirely at frozen 6/1/2026 rates and prints
+roughly $4,901/yr. The bills for a DIFFERENT, bill-aligned 365-day window
 (2025-06-27..2026-06-26, the 13 statements in data/bill_periods_electric.csv
 that data/electric_bill_summary.csv also carries) accrued $3,282.22 of current
 charges. TECHNICAL.md has long attributed the ~$1,622 gap to "rate vintage" --
@@ -13,7 +13,7 @@ LEVEL barely moved while its SHAPE rotated hard. This script actually measures
 the vintage effect over the whole billed year, using analysis/rates_history.py
 (the tariff actually in force on each historical date, sourced from the bill
 PDFs' own printed rate lines) -- and separates it from a second, previously
-unexamined confound: the two $4,904-vs-$3,282 figures are computed over
+unexamined confound: the two $4,901-vs-$3,282 figures are computed over
 DIFFERENT 365-day windows in the first place.
 
 THE DECOMPOSITION. Eight quantities, chained so each is "the previous total
@@ -23,7 +23,7 @@ total_vintage_effect as unsupported: generation_and_fixed_charge_vintage_
 effect's -$281.59 was being counted almost entirely as "vintage," but
 analysis/cca_rate_extraction.py's own committed data/cca_generation_rates.csv
 independently proves CEA's charged per-TOU generation rate never moved once
-across the whole CCA era and is IDENTICAL to rates.CEA's current table --
+across the fixed 13-period audit and is IDENTICAL to rates.CEA's current table --
 re-verified fresh here, against these specific 13 periods, not assumed from
 that module's docstring (see "GENERATION RATE VINTAGE IS ZERO, BY EVIDENCE"
 below). The true cause of that -$281.59 was almost entirely the SAME
@@ -41,7 +41,7 @@ usd), narrowing generation_tou_window_effect to what the TOU-window-shape
 confound can actually support. This is the corrected, 8-term version.)
 
     native_window_total   billing_model_nem's own native rolling window
-                           (2025-07-25..2026-07-23), current vintage
+                           (2025-07-24..2026-07-23), current vintage
                            throughout, computed by calling bmn.bill()
                            unmodified -- fresh here, never hardcoded.
   + window_effect          = bill_window_all_current_vintage_modeled_total
@@ -722,7 +722,7 @@ def _per_period_figures(d, row):
 # ---------------------------------------------------------------------------
 def _native_window_total(d_full):
     """billing_model_nem's own native 365-day rolling window
-    (2025-07-25..2026-07-23), current vintage throughout, computed exactly as
+    (2025-07-24..2026-07-23), current vintage throughout, computed exactly as
     that script's own __main__ block does -- from the SAME loaded frame
     (billing_model_nem.load() is a deterministic function of usage.csv, so
     filtering the already-loaded frame is byte-identical to a fresh load())."""
@@ -808,7 +808,7 @@ def _verify_cca_generation_rate_flat(periods):
     depends on (a fresh Codex adversarial review flagged the prior version's
     generation_and_fixed_charge_vintage_effect as an unsupported "vintage"
     claim; analysis/cca_rate_extraction.py's own docstring already argues
-    CEA's rate never moved across the whole CCA era, but this function
+    CEA's rate never moved across the fixed 13-period audit, but this function
     verifies that claim FRESH, against these specific 13 periods, rather than
     trusting the docstring's corpus-wide claim to cover them without checking).
 
@@ -1205,7 +1205,7 @@ def _residual_concentration_note(per_period):
             "billing_model_nem.load() assigns every historical 15-minute interval's "
             "TOU period via rates.period_at(), the CURRENT window rule, applied "
             "uniformly to every date in this analysis (both here and in the native "
-            "$4,904 model) -- a documented, pre-existing limitation of that reused, "
+            "$4,901 model) -- a documented, pre-existing limitation of that reused, "
             "unmodified module (rates.py's own docstring: 'wrong for reproducing a "
             "historical statement, where it misallocates 250-360 kWh per period "
             "between off-peak and super-off-peak'), not something this script "
@@ -1235,15 +1235,15 @@ def _build_notes(per_period, agg):
             "_verify_cca_generation_rate_flat() confirmed, against data/"
             "cca_generation_rates.csv (built by analysis/cca_rate_extraction.py "
             "from every CCA-era bill PDF), that CEA's charged per-TOU generation "
-            "rate is flat across all 13 periods in this corpus AND identical to "
+            "rate is flat across all 13 selected audit periods AND identical to "
             "rates.CEA's current table for every one of the six (season, TOU) "
             "cells, to 5 decimal places -- direct bill evidence, not an assumption "
             "carried over from that module's own docstring. There is therefore NO "
             "generation rate-vintage term in this decomposition: CEA charged "
-            "exactly today's rate throughout the analysis year, so pricing "
+            "the frozen June 2026 rate throughout the analysis year, so pricing "
             "generation at rates.CEA for the whole window is not a current-vintage "
             "modeling choice here, it is what was actually charged. If a future "
-            "regeneration of data/cca_generation_rates.csv ever shows this rate "
+            "regeneration of data/cca_generation_rates.csv ever shows this rate within the selected audit periods "
             "moving, build() fails closed rather than silently continuing to "
             "assume zero generation-vintage effect."),
         generation_tou_window_effect_explanation=(

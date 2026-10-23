@@ -7,7 +7,7 @@ description of the file said a third, "three-way" series -- meter-derived
 production -- was "computed in-script and summarized in the report," which
 is exactly the CLAUDE.md section 9 gate ("every committed artifact
 regenerable by its committed script") this file was failing. This script is
-that generator: it reproduces the two REFERENCE series from their own
+that generator: it reproduces the two reference series from their own
 committed daily records and independently DERIVES the third from raw meter
 data, so the whole file is regenerable end to end.
 
@@ -18,32 +18,14 @@ THE THREE COLUMNS, exactly:
   * `enphase_meter`  -- the Enphase production CT's own daily total
                         (data/enphase_daily_production.csv, "Energy
                         Delivered (kWh)"), passed through unchanged.
-  * `meter_derived`  -- a THIRD, independent production estimate built
-                        entirely from meter data, with NO production
-                        monitoring feed involved at all:
-
-                            pv_hour = max(sam_hour - import_hour + export_hour, 0)
-                            meter_derived_day = sum(pv_hour for hour in day)
-
-                        where `sam_hour` is the Enphase SAM 8760 whole-home
-                        CONSUMPTION CT's hourly gross load (private/1-raw-
-                        data/enphase_sam8760_*.csv, staged here as
-                        samA.csv/samB.csv per the sandbox convention) and
-                        `import_hour`/`export_hour` are the SDG&E revenue
-                        meter's own 15-minute Consumption/Generation columns
-                        (usage.csv), summed to the hour. This is the
-                        identity `gross_load = import - export + production`
-                        rearranged for production -- the SAME identity and
-                        the SAME clip-at-zero (absorbing dark-hour
-                        instrument noise) that analysis/service_headroom.py's
-                        `derive_pv()` uses for its own gross-load envelope,
-                        applied here as a straight daily sum instead of an
-                        hourly bound. `pv_hour` values below zero are meter
-                        timing/rounding noise between the two independent
-                        instruments (the CT and the revenue meter) at a dark
-                        hour where the true value is zero; clipping at zero
-                        is the same convention service_headroom.py documents
-                        for the identical noise source.
+  * `meter_derived`  -- production derived as
+        max(sam_hour - import_hour + export_hour, 0), summed by date.
+        SAM is the saved hourly load series. Each export has one kWh column
+        and 8,760 rows; neither file establishes its physical sensing point,
+        quantity definition, or independence from the production feeds.
+        Utility Consumption/Generation rows are summed to each hour.
+        Clipping negative reconstructed production to zero is a model convention.
+        Agreement checks arithmetic consistency; acquisition independence remains unresolved.
 
 DST DAYS -- HANDLED EXPLICITLY, NOT SILENTLY:
   The Enphase SAM 8760 export is a flat 24-hours-a-day grid indexed from
@@ -62,18 +44,15 @@ DST DAYS -- HANDLED EXPLICITLY, NOT SILENTLY:
   the tariff clock -- not re-derived here) are printed as a NOTICE at run
   time and are recorded as blank/NaN in the `meter_derived` column. All 365
   calendar rows stay in the file; `pvoutput` and `enphase_meter` are
-  independent instruments unaffected by the SAM/wall-clock mismatch and are
+  reference series unaffected by the SAM/wall-clock mismatch and are
   populated normally for both dates. The validation summary this script
   prints (correlation, MAE, ratio against each reference series) is computed
   over the OTHER 363 days only -- see `validation_stats()`.
 
-WHAT THIS DOES NOT VALIDATE: `meter_derived`'s agreement with `pvoutput`/
-`enphase_meter` speaks to whether the meter-based reconstruction is
-physically sound, not to which of the three is "more correct" -- pvoutput
-and enphase_meter are themselves independent instruments that already
-disagree with each other by a few percent (printed below), so
-`meter_derived` sitting inside that same spread is the bar this script
-checks it against, not exact agreement with either one.
+WHAT THIS DOES NOT VALIDATE: agreement among these series does not establish
+independent acquisition, installed CT configuration, or component health.
+The saved SAM export lacks those source definitions. The numerical series
+and agreement gates remain useful arithmetic checks under that limitation.
 
 Run from private/verify per the standard sandbox (needs usage.csv, samA.csv,
 samB.csv beside it, plus the committed data/pvoutput_daily.csv and
@@ -123,7 +102,7 @@ ENPHASE_CSV = DATA / "enphase_daily_production.csv"
 
 
 # ---------------------------------------------------------------------------
-# 1. The two REFERENCE series: read straight off the committed daily records
+# 1. The two reference series: read straight off the committed daily records
 #    (soiling_analysis.py's load_pvoutput()/load_enphase() read the exact
 #    same two files the exact same way -- reused pattern, independently
 #    written here so this generator has no import-time dependency on that
@@ -446,10 +425,10 @@ def validation_stats(dates, dst_days, derived, reference):
 #    signal anything was wrong, and exit 0.
 # ---------------------------------------------------------------------------
 # The floor comes from evidence, not a guess (CLAUDE.md section 0): pvoutput
-# and enphase_meter are two independent, already-trusted instruments, and
+# and enphase_meter are two reference series with unresolved source dependence, and
 # their OWN mutual correlation on this exact window is the natural benchmark
 # for "two honest measurements of the same daily production." meter_derived
-# is a THIRD independent measurement of the same quantity, so its
+# is a third derived series of the same quantity, so its
 # correlation with either reference should land in the same neighborhood,
 # not measurably worse. Measured at the time this gate was written: the two
 # references agree at r=0.99989 on this household's data; meter_derived
@@ -467,7 +446,7 @@ CORRELATION_FLOOR_BELOW_REF = 0.01
 # reference's day-to-day SHAPE perfectly and would sail through the
 # correlation floor above alone. The ratio check is what has to catch that,
 # so it needs its own evidence-derived band, not a flat guess. Same
-# principle as the correlation floor: the two REFERENCE instruments'
+# principle as the correlation floor: the two reference series'
 # own ratio (pvoutput/enphase_meter, measured 1.0205 on this household's
 # data, i.e. a 0.0205 deviation from perfect agreement) is the natural
 # "how far can two honest measurements of the same thing drift" benchmark.
@@ -503,14 +482,14 @@ RATIO_DEVIATION_ABSOLUTE_CEILING = 0.10
 
 
 def check_reference_sanity(ref_correlation, ref_ratio):
-    """FIXED bounds on the two REFERENCE instruments' own mutual agreement,
+    """FIXED bounds on the two reference series' own mutual agreement,
     checked before anything derives an adaptive threshold from them. Must
     never be computed FROM ref_correlation/ref_ratio themselves -- that
     would be exactly the self-relaxing hole this function exists to close."""
     problems = []
     if ref_correlation < REF_CORRELATION_SANITY_MIN:
         problems.append(
-            f"the two REFERENCE instruments' own correlation, "
+            f"the two reference series' own correlation, "
             f"{ref_correlation:.5f}, is below the fixed sanity floor "
             f"{REF_CORRELATION_SANITY_MIN} -- pvoutput and enphase_meter no "
             "longer look like two honest measurements of the same "
@@ -519,7 +498,7 @@ def check_reference_sanity(ref_correlation, ref_ratio):
     lo, hi = REF_RATIO_SANITY_BOUNDS
     if not (lo <= ref_ratio <= hi):
         problems.append(
-            f"the two REFERENCE instruments' own ratio, {ref_ratio:.4f}, is "
+            f"the two reference series' own ratio, {ref_ratio:.4f}, is "
             f"outside the fixed sanity band [{lo}, {hi}] -- one of them "
             "looks scaled or corrupted upstream (pvoutput_daily.csv / "
             "enphase_daily_production.csv), which would otherwise silently "
@@ -553,7 +532,7 @@ def check_validation(stats_en, stats_pv, ref_correlation, ref_ratio):
         if corr < floor:
             problems.append(
                 f"meter_derived vs {label}: correlation {corr:.5f} is below "
-                f"the {floor:.5f} floor (the two REFERENCE instruments' own "
+                f"the {floor:.5f} floor (the two reference series' own "
                 f"mutual correlation, {ref_correlation:.5f}, minus "
                 f"{CORRELATION_FLOOR_BELOW_REF}) -- the derived series no "
                 "longer tracks day-to-day production the way an honest "
@@ -563,7 +542,7 @@ def check_validation(stats_en, stats_pv, ref_correlation, ref_ratio):
             problems.append(
                 f"meter_derived vs {label}: annual ratio {ratio:.4f} is "
                 f"outside the [{ratio_lo:.4f}, {ratio_hi:.4f}] band (derived "
-                f"from the two REFERENCE instruments' own {ref_ratio:.4f} "
+                f"from the two reference series' own {ref_ratio:.4f} "
                 "ratio) -- looks like a units or scale error, since "
                 "correlation alone cannot catch a constant multiplicative "
                 "error")
@@ -628,7 +607,7 @@ def main():
          "Green Button meter's real wall-clock day (25 hours fall-back, 23 "
          "hours spring-forward) do not align on these dates, so no "
          "meter_derived value is computed for them; pvoutput and "
-         "enphase_meter are independent instruments and are unaffected.")
+         "enphase_meter are source series with unresolved acquisition independence and are unaffected.")
 
     print(f"validation, over the {stats_en['n_days']} non-DST days "
          "(PASSED -- see check_validation):")
@@ -638,7 +617,7 @@ def main():
     print(f"  meter_derived vs pvoutput:      corr={stats_pv['correlation']:.5f} "
          f"MAE={stats_pv['mae_kwh']:.3f} kWh/day "
          f"ratio={stats_pv['ratio_derived_over_reference']:.4f}")
-    print(f"  pvoutput vs enphase_meter (the two REFERENCE instruments, for "
+    print(f"  pvoutput vs enphase_meter (the two reference series, for "
          f"scale): corr={ref_correlation:.5f} MAE={ref_mae:.3f} kWh/day "
          f"ratio={ref_ratio:.4f}")
 

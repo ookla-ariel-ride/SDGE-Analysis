@@ -521,22 +521,22 @@ NEEDS_PRIVATE_ARCHIVE = {
                                    "monte_carlo block exactly -- same tie-out shape as "
                                    "battery_plan_matrix.py, so synthetic inputs must diverge "
                                    "and trip it"),
-    "gross_import_decomposition.py": ("both SAM 8760 exports (samA.csv/samB.csv, the only "
-                                      "independent gross-load instrument -- same dependency "
+    "gross_import_decomposition.py": ("both SAM 8760 exports (samA.csv/samB.csv, the saved "
+                                      "hourly load series with unresolved sensing provenance -- same dependency "
                                       "as service_headroom.py) and the raw Green Button "
                                       "export, none of which has a stand-in carrying a real "
                                       "two-year-apart pair of billing periods"),
     "reprice_by_vintage.py": ("the raw Green Button export (usage.csv, via "
                               "billing_model_nem.load()) for the interval data it reconciles "
                               "against the 13-period bill corpus"),
-    "quiet_night_floor.py": ("both SAM 8760 exports (samA.csv/samB.csv, the only "
-                             "independent gross-load instrument that can see the "
+    "quiet_night_floor.py": ("both SAM 8760 exports (samA.csv/samB.csv, the saved "
+                             "hourly load series used to describe the "
                              "day-side floor -- same dependency as service_headroom.py "
                              "and gross_import_decomposition.py), none of which has a "
                              "synthetic stand-in carrying a real, continuous always-on "
                              "signature"),
     "threeway_production_validation.py": ("both SAM 8760 exports (samA.csv/samB.csv, "
-                             "the only independent gross-load instrument -- same "
+                             "the saved hourly load series, sensing provenance unresolved -- same "
                              "dependency as service_headroom.py and gross_import_"
                              "decomposition.py) and the raw Green Button export, "
                              "none of which has a stand-in carrying a real solar year"),
