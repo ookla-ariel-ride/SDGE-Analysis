@@ -4940,8 +4940,9 @@ against the committed real-year `meter_derived` column would reject any syntheti
 
 This study models prospective hardware. The household owns no battery. Every Powerwall
 case is hypothetical. The study uses the measured 2025-07-24 through 2026-07-23 meter
-window and frozen June 2026 rates. Hardware savings are bill differences from the
-post-free-fix baseline at those same rates. They exclude the separate free-behavior saving.
+window and frozen June 2026 rates. Original NEM hardware savings are model bill differences
+from the post-free-fix baseline at those same rates. They exclude the separate free-behavior saving.
+The schema-version-2 NBT sensitivity below uses signed cost ledgers and matched behavior baselines.
 Equipment, circuit, export-settlement, and legal evidence appears in
 [`research/sb868-portable-solar-storage.md`](research/sb868-portable-solar-storage.md).
 These exploratory results do not establish lawful grid-parallel operation or a purchase recommendation.
@@ -4960,7 +4961,7 @@ intentionally export. The optional shared AC cap includes added PV and every bat
 discharge. This AC-coupled model does not capture DC production above the cap. The
 annual SOC vector iterates to a `1e-8` kWh tolerance; nonconvergence raises an error.
 
-Every bill uses `rates.bill_nem_monthly()`, including NBC on positive physical interval net, PCIA,
+Every original NEM bill uses `rates.bill_nem_monthly()`, including NBC on positive physical interval net, PCIA,
 delivery, CEA generation, and fixed charges. Credited, zero-credit, and incremental
 zero-export cases use separate physical and billing accounts. Zero-credit removes
 compensation for incremental meter exports, including displaced rooftop exports.
@@ -4968,9 +4969,76 @@ Zero-export curtails only new residual PV. These are disclosed counterfactual ac
 they do not establish legal settlement or prove perfect device export control.
 
 NEM-ST specifies NBC on consumption net of exports within each metered interval. The
-fifteen-minute channel/billing-interval reconciliation remains open. Every portable savings
+fifteen-minute channel/billing-interval reconciliation remains open. Every original NEM savings
 figure and price ceiling retains the model convention; exact reproduction does not establish
 tariff accuracy. See the [NBC clarification](#nbc-meter-interval-clarification).
+
+**Present-2026 NBT signed ledgers.** `present_2026_nbt_sensitivity` reprices the same
+physical traces for all 75 scenarios, nine canonical references, and 18 marginal pairs.
+Each of four cases retains `unchanged_behavior` and `post_free_fix` baselines.
+Rows with unchanged behavior use the first; all other rows use the second.
+Hardware deltas subtract each after-hardware ledger from its matched baseline ledger.
+Marginals subtract paired hardware ledgers and refuse mismatched behavior baselines.
+
+Free-behavior deltas remain separate. Canonical references retain their own capacity,
+discharge power, charge power, and policy identities. Both controller orders remain visible.
+The sensitivity does not dispatch again or optimize for NBT.
+
+`load_nbt_context()` uses `nem3_grandfathering.load_rate_table()` and the public
+`data/nbt_export_rates_2026.csv`. Cases cross `NBT00`/`NBT26` with
+`delivery_generation_cea_bonus`/`delivery_cea_bonus_only`.
+Both assumptions include the CEA $0.01/kWh bonus. Both vintages have equal first-year
+2026 prices; later schedule values do not enter this study.
+The block records the CSV SHA-256 and the NBT/rates engine hashes.
+
+The shared loader checks exact vintage/component/month/day/hour domains, unique keys,
+complete coverage, and finite numeric rates before the pivot. It refuses missing keys
+without interpolation. Public rate loading and `bill_nbt()` need no household intake;
+household-dependent imports occur inside their callers.
+
+`nbt_bill_comparison()` accepts matched gross imports, credited exports, and physical
+exports. `_nbt_bill()` checks equal lengths, finite nonnegative flows, and credited
+exports no greater than physical exports plus `1e-9` kWh.
+It checks datetime values and timestamp agreement with month, canonical season, and
+`rates.period_at()` TOU labels. It derives holiday/weekend labels through
+`rates.off_peak_day()`. Export pricing uses observed local month/day-type/hour labels
+against the saved 2026 table.
+
+Quarter-hour kWh sum without resampling; repeated fall-DST
+rows remain, and the missing spring hour stays absent. The wrapper refuses missing or
+nonfinite touched rate buckets and leaves the supplied arrays unchanged.
+
+`nem3_grandfathering.bill_nbt()` supplies the authoritative signed ledger total.
+Gross imports incur canonical UDC, CEA generation, PCIA, and NBC; distinct service dates
+incur BSC. This NBT NBC assumption differs from NEM's positive physical interval net.
+Export delivery, generation, and bonus credits enter as negative components.
+Annual/monthly totals and all eight components must agree within `1e-7` USD before rounding.
+
+Existing rooftop exports also receive the selected NBT prices.
+`credited` prices all physical exports; `zero_credit`/`zero_export` price the remaining
+old-export credit channel. This allocation establishes no SB 868 compensation entitlement.
+
+Every baseline, scenario, and reference exposes `settlement_diagnostics` with annual/monthly
+charge/credit pools, nonnegative delivery/generation excesses, negative months, imports,
+physical/credited exports, and modeled net-export flags. The bonus joins generation solely
+for diagnostics; PCIA stays outside both pools pending exact eligibility research.
+These diagnostics do not clip credits or implement credit banks, relevant periods,
+floors, or net-surplus compensation. `nsc_usd` stays null.
+
+Current SDG&E eligible credits carry forward during NBT service; CEA terms describe annual
+remaining-credit forfeiture and separate surplus settlement. The provider rules are distinct.
+Calendar months do not establish billing or relevant periods.
+
+The block's `payable_bill_established`, `actual_tariff_accuracy_established`,
+`settlement_credit_limits_applied`, and `future_transition_projection` flags remain false.
+NBT `economics` stays null because settlement credit limits and relevant-period treatment
+are not modeled. No NBT installed-price ceiling, NPV, or payback follows.
+`scenario_ranges` gives four-case extrema, not rigorous settlement-savings bounds.
+
+`unavailable_scenarios.post_nem_adoption.annual_savings_usd` remains null and points to this
+present sensitivity. Future tariff, equipment price, and supported configuration remain unknown.
+Original NEM results and economics retain their separate basis.
+See [the study's dated source limits and comparison](research/sb868-portable-solar-storage.md#present-2026-nbt-sensitivity-fixed-flows-signed-costs-before-settlement-limits).
 
 **Interpretation limits.** The schedule uses permitted solar surplus and super-off-peak
 grid charging, with off/on-peak discharge. It makes no optimality claim. The base reserve,

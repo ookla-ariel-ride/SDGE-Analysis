@@ -305,7 +305,39 @@ These credited cases keep the same 3.84 kWh battery and output ceiling. They pri
 | 0.5 → 1 kW DC | $230.48 | $979.06 | $1,708.58 |
 | 1 → 1.5 kW DC | $228.29 | $969.75 | $1,692.33 |
 
-These panels require their own installed quotes and lawful export treatment. The JSON also reports PV-only increments under each export treatment. Direct daytime EV/appliance flexibility remains unavailable: vehicle presence and selected-load timing were not measured. Future adoption after NEM ends also remains unavailable; no known future tariff enters this model.
+These panels require their own installed quotes and lawful export treatment. The JSON also reports PV-only increments under each export treatment. Direct daytime EV/appliance flexibility remains unavailable: vehicle presence and selected-load timing were not measured. Adoption after NEM ends remains unavailable; the present-2026 sensitivity below does not establish a future tariff or adoption value.
+
+### Present-2026 NBT sensitivity: fixed flows, signed costs before settlement limits
+
+**The three storage-only cases below have larger modeled hardware deltas under these NBT assumptions.** Credited added PV has a smaller delta. These are signed cost-ledger differences before settlement limits. They do not establish payable-bill savings or support a tariff-switch recommendation. The NEM tables and conditional price ceilings above retain their separate NEM basis.
+
+The sensitivity uses the same 35,040 intervals from 2025-07-24 through 2026-07-23. It keeps physical imports, exports, charging sources, SOC, and controller order unchanged. It prices gross imports at frozen June 2026 EV-TOU-5/CEA rates, including gross-import NBC. NEM uses positive physical interval-net NBC instead. All credited exports receive the selected NBT prices, including exports from the existing rooftop array. This is a whole-account counterfactual; it establishes no SB 868 compensation rule.
+
+The four cases combine `NBT00` and `NBT26` with two export-credit assumptions: delivery plus generation plus the CEA $0.01/kWh bonus, or delivery plus that bonus alone. Both vintages give equal results in the priced 2026 first year. Their equality says nothing about later years. The two credit assumptions reflect unresolved CEA generation-credit interpretation. Their extrema are not rigorous bounds on settlement savings.
+
+SDG&E's methodology assigns generation export pricing to bundled customers. CEA states that Solar Impact uses the same SDG&E pricing plus its bonus. These statements leave the component interpretation unresolved. The sources were checked on 2026-10-23. [SDG&E export pricing](https://www.sdge.com/solar/solar-billing-plan/export-pricing), [CEA Solar Impact](https://thecleanenergyalliance.org/solar-impact/)
+
+Each case stores `unchanged_behavior` and `post_free_fix` baselines. Each hardware row uses its own matched behavior baseline. The following rows all use `post_free_fix`, excluding free EV scheduling. The NBT free-behavior delta is $1,238.66 under either credit assumption; the separate NEM figure remains $1,222.26. These different pricing bases cannot be added together.
+
+| Fixed physical scenario | NEM modeled annual saving | NBT delivery + generation + bonus annual signed delta | NBT delivery + bonus annual signed delta |
+|---|---:|---:|---:|
+| `stream_single_default_360w`; 1.92 kWh, 0.36/1.05 kW discharge/charge | $255.33 | $356.74 | $370.93 |
+| `stream_single_conditional_800w`; 1.92 kWh, 0.8/1.05 kW | $294.94 | $428.96 | $450.09 |
+| `battery_3.84kwh`; 3.84 kWh, 1.2/1.2 kW | $666.01 | $829.82 | $863.08 |
+| `pv_0.8kw_credited`; 1 kW DC, 0.8 kW AC | $473.76 | $171.51 | $121.71 |
+| `pv_0.8kw_zero_credit`; same PV | $102.92 | $104.88 | $104.88 |
+| `combined_0.8kw_credited`; same PV plus 3.84 kWh storage | $1,057.02 | $910.17 | $886.50 |
+| `combined_0.8kw_zero_credit`; same combined system | $741.69 | $854.97 | $871.95 |
+
+Storage assumes 20% reserve, 85% round-trip efficiency, and 10 W continuous standby, with total-meter load access. The combined system shares a 0.8 kW cap across new PV and battery discharge. Its battery settings remain 1.2/1.2 kW. These assumptions do not establish product performance or accessible circuits. `zero_credit` removes credit from all incremental meter exports, including displaced rooftop exports. `zero_export` retains the same billing channel but curtails new residual PV; its physical exports differ.
+
+Source: [`data/portable_solar_storage.json`](../data/portable_solar_storage.json), `scenarios[id=ID].annual_savings_usd` and `present_2026_nbt_sensitivity.cases.CASE.scenarios.ID.annual_hardware_signed_ledger_delta_usd`. Here `CASE` is either `NBT00_delivery_generation_cea_bonus` or `NBT00_delivery_cea_bonus_only`; corresponding `NBT26` rows are equal. The block covers all 75 scenarios, nine canonical references, and 18 marginal pairs. It reprices saved dispatch without NBT optimization.
+
+**Credit-limit diagnostics do not settle bills.** Every baseline, scenario, and reference reports annual/monthly delivery and generation charge/credit pools, component excesses, negative months, and net-export flags. The CEA bonus joins generation only for diagnostics; PCIA remains outside both pools. These modeled results show no negative month, pool excess, or net-export flag. That result does not prove credit availability across actual billing or relevant periods.
+
+Current NBT permits credits against corresponding volumetric charges, excluding NBC and fixed charges. SDG&E carries eligible credits forward during NBT service. CEA terms describe annual remaining-credit forfeiture and separate net-surplus settlement. The model applies neither provider's credit banks, relevant periods, floors, nor net-surplus compensation. Calendar months are not established billing cycles. [NBT, SC 3](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=1064&utilId=SDGE), [CEA terms](https://thecleanenergyalliance.org/wp-content/uploads/2024/03/CEA-Solar-Impact-Plan-Terms-and-Conditions-Adopted-2024_01.pdf)
+
+The block keeps `payable_bill_established`, `actual_tariff_accuracy_established`, and `settlement_credit_limits_applied` false. Its `economics` and diagnostic `nsc_usd` remain null. No NBT price ceiling, NPV, payback, or future purchase date follows. `unavailable_scenarios.post_nem_adoption.annual_savings_usd` remains null because future tariffs, equipment prices, and supported connections remain unknown.
 
 ## 10. Physical flows and monthly bills are visible
 
@@ -424,7 +456,7 @@ The 14-day periods are protocol minimums, not proof of annual representativeness
 
 ## 14. Dated source register and quality limits
 
-All entries were checked on 2026-10-22. Statute text, current tariffs, manuals, advertisements, and measured household performance have different authority.
+Entries were checked on 2026-10-22 except the NBT/CEA sensitivity sources, checked on 2026-10-23. Statute text, current tariffs, manuals, advertisements, and measured household performance have different authority.
 
 ### Regulatory and settlement sources
 
@@ -434,6 +466,8 @@ All entries were checked on 2026-10-22. Statute text, current tariffs, manuals, 
 | [Secretary of State](https://www.sos.ca.gov/administration/bill-chapters) | General effective-date rule | January 2027 inference; no household interpretation |
 | [NEM-ST](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE), [Rule 21](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=96&utilId=SDGE) | Current compiled PDFs; relevant sheet dates stated above | Existing tariff pathways; no established exact SB 868 household treatment |
 | [CEA Personal Impact](https://thecleanenergyalliance.org/personal-impact/) | Current program page | Existing settlement terms; no new-device compensation determination |
+| [Solar Billing Plan](https://www.sdge.com/solar/solar-billing-plan), [export pricing](https://www.sdge.com/solar/solar-billing-plan/export-pricing), [NBT tariff](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=1064&utilId=SDGE) | Current pages and compiled NBT, SC 3; checked 2026-10-23 | EV-TOU-5 assignment, hourly components, separate credit pools and SDG&E carryforward; signed proxy does not implement settlement |
+| [CEA Solar Impact](https://thecleanenergyalliance.org/solar-impact/), [terms](https://thecleanenergyalliance.org/wp-content/uploads/2024/03/CEA-Solar-Impact-Plan-Terms-and-Conditions-Adopted-2024_01.pdf) | Current page; adopted January 2024 terms; checked 2026-10-23 | One-cent bonus, annual remaining-credit forfeiture and separate surplus settlement; generation-component interpretation remains unresolved |
 | [IRS credit guidance](https://www.irs.gov/credits-deductions/residential-clean-energy-credit) | Current guidance | Zero homeowner 25D base case; no other incentive approval |
 
 The tariff viewer provides the public access point. Its public API supplied the compiled PDFs when the viewer did not expose text. Use the current compilation rather than a stale search-result tariff.
@@ -484,13 +518,13 @@ Large DP3/Ultra X PDFs exceeded the web reader's size limit; the manufacturer PD
 | Backup priced separately; circuits established; no unsupported rooftop recharge | **Incomplete** | No rooftop recharge assumed; owner backup value, essential circuits/surges, supported transfer/PV design and outage evidence absent |
 | Report/glossary/consistency updates only after study supports claims | **Portable-study publication deferred** | Portable-study prerequisites remain open. The existing report and glossary include supported tariff qualifications; those changes do not establish portable-equipment eligibility |
 
-### Additional requested comparisons that remain unavailable
+### Additional requested comparisons: present sensitivity and remaining gaps
 
 | Comparison | Exact missing evidence |
 |---|---|
 | Site-specific south/west/shade/seasonal PV | Chosen placement, measured shade/horizon, orientation/tilt, permitted mounting, appropriate irradiance/yield model |
 | Daylight EV or flexible appliances before storage | Vehicle presence, charging sessions, appliance flexibility and measured schedules |
-| Adoption after NEM grandfathering | Exact future tariff and supported connection remain unknown. A separately modeled, clearly labeled present-NBT counterfactual could still support sensitivity analysis |
+| Adoption after NEM grandfathering | Present-2026 fixed-flow NBT sensitivity is complete in §9 and `present_2026_nbt_sensitivity`. Actual delayed-adoption value stays null: future tariff, equipment price, and supported connection remain unknown |
 | Real control interaction and split-phase access | Circuit/leg/CT diagram, supported controller topology, transient/feedback and offline tests |
 | Measured equipment and multi-day backup | Usable AC capacity, loss/standby curves, reserve behavior, essential-load traces, surge and outage-weather/design evidence |
 
