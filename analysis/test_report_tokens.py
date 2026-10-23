@@ -4260,11 +4260,11 @@ def _s8_scaffolds():
     return {
         "S8_VERDICT_SHORT": (
             "Defer rooftop expansion pending connection, settlement, and installed "
-            f"price; keep healthy hardware — {exp_pct}% of production is exported, with "
+            f"price; keep healthy hardware. The array exports {exp_pct}% of production, with "
             f"{rt._grandfathering_bracket('S8_VERDICT_SHORT')} of NEM 2.0 grandfathering"),
         "EXPANSION_VERDICT_SHORT": (
             "Defer purchase pending connection, settlement, and installed "
-            f"price — {midday_pct}% of the year's exports leave in the {window} window"),
+            f"price. About {midday_pct}% of the year's exports leave in the {window} window"),
     }
 
 
@@ -4548,7 +4548,7 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
     # inside "22.9¢"). It has to frame the figure as a range: a sentence naming
     # both bounds without "between" can still be reporting one of them as the
     # answer and the other as a foil.
-    claim = re.search(r"an exported kWh on this profile.*?\.(?=\s|<|$)", html, re.S)
+    claim = re.search(r"[Aa]n exported kWh on this profile.*?\.(?=\s|<|$)", html, re.S)
     assert claim, ("index.html no longer says what an exported kWh on this profile is "
                    "worth, so the range this pair of tokens publishes cannot be found")
     assert re.search(r"monthly energy settlement value between\b", claim.group(0)), (
@@ -4558,7 +4558,7 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
         assert rendered in claim.group(0), (
             f"the valuation sentence names only one end of the range: "
             f"{claim.group(0)!r} does not carry {rendered}")
-    assert "This range excludes changes to NBC from changed physical interval flows" in html
+    assert ("It excludes changes in non-bypassable charges (NBC). Those charges depend separately on each interval's physical flows; monthly energy credits do not erase them.") in html
     return (f"monthly energy export value is the range {surplus}-{netting}, ordered "
             "and separated by PCIA; fixed-physical credit changes yield energy/credit, "
             "while changed physical exports separately avoid NBC only in a positive interval")
@@ -10280,7 +10280,7 @@ def case_every_token_in_the_report_resolves_on_a_complete_no_ev_artifact_set():
         f"SEC13_TEASER does not state the measured overnight-vs-midday grid gap "
         f"({gap_kg_mwh:,.0f} kg CO₂/MWh, from carbon_fullyear_results.json:"
         f"intensity_kg_per_mwh.window_means_annual): {sec13!r}")
-    assert re.search(r"NEM 2\.0 worth \$[\d,]+–[\d,]+/yr", sec13), (
+    assert re.search(r"Modeled NEM 2\.0 value is \$[\d,]+–[\d,]+/yr", sec13), (
         f"SEC13_TEASER lost the NEM clause, which never depended on an EV: {sec13!r}")
     assert "not applicable" not in sec13 and "does not apply" not in sec13, (
         f"SEC13_TEASER degraded section 13's ONE permitted conclusion into a "
@@ -13321,13 +13321,13 @@ _SEAM_ALLOWLIST = {
         "by construction -- the figure it qualifies, the agreement percentage, "
         "carries its own sign two tokens later.",
     ("BILL_COUNT", "missing-unit",
-     "The annual baseline uses {{BILL_COUNT}} detailed electric statements"):
+     "The actual baseline uses {{BILL_COUNT}} detailed electric statements"):
         "the same statement COUNT at its second occurrence, on the bills "
         "section's opening line. A separate entry on purpose: the two "
         "occurrences are excused one at a time, so a lost unit at either one "
         "is still reported at the other.",
     ("BILLING_PERIOD_COUNT", "missing-unit",
-     "The annual baseline uses {{BILL_COUNT}} detailed electric statements ({{BILLING_PERIOD_COUNT}} billing periods)"):
+     "The actual baseline uses {{BILL_COUNT}} detailed electric statements covering {{BILLING_PERIOD_COUNT}} billing periods"):
         "a COUNT of billing periods. One statement PDF can carry two periods, "
         "which is why this count differs from BILL_COUNT and why neither is a "
         "quantity with a unit.",
@@ -17562,14 +17562,14 @@ def case_the_soiling_bracket_matches_the_published_report():
     published = (rt.ROOT / "index.html").read_text()
     # The paragraph opens on the bracket sentence the template emits from this
     # token (issue #217); the study it rests on follows inside the paragraph.
-    para = re.search(r"<p>The defensible soiling rate here is the full bracket.*?</p>",
+    para = re.search(r"<p>The evidence supports a broad soiling estimate.*?</p>",
                      published, re.S)
     assert para, "§12's soiling-range paragraph not found in index.html"
     para = para.group(0)
-    assert f"~{expected}" in para, (
+    assert f"<b>{expected}</b>" in para, (
         f"§12 does not state the soiling bracket as ~{expected}; the token and the "
         f"published report must agree (CLAUDE.md §9, artifact-prose diff): {para[-320:]}")
-    assert f"~{min(lo, hi):.1f}–" not in para, (
+    assert f"{min(lo, hi):.1f}–" not in para, (
         f"§12 still carries the one-decimal low end {min(lo, hi):.1f}, which understates "
         f"the artifact's {min(lo, hi)}%/month")
     return (f"SOILING_RATE_RANGE = {rendered}, matching soiling_results.json's scenario "
@@ -17934,7 +17934,7 @@ def case_archived_cleaning_cadence_does_not_support_a_purchase_verdict():
     with _example_household([{"date": cleaning_date, "cost_usd": 150}]):
         with _patched(rt, "_json", _stub_for("extra_results.json", expensive)):
             text = _renders("SEC12_TEASER")
-    assert "not determined" in text.lower(), text
+    assert "future cleaning payback and the best interval remain undetermined" in text.lower(), text
     assert "covers the" not in text and "modeled schedule" not in text, text
     assert "production gain" in text, text
 

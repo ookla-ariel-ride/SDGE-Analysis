@@ -403,7 +403,7 @@ def case_headline_figures_present_and_stale_ones_absent():
         f"${DISPATCH['pw3']['greedy']['save']:,}",
         f"${PK['packages']['MID']['savings_yr']:,}",
         f"${DISPATCH['baseline_bill_current_rates']:,}",
-        f"median payback {DP['monte_carlo']['payback_median']:.1f} yr",
+        f"Median payback is {DP['monte_carlo']['payback_median']:.1f} years",
     ]
     if has_ev:
         current += [
@@ -506,7 +506,7 @@ def case_cca_verdict_annualized_figure_matches_the_artifact():
     per_year = ccj["direction_a_cca_repriced_at_bundled"]["delta_usd_per_year"]
     rounded = round(per_year)
     verdict_match = re.search(
-        r'class="verdict">.*?staying on the CCA.*?about \$(\d+)/yr more', HTML)
+        r'class="verdict">.*?the CCA.*?costs \$(\d+)/yr more', HTML)
     assert verdict_match, "section-10 verdict sentence not found in the expected shape"
     assert int(verdict_match.group(1)) == rounded, (
         f"verdict says about ${verdict_match.group(1)}/yr, but the artifact's "
@@ -1020,7 +1020,7 @@ def case_heat_pump_conversion_section_matches_the_artifact():
     if not hpc["applicable"]:
         raise SkipCase("household.has_gas is false")
 
-    m = re.search(r"<h3>Replacing the furnace \+ AC with a heat pump.*?</p>\s*<p><b>Going all-electric",
+    m = re.search(r"<h3>Furnace and AC replacement:.*?(?=<h3 id=)",
                   HTML, re.S)
     assert m, "the heat-pump-conversion subsection was not found in index.html"
     section = m.group(0)
@@ -1185,10 +1185,10 @@ def case_all_electric_paragraph_furnace_savings_matches_the_artifact():
     hpc = json.loads((ROOT / "data" / "heat_pump_conversion.json").read_text())
     if not hpc["applicable"]:
         raise SkipCase("household.has_gas is false")
-    m = re.search(r"<p><b>Going all-electric.*?</p>(?:\s*<p>.*?</p>){1}", HTML, re.S)
+    m = re.search(r"<p>The saved GR-Residential.*?</p>\s*<p>The modeled water-heater step.*?</p>", HTML, re.S)
     assert m, "the 'Going all-electric' paragraph was not found in index.html"
     rounded = round(hpc["gas_savings_annual_usd"])
-    assert f"~${rounded}/yr heating gas" in m.group(0), (
+    assert f"furnace step avoids about ${rounded}, before replacement electricity" in m.group(0), (
         f"the 'Going all-electric' paragraph's own furnace-savings citation "
         f"must match the live gas_savings_annual_usd ({rounded}), not a "
         f"stale copy from an earlier regeneration")
@@ -1557,14 +1557,14 @@ def case_bill_decomposition_finding_matches_the_artifact():
     base, current = bd["periods"]["base"], bd["periods"]["current"]
     nem = next(t for t in bd["non_energy_bridge"] if t["term"] == "applied_nem_generation_credit")
 
-    start = HTML.index('<div class="finding"><p class="claim">A $48.25')
+    start = HTML.index('<div class="finding" id="statement-pair">')
     end = HTML.index("</div>", start) + len("</div>")
     section = HTML[start:end]
 
     # issue #112 Codex review: two separate presence checks don't enforce
     # DIRECTION -- "$398.56 became $48.25" would satisfy both equally.
     # Joined into the ordered "A $X ... became $Y" claim the report prints.
-    assert (f"A {_fmt_usd2(base['current_charges'])} early-summer bill became "
+    assert (f"The early-summer bill rises from {_fmt_usd2(base['current_charges'])} to "
             f"{_fmt_usd2(current['current_charges'])}") in section, (
         "the ordered 'A $base became $current' claim not found -- bill totals may be "
         "reversed or stale")
@@ -1602,7 +1602,7 @@ def case_carbon_dispatch_tradeoff_paragraph_matches_the_artifact():
     tr = cdt["tradeoff"]
     rca = cdt["run_c_analysis"]
 
-    m = re.search(r"<p>The price-aware dispatch this report recommends throughout.*?</p>(?:\s*<p>.*?</p>){5}", HTML, re.S)
+    m = re.search(r"<p>The price-aware battery policy used in.*?</p>(?:\s*<p>.*?</p>){5}", HTML, re.S)
     assert m, "§13 carbon-vs-cost dispatch paragraph not found in index.html"
     para = m.group(0)
 
@@ -1625,29 +1625,26 @@ def case_carbon_dispatch_tradeoff_paragraph_matches_the_artifact():
     # carries this paragraph's actual conclusion (cost-dispatch EMITS MORE
     # than the no-battery baseline) -- a flipped direction word would still
     # pass. Bound to the direction the artifact's own sign implies.
-    a_direction = "above" if A["co2_avoided_vs_baseline_kg"] < 0 else "below"
+    a_direction = "increase" if A["co2_avoided_vs_baseline_kg"] < 0 else "decrease"
     checks = [
-        ("comes out", f"{abs(A['co2_avoided_vs_baseline_kg']):.1f} kg/yr <b>{a_direction}</b>"),
-        ("baseline (", f"{A['net_co2_kg']:,.1f} vs {base['net_co2_kg']:,.1f} kg/yr"),
-        ("sized to the same", f"{round(th['target_clean_frac'] * 100, 1)}%/{round(th['target_dirty_frac'] * 100, 1)}%"),
-        ("thresholds (", f"{th['kg_per_mwh']:.1f} vs {round(th['discharge_kg_per_mwh'], 1)} kg/MWh"),
-        ("avoids", f"{B['co2_avoided_vs_baseline_kg']:.1f} kg/yr net against that baseline but keeps only"),
-        ("but keeps only", _fmt_usd2(B["savings_vs_baseline_usd"])),
-        ("cost-minimizing policy's", f"{_fmt_usd2(A['savings_vs_baseline_usd'])}/yr saving"),
-        ("saving:", f"{_fmt_usd2(tr['cost_penalty_of_clean_policy_usd'])}/yr cost penalty"),
-        ("cost penalty (", f"{round(tr['cost_penalty_of_clean_policy_usd_per_kwh_cycled'] * 100, 1)}¢"),
-        ("cheapness carries a", f"{tr['co2_penalty_of_cheap_policy_kg']:.1f} kg/yr net carbon penalty"),
-        ("carbon penalty (", f"{round(tr['co2_penalty_of_cheap_policy_kg_per_kwh_cycled'], 3)} kg"),
-        ("recovers", f"{_fmt_usd2(C['savings_vs_baseline_usd'])}/yr ("),
-        ("/yr (", f"{c_pct_of_a}%"),
-        ("still avoiding", f"{C['co2_avoided_vs_baseline_kg']:.1f} kg/yr net"),
-        ("a stated", f"{round(rca['meaningful_threshold_pct'] * 100)}%-on-both-metrics"),
-        ("sits within", f"{round(rca['pct_diff_co2_vs_b'] * 100, 1)}%"),
-        ("but small", f"{b_vs_c_gap_kg:.1f} kg/yr"),
-        ("capture roughly", f"{ratio_c_vs_b} times"),
-        ("cost-minimizing run cycles", f"{round(A['kwh_cycled_thru']):,} kWh/yr"),
-        ("carbon-minimizing run's", f"{round(B['kwh_cycled_thru']):,}"),
-        ("agrees with its", f"{_fmt_usd2(A['savings_vs_baseline_usd'])}/${cdt['cross_check']['run_a_computed_save_usd']:,}"),
+        ("price-aware policy gives", f"{A['net_co2_kg']:,.1f} kg CO₂ per year net versus {base['net_co2_kg']:,.1f} without a battery"),
+        ("full-precision", f"{a_direction} is {abs(A['co2_avoided_vs_baseline_kg']):.1f} kg"),
+        ("clean/dirty split is", f"{round(th['target_clean_frac'] * 100, 1)}%/{round(th['target_dirty_frac'] * 100, 1)}%"),
+        ("Its", f"{th['kg_per_mwh']:.1f} and {round(th['discharge_kg_per_mwh'], 1)} kg/MWh charge/discharge thresholds"),
+        ("That policy avoids", f"{B['co2_avoided_vs_baseline_kg']:.1f} kg per year net but saves only {_fmt_usd2(B['savings_vs_baseline_usd'])}"),
+        ("cost-focused policy's", _fmt_usd2(A['savings_vs_baseline_usd'])),
+        ("saving given up is", f"{_fmt_usd2(tr['cost_penalty_of_clean_policy_usd'])}/yr"),
+        ("or", f"{round(tr['cost_penalty_of_clean_policy_usd_per_kwh_cycled'] * 100, 1)}¢ per kWh cycled"),
+        ("cost-focused policy adds", f"{tr['co2_penalty_of_cheap_policy_kg']:.1f} kg net"),
+        ("carbon-focused policy, or", f"{round(tr['co2_penalty_of_cheap_policy_kg_per_kwh_cycled'], 3)} kg per kWh cycled"),
+        ("It saves", f"{_fmt_usd2(C['savings_vs_baseline_usd'])}/yr, {c_pct_of_a}%"),
+        ("while avoiding", f"{C['co2_avoided_vs_baseline_kg']:.1f} kg net"),
+        ("stated", f"{round(rca['meaningful_threshold_pct'] * 100)}%-on-both-metrics"),
+        ("within", f"{round(rca['pct_diff_co2_vs_b'] * 100, 1)}%"),
+        ("It gives up", f"{b_vs_c_gap_kg:.1f} kg"),
+        ("recover about", f"{ratio_c_vs_b} times"),
+        ("runs cycle", f"{round(A['kwh_cycled_thru']):,} and {round(B['kwh_cycled_thru']):,} kWh/yr respectively"),
+        ("agrees with the", f"{_fmt_usd2(A['savings_vs_baseline_usd'])}/${cdt['cross_check']['run_a_computed_save_usd']:,}"),
     ]
     cursor = 0
     for anchor, value in checks:
@@ -1702,24 +1699,17 @@ def case_ev_fleet_fuel_cost_matches_extended_results():
     ed = er["electrification_dividend"]
     sc = er["supercharge_delta"]
 
-    m = re.search(r"<p>The fleet.s annualized ownership-period mileage.*?</p>", HTML, re.S)
+    m = re.search(r"<p>The gasoline comparison uses.*?</p>(?:\s*<p>.*?</p>){2}", HTML, re.S)
     assert m, "§9 electrification-dividend paragraph not found in index.html"
     para = m.group(0)
     checks = [
-        f"{_fmt_usd(ed['total_ev_fuel_cost'])}/yr in fuel",
-        f"{_fmt_usd(ed['home_ev_cost_current_rates'])} of home charging",
-        f"{ed['home_ev_kwh']:,} kWh priced at current rates",
-        f"{_fmt_usd(ed['supercharge_cost_est'])} of supercharging",
-        f"{ed['supercharge_kwh']:,} kWh at ~${sc['sc_price_est']}/kWh",
-        f"{_fmt_usd(ed['gas_counterfactual_cost'])}/yr",
-        # issue #112 Codex review round 2: the current-behavior and
-        # post-fix dividend figures (both bare "~$X/yr") could swap
-        # without detection. Joined into the ordered "dividend of ~$A/yr
-        # ... falls to $B/yr) it rises to ~$C/yr" clause.
-        (f"electrification saving of ~{_fmt_usd(ed['dividend_yr'])}/yr</b>, and once charging is "
-         f"fully super-off-peak (home charging cost falls to "
-         f"{_fmt_usd(ed['home_ev_cost_if_all_sop'])}/yr) it rises to <b>"
-         f"~{_fmt_usd(ed['dividend_yr_post_fix'])}/yr"),
+        f"costs an estimated {_fmt_usd(ed['total_ev_fuel_cost'])}/yr",
+        f"{_fmt_usd(ed['home_ev_cost_current_rates'])} for {ed['home_ev_kwh']:,} kWh of home charging at current rates",
+        f"{_fmt_usd(ed['supercharge_cost_est'])} for {ed['supercharge_kwh']:,} kWh of supercharging at about ${sc['sc_price_est']:.2f} per kWh",
+        f"costs an estimated {_fmt_usd(ed['gas_counterfactual_cost'])}/yr",
+        (f"about {_fmt_usd(ed['dividend_yr'])}/yr in fuel savings. With home charging fully in super-off-peak, "
+         f"modeled home charging cost falls to {_fmt_usd(ed['home_ev_cost_if_all_sop'])} and estimated fuel savings rise to about "
+         f"{_fmt_usd(ed['dividend_yr_post_fix'])}/yr"),
     ]
     for value in checks:
         assert value in para, f"§9 electrification-dividend paragraph: {value!r} not found in it"
@@ -1750,7 +1740,7 @@ def case_gas_hdd_decomposition_matches_extended_results():
     if gd.get("not_applicable"):
         raise SkipCase("household.has_gas is false")
 
-    m = re.search(r"<p><b>The HDD decomposition agrees with the bills.*?</p>(?:\s*<p>.*?</p>){1}", HTML, re.S)
+    m = re.search(r"<p>The gas regression uses.*?</p>(?:\s*<p>.*?</p>){1}", HTML, re.S)
     assert m, "§9 HDD gas-decomposition paragraph not found in index.html"
     para = m.group(0)
     # issue #112 adversarial review, self-swept: floor_therms_day/annual_
@@ -1760,10 +1750,10 @@ def case_gas_hdd_decomposition_matches_extended_results():
     # within their own pair. Joined into the ordered clauses the report
     # actually prints.
     checks = [
-        f"{gd['floor_therms_day']} therms/day → {gd['annual_floor_therms']} therms/yr",
-        (f"{gd['slope_therms_per_hdd']} therms/HDD → {gd['annual_heating_therms']} therms/yr</b> "
-         f"of space heating (~{_fmt_usd(gd['heating_gas_cost_yr'])}/yr at bill rates)"),
-        f"~{_fmt_usd(gd['hpwh_saving_yr'])}/yr</b> priced the same midday-timer way",
+        f"floor of {gd['floor_therms_day']} therms per day, or {gd['annual_floor_therms']} per year",
+        (f"heating slope is {gd['slope_therms_per_hdd']} therms per heating-degree-day, or {gd['annual_heating_therms']} therms/yr, "
+         f"valued at about {_fmt_usd(gd['heating_gas_cost_yr'])}/yr"),
+        f"midday-timer calculation gives about ${gd['hpwh_saving_yr']:,} annual water-heater savings",
     ]
     for value in checks:
         assert value in para, f"§9 HDD gas-decomposition paragraph: {value!r} not found in it"
@@ -1786,7 +1776,7 @@ def case_nbt_flat_credit_sensitivity_matches_the_artifacts():
     nbt = er["nbt_2039"]
     real_hourly = n3["battery_marginal_reconciliation_vs_nbt_2039"]["battery_marginal_real_hourly_usd_yr"]["NBT26"]
 
-    m = re.search(r"<p>NEM 2\.0 runs to ~Dec 2039.*?</p>(?:\s*<p>.*?</p>){3}", HTML, re.S)
+    m = re.search(r"<p>The NBT battery comparison uses.*?</p>(?:\s*<p>.*?</p>){5}", HTML, re.S)
     assert m, "§13 NBT-2039 flat-credit-sensitivity paragraph not found in index.html"
     para = m.group(0)
 
@@ -1794,16 +1784,12 @@ def case_nbt_flat_credit_sensitivity_matches_the_artifacts():
     v5c = nbt["battery_marginal_under_nbt"]["5c"]["battery_marginal_yr"]
     v8c = nbt["battery_marginal_under_nbt"]["8c"]["battery_marginal_yr"]
     checks = [
-        # issue #112 Codex review round 2: these two values were bare
-        # presence checks -- swapping which figure is cited "under NBT"
-        # vs "under NEM 2.0" would still pass. Joined into the ordered
-        # "rises to $A/yr under NBT vs $B/yr under NEM 2.0" clause.
-        (f"rises</i> to <b>{_fmt_usd2(real_hourly['battery_marginal_usd_yr'])}/yr</b> under NBT vs "
-         f"<b>${nbt['battery_marginal_under_nem2']:,}/yr</b> under NEM 2.0"),
-        f"${v8c:,}–{v3c:,}/yr",  # the bracket, low (8c) to high (3c)
-        f"3¢→${v3c:,}/yr",
-        f"5¢→${v5c:,}/yr",
-        f"8¢→${v8c:,}/yr",
+        (f"At 2026 NBT prices, the same dispatch adds {_fmt_usd2(real_hourly['battery_marginal_usd_yr'])} annual battery savings "
+         f"versus ${nbt['battery_marginal_under_nem2']:,} under NEM 2.0"),
+        f"${v8c:,} to ${v3c:,} range",
+        f"${v3c:,} at 3¢",
+        f"${v5c:,} at 5¢",
+        f"${v8c:,} at 8¢",
     ]
     for value in checks:
         assert value in para, f"§13 NBT-2039 flat-credit-sensitivity paragraph: {value!r} not found in it"
@@ -1813,8 +1799,8 @@ def case_nbt_flat_credit_sensitivity_matches_the_artifacts():
 def case_extra_results_cleaning_cadence_matches_the_artifact():
     """The frozen cadence block cannot support an unqualified purchase verdict."""
     section = HTML[HTML.index('<h2 id="s12"'):HTML.index('<h2 id="s13"')]
-    assert "extra_results.json" in section and "does not reproduce the original calculation" in section
-    assert "optimal date" in section and "does not establish" in section
+    assert "extra_results.json" in section and "lack a reproduced calculation" in section
+    assert "optimal date" in section and "establishes neither" in section
     for unsupported in ("$7–52", "350–450", "approximately paid for itself", "bi-annual is not justified"):
         assert unsupported not in section, unsupported
     return "the cleaning section labels the frozen estimate and excludes unsupported purchase conclusions"
@@ -1829,12 +1815,12 @@ def case_extra_results_trueup_ledger_matches_the_artifact():
     xr = json.loads(xr_path.read_text())
     tu = xr["trueup"]
 
-    m = re.search(r"True-up ledger cross-check:.*?reconcile exactly", HTML, re.S)
+    m = re.search(r"The October 2025 year-to-date NEM ledger reconciles exactly:.*?\.(?=\s|<)", HTML, re.S)
     assert m, "§13 true-up ledger cross-check sentence not found in index.html"
     sentence = m.group(0)
     assert f"{_fmt_usd2(tu['charges'])} charges" in sentence, "trueup.charges not cited"
     assert f"{_fmt_usd2(tu['credits'])} credits" in sentence, "trueup.credits not cited"
-    assert f"{_fmt_usd2(tu['net'])} net" in sentence, "trueup.net not cited"
+    assert f"equals {_fmt_usd2(tu['net'])}" in sentence, "trueup.net not cited"
     return "the §13 true-up ledger cross-check sentence matches extra_results.json's trueup"
 
 
@@ -1999,42 +1985,24 @@ def case_night_floor_section_matches_the_artifact():
     doc = _night_floor_artifact()
     nf, pr = doc["night_floor"], doc["pricing"]
     section = _report_span("the §13 always-on-floor subsection",
-                           r"<h3>Phantom baseload", r"<h3")
+                           r"<h3>Quiet-night load: measurements and annual extrapolation", r"<h3")
     monthly = {int(m): v for m, v in nf["monthly_median_kw"].items()}
     lo_m = min(monthly, key=lambda m: (monthly[m], m))
     hi_m = max(monthly, key=lambda m: (monthly[m], -m))
     checks = [
-        # The sample AND the share it excludes: the floor is measured on the
-        # quiet minority of nights, and the artifact's own selection_caveat
-        # says to report the exclusion rate beside the figure rather than
-        # treating the kept nights as the whole story.
-        f"<b>{nf['quiet_nights']} of {nf['nights_total']} nights</b>",
-        f"<b>{(1 - nf['quiet_nights'] / nf['nights_total']) * 100:.1f}%</b>",
-        # A bare "{median} kW" check would still pass if the median were
-        # swapped with one of the paragraph's own seasonal figures (also bare
-        # "N kW"), so the median is joined to its own label and its own
-        # percentile pair (issue #112 /review).
-        f"median <b>{nf['median_kw']:,.2f} kW</b> ({nf['p10_kw']:,.2f} kW p10 to "
-        f"{nf['p90_kw']:,.2f} kW p90)",
-        f"within-night std {nf['cycling_within_night_std_kw_median']:,.2f} kW",
-        f"{monthly[lo_m]:,.2f} kW in {calendar.month_name[lo_m]} against "
-        f"{monthly[hi_m]:,.2f} kW in {calendar.month_name[hi_m]}",
-        # Both pricings, and the gap between them: two live methods on one
-        # load must be reconciled where they are published (CLAUDE.md §0).
-        f"<b>${pr['method_a_price_map']['total_usd']:,.0f}/yr</b>",
-        f"<b>${pr['method_b_rebill']['total_usd']:,.0f}/yr</b>",
-        f"{abs(pr['reconciliation']['gap_pct']):.1f}% apart",
-        # The qualifier the annual figures may not appear without, and the
-        # direction of the error it introduces.
-        "modeled, not measured",
+        f"{nf['quiet_nights']} of {nf['nights_total']} nights",
+        f"excludes {(1 - nf['quiet_nights'] / nf['nights_total']) * 100:.1f}% of nights",
+        (f"floor is {nf['median_kw']:,.2f} kW median, with a 10th to 90th percentile range of "
+         f"{nf['p10_kw']:,.2f} to {nf['p90_kw']:,.2f} kW"),
+        f"median standard deviation {nf['cycling_within_night_std_kw_median']:,.2f} kW",
+        f"{monthly[lo_m]:,.2f} kW in {calendar.month_name[lo_m]} to {monthly[hi_m]:,.2f} in {calendar.month_name[hi_m]}",
+        f"price map values it at ${pr['method_a_price_map']['total_usd']:,.0f}/yr",
+        f"complete NEM re-bill gives ${pr['method_b_rebill']['total_usd']:,.0f}",
+        f"or {abs(pr['reconciliation']['gap_pct']):.1f}%, difference",
+        "They are modeled annual quantities. No appliance meter supplies annual measurements.",
         f"conservative by about ${pr['floor_assumption_violations']['usd_dropped_at_export_rate']:,.0f}",
-        # What a household could act on, at the rate the sensitivity re-bill
-        # measured rather than an opinion about how much is removable. FIRST,
-        # not every: the rate is the ladder's smallest rung, and "for every
-        # 100 W" read it as a multiplier over rungs whose marginal is lower --
-        # the spread pinned below is what says by how much.
-        f"about ${doc['sensitivity_per_100w']['usd_per_100w_at_current_floor']['value_usd']:,.0f}/yr "
-        "for the first 100 W removed",
+        (f"first 100 W removed at about "
+         f"${doc['sensitivity_per_100w']['usd_per_100w_at_current_floor']['value_usd']:,.0f}/yr"),
     ]
     for value in checks:
         assert value in section, (
@@ -2059,9 +2027,9 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
         "§0": _report_span("the §0 always-on baseload item",
                            r"<li><b>Always-on baseload", r"</li>"),
         "§9": _report_span("the §9 always-on-load note",
-                           r"<h3>Phantom / always-on load", r"</div>"),
+                           r"<h3>Quiet-night load: its cost and evidence limits", r"</div>"),
         "§13": _report_span("the §13 always-on-floor subsection",
-                            r"<h3>Phantom baseload", r"<h3"),
+                            r"<h3>Quiet-night load: measurements and annual extrapolation", r"<h3"),
     }
     # The floor, its energy, its price-map cost and the rate for the next
     # 100 W off it are the four figures all three sections state. The full
@@ -2201,19 +2169,19 @@ def case_gross_import_decomposition_section_matches_the_artifact():
     assert m, "§9 load-shape decomposition subsection not found in index.html"
     section = m.group(0)
 
+    def period_words(period):
+        first, last = (dt.datetime.strptime(d, "%m/%d/%y").date()
+                       for d in period.split(" - "))
+        return (f"{calendar.month_name[first.month]} {first.day} to "
+                f"{calendar.month_name[last.month]} {last.day}, {last.year}")
+
     checks = [
-        # issue #112 adversarial review, self-swept: bare "X kWh"/"Y kWh"
-        # checked separately would pass even if the report swapped which
-        # year rose and which fell (the underlying claim of this whole
-        # subsection). Joined into the one ordered "2024-figure ... to
-        # 2026-figure" clause the report actually prints.
-        (f"{bgt['period_2024']['gross_kwh']:,.0f} kWh "
-         f"({bgt['period_2024']['period'].replace(' - ', '–')}, {bgt['period_2024']['days']} days) and "
-         f"{bgt['period_2026']['gross_kwh']:,.0f} kWh"),
+        (f"{bgt['period_2024']['gross_kwh']:,.0f} kWh for {period_words(bgt['period_2024']['period'])} ({bgt['period_2024']['days']} days), and "
+         f"{bgt['period_2026']['gross_kwh']:,.0f} kWh for {period_words(bgt['period_2026']['period'])} ({bgt['period_2026']['days']} days)"),
         f"{bgt['period_2024']['net_kwh']:,.0f} to {bgt['period_2026']['net_kwh']:,.0f} kWh",
         f"{bgt['observed_delta_gross_kwh']:,.0f} kWh",
-        f"+{dec['consumption_term_kwh']:,.0f} kWh consumption against +{dec['production_term_kwh']:,.0f} kWh production",
-        (f"+{round(robust['consumption_term_kwh_this_scenario']):,} kWh consumption against "
+        f"+{dec['consumption_term_kwh']:,.0f} kWh to consumption and +{dec['production_term_kwh']:,.0f} kWh to production",
+        (f"+{round(robust['consumption_term_kwh_this_scenario']):,} kWh consumption and "
          f"+{round(robust['production_term_kwh_this_scenario']):,} kWh production"),
     ]
     for value in checks:
@@ -2260,7 +2228,7 @@ def case_irreducible_bill_figures_match_the_artifact():
     for value in checks:
         assert value in section, f"§7 irreducible-bill paragraphs: {value!r} not found in it"
 
-    m2 = re.search(r'<p class="small"><b>That \$[\d,]+/yr already includes the floor.*?</p>', HTML, re.S)
+    m2 = re.search(r'<p>The \$[\d,]+ modeled bill already includes.*?</p>', HTML, re.S)
     assert m2, "§7 baseline-floor recap sentence not found in index.html"
     recap = m2.group(0)
     # issue #112 Codex review round 2: each amount/percentage pair was
@@ -2269,13 +2237,11 @@ def case_irreducible_bill_figures_match_the_artifact():
     # pair's "is non-bypassable charges" label -- swapping which pair gets
     # which label would still pass. Each check now includes its own label.
     recap_checks = [
-        (f"{_fmt_usd2(base['strictly_irreducible_usd'])}/yr "
-         f"({round(base['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}%) is the "
-         f"fixed daily charge"),
-        (f"{_fmt_usd2(base['non_bypassable_usd'])}/yr "
-         f"({round(base['non_bypassable_fraction_of_projected_bill'] * 100, 1)}%) is "
-         f"non-bypassable charges"),
-        f"{_fmt_usd2(base['combined_usd'])}/yr",
+        (f"{_fmt_usd2(base['strictly_irreducible_usd'])} of fixed daily charges, "
+         f"{round(base['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}%"),
+        (f"{_fmt_usd2(base['non_bypassable_usd'])}, "
+         f"{round(base['non_bypassable_fraction_of_projected_bill'] * 100, 1)}%, is NBC"),
+        _fmt_usd2(base['combined_usd']),
         f"{round(base['combined_fraction_of_projected_bill'] * 100, 1)}%",
     ]
     for value in recap_checks:
@@ -2292,21 +2258,18 @@ def case_lifetime_payback_recovered_figures_match_the_artifact():
     assert lp_path.exists(), f"{lp_path} is committed public data and must exist"
     lp = json.loads(lp_path.read_text())
 
-    m = re.search(r'<div class="rec"><b>The model estimates recovery of the \$37,845 gross cost.*?</div>', HTML, re.S)
+    m = re.search(r'<div class="rec"><p>The model estimates recovery of the \$37,845 gross.*?</div>', HTML, re.S)
     assert m, "§11 lifetime-payback recommendation box not found in index.html"
     box = m.group(0)
 
     checks = [
         f"${lp['invoice_usd']:,}",
-        f"{round(lp['crossover']['gross']['fraction_through_year'] * 100)}% of the way through "
-        f"{lp['crossover']['gross']['year']}",
+        (f"{lp['crossover']['gross']['year']}, "
+         f"{round(lp['crossover']['gross']['fraction_through_year'] * 100)}% through that year's production"),
         str(lp["crossover"]["net_itc"]["year"]),
-        f"${lp['nosolar_bill_usd']:,}/yr",
-        # issue #112 adversarial review, self-swept: two bare "$X.XX/kWh"
-        # values (current-rate vs pre-2026-TOU) with no label of their own
-        # baked in would still both pass if swapped. Joined into the one
-        # ordered "blended ~$A/kWh; ~$B/kWh under the pre-2026" clause.
-        f"blended ~${lp['blended_new_tou']:.2f}/kWh; ~${lp['blended_old_tou']:.2f}/kWh under the pre-2026",
+        f"${lp['nosolar_bill_usd']:,} without solar",
+        (f"or ${lp['blended_new_tou']:.2f} per kWh. Under the pre-2026 TOU structure, "
+         f"blended value is about ${lp['blended_old_tou']:.2f} per kWh"),
     ]
     for value in checks:
         assert value in box, f"§11 lifetime-payback box: {value!r} not found in it"
@@ -2352,15 +2315,15 @@ def case_nem3_grandfathering_section_matches_the_artifact():
     # labels (the two bill totals) and sequential document order (the two
     # grandfathering values, which share no distinguishing label of their
     # own in the prose).
-    assert f"from {_fmt_usd2(nem2)} (NEM 2.0) to {_fmt_usd2(nbt['annual_bill_usd'])} (NBT)" in section, (
+    assert f"cost rises from {_fmt_usd2(nem2)} (NEM 2.0) to {_fmt_usd2(nbt['annual_bill_usd'])} (NBT)" in section, (
         "the ordered 'from $X (NEM 2.0) to $Y (NBT)' bill-total claim not found -- "
         "the two scenarios' totals may be reversed or stale")
-    cursor = section.index("(NBT)")
-    gap_idx = section.find("a gap of", cursor)
+    cursor = section.index("Modeled annual cost")
+    gap_idx = section.find("a full-precision difference of", cursor)
     assert gap_idx != -1, "'a gap of' clause not found after the NEM2/NBT bill totals"
     assert f"{_fmt_usd2(nbt['grandfathering_value_usd'])}/yr" in section[gap_idx:gap_idx + 60], (
         "the primary grandfathering-value gap not found within its own clause")
-    alt_idx = section.find("prices the same measured year at", gap_idx)
+    alt_idx = section.find("and gives a", gap_idx)
     assert alt_idx != -1, "'prices the same measured year at' (Delivery-only) clause not found"
     assert f"{_fmt_usd2(alt['grandfathering_value_usd'])}/yr" in section[alt_idx:alt_idx + 60], (
         "the Delivery-only alternative grandfathering value not found within its own clause")
@@ -2392,18 +2355,18 @@ def case_reprice_by_vintage_note_matches_the_artifact():
     note = m.group(0)
 
     checks = [
-        ("365 days and", _fmt_usd2(rv["actual_total_sum"])),
-        ("native 365-day window at", _fmt_usd2(rv["native_window_total"])),
-        ("accounts for only", f"-{_fmt_usd2(abs(rv['window_effect']))}"),
-        ("The largest correction,", f"-{_fmt_usd2(abs(rv['generation_tou_window_effect']))}"),
-        ("generation dollars specifically (", f"-{_fmt_usd2(abs(rv['generation_clean_tou_effect']))}"),
-        ("a disclosed", f"+{_fmt_usd2(rv['delivery_pcia_restart_artifact_usd'])}"),
-        ('"Clean Impact Plus" product adder (', f"+{_fmt_usd2(rv['cip_adder_usd'])}"),
-        ("a per-period state surcharge tax (", f"+{_fmt_usd2(rv['state_surcharge_tax_usd'])}"),
-        ("Base Services Charge moves the total by", f"-{_fmt_usd2(abs(rv['fixed_charge_vintage_effect']))}"),
-        ("moves the total by a further", f"-{_fmt_usd2(abs(rv['delivery_vintage_effect']))}"),
-        ("accounts for only", f"-{_fmt_usd2(abs(rv['total_vintage_effect']))}"),
-        ("The remaining", f"-{_fmt_usd2(abs(rv['residual_total']))}"),
+        ("Actual current charges total", _fmt_usd2(rv["actual_total_sum"])),
+        ("The NEM model gives", _fmt_usd2(rv["native_window_total"])),
+        ("changes modeled cost by", f"−{_fmt_usd2(abs(rv['window_effect']))}"),
+        ("next adjustment changes modeled cost by", f"−{_fmt_usd2(abs(rv['generation_tou_window_effect']))}"),
+        ("changes generation dollars by", f"−{_fmt_usd2(abs(rv['generation_clean_tou_effect']))}"),
+        ("A", f"+{_fmt_usd2(rv['delivery_pcia_restart_artifact_usd'])}"),
+        ("current model:", f"+{_fmt_usd2(rv['cip_adder_usd'])} for Clean Impact Plus"),
+        ("and", f"+{_fmt_usd2(rv['state_surcharge_tax_usd'])} for the state surcharge tax"),
+        ("Historical fixed charges change modeled cost by", f"−{_fmt_usd2(abs(rv['fixed_charge_vintage_effect']))}"),
+        ("read from the bills, change it by", f"−{_fmt_usd2(abs(rv['delivery_vintage_effect']))}"),
+        ("changes explain", f"−{_fmt_usd2(abs(rv['total_vintage_effect']))}"),
+        ("The remaining", f"−{_fmt_usd2(abs(rv['residual_total']))}"),
     ]
     # Each anchor is searched for STARTING right after the previous anchor's
     # own position (not from the top of the note each time), and its value
@@ -2448,11 +2411,11 @@ def case_soiling_annual_economics_matches_the_artifact():
 # sentence is the template's fixed prose around {{SOILING_RATE_RANGE}} (issue
 # #217): the evidence the bracket rests on is the TODO block that follows it.
 _SOILING_PARAGRAPH_RE = re.compile(
-    r"<p>The defensible soiling rate here is the full bracket.*?</p>", re.S)
+    r"<p>The evidence supports a broad soiling estimate.*?</p>\s*<p>These estimates.*?</p>", re.S)
 # The rate bracket that sentence states -- the figure SOILING_RATE_RANGE
 # renders. Captured WITHOUT the leading "~", which is prose, not token output.
 _SOILING_BRACKET_RE = re.compile(
-    r"the full bracket the evidence allows, <b>~([\d.]+–[\d.]+%/month)</b>")
+    r"a broad soiling estimate of about <b>([\d.]+–[\d.]+%/month)</b>")
 
 
 def case_soiling_rate_bracket_matches_the_token_that_renders_it():
@@ -2489,9 +2452,9 @@ def case_soiling_rate_bracket_matches_the_token_that_renders_it():
 
 # The §12 cleaning heading, and the two figures it can be filled from.
 _CLEANING_HEADING_RE = re.compile(
-    r"<h3>The [^<]*?cleaning \([^)]*\): ([-+]?[\d.]+%) production gain")
+    r"<h3>[^<]*?cleaning: \$[\d,]+ cost and ([-+]?[\d.]+%) production gain")
 # The section's own conclusion, three lines below that heading.
-_CLEANING_DIFF_IN_DIFF_RE = re.compile(r"(?:Difference-in-differences: |difference-in-differences estimate is )<b>([-+]?[\d.]+%)</b>")
+_CLEANING_DIFF_IN_DIFF_RE = re.compile(r"(?:Difference-in-differences: |difference-in-differences estimate is )([-+]?[\d.]+%)")
 # The cleaned year's row in the per-year windows table -- the OTHER statistic,
 # each year's own raw post ÷ pre ratio.
 _CLEANING_RAW_RATIO_RE = re.compile(
@@ -2810,7 +2773,7 @@ _EV_FIX_SAVINGS_PROSE_SITES = (
     ("§7's 'EV charging discipline' bullet",
      "<b>EV charging discipline: {ev100}/yr at 100% compliance, {ev80} at 80%</b>:"),
     ("§9's session-detection paragraph",
-     "recovers <b>{ev100}/yr at 100% compliance ({ev80} at 80%)</b>."),
+     "It estimates {ev100}/yr at full compliance, or {ev80} at 80%."),
 )
 
 
@@ -4141,7 +4104,7 @@ def case_s8_more_panels_timing_matches_the_artifacts():
     §8 is advanced-tier prose and exempt from the basic tier's density cap, so
     this case checks only the figures and their referents, not the sentence
     shape."""
-    m = re.search(r"<p>The constraint is timing\..*?</p>", HTML, re.S)
+    m = re.search(r"<p>The existing array exports.*?</p>\s*<p>Those exports total.*?</p>", HTML, re.S)
     assert m, "§8's 'more panels' paragraph not found in index.html"
     para = m.group(0)
 
@@ -4150,8 +4113,9 @@ def case_s8_more_panels_timing_matches_the_artifacts():
     nights, eligible = _nights_with_ev_charging()
 
     checks = [
-        f"exports {export_pct}% of what it makes ({RD['totals']['exp']:,} kWh/yr)",
-        f"{midday_pct}% of those exports leave in the 10am–2pm window",
+        f"exports {export_pct}% of its production",
+        f"Those exports total {RD['totals']['exp']:,} kWh/yr",
+        f"Most of those exports, {midday_pct}%, leave in the 10am–2pm window",
         f"the EV charged between midnight and 6am on {nights} of {eligible} nights",
     ]
     for value in checks:
@@ -4386,7 +4350,7 @@ def case_s8_export_value_is_published_as_a_bounded_range():
     # [^.]* locator cuts the clause at "22", which is how the first draft of
     # this pin reported "names no price at all" on a sentence that names two.
     # Same rule _CLAUSE_END_AFTER above uses, for the same reason.
-    claim = re.search(r"an exported kWh on this profile.*?\.(?=\s|<|$)", section, re.S)
+    claim = re.search(r"[Aa]n exported kWh on this profile.*?\.(?=\s|<|$)", section, re.S)
     assert claim, (
         "§8 no longer contains a sentence saying what an "
         "exported kWh on this profile is worth -- the valuation claim this case pins "
@@ -4989,7 +4953,7 @@ def case_s8_specific_yield_matches_the_token_rendered_one():
     exactly why they can drift apart. Neither is recomputed here, because the
     array nameplate it divides by lives in private/household.yaml and this file
     runs without the private archive."""
-    m = re.search(r"<p><b>Repowering has no demonstrated economic case in this analysis\..*?</p>", HTML, re.S)
+    m = re.search(r"<p>Repowering has no demonstrated economic case here\..*?</p>", HTML, re.S)
     assert m, "§8's repowering paragraph not found in index.html"
     typed = re.search(r"([\d,]+) kWh/kW/yr", m.group(0))
     assert typed, "§8's repowering paragraph no longer states the array's specific yield"
@@ -5390,7 +5354,7 @@ def case_the_referent_guard_reads_across_a_sentence_boundary():
         f"{_referent_guard_rejects(priced)}")
 
     # The rule that was NOT adopted, measured on the live §8 paragraph.
-    live = re.search(r"<p>The constraint is timing\..*?</p>", HTML, re.S)
+    live = re.search(r"<p>The existing array exports.*?</p>\s*<p>Those exports total.*?</p>", HTML, re.S)
     assert live, "§8's 'more panels' paragraph not found in index.html"
     s8 = live.group(0)
     midday_pct = _midday_export_share_pct()
@@ -5406,7 +5370,7 @@ def case_the_referent_guard_reads_across_a_sentence_boundary():
         "figure-free-run rule, and delete this assertion if it is adopted")
 
     for where, pattern in (("§2", r'<p class="small">The array exports.*?</p>'),
-                           ("§8", r"<p>The constraint is timing\..*?</p>"),
+                           ("§8", r"<p>The existing array exports.*?</p>\s*<p>Those exports total.*?</p>"),
                            ("§0", r"<li><b>More solar\? [^<]*</b>.*?</li>")):
         m = re.search(pattern, HTML, re.S)
         assert m, f"{where}'s guarded passage not found in index.html"
@@ -6327,8 +6291,8 @@ _LOAD_BALANCE_RE = re.compile(r"Whole-home load is <b>([\d,]+) kWh/yr</b>")
 _LOAD_CT_RE = re.compile(r"SAM8760 load series totals ([\d,]+) kWh, 57 kWh \(([\d.]+)%\) below")
 # The naive degradation band appears in two separate report sentences.
 _NAIVE_BAND_RES = (
-    re.compile(r"naïve fit reads ~([\d.]+)–([\d.]+)%/yr"),
-    re.compile(r"~([\d.]+)–([\d.]+)%/yr naïve band"),
+    re.compile(r"decline of about ([\d.]+) to ([\d.]+)% per year"),
+    re.compile(r"the ([\d.]+) to ([\d.]+)% range"),
 )
 
 
@@ -6918,16 +6882,9 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
         "balance link, MWh splits, and share-of-production parentheticals without tokens"),
     ("s6", "Price-aware (all non-super-off-peak imports)"): ("c0c52fc7d519",
         "index's expansion cell adds cycles/day; no token for pw3x cycles exists"),
-    ("s8", "The constraint is timing."): ("8ad8c6d8dd23",
-        "index keeps measured timing details under the token-rendered purchase deferral; "
-        "the template states the same export fraction and points to the token's midday "
-        "share. The marginal-kW paragraph now matches the template exactly, including "
-        "the conditional whole-facility NBT comparison"),
     ("s9", "Inverter clipping"): ("f861755778ff",
         "index's heading states the sampled-curve evidence and annual-loss limit"),
-    ("s9", "Phantom / always-on load"): ("d47f1f64d6aa",
-        "index's heading bakes this household's verdict (identified, de-prioritized)"),
-    ("s10", "detailed electric statements"): ("c6c9ebdc2a26",
+    ("s10", "detailed electric statements"): ("bb65e768a905",
         "both distinguish the annual baseline from longer comparisons; index adds "
         "the baseline date range without a token"),
     ("s10", "Generation billed at"): ("6d1752357deb",
@@ -6938,8 +6895,6 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
     ("s11", "The install invoice shows"): ("1e3efa71c591",
         "index appends the blended-$/kWh derivation (rate-history scaling, CA State "
         "Auditor figures) with no tokens"),
-    ("s13", "Short workups pricing the context"): ("29756b16f69d",
-        "index counts the workups (Six) and dates NEM expiry (2039); no tokens"),
     ("s13", "Annual rate escalation</th>"): ("be0c211b8e51",
         "index prefixes the utility name (SDG&E) the template keeps neutral"),
     ("s13", "Level escalation vs spread escalation"): ("8a43381191aa",

@@ -1793,7 +1793,7 @@ def _sec9_teaser(ctx):
         lead = f"{sessions} EV charging sessions detected"
     cost, = _amounts("SEC9_TEASER", "what the always-on overnight floor costs",
                      price_map_usd=_night_floor_pricing()["method_a_price_map"]["total_usd"])
-    return (f"{lead}; an always-on overnight floor of "
+    return (f"{lead}; a quiet-night floor implies a modeled "
             f"{_night_floor_annual_kwh(ctx)}, about ${cost:,.0f}"
             f"{'/yr' if covers else ''}")
 
@@ -1839,7 +1839,7 @@ def _sec12_teaser(ctx):
                      known_cleaning_gain_pct=sc["known_cleaning_gain_pct"])
     return (f"The {sc['cleaning_date']} study estimates {_a_or_an(gain)} {gain}% "
             "production gain relative to control years. Future cleaning payback "
-            "and optimal cadence are not determined; the archived cadence "
+            "and the best interval remain undetermined; the archived cadence "
             "calculation is not reproduced.")
 
 
@@ -1880,11 +1880,11 @@ def _sec13_teaser(ctx):
             "SEC13_TEASER", "how much dirtier overnight grid power is than midday",
             sop_overnight_00_06=windows["sop_overnight_00_06"],
             solar_midday_10_14=windows["solar_midday_10_14"])
-        return (f"NEM 2.0 worth ${low:,.0f}–{high:,.0f}/yr; overnight grid power "
+        return (f"Modeled NEM 2.0 value is ${low:,.0f}–{high:,.0f}/yr; overnight grid power "
                 f"runs {night - midday:,.0f} kg CO₂/MWh dirtier than midday")
     swing, = _figures("SEC13_TEASER", "how much dirtier overnight grid power is",
                       midday_cleaner_than_overnight_by=swing)
-    return (f"NEM 2.0 worth ${low:,.0f}–{high:,.0f}/yr; overnight grid "
+    return (f"Modeled NEM 2.0 value is ${low:,.0f}–{high:,.0f}/yr; overnight grid "
             f"power runs {swing:.0f} kg CO₂/yr dirtier than midday for the same load")
 
 
@@ -4380,7 +4380,7 @@ def _s8_verdict_short(ctx):
     # Keep export fraction separate from timing and defer the purchase until
     # the proposed tariff path and installed price can settle its economics.
     return ("Defer rooftop expansion pending connection, settlement, and installed "
-            f"price; keep healthy hardware — {exp_pct}% of production is exported, with "
+            f"price; keep healthy hardware. The array exports {exp_pct}% of production, with "
             f"{bracket} of NEM 2.0 grandfathering")
 
 
@@ -4395,7 +4395,7 @@ def _expansion_verdict_short(ctx):
     # no. Only the midday slice, not exports/production, describes timing.
     share = _midday_export_share(ctx, "EXPANSION_VERDICT_SHORT")
     return ("Defer purchase pending connection, settlement, and installed "
-            f"price — {round(share * 100)}% of the year's exports leave in the "
+            f"price. About {round(share * 100)}% of the year's exports leave in the "
             f"{_cheap_window()} window")
 
 
@@ -6735,8 +6735,8 @@ def _s10_verdict(ctx):
         tail = f", but {size} means the whole-household answer is not fully settled."
     else:
         tail = ", with no net-export credit excluded from it."
-    return (f"{VERDICT_STEM}on the net-import energy this analysis can price, staying on "
-            f"the CCA ({cca_name}) would have cost this household about "
+    return (f"{VERDICT_STEM}on the net-import energy this analysis can price, "
+            f"the CCA ({cca_name}) costs "
             f"{comparison} "
             f"({a['confidence']} · same-date bill rates, {a['days']} days){tail}")
 
@@ -6759,9 +6759,8 @@ def _s14_verdict(ctx):
     # deltas, which is what section 14's own package-math paragraph says
     # ("absolute bills anchored to the ... actual"); the verdict summarises
     # that methodology rather than widening it to every dollar on the page.
-    return (f"{VERDICT_STEM}absolute bills are anchored to the actual statements, savings are "
-            f"model deltas at {d.month}/{d.day}/{d.year} rates, and each figure carries a "
-            "confidence label with the few non-artifact-backed items named as such.")
+    return (f"{VERDICT_STEM}actual statements set bill spending; savings compare model runs "
+            f"at {d.month}/{d.day}/{d.year} rates, with evidence limits stated beside the findings.")
 
 
 _tok("S14_VERDICT", phrase=True, kind="derived", get=_s14_verdict,
