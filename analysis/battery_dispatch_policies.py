@@ -1,64 +1,19 @@
 #!/usr/bin/env python3
 """Battery dispatch policies — the report's battery economics (integrated engine).
 
-Principle: a stored kWh costs 11.7c when it displaces a MIDDAY super-off-peak export
-and 14.0c from a super-off-peak grid top-up; every import priced above that is worth
-serving. Non-super-off-peak imports price at 51-87c, so the price-aware policy
-discharges against ALL of them; super-off-peak imports (12.5c) are never served.
+The price-aware policy uses a conservative charge gate: the maximum finite
+charge cost (energy + NBC, divided by round-trip efficiency) must be below
+its seasonal discharge reference. The default floor reference is the minimum
+credit rate in eligible discharge intervals. This remains a lower bound when
+monthly energy net or physical interval net crosses zero.
 
-BOTH FIGURES ARE DERIVED, NOT ASSERTED (issue #189). stored_energy_cost() below
-prices the price-aware run's OWN charging intervals through the same settlement
-rule rates.bill_nem_monthly() applies, and writes the result to the artifact's
-stored_kwh_cost key -- which is the authority, not this paragraph.
-
-WHY THE MIDDAY FIGURE IS 11.7c AND NOT THE 8.4c THIS DOCSTRING USED TO CLAIM. A
-forgone export settles at the NETTING end of the export bracket, not the surplus
-end. rates.bill_nem_monthly() nets per (month, season, TOU period) bucket and pays
-the export credit only on what a bucket has left AFTER netting: a bucket with net
->= 0 is billed at rates.energy(), and only a net-NEGATIVE bucket settles at
-rates.credit(). Every one of this window's 13 super-off-peak buckets is net-IMPORT
--- the super-off-peak period lumps overnight EV charging in with midday solar --
-so a super-off-peak export cancels an import of its own month and period, and what
-storing it forgoes is energy() (10.5c), not credit() (7.6c). Divided by the 90%
-round trip that is 11.7c, not 8.4c. Same distinction, one level up, as the NBC-on-
-gross-imports rule in CLAUDE.md section 9; the same bracket analysis/report_tokens.py
-publishes as EXPORT_VALUE_SURPLUS_BOUND / EXPORT_VALUE_NETTING_BOUND.
-
-The POLICY CONCLUSION IS UNCHANGED: non-super-off-peak imports at 51-87c are far
-above either figure, so the price-aware policy still discharges against all of
-them. What changes is the margin of the argument. Headroom against a super-off-peak
-import (12.5c) narrows from ~4.1c to ~0.8c -- storing midday surplus to serve a
-super-off-peak import is now barely worth the round trip, which is a real change in
-the argument even though the decision it supports is the same.
-
-SOLAR SURPLUS IS NOT A SUPER-OFF-PEAK PHENOMENON ON THIS TARIFF, which is why the
-published policy has to price the charge side too. The 6-10h and 14-16h shoulders
-are OFF-PEAK and the summer sun is still up well into the 16-21h on-peak window, so
-surplus arrives in buckets whose forgone export is worth 46.2-49.8c, or 51.3-55.3c per
-kWh delivered after the round trip -- against an off-peak import worth 48.3-51.9c. (Both
-brackets span the same three off-peak buckets, and the low end of each is the summer
-buckets that run net-EXPORT and therefore settle at credit() rather than energy(): 46.2c
-delivers at 51.3c and faces a 48.3c import, so it is declined on the same test, by a
-thinner margin. Quoting only 49.0-49.8c/54.5-55.3c against 51.1-51.9c would be the same
-one-end-of-the-bracket error this docstring warns about two paragraphs down.) A policy
-that stores every kWh it has room for cannot see that: the "greedy" run this module
-still publishes as a sensitivity takes half its surplus from those shoulders. The
-published "value" policy declines them, and its artifact says so directly --
-stored_kwh_cost.solar_surplus.by_period carries one cell, "sop", at 100% of the
-surplus stored. The whole point of that rule is that the midday cell and the
-surplus-weighted average are the same figure only when the policy makes them so.
-
-NOR IS ONE BUCKET ALWAYS ON ONE END OF THE BRACKET. Storing a block of surplus
-raises its bucket's net, and where that move crosses zero part of the block
-settles at credit() and part at energy() -- so the bucket's final sign cannot
-price the whole block. Each block is priced piecewise across that boundary
-(_span_value below) rather than at one end rate. On the published run no bucket
-in fact splits (census.buckets_split_across_zero is 0 for both charge streams: no
-super-off-peak bucket comes near zero, and the policy stores nothing anywhere
-else), so the rule is a no-op here and the census is what says so. It is not
-asserted either way -- every published stream and period price is checked against
-an exact rates.bill_nem() re-bill of its own counterfactual, and the residual is
-published beside it.
+Accepted lots carry their actual finite incremental cost at the decision:
+monthly energy is integrated across zero and NBC is the change in positive
+physical interval net. Discharge splits at both zero boundaries. Later dispatch
+can change a month's net position; the ledger is a scheduling heuristic, not
+an ex-post guarantee about every lot's final settled profit. stored_energy_cost
+prices each complete stream against an exact final-dispatch counterfactual.
+Its published reconciliation includes any interaction between streams.
 
 Four policies x two configurations (13.5 kWh Powerwall 3 / 27 kWh PW3+Expansion,
 both 11.5 kW continuous discharge -- but DIFFERENT continuous charge rates: 5 kW
@@ -85,7 +40,7 @@ run_batt() and EV_EXCLUSION_NOTE_* below, which is what the artifact publishes.
 
 INTEGRATED VALUATION: the battery modifies the physical import/export series and the
 modified year is re-billed with the canonical engine (rates.bill_nem: monthly
-per-period NEM netting, NBC on gross imports) — the same engine used for the
+per-period NEM netting, NBC on positive physical interval net) — the same engine used for the
 behavior model. The post-behavior block runs THIS HOUSEHOLD'S FREE FIX FIRST,
 then the battery on the shifted load: one pipeline, one rate set, no cross-model
 splicing.
@@ -326,39 +281,15 @@ def bucket_net_sign(d, imp, gen):
 
 
 def value_charge_gate(d, imp0, gen0, charge_ref=None):
-    """THE priced charge rule (issue #240), as per-interval arrays.
+    """Conservative charge eligibility shared with VPP and carbon dispatch.
 
-    One implementation, three callers: _run_batt_value() below, and the two
-    scripts that carry their own dispatch loops for a different question and
-    used to carry a verbatim copy of the UNPRICED charge rule with them --
-    dsgs_vpp_backtest.run_batt_vpp() (a VPP-event variant) and
-    carbon_dispatch_tradeoff.py's carbon-aware runs. Those two need the rule
-    but not this function's lot ledger, so the rule is factored out here
-    rather than copied a third and fourth time; a fix to the pricing reaches
-    all of them or none.
-
-    Returns a dict of same-length arrays plus the season reference:
-
-      e_val         what an exported kWh is worth in interval i, on the same
-                    net >= 0 per-bucket test bill_nem_monthly() applies
-      i_val         what an imported kWh costs there (e_val + NBC)
-      disch_win     the intervals the policy is allowed to discharge into
-      ref           the reference discharge value for i's season (VALUE_CHARGE_REF)
-      surplus_cost  e_val / RTE -- a stored surplus kWh's cost per kWh DELIVERED
-      topup_cost    i_val / RTE -- the same for a grid top-up kWh
-      surplus_ok    surplus_cost < ref: may this interval's surplus be stored?
-      topup_ok      topup_cost  < ref: may this interval take a grid top-up?
-
-    WHY A CALLER CAN USE surplus_ok/topup_ok WITHOUT THE LOT LEDGER. Under the
-    default "floor" reference, ref is the SMALLEST import value over the
-    season's discharge-window intervals, so every kWh this gate admits already
-    costs less than every import its own season can discharge into. The lot
-    ledger's "serve an import only from a cheaper lot" filter therefore refuses
-    nothing that the gate admitted, and a loop that applies only the gate
-    reproduces this policy's physical series exactly -- checked, not assumed,
-    by test_battery_dispatch_policies.py on the measured year. Under "best"
-    that argument does not hold, which is why a caller relying on it should
-    keep VALUE_CHARGE_REF.
+    surplus_cost/topup_cost are upper bounds on finite delivered charge cost.
+    The floor reference is the minimum credit rate over eligible intervals;
+    best uses the maximum all-in rate and is only a heuristic reference.
+    i_val/e_val are initial marginal diagnostics, not finite stream prices.
+    Under floor, admitted lots cost less than every eligible discharge marginal
+    even when monthly net or interval net crosses zero. Gate-only callers can
+    therefore preserve their own physical loops without a price refusal.
     """
     p = d.p.values; seas = d.seas.values
     kw = np.asarray(imp0, dtype=float) * 4
@@ -366,7 +297,7 @@ def value_charge_gate(d, imp0, gen0, charge_ref=None):
     sign = bucket_net_sign(d, imp0, gen0)
     e_val = np.array([(R.energy(s, q) if ok else R.credit(s, q))
                       for s, q, ok in zip(seas, p, sign)])
-    i_val = e_val + R.NBC
+    i_val = e_val + R.NBC * (np.asarray(imp0) > np.asarray(gen0))
     serve_ok = (kw < 2.5) if br.EV_ANALYSIS else np.ones(len(d), bool)
     # same window as "greedy": on-peak unconditionally, every other non-super-
     # off-peak import subject to the EV-spillover gate
@@ -376,67 +307,33 @@ def value_charge_gate(d, imp0, gen0, charge_ref=None):
         raise SystemExit(f"run_batt: charge_ref {charge_ref!r} is not 'best' or 'floor'")
     by_seas = {}
     for s in np.unique(seas):
-        vals = i_val[(seas == s) & disch_win]
+        # Floor is a conservative lower bound even after either net crosses
+        # zero. Best remains an explicitly optimistic scheduling reference.
+        bound = np.array([R.credit(ss, pp) if charge_ref == 'floor' else R.allin(ss, pp)
+                          for ss, pp in zip(seas, p)])
+        vals = bound[(seas == s) & disch_win]
         by_seas[s] = (float(vals.max()) if charge_ref == "best" else float(vals.min())) \
             if len(vals) else 0.0
     ref = np.array([by_seas[s] for s in seas])
-    surplus_cost = e_val / rte
-    topup_cost = i_val / rte
+    # Charging can cross BOTH the monthly energy and physical NBC kinks.
+    # This upper bound holds for any finite charge, independent of its size.
+    charge_bound = np.array([R.energy(s, q) + R.NBC for s, q in zip(seas, p)])
+    surplus_cost = charge_bound / rte
+    topup_cost = charge_bound / rte
     return {"e_val": e_val, "i_val": i_val, "disch_win": disch_win, "ref": ref,
             "surplus_cost": surplus_cost, "topup_cost": topup_cost,
             "surplus_ok": surplus_cost < ref, "topup_ok": topup_cost < ref}
 
 
 def _run_batt_value(d, imp0, gen0, cap, power_kw, charge_kw, soc0, charge_ref, trace):
-    """The price-aware policy with both decisions priced at the margin (issue #240).
+    """Schedule conservative charges and price finite changes in a lot ledger.
 
-    The original "greedy" policy stores every kWh of solar surplus it has room
-    for and discharges against every non-super-off-peak import. Half the
-    surplus it stores on this house is not midday surplus but 6-10h and 14-16h
-    off-peak surplus, whose forgone export is worth rates.energy(off) in a
-    net-import bucket: 49-50c, or 54-55c per kWh delivered after the round
-    trip. Served against an off-peak import worth allin(off) = 51-52c, that
-    kWh loses 2-3c. Nothing in "greedy" can see that, because it prices
-    neither side.
-
-    This policy prices both sides with the same rule bill_nem_monthly() bills
-    by. For every interval, from the bucket sign bucket_net_sign() returns:
-
-      export value  E_i = energy(seas, p) if the bucket is net >= 0 else credit(seas, p)
-      import value  I_i = E_i + NBC   (a displaced import also stops paying NBC;
-                                       a grid top-up starts paying it)
-
-    A kWh stored from surplus in interval i costs E_i / RTE per kWh delivered;
-    a kWh of grid top-up costs I_i / RTE. Every kWh in the pack carries that
-    cost with it, as a lot.
-
-    Charge rule: surplus in interval i is stored only if E_i / RTE is below the
-    reference discharge value for its season (see VALUE_CHARGE_REF): the
-    smallest I_j over the season's discharge-window intervals, whether or not
-    an import occurs in them ("floor", the default), or the largest ("best").
-    Grid top-up is tested the same way.
-    On this tariff "floor" means: midday super-off-peak surplus (11.7c
-    delivered) is stored, 6-10h and 14-16h off-peak surplus (51-55c) and
-    on-peak surplus are exported. The gain is mostly not the 2-3c margin on
-    the shoulder kWh itself but the room it frees: greedy fills the pack from
-    the morning shoulder first, so the cheaper midday surplus that follows has
-    nowhere to go and is exported at 10.4c while the 49c shoulder export was
-    forgone in its place.
-
-    Discharge rule: an import of value I_i may be served only from lots whose
-    delivered cost is below I_i, most expensive eligible lot first, so cheap
-    lots stay available for cheap imports. No served import is therefore ever
-    cheaper than the energy serving it, by construction; the optional `trace`
-    records every charge, skip and discharge with the two figures compared, so
-    a test can check that on the actual run rather than on this paragraph.
-
-    Everything else is "greedy": the discharge window is every non-super-off-
-    peak import (with the EV-spillover gate), an interval carrying both flows
-    inside that window serves its import rather than storing its surplus, and
-    super-off-peak gaps top the pack up toward full. Super-off-peak imports
-    are still never served: a midday lot at 11.7c delivered would clear a
-    12.5c import by 0.8c, and the grid top-up that then refilled the pack for
-    the evening would cost 14.0c, a losing round trip the window rule spares.
+    The running monthly position starts with the complete baseline and includes
+    each accepted action. Charges integrate the energy kink and physical NBC
+    change; discharge splits at either zero boundary before comparing lot cost.
+    The trace states decision-time values, not final settled lot profitability.
+    Initial SOC is inherited at zero ledger cost. Hardware, window, spillover,
+    source priority and conservation rules match the other physical policies.
     """
     imp = imp0.copy(); exp = gen0.copy()
     pwrq_dis = power_kw / 4
@@ -457,6 +354,18 @@ def _run_batt_value(d, imp0, gen0, cap, power_kw, charge_kw, soc0, charge_ref, t
     # carry a cost no interval produced.
     lots = [[soc0, 0.0]] if soc0 > 0 else []
     soc = soc0
+    keys = list(zip(d.ym.astype(str), d.seas, d.p))
+    net = {}
+    for key, ii, ee in zip(keys, imp0, gen0):
+        net[key] = net.get(key, 0.) + ii - ee
+
+    def charge_cost(i, q, solar):
+        key = keys[i]
+        energy_cost, _ = _span_value(q, net[key], key[1], key[2])
+        old_nbc = R.nbc_kwh(imp[i], exp[i])
+        new_nbc = R.nbc_kwh(imp[i] + (0 if solar else q), exp[i] - (q if solar else 0))
+        net[key] += q
+        return float((energy_cost + R.NBC * (new_nbc - old_nbc)) / q / (ETA * ETA))
 
     def _log(i, kind, kwh, cost, value):
         if trace is not None:
@@ -475,6 +384,7 @@ def _run_batt_value(d, imp0, gen0, cap, power_kw, charge_kw, soc0, charge_ref, t
             if surplus_ok[i]:
                 c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
                 if c > 0:
+                    cost = charge_cost(i, c, True)
                     soc += c * ETA; exp[i] -= c; thru += c * ETA
                     _add_lot(c * ETA, cost)
                     _log(i, "charge_surplus", c, cost, ref[i])
@@ -488,6 +398,7 @@ def _run_batt_value(d, imp0, gen0, cap, power_kw, charge_kw, soc0, charge_ref, t
             cost = topup_cost[i]
             take = min(max((cap - soc) / ETA, 0), pwrq_chg) if topup_ok[i] else 0
             if take > 0:
+                cost = charge_cost(i, take, False)
                 soc += take * ETA; imp[i] += take; thru += take * ETA
                 _add_lot(take * ETA, cost)
                 _log(i, "charge_grid", take, cost, ref[i])
@@ -497,15 +408,24 @@ def _run_batt_value(d, imp0, gen0, cap, power_kw, charge_kw, soc0, charge_ref, t
             # most expensive eligible lot first; lots are appended in time
             # order, so sort by cost for the pick and keep the list otherwise
             for lot in sorted(lots, key=lambda l: -l[1]):
-                if need <= 0:
-                    break
-                if lot[1] >= i_val[i]:
-                    continue
-                dd = min(need, lot[0] * ETA)
-                if dd > 0:
+                while need > 1e-12 and lot[0] > 1e-12:
+                    key = keys[i]
+                    physical_net = float(imp[i] - exp[i])
+                    monthly_net = net[key]
+                    value = (R.energy(key[1], key[2]) if monthly_net > 1e-12
+                             else R.credit(key[1], key[2]))
+                    value += R.NBC if physical_net > 1e-12 else 0.
+                    if lot[1] >= value:
+                        break
+                    dd = min(need, lot[0] * ETA)
+                    if monthly_net > 1e-12:
+                        dd = min(dd, monthly_net)
+                    if physical_net > 1e-12:
+                        dd = min(dd, physical_net)
                     lot[0] -= dd / ETA; soc -= dd / ETA; imp[i] -= dd
+                    net[key] -= dd
                     served += dd; need -= dd
-                    _log(i, "discharge", dd, lot[1], i_val[i])
+                    _log(i, "discharge", dd, lot[1], value)
             lots[:] = [l for l in lots if l[0] > 1e-12]
     if abs(soc - (soc0 + thru - served / ETA)) > 1e-6:
         raise SystemExit("run_batt: energy-conservation identity failed — "
@@ -648,20 +568,10 @@ def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw, charge_ref=None):
     and blended solar figures, because two off-peak buckets are net-positive by less
     than the surplus block taken out of them.
 
-    NOT rates.allin() for an export. allin() = energy() + NBC is what a GROSS IMPORT
-    costs, and an export does not reduce gross imports -- bill_nem_monthly() charges
-    NBC on m[imp].sum() before any netting, so the NBC on the cancelled import is on
-    the statement either way. This is the same distinction report_tokens.py's
-    EXPORT_VALUE_SURPLUS_BOUND / EXPORT_VALUE_NETTING_BOUND carry, and it is not
-    decided here by argument: the split is computed per bucket and the census of how
-    many kWh took which end is published alongside the cost.
-
-    A GRID top-up is the other case, and it does pay NBC: it IS a gross import, on
-    top of whatever the netting adds. NBC rides on every top-up kWh regardless of
-    where the bucket's net sits, so it is added outside the piecewise term rather
-    than folded into a rate; the artifact records whether every top-up kWh in fact
-    landed on energy() + NBC = allin() (it does here -- every super-off-peak bucket
-    is net-import by hundreds of kWh, far more than the top-up itself).
+    NBC is priced separately for each interval from the finite change in
+    max(physical import - physical export, 0). Solar capture can increase NBC;
+    grid top-up need not pay NBC on its entire quantity; discharge can cross
+    positive physical net to zero. Monthly grouping cannot price this term.
 
     WHICH REFERENCE EACH STREAM IS PRICED FROM, and why that one. Each stream is
     valued at the margin of the FULL dispatch: the span runs from the bucket's net
@@ -707,7 +617,11 @@ def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw, charge_ref=None):
     f["_ym"] = f.ym.astype(str)
     f["_imp2"] = imp2; f["_exp2"] = exp2; f["_imp0"] = imp0; f["_gen0"] = gen0
     f["_surp"] = surplus; f["_grid"] = grid; f["_disch"] = disch
-    cols = ["_imp2", "_exp2", "_imp0", "_gen0", "_surp", "_grid", "_disch"]
+    actual_nbc = R.nbc_kwh(imp2, exp2)
+    f['_solar_nbc'] = (actual_nbc - R.nbc_kwh(imp2, gen0)) * R.NBC
+    f['_grid_nbc'] = (actual_nbc - R.nbc_kwh(imp2 - grid, exp2)) * R.NBC
+    f['_disch_nbc'] = (R.nbc_kwh(imp2 + disch, exp2) - actual_nbc) * R.NBC
+    cols = ['_solar_nbc', '_grid_nbc', '_disch_nbc', "_imp2", "_exp2", "_imp0", "_gen0", "_surp", "_grid", "_disch"]
     g = f.groupby(["_ym", "seas", "p"], sort=True)[cols].sum()
 
     streams = {"solar_surplus": "_surp", "grid_topup": "_grid"}
@@ -729,19 +643,19 @@ def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw, charge_ref=None):
             # The span this stream moves the bucket through: from the net it would
             # have WITHOUT this stream's own q kWh (the rest of the dispatch left in
             # place, because that is the frame rates.bill_nem() prices) up to the
-            # post-dispatch net. Priced piecewise across the zero boundary; a grid
-            # kWh additionally pays NBC, which rides on gross imports whatever the
-            # bucket's net does, and an avoided export never does.
+            # post-dispatch net. Monthly energy spans and interval NBC changes
+            # each cross their own zero boundary and are computed separately.
             value, at_credit = _span_value(q, net - q, seas, per)
+            nbc_value = float(row['_solar_nbc' if stream == 'solar_surplus' else '_grid_nbc'])
+            value += nbc_value
             if stream == "grid_topup":
-                value += q * R.NBC
                 # Same 1e-12 guard the census below uses. With a bare `> 0`,
                 # a bucket sitting within float dust of zero could publish
                 # every_bucket_priced_at_allin: false beside a census reporting
                 # surplus_credit.kwh: 0.0 -- two fields of one artifact
                 # disagreeing, with no way to tell which is the artifact of
                 # rounding (Codex/review, issue #189).
-                if at_credit > 1e-12:
+                if at_credit > 1e-12 or abs(nbc_value - q * R.NBC) > 1e-10:
                     grid_is_allin = False
             tot[stream][0] += q
             tot[stream][1] += value
@@ -759,10 +673,9 @@ def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw, charge_ref=None):
         if dq > 0:
             # Discharge removes import, so it walks the bucket's net the other way:
             # the span runs from the post-dispatch net up to what it would have been
-            # without the discharge. Same piecewise rule, plus the NBC the displaced
-            # gross import would have paid.
+            # without the discharge. Add the finite positive-interval NBC change.
             dv, _ = _span_value(dq, net, seas, per)
-            disch_value += dv + dq * R.NBC
+            disch_value += dv + float(row['_disch_nbc'])
 
     rte = float(ETA * ETA)
 
@@ -890,9 +803,9 @@ def stored_energy_cost(d, imp0, gen0, cap, policy, charge_kw, charge_ref=None):
                    "season, TOU period) bucket's net, and the span that move travels "
                    "settles at rates.credit() below zero and rates.energy() at or "
                    "above it -- the same test bill_nem_monthly() applies, so a bucket "
-                   "the block carries across zero splits between the two. Each grid-"
-                   "charged kWh additionally pays NBC, because it is a gross import "
-                   "and an avoided export is not. Each stream is priced from the "
+                   "the block carries across zero splits between the two. NBC is the "
+                   "finite interval change in max(physical import - physical export, 0), "
+                   "including solar capture and zero crossings. Each stream is priced from the "
                    "bucket net it would have WITHOUT that stream, the rest of the "
                    "dispatch in place, and every figure is checked against an exact "
                    "rates.bill_nem() re-bill of that counterfactual (see each block's "
@@ -1075,7 +988,7 @@ if __name__ == "__main__":
     out["post_behavior"] = pb
     out["escalation_published_pw3_post_behavior"] = escalation(pb["mid"]["battery_marginal"])
     out["escalation_note"] = _ESCALATION_SEED_NOTE[fix_scenario]
-    out["notes"] = {"engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
+    out["notes"] = {"engine": "rates.bill_nem (monthly per-period NEM netting, NBC on positive physical interval net)",
                     "ev_exclusion": ev_exclusion_note(),
                     "rte": 0.9, "power_kw": 11.5,
                     "charge_kw_bare_unit": CHARGE_KW,

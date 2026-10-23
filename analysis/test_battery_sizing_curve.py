@@ -747,8 +747,8 @@ def case_committed_sizing_curve_artifact_27kwh_point_matches_the_expansion_rate_
     they are this household's figures under battery_dispatch_policies.
     PUBLISHED_POLICY, re-derived when that policy changed, not constants with
     a life of their own. The two rates separate the 27 kWh point by only
-    $0.18 here (the expansion rate buys little at a capacity this house
-    rarely fills), so the margin below is deliberately tight."""
+    $0.16 in this heuristic dispatch run, so the margin below is deliberately
+    tight. This is a model regression, not a hardware performance guarantee."""
     if not ARTIFACT.is_file():
         raise SkipCase(f"{ARTIFACT} not present")
     data = json.loads(ARTIFACT.read_text())
@@ -757,21 +757,21 @@ def case_committed_sizing_curve_artifact_27kwh_point_matches_the_expansion_rate_
     bare_row = next((r for r in ship if abs(r["kwh"] - 13.5) < EPS), None)
     assert exp_row is not None and bare_row is not None, \
         "committed artifact must list both shipping products"
-    WRONG_UNIFORM_5KW_SAVE = 2932.73   # the same sweep with CHARGE_KW everywhere
+    WRONG_UNIFORM_5KW_SAVE = 2931.25   # the same sweep with CHARGE_KW everywhere
     assert abs(exp_row["save_usd"] - WRONG_UNIFORM_5KW_SAVE) > 0.10, (
         f"27 kWh shipping product's save_usd ({exp_row['save_usd']}) matches the "
         f"OLD uniform-bare-unit-charge-rate figure ({WRONG_UNIFORM_5KW_SAVE}) -- "
         "this is the exact signature of Finding 1 (CHARGE_KW applied above the "
         "bare-unit reference instead of CHARGE_KW_WITH_EXPANSION) recurring")
-    assert exp_row["save_usd"] == 2932.55, \
+    assert exp_row["save_usd"] == 2931.09, \
         f"27 kWh shipping product's save_usd drifted from the known-correct " \
-        f"value (2932.55): {exp_row['save_usd']}"
-    assert bare_row["save_usd"] == 2464.85, \
+        f"value (2931.09): {exp_row['save_usd']}"
+    assert bare_row["save_usd"] == 2463.36, \
         "13.5 kWh (bare-unit) shipping product's save_usd should be unaffected " \
         f"by the expansion-rate fix: {bare_row['save_usd']}"
-    return ("committed sizing-curve artifact's 27 kWh point (save_usd=2932.55) "
+    return ("committed sizing-curve artifact's 27 kWh point (save_usd=2931.09) "
             "reflects CHARGE_KW_WITH_EXPANSION, not the uniform bare-unit "
-            "figure (2932.73)")
+            "figure (2931.25)")
 
 
 @case

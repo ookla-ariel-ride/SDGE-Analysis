@@ -56,59 +56,59 @@
  },
  "current_behavior": {
   "label": "current_behavior",
-  "baseline_bill_current_rates": 4904,
+  "baseline_bill_current_rates": 4901,
   "energy_sweep_at_11.5kw": [
    {
     "kwh": 5,
-    "save_usd": 1234.79,
+    "save_usd": 1233.33,
     "kwh_served": 2399.43,
     "cycles_per_day": 1.3859,
-    "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_soc0_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": null,
     "cost_usd": 10785.19,
-    "asset_alone_payback_years": 8.73
+    "asset_alone_payback_years": 8.74
    },
    {
     "kwh": 10,
-    "save_usd": 2085.52,
+    "save_usd": 2084.04,
     "kwh_served": 3984.35,
     "cycles_per_day": 1.1506,
     "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 170.15,
+    "marginal_save_usd_per_kwh": 170.14,
     "cost_usd": 12970.37,
     "asset_alone_payback_years": 6.22
    },
    {
     "kwh": 13.5,
-    "save_usd": 2464.85,
+    "save_usd": 2463.36,
     "kwh_served": 4709.91,
     "cycles_per_day": 1.0075,
-    "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_soc0_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 108.38,
     "cost_usd": 14500.0,
-    "asset_alone_payback_years": 5.88
+    "asset_alone_payback_years": 5.89
    },
    {
     "kwh": 15,
-    "save_usd": 2571.05,
+    "save_usd": 2569.59,
     "kwh_served": 4916.39,
     "cycles_per_day": 0.9465,
     "steady_state_soc0_kwh": 0.0,
     "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 70.8,
+    "marginal_save_usd_per_kwh": 70.82,
     "cost_usd": 15155.56,
-    "asset_alone_payback_years": 5.89
+    "asset_alone_payback_years": 5.9
    },
    {
     "kwh": 20,
-    "save_usd": 2782.96,
+    "save_usd": 2781.5,
     "kwh_served": 5312.87,
     "cycles_per_day": 0.7672,
     "steady_state_soc0_kwh": 0.0,
@@ -120,7 +120,7 @@
    },
    {
     "kwh": 25,
-    "save_usd": 2898.91,
+    "save_usd": 2897.44,
     "kwh_served": 5517.94,
     "cycles_per_day": 0.6374,
     "steady_state_soc0_kwh": 0.0,
@@ -132,23 +132,23 @@
    },
    {
     "kwh": 27,
-    "save_usd": 2932.55,
+    "save_usd": 2931.09,
     "kwh_served": 5578.67,
     "cycles_per_day": 0.5967,
     "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 16.82,
+    "marginal_save_usd_per_kwh": 16.83,
     "cost_usd": 20400.0,
     "asset_alone_payback_years": 6.96
    },
    {
     "kwh": 30,
-    "save_usd": 2972.03,
+    "save_usd": 2970.56,
     "kwh_served": 5650.17,
     "cycles_per_day": 0.5439,
     "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 13.16,
     "cost_usd": 21711.11,
@@ -156,23 +156,23 @@
    },
    {
     "kwh": 35,
-    "save_usd": 3019.35,
+    "save_usd": 3017.89,
     "kwh_served": 5739.13,
     "cycles_per_day": 0.4735,
     "steady_state_soc0_kwh": 0.025,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 9.46,
+    "marginal_save_usd_per_kwh": 9.47,
     "cost_usd": 23896.3,
-    "asset_alone_payback_years": 7.91
+    "asset_alone_payback_years": 7.92
    },
    {
     "kwh": 40,
-    "save_usd": 3044.97,
+    "save_usd": 3043.5,
     "kwh_served": 5790.72,
     "cycles_per_day": 0.4181,
     "steady_state_soc0_kwh": 5.025,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 5.12,
     "cost_usd": 26081.48,
@@ -182,7 +182,7 @@
   "power_sweep_at_13.5kwh": [
    {
     "kw": 5.0,
-    "save_usd": 2449.28,
+    "save_usd": 2447.79,
     "kwh_served": 4692.29,
     "cycles_per_day": 1.0038,
     "steady_state_soc0_kwh": 0.0,
@@ -194,11 +194,11 @@
    },
    {
     "kw": 7.5,
-    "save_usd": 2460.59,
+    "save_usd": 2459.1,
     "kwh_served": 4703.99,
     "cycles_per_day": 1.0063,
     "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kw": 4.52,
     "cost_usd": null,
@@ -206,11 +206,11 @@
    },
    {
     "kw": 10.0,
-    "save_usd": 2463.99,
+    "save_usd": 2462.51,
     "kwh_served": 4708.71,
     "cycles_per_day": 1.0073,
     "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kw": 1.36,
     "cost_usd": null,
@@ -218,11 +218,11 @@
    },
    {
     "kw": 11.5,
-    "save_usd": 2464.85,
+    "save_usd": 2463.36,
     "kwh_served": 4709.91,
     "cycles_per_day": 1.0075,
-    "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_soc0_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kw": 0.57,
     "cost_usd": null,
@@ -230,19 +230,19 @@
    },
    {
     "kw": 12.5,
-    "save_usd": 2465.3,
+    "save_usd": 2463.82,
     "kwh_served": 4710.55,
     "cycles_per_day": 1.0077,
     "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 0.45,
+    "marginal_save_usd_per_kw": 0.46,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
    {
     "kw": 15.0,
-    "save_usd": 2465.85,
+    "save_usd": 2464.37,
     "kwh_served": 4711.34,
     "cycles_per_day": 1.0079,
     "steady_state_soc0_kwh": 0.0,
@@ -268,40 +268,40 @@
     "kwh": 13.5,
     "kw": 11.5,
     "quoted_cost_usd": 14500,
-    "save_usd": 2464.85,
+    "save_usd": 2463.36,
     "kwh_served": 4709.91,
-    "payback_years": 5.88
+    "payback_years": 5.89
    },
    {
     "name": "Powerwall 3 + Expansion",
     "kwh": 27.0,
     "kw": 11.5,
     "quoted_cost_usd": 20400,
-    "save_usd": 2932.55,
+    "save_usd": 2931.09,
     "kwh_served": 5578.67,
     "payback_years": 6.96
    }
   ],
   "sensitivity": {
-   "save_at_reference_usd": 2464.85,
-   "energy_elasticity": 0.4495,
+   "save_at_reference_usd": 2463.36,
+   "energy_elasticity": 0.4499,
    "power_elasticity": 0.0023,
    "binds": "energy",
    "note": "elasticity = (% change in save) / (% change in the dimension), an unequal-spacing 3-point derivative AT the shared reference point (13.5 kWh, 11.5 kW) using the reference's own row and the grid points immediately flanking it in each sweep -- a local derivative property, not a raw top-to-bottom span, so it does not depend on how far either grid extends beyond that neighborhood",
-   "energy_elasticity_charge_held_fixed_diagnostic": 0.45,
-   "energy_elasticity_ratio_to_power_real": 193.0,
-   "energy_elasticity_ratio_to_power_charge_held_fixed": 193.2,
+   "energy_elasticity_charge_held_fixed_diagnostic": 0.4503,
+   "energy_elasticity_ratio_to_power_real": 191.7,
+   "energy_elasticity_ratio_to_power_charge_held_fixed": 191.9,
    "ratio_null_note": null,
    "charge_held_fixed_diagnostic_note": "the published energy_elasticity's flanking point above the 13.5 kWh reference (15 kWh) correctly uses the real with-expansion charge rate (8 kW) for that capacity, while the reference point itself uses the bare-unit rate (5 kW) -- a small second variable (charge rate) moving alongside the intended one (capacity) in that one derivative (Codex adversarial review, fourth pass). energy_elasticity_charge_held_fixed_diagnostic re-derives the SAME local elasticity a second way, with the 15 kWh flanking point's charge rate counterfactually held at 5 kW instead of 8 kW -- diagnostic only, does NOT change energy_sweep_at_11.5kw's own rows (still correct, real per-product hardware) or the published energy_elasticity above. See TECHNICAL.md for the comparison and why the qualitative energy-binds-far-more-than-power conclusion is unaffected."
   }
  },
  "post_behavior": {
   "label": "post_behavior",
-  "baseline_bill_current_rates": 3683,
+  "baseline_bill_current_rates": 3679,
   "energy_sweep_at_11.5kw": [
    {
     "kwh": 5,
-    "save_usd": 1249.87,
+    "save_usd": 1247.75,
     "kwh_served": 2479.94,
     "cycles_per_day": 1.4324,
     "steady_state_soc0_kwh": 4.304,
@@ -309,23 +309,23 @@
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": null,
     "cost_usd": 10785.19,
-    "asset_alone_payback_years": 8.63
+    "asset_alone_payback_years": 8.64
    },
    {
     "kwh": 10,
-    "save_usd": 2057.88,
+    "save_usd": 2055.72,
     "kwh_served": 4043.37,
     "cycles_per_day": 1.1677,
     "steady_state_soc0_kwh": 9.304,
     "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 161.6,
+    "marginal_save_usd_per_kwh": 161.59,
     "cost_usd": 12970.37,
-    "asset_alone_payback_years": 6.3
+    "asset_alone_payback_years": 6.31
    },
    {
     "kwh": 13.5,
-    "save_usd": 2380.51,
+    "save_usd": 2378.36,
     "kwh_served": 4696.57,
     "cycles_per_day": 1.0047,
     "steady_state_soc0_kwh": 12.804,
@@ -333,35 +333,35 @@
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 92.18,
     "cost_usd": 14500.0,
-    "asset_alone_payback_years": 6.09
+    "asset_alone_payback_years": 6.1
    },
    {
     "kwh": 15,
-    "save_usd": 2459.43,
+    "save_usd": 2457.29,
     "kwh_served": 4865.45,
     "cycles_per_day": 0.9367,
     "steady_state_soc0_kwh": 14.304,
     "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 52.61,
+    "marginal_save_usd_per_kwh": 52.62,
     "cost_usd": 15155.56,
-    "asset_alone_payback_years": 6.16
+    "asset_alone_payback_years": 6.17
    },
    {
     "kwh": 20,
-    "save_usd": 2572.72,
+    "save_usd": 2570.59,
     "kwh_served": 5112.17,
     "cycles_per_day": 0.7382,
     "steady_state_soc0_kwh": 19.304,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 22.66,
     "cost_usd": 17340.74,
-    "asset_alone_payback_years": 6.74
+    "asset_alone_payback_years": 6.75
    },
    {
     "kwh": 25,
-    "save_usd": 2596.68,
+    "save_usd": 2594.54,
     "kwh_served": 5164.63,
     "cycles_per_day": 0.5966,
     "steady_state_soc0_kwh": 24.304,
@@ -369,15 +369,15 @@
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 4.79,
     "cost_usd": 19525.93,
-    "asset_alone_payback_years": 7.52
+    "asset_alone_payback_years": 7.53
    },
    {
     "kwh": 27,
-    "save_usd": 2599.94,
+    "save_usd": 2597.8,
     "kwh_served": 5172.31,
     "cycles_per_day": 0.5532,
     "steady_state_soc0_kwh": 26.304,
-    "steady_state_boundary_imbalance_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 1.63,
     "cost_usd": 20400.0,
@@ -385,19 +385,19 @@
    },
    {
     "kwh": 30,
-    "save_usd": 2601.39,
+    "save_usd": 2599.26,
     "kwh_served": 5176.55,
     "cycles_per_day": 0.4983,
     "steady_state_soc0_kwh": 29.304,
     "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 0.48,
+    "marginal_save_usd_per_kwh": 0.49,
     "cost_usd": 21711.11,
     "asset_alone_payback_years": 8.35
    },
    {
     "kwh": 35,
-    "save_usd": 2601.39,
+    "save_usd": 2599.26,
     "kwh_served": 5176.55,
     "cycles_per_day": 0.4271,
     "steady_state_soc0_kwh": 34.304,
@@ -409,11 +409,11 @@
    },
    {
     "kwh": 40,
-    "save_usd": 2601.39,
+    "save_usd": 2599.26,
     "kwh_served": 5176.55,
     "cycles_per_day": 0.3737,
     "steady_state_soc0_kwh": 39.304,
-    "steady_state_boundary_imbalance_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 0.0,
     "cost_usd": 26081.48,
@@ -423,7 +423,7 @@
   "power_sweep_at_13.5kwh": [
    {
     "kw": 5.0,
-    "save_usd": 2373.4,
+    "save_usd": 2371.25,
     "kwh_served": 4691.06,
     "cycles_per_day": 1.0035,
     "steady_state_soc0_kwh": 12.804,
@@ -435,7 +435,7 @@
    },
    {
     "kw": 7.5,
-    "save_usd": 2380.4,
+    "save_usd": 2378.25,
     "kwh_served": 4696.48,
     "cycles_per_day": 1.0047,
     "steady_state_soc0_kwh": 12.804,
@@ -447,7 +447,7 @@
    },
    {
     "kw": 10.0,
-    "save_usd": 2380.51,
+    "save_usd": 2378.36,
     "kwh_served": 4696.57,
     "cycles_per_day": 1.0047,
     "steady_state_soc0_kwh": 12.804,
@@ -459,7 +459,7 @@
    },
    {
     "kw": 11.5,
-    "save_usd": 2380.51,
+    "save_usd": 2378.36,
     "kwh_served": 4696.57,
     "cycles_per_day": 1.0047,
     "steady_state_soc0_kwh": 12.804,
@@ -471,7 +471,7 @@
    },
    {
     "kw": 12.5,
-    "save_usd": 2380.51,
+    "save_usd": 2378.36,
     "kwh_served": 4696.57,
     "cycles_per_day": 1.0047,
     "steady_state_soc0_kwh": 12.804,
@@ -483,7 +483,7 @@
    },
    {
     "kw": 15.0,
-    "save_usd": 2380.51,
+    "save_usd": 2378.36,
     "kwh_served": 4696.57,
     "cycles_per_day": 1.0047,
     "steady_state_soc0_kwh": 12.804,
@@ -509,27 +509,27 @@
     "kwh": 13.5,
     "kw": 11.5,
     "quoted_cost_usd": 14500,
-    "save_usd": 2380.51,
+    "save_usd": 2378.36,
     "kwh_served": 4696.57,
-    "payback_years": 6.09
+    "payback_years": 6.1
    },
    {
     "name": "Powerwall 3 + Expansion",
     "kwh": 27.0,
     "kw": 11.5,
     "quoted_cost_usd": 20400,
-    "save_usd": 2599.94,
+    "save_usd": 2597.8,
     "kwh_served": 5172.31,
     "payback_years": 7.85
    }
   ],
   "sensitivity": {
-   "save_at_reference_usd": 2380.51,
-   "energy_elasticity": 0.3657,
+   "save_at_reference_usd": 2378.36,
+   "energy_elasticity": 0.3661,
    "power_elasticity": 0.0,
    "binds": "energy",
    "note": "elasticity = (% change in save) / (% change in the dimension), an unequal-spacing 3-point derivative AT the shared reference point (13.5 kWh, 11.5 kW) using the reference's own row and the grid points immediately flanking it in each sweep -- a local derivative property, not a raw top-to-bottom span, so it does not depend on how far either grid extends beyond that neighborhood",
-   "energy_elasticity_charge_held_fixed_diagnostic": 0.3662,
+   "energy_elasticity_charge_held_fixed_diagnostic": 0.3666,
    "energy_elasticity_ratio_to_power_real": null,
    "energy_elasticity_ratio_to_power_charge_held_fixed": null,
    "ratio_null_note": "power_elasticity is a true (or floating-point-noise) zero in this scenario's reference neighborhood once charge is held fixed -- save_usd does not measurably change with discharge power there -- so there is no local sensitivity to form a ratio against; the ratio fields are null rather than a large number produced by dividing by noise. energy binds; power does not measurably bind at all in this neighborhood.",

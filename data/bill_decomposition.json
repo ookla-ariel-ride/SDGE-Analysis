@@ -20,7 +20,7 @@
    "gross_kwh": 1934.0,
    "current_charges": 398.56
   },
-  "why_these_two": "first and last statements in the corpus; both early-summer periods straddling the 6/1 winter->summer tariff boundary; 24 months and one provider break apart",
+  "why_these_two": "fixed comparison statements dated 2024-06-27 and 2026-07-02; both early-summer periods straddling the 6/1 winter->summer tariff boundary; 24 months and one provider break apart",
   "days_differ": {
    "base_usd_per_day": 1.51,
    "current_usd_per_day": 13.74
@@ -92,11 +92,11 @@
     }
    ],
    "how_each_statement_was_established": "an accruing statement has to carry one of the two recognised true-up deferral sentences; the payment flag alone is not accepted. A settlement statement has to say it is one AND have a billing period ending on the true-up date the preceding statements printed, matching its own 'True-Up Date:' field. Anything else stops the run",
-   "statements_scanned": 25,
-   "statements_accruing": 23,
+   "statements_scanned": 28,
+   "statements_accruing": 26,
    "statements_payable": 2,
    "what_changed_and_when": {
-    "the_billing_mode_did_not_change": "23 of the 25 statements in the corpus print Payment Required This Month: No and carry a true-up deferral sentence naming the date they accrue towards; the other 2 are annual settlements, each closing a true-up the earlier statements named. Both compared periods are accruing statements. The energy component has accrued to the annual true-up throughout.",
+    "the_billing_mode_did_not_change": "26 of the 28 statements in the corpus print Payment Required This Month: No and carry a true-up deferral sentence naming the date they accrue towards; the other 2 are annual settlements, each closing a true-up the earlier statements named. Both compared periods are accruing statements. The energy component has accrued to the annual true-up throughout.",
     "the_presentation_changed_on": "2025-05-02",
     "presentation_change": "through 2025-04-02 the accrued charge sat in a separate 'Net Metering Account Summary' block and the Account Summary's Current Charges line read $0.00; from 2025-05-02 that block is gone and the same accrued charge appears on the Account Summary line, still not payable. The billing-history export follows the Account Summary line, which is why its current_charges column steps off $0.00 on that date without anything about the billing having changed."
    }
@@ -518,6 +518,54 @@
      "5/29/26 - 6/26/26"
     ],
     "period_accrual_usd": 398.56
+   },
+   {
+    "statement_date": "2026-08-03",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 28, 2026",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
+    "total_charges_this_month_usd": 462.88,
+    "california_climate_credit_usd": 0.0,
+    "periods_on_statement": [
+     "6/27/26 - 7/28/26"
+    ],
+    "period_accrual_usd": 462.88
+   },
+   {
+    "statement_date": "2026-09-01",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 28, 2026",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
+    "total_charges_this_month_usd": 365.57,
+    "california_climate_credit_usd": -49.36,
+    "periods_on_statement": [
+     "7/29/26 - 8/26/26"
+    ],
+    "period_accrual_usd": 414.93
+   },
+   {
+    "statement_date": "2026-10-01",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 28, 2026",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
+    "total_charges_this_month_usd": 418.94,
+    "california_climate_credit_usd": -49.36,
+    "periods_on_statement": [
+     "8/27/26 - 9/25/26"
+    ],
+    "period_accrual_usd": 468.3
    }
   ],
   "billing_history_export_reconciliation": {
@@ -747,6 +795,33 @@
      "deferred_to_nem_ledger_usd": 0.0,
      "california_climate_credit_usd": 0.0,
      "explained_usd": 398.56,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2026-08-03",
+     "export_current_charges_usd": 462.88,
+     "period_accrual_usd": 462.88,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 462.88,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2026-09-01",
+     "export_current_charges_usd": 365.57,
+     "period_accrual_usd": 414.93,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": -49.36,
+     "explained_usd": 365.57,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2026-10-01",
+     "export_current_charges_usd": 418.94,
+     "period_accrual_usd": 468.3,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": -49.36,
+     "explained_usd": 418.94,
      "residual_usd": 0.0
     }
    ]
@@ -1279,7 +1354,7 @@
    "fisher_pct": -4.0,
    "years_apart": 2.01,
    "is_total_change_not_a_rate": true,
-   "no_annual_rate_path": "every percentage here is the TOTAL change between two matched endpoints 2.01 years apart, and nothing here is a per-year figure. Two endpoints cannot establish an annual rate path: there is no matched observation between them \u2014 these are the first and last statements in the corpus, and no intermediate pair of periods is comparable on season, provider and TOU mix at once. Any per-year number derived from these by compounding would be a transformation of two points, not an observed yearly change, so none is published",
+   "no_annual_rate_path": "every percentage here is the TOTAL change between two matched endpoints 2.01 years apart, and nothing here is a per-year figure. Two endpoints cannot establish an annual rate path: this comparison uses only the two early-summer periods and does not estimate a matched annual path across the intervening statements. Any per-year number derived from these by compounding would be a transformation of two points, not an observed yearly change, so none is published",
    "note": "the Laspeyres and Paasche readings straddle zero because the price structure ROTATED rather than shifted \u2014 on-peak up, super-off-peak down \u2014 and the quantity mix rotated the same way"
   },
   "price_effect_usd": {

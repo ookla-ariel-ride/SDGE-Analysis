@@ -268,6 +268,16 @@ def case_committed_json_digest_matches_the_committed_csv():
     this check behind the private archive requirement silently skipped it in
     CI, the one place a staleness regression would actually need to be caught."""
     result = json.loads(NG.RESULTS_JSON.read_text())
+    label = result["nem2"]["label"]
+    assert "separate" in label and "same window" not in label
+    from datetime import datetime
+    audit_dates = re.findall(r"\d{1,2}/\d{1,2}/\d{2}",
+                             result["actual_billed_anchor"]["window"])
+    dates = [result["window"]["start"][:10], result["window"]["end"][:10],
+             datetime.strptime(audit_dates[0], "%m/%d/%y").date().isoformat(),
+             datetime.strptime(audit_dates[-1], "%m/%d/%y").date().isoformat()]
+    assert all(date in label for date in dates), (
+        "NEM2 label must name the distinct modeled and bill-audit windows")
     stored = result["rate_table_provenance"]["sha256"]
     actual = hashlib.sha256(NG.RATE_CSV.read_bytes()).hexdigest()
     assert stored == actual, (

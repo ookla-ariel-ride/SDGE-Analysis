@@ -1,86 +1,47 @@
 #!/usr/bin/env python3
-"""Gross imports are rising (issue #16): is it the house or the array?
+"""Conditional attribution of a printed NBC-usage increase (issue #16).
 
-Two comparable early-summer bill periods show gross imports climbing and net
-imports climbing FASTER:
-    5/25/24 - 6/25/24 (32 days): gross 1,438 kWh, net   346 kWh
-    5/29/26 - 6/26/26 (29 days): gross 1,934 kWh, net   987 kWh
-Net rising faster than gross is the signature of a production problem, a
-consumption problem, or both. This script decomposes the change and states,
-with evidence, how much is which.
+The bill periods 5/25/24-6/25/24 (32 days) and 5/29/26-6/26/26 (29 days)
+print NBC usage of 1,438 and 1,934 kWh, and signed net of 346 and 987 kWh.
+The compatibility key gross_kwh stores the printed NBC quantity, not the raw
+Consumption channel. The 496 kWh change is a target for this model, not a
+measured increase in physical gross imports.
 
-DATA REALITY THIS SCRIPT IS HONEST ABOUT (CLAUDE.md sec 0 -- no fabricated
-precision):
-  - This repo has NO measured plane-of-array irradiance anywhere. A true,
-    weather-normalized Performance Ratio is NOT DETERMINED. What IS available:
-      (a) a deterministic Haurwitz CLEAR-SKY model (reused, read-only, from
-          analysis/soiling_analysis.py) -- normalizes for solar GEOMETRY
-          (day length, sun angle, calendar effects), not for actual cloud
-          cover;
-      (b) day-matched calendar-window comparison across years, which controls
-          for the typical seasonal irradiance pattern (including San Diego's
-          "June gloom") without needing a raw irradiance series, because it
-          uses each year's OWN measured production for that specific window;
-      (c) an empirically FITTED ambient-temperature sensitivity (regression
-          of clear-day performance on Open-Meteo daily mean temperature,
-          season- and soiling-controlled) as a magnitude check, not a
-          manufacturer datasheet coefficient asserted as fact.
-  - The private Green Button archive staged in this environment covers only
-    2025-06-27 .. 2026-07-26 (SDG&E's ~13-month export window). It does NOT
-    reach back to May/June 2024. Daily production records
-    (pvoutput_daily.csv / enphase_daily_production.csv) and the whole-home CT
-    archive (SAM 8760, samA.csv/samB.csv) likewise start no earlier than
-    2025. Every 2024-side figure below is therefore an ESTIMATE built from
-    what DOES survive from 2024 -- the bill's own net_kwh/gross_kwh (exact)
-    and the calendar-year PVOutput total (data/pvoutput_yearly_2020-2025.csv,
-    exact) -- never a fabricated interval series. Session-level EV detection
-    (analysis/behavior_rebuild.py's detect_sessions, reused read-only) can
-    only run on the 2026 side; the 2024-side EV share of the INCREASE is
-    NOT DETERMINED, and this is stated plainly rather than guessed.
+This study uses daily production and daily temperature records for the fixed
+July 24, 2025-July 23, 2026 window. Longer production and hourly weather history
+exist in the live project; they need aligned quality checks before another
+study window. The saved SAM files each contain one kWh column and 8,760 rows.
+They do not establish independent consumption CTs, the sensing point, or the
+installed configuration. SAM is used as an hourly load series by assumption.
 
-METHOD SUMMARY (full derivation: TECHNICAL.md 3.26):
-  1. Production, 2026 window: measured directly (pvoutput_daily.csv, cross-
-     checked against enphase_daily_production.csv).
-  2. Production, 2024 window: ESTIMATED as (empirical seasonal fraction of a
-     year's output that falls in this calendar window, measured from the one
-     year we have daily data for) x (2024's own exact calendar-year total).
-  3. Gross household load (not net import) for 2026: measured directly from
-     the whole-home CT archive (SAM 8760). For 2024: ESTIMATED via the
-     bill's own net_kwh (exact) plus the estimated 2024 production.
-  4. Hourly gross load (CT) and an hourly-resolution PRODUCTION series
-     derived by combining CT load with the Green Button's import/export
-     columns feed a physically-grounded counterfactual: 2024's consumption
-     is PINNED by an exact accounting identity (bill-exact net_kwh plus
-     estimated production), leaving production_scale as the one genuinely
-     free parameter, back-solved (not assumed) so the simulated 2024 corner
-     matches the 2024 bill exactly. This makes the simulated-vs-bill
-     agreement EXACT BY CONSTRUCTION, not an independent validation --
-     with no 2024 hourly shape available, the specific split into a
-     consumption term and a production term depends on the modeling choice
-     of HOW 2024 differed from 2026's diurnal shape (this script's default:
-     uniform proportional scaling). A companion identifiability check
-     (identifiability_robustness_check) re-solves under one materially
-     different, still-defensible shape assumption (all consumption decline
-     concentrated in EV-charging hours) to test whether the reported split's
-     CONCLUSION -- not its exact magnitude -- survives that alternative; see
-     its own docstring and the artifact's own
-     decomposition_identifiability_robustness_check field for the result.
-  5. EV share of the 2026 window's consumption comes from detect_sessions,
-     not a guess; its share of the two-year INCREASE is bounded, not
-     claimed exactly, because 2024's EV baseline is unavailable.
-  6. The 6-year (2021-2025) PVOutput efficiency trend is refit here
-     (OLS / CAGR / Theil-Sen, all artifact-backed) and reconciled explicitly
-     against index.html's existing hand-computed "~0.5-1.0%/yr" claim, using
-     the soiling module's own validated 2024-08-12 cleaning event (11.8%
-     gain after ~4.4 dry months) as a bound on how much of the year-to-year
-     swing weather/soiling timing alone can produce.
+No measured plane-of-array irradiance supports this study. The Haurwitz
+clear-sky model controls solar geometry, not actual cloud cover. A seasonal
+production-rate ratio and a fitted daily ambient-temperature sensitivity are
+separate model estimates, not measured irradiance or panel temperature.
 
-Run from private/verify per the standard sandbox (needs usage.csv, samA.csv,
-samB.csv, plus the committed data/ files and private/household.yaml beside
-it -- soiling_analysis.py and behavior_rebuild.py are imported READ-ONLY,
-never modified, never re-run as generators). Writes gross_import_
-decomposition.json to the CWD; promote it to data/ by hand, matching
-behavior_rebuild.py's own cwd-artifact convention.
+For 2026, production comes from the daily records and load from SAM. For 2024,
+production is estimated from the seasonal-rate ratio and the recorded annual
+total; load equals printed signed net plus estimated production. The hourly
+model combines SAM and utility channels, then calibrates its positive-part sum
+to the 2026 printed NBC target. That fit does not isolate a resolution effect;
+transfer of the factor to other corners is an assumption.
+
+Both periods use a shared 32-day template. The back-solve pins modeled endpoints
+to their bill targets by construction. Its default uniform-shape assumption
+and an alternative with the load change concentrated in EV-charging hours
+produce conditional decompositions. Agreement with the endpoints does not
+identify the true physical attribution. EV detection runs on the study's 2026
+interval input; the 2024 EV share of the increase remains undetermined.
+
+The 2021-2025 annual production trend is refit with OLS, CAGR and Theil-Sen.
+True panel degradation and its bounds remain undetermined. The historical
+~0.5-1.0%/yr band stays only as compatibility metadata. The recorded 2024-08-12
+cleaning estimate demonstrates one short-term effect, not an annual correction.
+
+Run from private/verify with usage.csv, samA.csv and samB.csv. The owner also
+reads repository data/ and private/household.yaml. Imported analysis helpers
+are read-only. It writes gross_import_decomposition.json to the working
+directory; check the output before promoting it to data/.
 """
 import csv
 import datetime as dt
@@ -155,8 +116,8 @@ TEMPLATE_END = dt.date(2026, 6, 25)
 
 # The trailing-year window analysis/soiling_analysis.py itself uses for its
 # daily production/weather record -- reused here for consistency, not
-# reinvented, since it is the only window with both daily production and
-# daily temperature data in this repo.
+# reinvented. Other collected history needs aligned quality checks before
+# it can support a different window.
 TRAILING_START = dt.date(2025, 7, 24)
 TRAILING_END = dt.date(2026, 7, 23)
 
@@ -219,9 +180,9 @@ def load_bill_periods():
             "days": int(r["days"]),
             "net_kwh": net,
             "gross_kwh": gross,
-            # Export = Gross import - Net ("Total Usage" = Consumption -
-            # Production, TECHNICAL.md's own "Gross vs net" note): both
-            # gross_kwh and net_kwh are exact bill lines, so this is exact too.
+            # Compatibility gross_kwh is printed NBC usage. Its difference from
+            # printed signed net approximates interval-net exports only under
+            # the NBC interpretation, with whole-kWh bill rounding.
             "export_kwh": round(gross - net, 3),
         }
     return out
@@ -319,9 +280,10 @@ def production_block():
         "period_2024_estimated_kwh_clearsky_basis": round(prod_2024_est_clearsky, 1),
         "yearly_2024_calendar_total_kwh": yearly_2024_kwh,
         "estimate_basis": (
-            "ESTIMATED, not measured: no daily production record exists for "
-            "2024 anywhere in this repo (pvoutput_daily.csv and "
-            "enphase_daily_production.csv both start 2025-07-24). Estimated as "
+            "ESTIMATED, not measured for this comparison window: "
+            "pvoutput_daily.csv and enphase_daily_production.csv both start "
+            "2025-07-24. Earlier daily samples in cleaning_study_daily.csv "
+            "support the cleaning study but do not cover May-June 2024. Estimated as "
             "a PER-DAY seasonal-rate index: (this 29-day 2026 window's own "
             "average daily output) / (the trailing year's own average daily "
             "output) -- a dimensionless ratio, computed from the SAME 29 "
@@ -342,21 +304,21 @@ def production_block():
             "not just day length -- see seasonal_fraction_clearsky_geometric, "
             "which diverges from the empirical ratio by ~10% for exactly that "
             "reason) is stable year to year, and cannot fully verify that "
-            "assumption since actual cloud cover for May-June 2024 "
-            "specifically is not recorded anywhere in this repo."),
+            "assumption from this study’s daily inputs. Other collected "
+            "history needs aligned quality checks before this comparison."),
         "limitation": (
             "NOT DETERMINED to better precision than this transfer estimate. "
-            "What would settle it: a daily PVOutput/Enphase production export "
+            "What would settle it: quality-checked daily PVOutput/Enphase production "
             "covering May-June 2024, or an irradiance dataset (e.g. NREL "
             "NSRDB) for the site coordinates spanning 2024."),
     }
 
 
 # ---------------------------------------------------------------------------
-# 3. Gross household load: measured (CT, 2026), estimated (bill identity, 2024).
+# 3. Household load: SAM series (2026), estimated bill identity (2024).
 # ---------------------------------------------------------------------------
 def load_ct_hourly():
-    """Whole-home CT hourly series spanning 2025-01-01..2026-12-30, exactly
+    """Saved SAM hourly series spanning 2025-01-01..2026-12-31, exactly
     reproducing deep_analyses.py's own samA/samB concatenation (same index
     construction, same source files) -- reused pattern, not reinvented."""
     b = pd.read_csv(SAM_B_CSV).iloc[:, 0].values  # 2025 full year
@@ -393,27 +355,25 @@ def consumption_block(bill, prod):
 
     return {
         "period_2026_ct_measured_kwh": round(cons_2026_ct, 1),
-        "period_2026_ct_source": "whole-home SAM 8760 CT metering (samA.csv/samB.csv)",
+        "period_2026_ct_source": "SAM 8760 hourly load series; physical provenance unresolved (samA.csv/samB.csv)",
         "period_2026_identity_check_kwh": round(identity_check, 1),
         "period_2026_identity_check_basis": (
             "Net_kwh (exact, bill) + measured PVOutput production for the "
-            "window -- an independent cross-check of the CT measurement "
-            "against the bill and a separate production meter."),
+            "window: an arithmetic check against SAM. The saved export does not "
+            "establish SAM sensing point or acquisition independence."),
         "period_2026_ct_vs_identity_agreement_pct_diff": round(agreement_pct, 2),
         "period_2024_estimated_kwh": round(cons_2024_est, 1),
         "period_2024_basis": (
             "ESTIMATED: Net_kwh_2024 (346.0, exact bill figure) + the "
             "ESTIMATED 2024 production for this window (see production "
-            "block). No CT/SAM-8760 archive exists before 2025 "
-            "(private/1-raw-data/enphase_sam8760_2025.csv is the earliest), "
-            "so a directly MEASURED gross load figure for 2024 is NOT "
-            "DETERMINED in this repo."),
+            "block). This study has no quality-checked 2024 hourly load input. "
+            "The saved SAM exports do not establish sensing provenance, "
+            "so a directly measured 2024 gross-load figure is not determined."),
         "limitation": (
             "AC3's 'trended over the same window' is only fully achievable "
-            "for the 2026 side (measured). The 2024 side is bill-identity-"
+            "for the 2026 side (saved SAM series). The 2024 side is bill-identity-"
             "estimated, not measured. What would settle it: a 2024 SAM 8760 "
-            "whole-home export, if one exists in the monitoring account's "
-            "history but was not pulled into this repo."),
+            "load series with checked sensing provenance and aligned timestamps."),
     }
 
 
@@ -455,26 +415,23 @@ def hourly_reconstruction(bill):
             "hours_with_negative_raw_derived_production": n_negative,
             "min_raw_derived_production_kwh": round(min_negative, 3),
             "note": (
-                "Production_hourly = CT_load - GreenButton_import + "
-                "GreenButton_export, i.e. gross load reconciled against "
-                "import/export at hourly resolution -- an independent, "
-                "hourly-resolution production estimate built entirely from "
-                "meter data, no PV monitoring feed involved. A handful of "
-                "small negative values (meter-timing/rounding noise between "
-                "the CT and Green Button meters, clipped to 0 before use) is "
-                "expected and reported rather than hidden."),
+                "Production_hourly = SAM_load - GreenButton_import + GreenButton_export. "
+                "SAM sensing point and acquisition independence are unresolved. "
+                "Raw channel totals versus printed NBC usage and NBC-minus-net are "
+                "unlike-quantity diagnostics, not same-quantity meter validation. "
+                "Negative derived values are clipped to zero as a model convention."),
         },
     }
 
 
 def template_hourly_vectors():
-    """Real 2026 hourly CT load and meter-derived production for
+    """Saved 2026 hourly SAM load and derived production for
     TEMPLATE_START..TEMPLATE_END (May 25-June 25, 2026 -- 32 real days,
     matching PERIOD_2024's own day count and calendar span exactly). This is
     the shared REAL base both years' back-solves in decomposition_block
     scale from (Codex review pass 2, finding 1) -- unlike
     hourly_reconstruction()'s 29-day P26_START..P26_END window (kept
-    unchanged, still used for its own independent cross-meter validation),
+    unchanged, used for an arithmetic comparison and endpoint calibration),
     no vector here is ever asked to represent a day count it wasn't actually
     measured at."""
     ct = load_ct_hourly()
@@ -496,21 +453,17 @@ def _shapley_two_factor_vectors(ct_2026, prod_2026, ct_2024, prod_2024, correcti
     works identically whether the 2024 counterfactual came from a uniform
     multiplicative scale (ct_2024 = c_scale * ct_2026) or a per-hour
     ADDITIVE shape change (ct_2024 = ct_2026 - ev_hourly*frac). `correction`
-    rescales for a KNOWN, disclosed, equally-applied artifact (see
-    decomposition_block: the CT archive's native hourly resolution smooths
-    some real sub-hourly import/export crossovers a finer-resolution meter
-    would catch, understating simulated gross import by a small, consistent
-    amount) -- applying it uniformly to every corner does not change WHICH
-    corner explains WHAT, only removes a shared, understood bias before
-    decomposing. Returns the four corner evaluations and the exact
+    calibrates the hourly positive-part sum to a printed NBC-usage endpoint.
+    This fit does not isolate a resolution effect; transfer to other corners
+    is an assumption. Returns the four corner evaluations and the exact
     order-independent (Shapley/telescoping) decomposition of g(2026,2026)-
     g(2024,2024) into a consumption term and a production term that sum to
-    it EXACTLY -- in GROSS-IMPORT kWh, the same units on both sides, always
+    it EXACTLY -- in modeled NBC-USAGE kWh, the same units on both sides, always
     (adversarial review pass 3, finding 1: an earlier draft compared this
     scenario's RAW production-energy delta, prod_2026*(1-p), against the
-    baseline's Shapley gross-import CONTRIBUTION -- different quantities
+    baseline's Shapley NBC-usage CONTRIBUTION -- different quantities
     entirely, since most of a production change is absorbed by export/
-    self-consumption rather than changing gross import 1:1; every caller
+    self-consumption rather than changing modeled NBC usage 1:1; every caller
     must go through this shared function so the two are always comparable)."""
     def g(load, prod):
         return correction * float(np.maximum(0.0, load - prod).sum())
@@ -577,14 +530,9 @@ def decomposition_block(bill, prod, cons, hourly):
     gross_2026 = bill["period_2026"]["gross_kwh"]
     observed_delta = gross_2026 - gross_2024
 
-    # hourly (the 29-day P26 reconstruction) is kept ONLY for its own
-    # independent cross-meter validation (hourly_reconstruction's own
-    # docstring) and to calibrate hourly_resolution_correction below -- a
-    # meter-RESOLUTION artifact, not day-count-dependent, so calibrating it
-    # from the real, zero-estimation 29-day corner remains valid. The
-    # decomposition itself uses the REAL 32-day TEMPLATE (Codex review pass
-    # 2, finding 1), never a vector scaled to represent a day count it
-    # wasn't measured at.
+    # The 29-day reconstruction supplies the endpoint calibration. The
+    # factor does not isolate resolution, and transfer to the other corners
+    # is assumed. Decomposition uses the real 32-day template below.
     ct_values = hourly["ct_values"]
     prod_values = hourly["production_hourly_derived"]
     f11_raw = float(np.maximum(0.0, 1.0 * ct_values - 1.0 * prod_values).sum())
@@ -645,11 +593,9 @@ def decomposition_block(bill, prod, cons, hourly):
             "year is special-cased as 'the exact one' -- the 2024-relative-"
             "to-2026 ratio is what the report calls production_scale_2024_"
             "over_2026. The whole simulation is corrected by a small factor "
-            "for the CT archive's hourly (not 15-minute) resolution "
-            "(hourly_resolution_correction, calibrated from the REAL, "
-            "zero-estimation 29-day 2026 corner, a meter-resolution "
-            "artifact independent of which specific days are used). The "
-            "INDEPENDENT weather/seasonal-rate-based production estimate "
+            "calibrated to the 2026 printed NBC endpoint. Its transfer to other "
+            "corners is assumed; the fit does not isolate a resolution-only cause. The "
+            "Separate weather/seasonal-rate-based production estimate "
             "(AC1, production_block) is reported separately for the AC1 "
             "requirement, not as an input the decomposition's accuracy "
             "depends on -- and NOT as a numeric cross-check on the solved "
@@ -662,23 +608,18 @@ def decomposition_block(bill, prod, cons, hourly):
             "to it EXACTLY by construction. See TECHNICAL.md 3.26."),
         "hourly_resolution_correction_factor": round(hourly_resolution_correction, 5),
         "hourly_resolution_correction_basis": (
-            "The whole-home CT archive (SAM 8760) resolves at hourly "
-            "granularity, coarser than the Green Button meter's 15-minute "
-            "resolution the bill's own gross_kwh is computed from. Averaging "
-            "sub-hourly import/export crossovers before taking max(0, "
-            "load-production) understates true gross import by a small, "
-            "systematic amount -- confirmed at the c=p=1 corner (REAL 2026 "
-            "data, zero estimation involved): the raw hourly simulation "
-            "undershoots the bill's own 2026 gross-import figure by "
-            f"{round((1 - f11_raw / gross_2026) * 100, 2)}%, a "
-            "resolution artifact, not a modeling error. Applied identically "
-            "to every corner (a shared bias, not a per-corner adjustment)."),
+            "Legacy name: this factor calibrates the hourly positive-part model "
+            "to the 2026 printed NBC-usage target. Its endpoint discrepancy is "
+            f"{round((1 - f11_raw / gross_2026) * 100, 2)}%. "
+            "Hourly aggregation can affect positive-part sums, but this fit does "
+            "not isolate its cause. Applying the factor to other corners is an "
+            "assumption. SAM provenance, bill rounding and NBC residuals remain limits."),
         "production_scale_estimated_from_weather": round(production_scale_estimated, 5),
         "production_scale_backsolved_from_bill": round(production_scale_backsolved, 5),
         "production_scale_backsolved_not_a_clean_rate_comparison": (
             "Codex review pass 3, finding 1: production_scale_2026_vs_template "
             "and production_scale_2024_vs_template are each fit so a "
-            "NONLINEAR gross-import equation (sum(max(0, load-production))) "
+            "NONLINEAR modeled NBC-usage equation (sum(max(0, load-production))) "
             "matches that year's OWN bill total, using the SAME 32-day "
             "template shape -- but 2026's bill target is only 29 days while "
             "2024's is the full 32. Fitting a 32-day-shaped simulation to a "
@@ -733,7 +674,7 @@ def decomposition_block(bill, prod, cons, hourly):
         "within_5_pct_tolerance": bool(pct_error < 5.0),
         "verdict": (
             "Under this scenario's modeling assumption -- 2024 shared 2026's "
-            "diurnal SHAPE exactly, scaled uniformly -- the gross-import "
+            "diurnal SHAPE exactly, scaled uniformly -- the printed NBC-usage "
             "increase is overwhelmingly a CONSUMPTION story: the consumption "
             "term accounts for essentially all of the observed change. "
             "IMPORTANT: this specific split is NOT uniquely identified by "
@@ -854,9 +795,9 @@ def identifiability_robustness_check(bill, prod, cons, hourly, decomposition):
     # Run the SAME 4-corner Shapley decomposition the baseline scenario uses
     # (adversarial review pass 3, finding 1: an earlier draft compared this
     # scenario's raw production-ENERGY delta against the baseline's Shapley
-    # gross-IMPORT contribution -- different quantities, since most of a
+    # modeled NBC-USAGE contribution -- different quantities, since most of a
     # production change is absorbed by export/self-consumption rather than
-    # changing gross import 1:1. Both scenarios now go through
+    # changing modeled NBC usage 1:1. Both scenarios now go through
     # _shapley_two_factor_vectors so their terms are directly comparable, in
     # the same units, always.)
     sh_ev = _shapley_two_factor_vectors(
@@ -888,8 +829,8 @@ def identifiability_robustness_check(bill, prod, cons, hourly, decomposition):
             "4-corner Shapley decomposition as the baseline scenario "
             "(_shapley_two_factor_vectors) is run against this alternative "
             "consumption shape, so both scenarios' terms are directly "
-            "comparable gross-import contributions, not a production-energy "
-            "delta compared against a gross-import contribution."),
+            "comparable modeled NBC-usage contributions, not a production-energy "
+            "delta compared against an NBC-usage contribution."),
         "ev_template_total_kwh": round(ev_template_total, 1),
         "implied_ev_reduction_pct_2026_vs_template": round(frac_2026 * 100, 1),
         "implied_ev_reduction_pct_2024_vs_template": round(frac_2024 * 100, 1),
@@ -952,24 +893,23 @@ def ev_block(cons):
             "false), not a point estimate."),
         "true_share_of_increase": "NOT DETERMINED",
         "caveat": (
-            "The private Green Button archive staged in this environment "
-            "covers 2025-06-27..2026-07-26 only (SDG&E's ~13-month export "
-            "window) -- it does not reach back to May/June 2024, so "
+            "The canonical usage.csv input used by this study covers "
+            "2025-06-27..2026-07-26. It does not reach May/June 2024, so "
             "detect_sessions cannot run on the 2024 comparison period at "
             "all. Because measured EV charging in the 2026 window "
             f"({round(ev_total, 0)} kWh) is itself larger than the entire "
             "observed consumption increase, the true EV share of the "
             "INCREASE (as opposed to of 2026's total consumption) cannot be "
-            "bounded usefully tighter than 0-100% from data in this repo. "
+            "bounded usefully tighter than 0-100% from these study inputs. "
             "What would settle it: a Green Button export or Tesla Charge "
             "Stats history covering May-June 2024."),
     }
 
 
 # ---------------------------------------------------------------------------
-# 6. Degradation trend: artifact-backed, reconciled against the one claim in
-#    index.html section 9 that is still hand-reasoned rather than derived from
-#    this artifact -- the "best-estimate ~0.5-1.0%/yr" verdict (AC2, AC6).
+# 6. Naive degradation trend and limits of attribution (AC2, AC6).
+#    Historical prose estimates stay explicitly historical; current report
+#    claims must state that the true degradation rate and bounds are unknown.
 # ---------------------------------------------------------------------------
 def _theil_sen(x, y):
     slopes = []
@@ -1043,17 +983,21 @@ def degradation_block():
             "Clear-sky annual insolation varies only ~%.2f%% year to year "
             "(leap-day effect only) -- geometry cannot explain the observed "
             "%.1f%% peak-to-trough swing in avg_eff_kwh_per_kw_day (2022 "
-            "4.839 -> 2023 4.245), so that swing must be real weather (cloud "
-            "cover) and/or soiling, which this repo cannot separate for "
-            "years before 2025 (no daily weather or production record "
-            "exists before 2025-07-24)." % (clearsky_spread_pct, peak_to_trough_pct)),
+            "4.839 -> 2023 4.245). This check does not isolate weather, "
+            "soiling, or panel aging. Earlier daily production samples exist "
+            "in cleaning_study_daily.csv, but the study's saved weather and "
+            "production records do not cover the full comparison well enough "
+            "to separate those effects." % (clearsky_spread_pct, peak_to_trough_pct)),
         "single_event_soiling_swing_pct": single_event_swing_pct,
         "single_event_soiling_basis": (
             "data/soiling_results.json -> sanity_check_2024_cleaning: an "
-            "11.8% production gain measured after the 2024-08-12 cleaning, "
-            "following ~134 dry days (~4.4 months) with no rain -- a "
-            "VALIDATED (not modeled) single-event swing, reused read-only "
-            "from analysis/soiling_analysis.py, never recomputed here."),
+            "11.8% production gain estimated by difference-in-differences "
+            "after the 2024-08-12 cleaning, following ~134 dry days "
+            "(~4.4 months) with no rain. The estimate uses measured daily "
+            "production and control years; attribution to cleaning is not "
+            "a direct meter measurement. It is reused read-only from "
+            "analysis/soiling_analysis.py, never recomputed here, and does "
+            "not establish a full-year correction or bound."),
         # WHICH OF THE REPORT'S CLAIMS IS STILL SOMETHING TO RECONCILE AGAINST.
         # This block used to pin the report's naive band as a hand-typed
         # "existing_report_naive_range_pct_per_yr": [1.3, 1.7] literal, from
@@ -1069,21 +1013,29 @@ def degradation_block():
         # copy is. The field is therefore gone, not corrected. The estimators
         # are published above; the span belongs to whoever renders it, once.
         #
-        # The best-estimate range below IS still an independent claim. Section
-        # 9 states "best-estimate ~0.5-1.0%/yr" as hand-reasoned prose that no
-        # committed artifact derives, so measuring this script's evidence
-        # against it is a real reconciliation -- and it finds a real
-        # disagreement, recorded in gap_on_the_best_estimate.
+        # Preserve the historical best-estimate numeric field for existing
+        # consumers, but label its scope explicitly. It is not a current
+        # report claim or an input to any calculation. Current publication
+        # checks enforce non-determination of both the true rate and bounds.
         "reconciliation": {
             "existing_report_best_estimate_range_pct_per_yr": [0.5, 1.0],
+            "existing_report_fields_scope": (
+                "Historical compatibility only. The existing_report_* fields "
+                "record a superseded unsupported prose estimate; they are "
+                "not current report conclusions or model inputs."),
             "existing_report_location": (
-                'index.html, section 9, "Array health: 6-year degradation '
-                'trend" -- specifically its hand-reasoned "best-estimate '
-                '~0.5-1.0%/yr" verdict, which no committed artifact in this '
-                "repo derives. The naive band printed in the same section is "
+                'Historical index.html, section 9, "Array health: 6-year '
+                'degradation trend": its former hand-reasoned "best-estimate '
+                '~0.5-1.0%/yr" verdict was not derived by a committed artifact. '
+                "The current report states that true degradation and its "
+                "bounds are not determined. The naive band in that section is "
                 "NOT an independent claim to reconcile against: "
                 "report_tokens.DEGRADATION_NAIVE_RANGE renders it from this "
                 "artifact's own three estimators."),
+            "current_report_status": {
+                "true_degradation_rate": "NOT DETERMINED",
+                "bounds": "NOT DETERMINED",
+            },
             "this_scripts_naive_figures_pct_per_yr": {
                 "ols": round(ols_pct_per_yr, 2),
                 "cagr": round(cagr_pct_per_yr, 2),
@@ -1100,44 +1052,35 @@ def degradation_block():
                 "evidence that the naive trend is a property of the annual "
                 "series rather than of one fit's sensitivity. It is NOT "
                 "evidence about true panel degradation, which needs the "
-                "weather normalization this repo cannot do before 2025-07-24 "
-                "-- see gap_on_the_best_estimate. This is the only agreement "
+                "weather normalization the inputs used here cannot support "
+                "over the full comparison span -- see gap_on_the_best_estimate. "
+                "This is the only agreement "
                 "claim available here: the report's published naive band is "
                 "the span of these same three figures, so checking them "
                 "against it would be checking a number against itself."),
             "gap_on_the_best_estimate": (
-                "NOT DETERMINED -- and not bounded either (Codex review pass "
-                "3, finding 2: an earlier draft claimed a 0%/yr-to-naive-rate "
-                "'bracket', reasoning that soiling/weather timing could only "
-                "make the naive trend look WORSE than true degradation. That "
-                "reasoning only covers one direction: soiling/weather could "
-                "just as easily mask a TRUE degradation rate WORSE than the "
-                "naive trend shows, if later years happened to be sunnier or "
-                "cleaner -- a single VALIDATED dry-spell/soiling event "
-                f"(an {single_event_swing_pct}% swing -- more than double the "
-                f"ENTIRE naive 4-year change, {total_change_pct:.1f}%) proves "
-                "soiling/weather CAN swing the annual total by more than the "
-                "naive trend itself, in either direction, not that it is "
-                "bounded to only push one way). The existing report's tighter "
-                "'0.5-1.0%/yr best estimate' is a qualitative downward "
-                "adjustment (reasoning: the naive metric isn't weather-"
-                "normalized, so true degradation is probably lower), not a "
-                "value any committed artifact in this repo derives, and not "
-                "something this script's evidence can confirm OR bound: with "
-                "no daily weather or production record before 2025-07-24 to "
-                "separate soiling/weather timing from true panel aging in "
-                "the 2021-2025 span, and a single confounding event already "
-                "shown to be large enough to explain the ENTIRE naive trend "
-                "on its own, the honest statement is that true degradation "
-                "is NOT DETERMINED from data in this repo -- not merely "
-                "uncertain within a stated range."),
+                "True degradation is NOT DETERMINED, and the available "
+                "evidence establishes no bound. Weather and soiling can "
+                "either steepen the naive decline or mask panel aging if "
+                "later years are sunnier or cleaner. The cleaning study's "
+                f"{single_event_swing_pct}% gain and the naive four-year "
+                f"change of {total_change_pct:.1f}% cover different time "
+                "windows. The event demonstrates short-term confounding; "
+                "it does not measure an annual correction or establish "
+                "how much weather or soiling changed annual totals. Earlier "
+                "daily production samples support that study, but the "
+                "weather and production inputs used here do not cover the full "
+                "2021-2025 span well enough to isolate panel aging. The "
+                "historical 0.5-1.0%/yr best-estimate band was an unsupported "
+                "downward adjustment and is not a current report conclusion. "
+                "Lack of normalization does not establish that the true "
+                "rate lies above, below, or within the naive range."),
             "what_would_settle_it": (
-                "A multi-year (2020-2024) daily production + local rainfall "
-                "+ irradiance record, or repeated professional cleanings "
-                "with a measured before/after gain each year, to build a "
-                "real soiling-corrected annual trend the way "
-                "soiling_analysis.py already does for the one year it has "
-                "daily data."),
+                "Daily production, local weather, and irradiance covering "
+                "the full comparison span, together with soiling controls "
+                "such as documented cleanings and before/after measurements. "
+                "These would support a weather- and soiling-adjusted trend; "
+                "the short cleaning-study samples alone cannot supply one."),
         },
     }
 
@@ -1204,10 +1147,10 @@ def temperature_sensitivity_block():
             "damps the true midday cell-temperature swing. Same DIRECTION "
             "(negative), different magnitude scale; do not compare the two "
             "numbers as if they measured the same physical quantity. This "
-            "regression cannot be extended to years before 2025-07-24 (no "
-            "daily temperature record exists in this repo before then), so "
-            "it is a magnitude check for the ONE year available, not a "
-            "correction applied to the 6-year degradation trend."),
+            "regression uses the fixed daily study inputs. Other collected "
+            "weather history needs aligned quality checks before use, so "
+            "this is a magnitude check for the study year, not a "
+            "correction applied to the multi-year degradation trend."),
     }
 
 
@@ -1232,7 +1175,8 @@ def build():
 
     return {
         "meta": {
-            "issue": "#16 -- gross imports rising: separate load growth from production loss",
+            "issue": "#16 -- modeled attribution of printed NBC-usage growth",
+            "quantity_scope": "Legacy gross_kwh fields are printed NBC usage, not raw Consumption. Decomposition terms conditionally attribute that target difference. Legacy export_kwh is NBC usage minus signed net: approximate interval-net exports under NBC semantics and bill rounding. Existing live production/weather history needs quality checks before another study window.",
             "bill_periods_compared": {"period_2024": PERIOD_2024, "period_2026": PERIOD_2026},
             "normalization_basis": (
                 "No measured plane-of-array irradiance exists anywhere in this "
@@ -1252,7 +1196,7 @@ def build():
                 "data/pvoutput_yearly_2020-2025.csv (6-year annual production)",
                 "data/weather_daily_tmean.csv (Open-Meteo daily mean temperature, same trailing year)",
                 "data/soiling_results.json (soiling validation target, reused read-only)",
-                "private/1-raw-data/enphase_sam8760_{2025,2026}.csv via samA.csv/samB.csv (whole-home CT, gross load)",
+                "private/1-raw-data/enphase_sam8760_{2025,2026}.csv via samA.csv/samB.csv (SAM hourly load; physical provenance unresolved)",
                 "private raw Green Button 15-min export (usage.csv, 2025-06-27..2026-07-26)",
                 "analysis/behavior_rebuild.py detect_sessions() (EV attribution, reused read-only)",
             ],

@@ -2,8 +2,8 @@
 """The bundled counterfactual: was switching to CEA (the CCA) a win? (issue #11, Phase 2)
 
 Phase 1 (analysis/cca_rate_extraction.py, data/cca_generation_rates.csv) established what
-CEA itself CHARGED, per season x TOU cell, on every one of the 19 CCA-era billing periods,
-and found the charged rate never moved once in 18 months. This phase pairs that with what
+CEA itself CHARGED, per season x TOU cell, on every one of the 22 CCA-era billing periods,
+and found the charged rate did not change across the parsed corpus. This phase pairs that with what
 SDG&E's own bundled generation would have cost on the SAME dates and the SAME usage, in BOTH
 directions, so the comparison is not anchored to a single hand-picked pair of statements the
 way analysis/bill_decomposition.py's provider_effect_whole_period() is (that function reads
@@ -18,7 +18,7 @@ data/cca_generation_rates.csv). Its only new extraction is two direct bill-line 
 off the same two anchor statements bill_decomposition.py already uses (BASE=2024-06-27,
 CURRENT=2026-07-02), because no committed artifact carries either fact.
 
-DIRECTION A -- the 19 CCA periods repriced at bundled rates (MODELED -- SAME-DATE BILL RATES).
+DIRECTION A -- the 22 CCA periods repriced at bundled rates (MODELED -- SAME-DATE BILL RATES).
 For each CCA period's actual per-(season, TOU) kWh (data/cca_generation_rates.csv, already
 bill-reconciled to the cent), this asks what SDG&E's OWN bundled-generation comparison table
 printed for that exact date (RateSet.generation_comparison_table -- the same-statement
@@ -79,12 +79,9 @@ in sign. Where they did not, the resulting per-cell "effective rate" (bundled_co
 bundled_comparison_kwh) blended a real, same-date printed rate together with a $0 sentinel for
 energy no bundled comparison exists for at all -- a rate no tariff SDG&E ever printed. Checked
 directly against every generation-section row in data/bill_tou_detail.csv (not assumed, not
-special-cased to the one cell a review first flagged): exactly 3 (period, season, TOU) cells in
-the whole 66-cell CCA corpus carry mixed-sign segments, only one of which (the smallest swing)
-had actually been reaching the old priced branch -- the other two were already routed to
-excluded-absent by the (unrelated) representative-date existence check, but for the wrong
-reason (misleadingly labeled a "genuine data absence" when a real comparison rate does exist
-for part of the period). All 3 are now detected up front, before ANY disposition decision, by
+special-cased to the one cell a review first flagged): exactly 4 (period, season, TOU) cells in
+the whole 75-cell CCA corpus carry mixed-sign segments. Two have positive whole-period
+kWh and two have negative whole-period kWh. All 4 are detected before ANY disposition decision, by
 checking the raw segments for mixed sign (see `_mixed_sign()`) regardless of which way the
 period's own net kWh happens to fall.
 
@@ -119,7 +116,7 @@ Four-way disposition of each (period, season, TOU) cell for Direction A, decided
 its printed generation-comparison segments carry mixed signs, checked first and unconditionally,
 then (2) whether it was billed as a net import (kWh > 0) and (3) whether a same-date bundled
 figure exists -- (2) and (3) mirror provider_effect_whole_period()'s own net-import/net-export
-split (adapted here across all 19 periods rather than one):
+split (adapted here across all 22 periods rather than one):
   MIXED-SIGN (segments carry both signs)  excluded regardless of the period-total's own sign;
                                           see MIXED-SIGN CELLS above.
   PRICED (kWh > 0, comparison present, single-sign segments)   the only cells "energy-only"
@@ -195,11 +192,11 @@ fully toward Direction A's own headline (which needs no g0), they are simply exc
 vintage/provider split and disclosed as such.
 
 AC6 -- THE TWO DIRECTIONS DISAGREE BY WELL OVER 20%, AND THE REASON IS NAMED, NOT AVERAGED
-AWAY. Direction A (modeled -- same-date bill rates, 547 days, spans two summers and two
+AWAY. Direction A (modeled -- same-date bill rates, 638 days, spans two summers and two
 winters) finds the CCA
-premium at roughly $50/yr on the net-import cells it can price. Direction B (modeled, 216 days,
-May-Dec 2024 only -- one summer and one partial winter, no Jan-Apr) finds about $136/yr,
-roughly 2.7x larger (see the committed artifact for the current exact figures on both sides).
+premium at roughly $10/yr on the net-import cells it can price. Direction B (modeled, 216 days,
+May-Dec 2024 only -- one summer and one partial winter, no Jan-Apr) finds about $136/yr
+(see the committed artifact for the current exact figures on both sides).
 The provider/vintage split above supplies the mechanism: SDG&E's own
 bundled generation rate ROSE substantially
 across the observed CCA era (the printed comparison table documents summer on-peak alone
@@ -218,7 +215,7 @@ averaged with Direction A.
 
 Inputs (read-only, never re-derived):
   data/cca_generation_rates.csv       Phase 1: CEA's own per-(period, season, TOU) charged
-                                      kWh/rate/usd for all 19 CCA periods, plus its product
+                                      kWh/rate/usd for all 22 CCA periods, plus its product
                                       adders (Clean Impact Plus, State Surcharge Tax).
   data/bill_periods_electric.csv      the period universe, days, generation_provider.
   data/bill_tou_detail.csv            bundled-era per-(period, section, season, segment, TOU)
@@ -494,7 +491,7 @@ def _mixed_sign(segs):
 
 
 # ---------------------------------------------------------------------------
-# Direction A -- 19 CCA periods repriced at SDG&E's same-date bundled comparison
+# Direction A -- 22 CCA periods repriced at SDG&E's same-date bundled comparison
 # (MODELED -- same-date bill rates; see the module docstring's CONFIDENCE LABEL section)
 # ---------------------------------------------------------------------------
 def direction_a(cca_cells):
@@ -517,8 +514,8 @@ def direction_a(cca_cells):
             # against the raw segments, regardless of which way this cell's PERIOD-TOTAL
             # kWh nets -- a mixed-sign cell must never reach the summing logic further down,
             # whichever aggregate sign cca_generation_rates.csv happens to report for it (see
-            # the module docstring's MIXED-SIGN CELLS section: this catches all 3 of the
-            # corpus's mixed cells, not just the one whose aggregate happens to be positive).
+            # the module docstring's MIXED-SIGN CELLS section: this catches all 4 of the
+            # corpus's mixed cells, including the two whose aggregates are positive).
             segs = gen_segments.get((p["period"], season, tou))
             if _mixed_sign(segs):
                 seg_total = _r(sum(kwh for kwh, _rate in segs), 1)
@@ -966,8 +963,8 @@ def provider_vs_vintage(direction_a_result):
         "cells_with_no_vintage_baseline": no_g0,
         "cca_side_vintage_effect_usd": 0.0,
         "cca_side_vintage_effect_note": (
-            "exactly zero, by construction: Phase 1 found CEA's own charged rate never "
-            "moved once across all 18 statements on file, so none of the observed drift "
+            "exactly zero, by construction: the charged-rate flatness check found no "
+            "change across this corpus, so none of the observed drift "
             "in what CEA-vs-bundled costs over time comes from the CCA side"),
         "identity_check": {
             "shared_subset_provider_usd": shared_provider,
@@ -1143,7 +1140,7 @@ def pcia_and_franchise_evidence():
                 "moves gross imports, so it needs no separate term) does not hold as "
                 "stated: it is real, provider-attributable, and not captured by Direction "
                 "A/B's per-TOU-cell repricing (which prices generation energy only). No "
-                "committed artifact extracts this line for all 26 periods, so its "
+                "committed artifact extracts this line for all 29 periods, so its "
                 "systematic dollar contribution across the whole corpus is not determined "
                 "here; on these two anchor statements it is a few dollars per period, far "
                 "smaller than the generation-rate terms above"),
@@ -1166,7 +1163,7 @@ def recommendation(a, b, recon):
             "Direction B mixes two years of bundled-side rate inflation into what looks "
             "like a provider effect (see reconciliation.explanation_if_disagreeing); "
             "Direction A's same-date comparison does not, and covers a much longer, more "
-            "representative sample (547 days vs 216)"),
+            f"representative sample ({a['days']} days vs {b['days']})"),
         "annual_dollar_result_usd": ann_a,
         "confidence": "modeled",
         "confidence_detail": (
@@ -1195,9 +1192,8 @@ def recommendation(a, b, recon):
             f"comparison rate), staying on CEA's CCA would have cost this household about "
             f"${ann_a}/yr more than bundled SDG&E generation -- but ONLY on the net-import "
             "cells this analysis can price. That priced-cell answer is well-evidenced and "
-            "it is small (individual periods in this sample range from a net CCA saving of "
-            "roughly $14 to a net CCA cost of roughly $27 -- see direction_a.priced_detail "
-            "for the per-period provider_delta_usd figures). It is NOT the full answer to "
+            "it is small; direction_a.priced_detail gives each cell's provider_delta_usd. "
+            "It is NOT the full answer to "
             f"whether switching to the CCA was a win for this household: {excl_n} cells "
             f"were billed as net exports and carry a real CEA credit of {_money(excl_usd)} -- "
             "several times the size of the priced-cell delta -- and SDG&E's bill prints "
@@ -1221,7 +1217,7 @@ def recommendation(a, b, recon):
             f"stated honestly rather than letting the ${ann_a}/yr figure stand in for a "
             "conclusion it does not support. Two smaller facts bear on the PRICED "
             "portion of the decision, neither of which changes that number: (1) CEA's "
-            "own charged rate has not moved once in 18 months on file, while SDG&E's "
+            "own charged rate did not change across the parsed corpus, while SDG&E's "
             "bundled generation rate has moved up substantially over the same span "
             "(provider_vs_vintage_split.vintage_effect_usd) -- if that pattern "
             "continues, the small current CCA premium on the priced cells would likely "
@@ -1272,7 +1268,7 @@ def build():
             "clean_impact_plus_usd": cip_total,
             "state_surcharge_tax_usd": sst_total,
             "note": ("CEA's own period-level product adders, actual and already-reconciled "
-                     "(Phase 1), summed over all 19 CCA periods -- small next to the "
+                     f"(Phase 1), summed over all {a['n_periods']} CCA periods -- small next to the "
                      "generation-rate terms above and not part of either direction's "
                      "energy-only headline; no bundled-side equivalent exists because "
                      "Clean Impact Plus is CEA's own optional product tier"),
@@ -1283,7 +1279,7 @@ def build():
             "and CCA-only unbundling riders on 2024 usage) -- CEA did not serve this "
             "household in 2024, so no rider value exists to apply",
             "PCIA / Incremental Procurement Cost Adjustment / Economic Development Program "
-            "credit values for all 19 CCA periods (only the one hardcoded CURRENT statement "
+            f"credit values for all {a['n_periods']} CCA periods (only the one hardcoded CURRENT statement "
             "in bill_decomposition.py has these extracted) -- so a full whole-period-"
             "arrangement scope, matching provider_effect_whole_period()'s second figure, "
             "cannot be computed systematically here",

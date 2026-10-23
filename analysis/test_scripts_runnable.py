@@ -127,6 +127,7 @@ RAW_DATA_EXCLUDE = ("sdge_nbt_export_rates", "panel", "superseded")
 # by others and must import cleanly with no side effects; "retired" is kept for
 # provenance and must refuse to run.
 MANIFEST = {
+    "nbc_bill_reconciliation.py": "generator",
     "rates.py": "library",
     "rates_history.py": "generator",
     "household.py": "library",
@@ -198,6 +199,7 @@ MANIFEST = {
 # whose seven artifacts (six bill CSVs plus bill_corpus_boundary.json) have their own
 # transactional gate and test suite.
 OWNS = {
+    "nbc_bill_reconciliation.py": [("data", "nbc_bill_reconciliation.json")],
     "service_voltage.py": [("data", "service_voltage.json")],
     "rates_history.py":             [("data", "rate_vintages.csv"),
                                      ("data", "rate_rebilling_residuals.csv")],
@@ -466,6 +468,7 @@ CI_RUNNABLE = {
 # stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run
 # only where that archive exists, and the reason is recorded rather than implied.
 NEEDS_PRIVATE_ARCHIVE = {
+    "nbc_bill_reconciliation.py": "preserved overlapping raw exports and actual statement PDFs",
     "service_voltage.py": "the frozen private/1-raw-data/service-telemetry snapshot and manifest",
     "parse_bills.py": "the bill PDF corpus (private/1-raw-data/*-bills/)",
     "bill_decomposition.py": ("the bill PDF corpus (the charged CEA per-TOU rates and "
@@ -518,22 +521,22 @@ NEEDS_PRIVATE_ARCHIVE = {
                                    "monte_carlo block exactly -- same tie-out shape as "
                                    "battery_plan_matrix.py, so synthetic inputs must diverge "
                                    "and trip it"),
-    "gross_import_decomposition.py": ("both SAM 8760 exports (samA.csv/samB.csv, the only "
-                                      "independent gross-load instrument -- same dependency "
+    "gross_import_decomposition.py": ("both SAM 8760 exports (samA.csv/samB.csv, the saved "
+                                      "hourly load series with unresolved sensing provenance -- same dependency "
                                       "as service_headroom.py) and the raw Green Button "
                                       "export, none of which has a stand-in carrying a real "
                                       "two-year-apart pair of billing periods"),
     "reprice_by_vintage.py": ("the raw Green Button export (usage.csv, via "
                               "billing_model_nem.load()) for the interval data it reconciles "
                               "against the 13-period bill corpus"),
-    "quiet_night_floor.py": ("both SAM 8760 exports (samA.csv/samB.csv, the only "
-                             "independent gross-load instrument that can see the "
+    "quiet_night_floor.py": ("both SAM 8760 exports (samA.csv/samB.csv, the saved "
+                             "hourly load series used to describe the "
                              "day-side floor -- same dependency as service_headroom.py "
                              "and gross_import_decomposition.py), none of which has a "
                              "synthetic stand-in carrying a real, continuous always-on "
                              "signature"),
     "threeway_production_validation.py": ("both SAM 8760 exports (samA.csv/samB.csv, "
-                             "the only independent gross-load instrument -- same "
+                             "the saved hourly load series, sensing provenance unresolved -- same "
                              "dependency as service_headroom.py and gross_import_"
                              "decomposition.py) and the raw Green Button export, "
                              "none of which has a stand-in carrying a real solar year"),
@@ -1198,7 +1201,7 @@ def case_the_real_archive_copy_excludes_unread_raw_data_subdirs():
     with tempfile.TemporaryDirectory() as td:
         src = pathlib.Path(td) / "src"
         dst = pathlib.Path(td) / "dst"
-        for name in RAW_DATA_EXCLUDE + ("electric-bills", "gas-bills"):
+        for name in RAW_DATA_EXCLUDE + ("electric-bills", "gas-bills", "sdge-downloads-20261022"):
             d = src / name
             d.mkdir(parents=True)
             (d / "placeholder.txt").write_text("x")
@@ -1208,12 +1211,12 @@ def case_the_real_archive_copy_excludes_unread_raw_data_subdirs():
         assert not leaked, (
             f"RAW_DATA_EXCLUDE did not keep {sorted(leaked)} out of the "
             "real-archive sandbox copy")
-        for kept in ("electric-bills", "gas-bills"):
+        for kept in ("electric-bills", "gas-bills", "sdge-downloads-20261022"):
             assert (dst / kept).is_dir(), (
                 f"the ignore pattern also dropped {kept}/, which parse_bills.py "
                 "and other generators genuinely read")
     return ("the real-archive copytree's ignore pattern drops "
-            f"{', '.join(RAW_DATA_EXCLUDE)} and keeps electric-bills/ and gas-bills/")
+            f"{', '.join(RAW_DATA_EXCLUDE)} and keeps bill directories and the October interval archive")
 
 
 def case_the_real_archive_sandbox_is_removed_even_when_a_generator_run_raises():

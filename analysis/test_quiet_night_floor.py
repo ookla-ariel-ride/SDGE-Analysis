@@ -223,7 +223,8 @@ def case_night_floor_series_within_night_std_matches_numpy():
 # ---------------------------------------------------------------------------
 @case
 def case_price_method_a_matches_hand_computation():
-    d = pd.DataFrame({"seas": ["S", "S", "W"], "p": ["on", "sop", "off"]})
+    d = pd.DataFrame({"seas": ["S", "S", "W"], "p": ["on", "sop", "off"],
+                      "Consumption": [1., 2., 0.], "Generation": [0., 0., 0.]})
     reduce_i = np.array([1.0, 2.0, 0.0])
     leftover_i = np.array([0.0, 0.5, 3.0])
     price_map = QNF.price_map_from_rates()
@@ -1134,6 +1135,16 @@ def case_battery_caveat_states_which_exclusion_ran():
 
 
 # ---------------------------------------------------------------------------
+@case
+def case_flat_price_method_uses_finite_interval_nbc():
+    d = pd.DataFrame({'seas': ['S'], 'p': ['sop'], 'Consumption': [1.], 'Generation': [.6]})
+    got = QNF.price_method_a(d, QNF.price_map_from_rates(), np.array([.5]), np.array([0.]))
+    expected = .5 * (QNF.price_map_from_rates()['S_sop']['import'] - QNF.R.NBC) + .4 * QNF.R.NBC
+    assert got['avoided_import_usd'] == round(expected, 2)
+    assert got['nbc_saved_usd'] == round(.4 * QNF.R.NBC, 2)
+    return 'flat energy comparison shares the canonical finite NBC basis'
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), \

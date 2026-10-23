@@ -3,37 +3,23 @@
  "rule": "A statement is inside the reconcilable electric bill corpus if and only if SDG&E's billing-history export also carries a row for it. Statements with a PDF but no export row are listed under excluded_statements and appear in no artifact. The boundary is derived from the export on every run \u2014 no cutoff date is stored \u2014 so nothing here is ever edited to end an exclusion: stage an export that covers the statement and the next run publishes it. WHICH export that is depends on which end of the export's range the statement falls outside, and is stated per statement in excluded_statements[].exclusion_ends_when. An export row with no PDF is the opposite case and fails the run closed instead.",
  "export": {
   "path": "private/1-raw-data/electric_billing_history_2024-2026.csv",
-  "statements": 25,
+  "statements": 28,
   "span": [
    "2024-06-27",
-   "2026-07-02"
+   "2026-10-01"
   ]
  },
- "statements_parsed": 26,
- "statements_published": 25,
+ "statements_parsed": 28,
+ "statements_published": 28,
  "published_statement_span": [
   "2024-06-27",
-  "2026-07-02"
+  "2026-10-01"
  ],
  "published_period_span": [
   "2024-05-25",
-  "2026-06-26"
+  "2026-09-25"
  ],
- "excluded_statements": [
-  {
-   "statement_date": "2026-08-03",
-   "periods": [
-    "6/27/26 - 7/28/26"
-   ],
-   "billed_days": 32,
-   "period_span": [
-    "2026-06-27",
-    "2026-07-28"
-   ],
-   "reason": "electric_billing_history_2024-2026.csv carries no row for this statement, so the billing-history export reconciliation cannot cover it; publishing it would claim coverage SDG&E's own export does not corroborate",
-   "exclusion_ends_when": "the billing-history export is re-pulled so that it covers this statement. The boundary is re-derived from the export on every parse_bills.py run \u2014 no cutoff date is stored anywhere, so nothing has to be edited or remembered when the export catches up"
-  }
- ],
+ "excluded_statements": [],
  "window_coverage": {
   "window": [
    "2025-07-24",
@@ -41,15 +27,10 @@
   ],
   "window_source": "data/behavior_rebuild.json:window",
   "window_days": 365,
-  "days_covered": 338,
-  "days_missing": 27,
-  "missing_ranges": [
-   [
-    "2026-06-27",
-    "2026-07-23"
-   ]
-  ],
-  "days_the_excluded_statements_would_supply": 27
+  "days_covered": 365,
+  "days_missing": 0,
+  "missing_ranges": [],
+  "days_the_excluded_statements_would_supply": 0
  },
  "gas_corpus": {
   "restricted_by_this_boundary": false,
@@ -59,13 +40,13 @@
    "applied": true,
    "statements_listed": 12,
    "statements_listed_and_present": 12,
-   "statements_published_the_list_does_not_name": 13,
-   "what_it_means": "_validate()'s check 1 ran on this corpus: all 12 gas statement date(s) SUMMARY_STATEMENTS_GAS documents are present, so the published gas corpus is complete over the statements that list names \u2014 one missing from it would have failed the run closed rather than publishing a shorter corpus. The check speaks for those statements and no others: the 13 published gas statement(s) the list does not name are covered by no completeness check, whether they fall past its last date (the list is also what pins the summary window, and that deliberately stops at the analysis year) or sit inside its span and are simply absent from it"
+   "statements_published_the_list_does_not_name": 16,
+   "what_it_means": "_validate()'s check 1 ran on this corpus: all 12 gas statement date(s) SUMMARY_STATEMENTS_GAS documents are present, so the published gas corpus is complete over the statements that list names \u2014 one missing from it would have failed the run closed rather than publishing a shorter corpus. The check speaks for those statements and no others: the 16 published gas statement(s) the list does not name are covered by no completeness check, whether they fall past its last date (the list is also what pins the summary window, and that deliberately stops at the analysis year) or sit inside its span and are simply absent from it"
   },
-  "statements_published": 25,
+  "statements_published": 28,
   "published_period_span": [
    "2024-05-25",
-   "2026-06-26"
+   "2026-09-25"
   ],
   "days_published_inside_an_excluded_electric_period": 0,
   "periods_inside_an_excluded_electric_period": []

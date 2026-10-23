@@ -68,7 +68,7 @@ WINDOW_END = dt.datetime(2026, 7, 24)   # analysis year = the 365 days before th
 # ---- rates: identical to billing_model_nem.py (actual bills, 6/1/2026) ----
 import rates as R                                          # canonical module
 from rates import UDC, CEA, NBC, PCIA, BSC, energy, credit  # canonical bill-derived rates
-retail = energy  # netted energy rate (NBC applied on gross imports in bill_monthly)
+retail = energy  # netted energy rate (NBC applied on positive physical interval net in bill_monthly)
 
 # ---- detection / shifting parameters ----
 BASE_WIN = 96          # rolling-baseline window (24 h of 15-min intervals)

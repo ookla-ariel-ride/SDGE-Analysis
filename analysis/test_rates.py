@@ -182,7 +182,44 @@ def case_interval_coverage_accepts_dst_days_and_rejects_extras():
     return "DST slot counts are honored and out-of-window days are rejected"
 
 
+def case_nbc_positive_interval_net_and_monthly_signs():
+    import pandas as pd
+    # Gross imports=4, monthly positive net=0, interval positive net=1.4.
+    f = pd.DataFrame({'dt': pd.to_datetime(['2026-06-01'] * 5),
+                      'ym': ['2026-06'] * 5, 'seas': ['S'] * 5, 'p': ['sop'] * 5,
+                      'Consumption': [1., 1., 1., 1., 0.],
+                      'Generation': [0., .6, 1., 2., 1.]})
+    expected = R.BSC - .6 * R.credit('S', 'sop') + 1.4 * R.NBC
+    assert abs(R.bill_nem(f) - expected) < 1e-12
+    f.loc[4, 'Consumption'] = 2.
+    expected = R.BSC + 1.4 * R.energy('S', 'sop') + 2.4 * R.NBC
+    assert abs(R.bill_nem(f) - expected) < 1e-12
+    return 'NBC uses positive physical interval net across both monthly signs'
+
+
+def case_nbc_physical_exports_are_separate_from_credit():
+    import pandas as pd
+    f = pd.DataFrame({'dt': pd.to_datetime(['2026-06-01']), 'ym': ['2026-06'],
+                      'seas': ['S'], 'p': ['sop'], 'I': [1.], 'E': [0.], 'physical': [.6]})
+    assert abs(R.bill_nem(f, 'I', 'E', physical_exp='physical') -
+               (R.BSC + R.energy('S', 'sop') + .4 * R.NBC)) < 1e-12
+    return 'zero export credit does not remove physical interval netting'
+
+
+def case_legacy_bill_entrypoint_uses_physical_interval_nbc():
+    import pandas as pd
+    import billing_model_nem as legacy
+    f = pd.DataFrame({'dt': pd.to_datetime(['2026-06-01']), 'ym': ['2026-06'],
+                      'seas': ['S'], 'p': ['sop'], 'I': [1.], 'E': [0.], 'physical': [.6]})
+    expected = R.BSC + R.energy('S', 'sop') + .4 * R.NBC
+    assert abs(legacy.bill(f, 'I', 'E', physical_exp='physical') - expected) < 1e-12
+    return 'legacy entrypoint delegates physical NBC without changing its input loader'
+
+
 CASES = [
+    case_legacy_bill_entrypoint_uses_physical_interval_nbc,
+    case_nbc_positive_interval_net_and_monthly_signs,
+    case_nbc_physical_exports_are_separate_from_credit,
     case_eight_tariff_holidays,
     case_sunday_holidays_add_an_observed_monday,
     case_off_peak_day_covers_weekends_and_holidays,

@@ -122,7 +122,6 @@ RETIRED_FIGURES = [
     "$1,982",                  # TOU-DR1 margin (now $1,990)
     "$2,329",                  # TOU-DR2 margin (now $2,338)
     "$1,609",                  # EV-TOU-2 margin, with battery (now $1,612)
-    "$2,782",                  # TOU-ELEC margin, with battery (now $2,785)
     "8.5 yr",                  # evening-only battery payback (now 8.4 yr)
     # Issue #189. The grid top-up cost stopped being an asserted constant and
     # became a DERIVED figure, currently 14.023¢. It belongs in this group and
@@ -348,7 +347,7 @@ def case_the_policy_table_marks_the_published_row_and_prints_its_figures():
     that no unmarked row carries those same figures."""
     art = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
     pub = art["published_policy"]
-    start = HTML.index("Dispatch policy: price-aware beats evening-only")
+    start = HTML.index("Dispatch policy: price-aware saves more in the billing model")
     end = HTML.index("Electrical caveat", start)
     rows = re.findall(r"<tr([^>]*)>(.*?)</tr>", HTML[start:end], re.S)
     marked = [(attrs, body) for attrs, body in rows if "published" in body.lower()]
@@ -485,7 +484,7 @@ def case_cca_cheaper_period_count_matches_the_artifact():
     for r in ccj["direction_a_cca_repriced_at_bundled"]["priced_detail"]:
         by_period[(r["statement_date"], r["period"])] += r["provider_delta_usd"]
     n_cheaper = sum(1 for v in by_period.values() if v < 0)
-    assert f"{n_cheaper} of the 19 priced periods" in HTML or f"{n_cheaper} of 19" in HTML, (
+    assert f"{n_cheaper} of the {len(by_period)} priced periods" in HTML or f"{n_cheaper} of {len(by_period)}" in HTML, (
         f"the artifact shows {n_cheaper} CEA-cheaper periods, but the report's own "
         "count phrase doesn't match it")
     assert "the one period in the sample" not in HTML, (
@@ -662,7 +661,7 @@ def case_optimality_gap_table_matches_the_artifact():
         f"${ps['gap_attributed_to_forecast_error_usd']:,.2f}",
         f"${ps['gap_attributed_to_myopic_horizon_usd']:,.2f}",
     ]
-    start = HTML.index("<h3>How good is the controller?")
+    start = HTML.index("<h3>How close is the modeled policy to the best result within the model?")
     end = HTML.index("<h3", start + 4)
     section = HTML[start:end]
     for value in checks:
@@ -682,8 +681,12 @@ def case_optimality_gap_table_matches_the_artifact():
     # underperform a simpler real-time reactive heuristic (a real, disclosed
     # finding on this house's data: day-ahead $1,711.28 < greedy $2,329),
     # so asserting an ordering here would encode a false assumption.
-    assert abs(pfd["verification"]["agreement_usd"]) < 1.0, (
-        "the LP's own required $1 agreement with rates.bill_nem is not met")
+    assert "$0.000001 bound" in section, "§6 must state the actual LP guard"
+    residual = pfd["verification"]["agreement_usd"]
+    assert f"${residual / 1e-12:.1f}×10<sup>−12</sup>" in section, (
+        "§6 must state the current LP residual at its displayed precision")
+    assert abs(pfd["verification"]["agreement_usd"]) <= 1e-6, (
+        "the LP's own required $0.000001 agreement with rates.bill_nem is not met")
     return ("the §6 controller-quality subsection's own figures match the live "
             "perfect-foresight artifact")
 
@@ -726,7 +729,13 @@ def case_tou_structure_stress_table_matches_the_artifact():
         f"the §7 table has {len(rows)} scenario rows but the artifact has "
         f"{len(tss['scenarios'])} scenarios")
 
-    allowed = {"measured, in-corpus", "historically motivated", "hypothetical"}
+    # The precedent is observed; the scenario's dollar result is modeled.
+    # Keep one explicit report label per artifact category, bound to its row.
+    precedent_labels = {
+        "measured, in-corpus": "earlier schedule observed in bills",
+        "historically motivated": "historically motivated",
+        "hypothetical": "hypothetical",
+    }
     for key, spec in sorted(tss["scenarios"].items()):
         deltas = [fmt(spec["baseline_delta_usd"]), fmt(spec["behavior_save_delta_usd"]),
                   fmt(spec["battery_marginal_delta_usd"]),
@@ -736,10 +745,10 @@ def case_tou_structure_stress_table_matches_the_artifact():
             f"§7 tariff-structure-risk table: the {key} scenario's four deltas {deltas} "
             f"match {len(matched)} rows of the table, not exactly one -- a cell has "
             "drifted from the artifact, or two scenarios' rows have been swapped")
-        assert spec["precedent"] in allowed, (
+        assert spec["precedent"] in precedent_labels, (
             f"{key} carries precedent {spec['precedent']!r}, which is not one of the "
-            f"labels this analysis allows ({sorted(allowed)}) -- a fabricated precedent")
-        assert matched[0][1] == spec["precedent"], (
+            f"labels this analysis allows ({sorted(precedent_labels)}) -- a fabricated precedent")
+        assert matched[0][1] == precedent_labels[spec["precedent"]], (
             f"§7 tariff-structure-risk table labels the {key} scenario "
             f"{matched[0][1]!r}, but the artifact's own precedent for it is "
             f"{spec['precedent']!r} -- the label and the scenario it sits beside "
@@ -865,7 +874,7 @@ def case_export_netting_definition_is_stated_once():
     # adversarial review, PR #261, pass 1 -- proven by mutating one site's
     # 10.4 to 10.5 and appending an unrelated linked paragraph).
     collapsed = {
-        "section 0's midday bullet": "Exploit the 10am–2pm weekday window",
+        "section 0's midday bullet": "Use the 10am–2pm weekday super-off-peak window",
         "section 5's export bullet": "Midday exports earn little",
         "the Monday appendix's midday habit": "Build the home-day midday habit",
     }
@@ -1267,13 +1276,13 @@ def case_backup_endurance_table_matches_the_artifact():
         assert cells[2] == fmt_hours(t2["median_h"]), (
             f"{label} house-minus-EV cell {cells[2]!r} != {fmt_hours(t2['median_h'])!r}")
         if key == "PW3":
-            # issue #112 Codex review: the worst-case annotation was
+            # issue #112 Codex review: the percentile annotation was
             # searched across the whole table, so it could pass even if
             # moved onto a different config's row. Bind it to PW3's own
             # essentials cell specifically.
             pw3_p10 = be["PW3|t1"]["p10_h"]
-            assert f"({pw3_p10} h worst-case)" in cells[1], (
-                f"PW3's p10_h ({pw3_p10}) worst-case annotation not found in PW3's own "
+            assert f"({pw3_p10} h at the 10th percentile)" in cells[1], (
+                f"PW3's p10_h ({pw3_p10}) percentile annotation not found in PW3's own "
                 f"essentials cell {cells[1]!r}")
     return "the §6 outage-endurance table's hour/day figures match the live backup_endurance artifact"
 
@@ -1495,14 +1504,14 @@ def case_plan_and_battery_margins_match_their_artifacts():
 
 
 def case_battery_hardware_sizing_table_matches_battery_sim_artifact():
-    """issue #112: the §6 'Arbitrage value (current behavior)' table is
+    """issue #112: the §6 on-peak-only simulation table is
     hand-written, not templated -- lock its four cited configs' kWh/kW and
     savings-per-year figures against the live artifact."""
     bs_path = ROOT / "data" / "battery_sim.json"
     assert bs_path.exists(), f"{bs_path} is committed public data and must exist"
     bs = {row["config"]: row for row in json.loads(bs_path.read_text())}
 
-    start = HTML.index("<h3>Arbitrage value (current behavior)</h3>")
+    start = HTML.index("<h3>On-peak-only simulation (current behavior)")
     end = HTML.index("</table>", start) + len("</table>")
     table_html = HTML[start:end]
     tr_re = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
@@ -1526,7 +1535,7 @@ def case_battery_hardware_sizing_table_matches_battery_sim_artifact():
         expected_kwh_kw = f"{fmt_kwh(row['usable_kwh'])} / {round(row['power_kw'], 1)}"
         assert cells[1] == expected_kwh_kw, (row_label, cells[1], expected_kwh_kw)
         assert cells[2] == _fmt_usd(row["net_annual_savings"]), (row_label, cells[2])
-    return "the §6 arbitrage-value table's kWh/kW and savings figures match battery_sim.json"
+    return "the §6 on-peak-only table's kWh/kW and savings figures match battery_sim.json"
 
 
 def case_bill_decomposition_finding_matches_the_artifact():
@@ -1693,7 +1702,7 @@ def case_ev_fleet_fuel_cost_matches_extended_results():
     ed = er["electrification_dividend"]
     sc = er["supercharge_delta"]
 
-    m = re.search(r"<p>The fleet.s ~34,000 mi/yr costs.*?</p>", HTML, re.S)
+    m = re.search(r"<p>The fleet.s annualized ownership-period mileage.*?</p>", HTML, re.S)
     assert m, "§9 electrification-dividend paragraph not found in index.html"
     para = m.group(0)
     checks = [
@@ -1707,7 +1716,7 @@ def case_ev_fleet_fuel_cost_matches_extended_results():
         # post-fix dividend figures (both bare "~$X/yr") could swap
         # without detection. Joined into the ordered "dividend of ~$A/yr
         # ... falls to $B/yr) it rises to ~$C/yr" clause.
-        (f"electrification dividend of ~{_fmt_usd(ed['dividend_yr'])}/yr</b>, and once charging is "
+        (f"electrification saving of ~{_fmt_usd(ed['dividend_yr'])}/yr</b>, and once charging is "
          f"fully super-off-peak (home charging cost falls to "
          f"{_fmt_usd(ed['home_ev_cost_if_all_sop'])}/yr) it rises to <b>"
          f"~{_fmt_usd(ed['dividend_yr_post_fix'])}/yr"),
@@ -1802,25 +1811,13 @@ def case_nbt_flat_credit_sensitivity_matches_the_artifacts():
 
 
 def case_extra_results_cleaning_cadence_matches_the_artifact():
-    """issue #112: the §12 cleaning-cadence paragraph is hand-written, not
-    templated -- lock its second-cleaning marginal-value range and its
-    full-blended-value best case against the live artifact.
-    Spans the lead paragraph plus the 1 consecutive <p> its split
-    produced (issue #255)."""
-    xr_path = ROOT / "data" / "extra_results.json"
-    assert xr_path.exists(), f"{xr_path} is committed public data and must exist"
-    xr = json.loads(xr_path.read_text())
-    cleaning = xr["cleaning"]
-    marginals = [v["marginal2nd"] for v in cleaning.values()]
-    best_case = cleaning["2.4"]["save1"]
-
-    m = re.search(r"<p>Modeling soiling accumulation over the Apr–Nov dry season.*?</p>(?:\s*<p>.*?</p>){1}", HTML, re.S)
-    assert m, "§12 cleaning-cadence paragraph not found in index.html"
-    para = m.group(0)
-    assert f"${min(marginals)}–{max(marginals)}/yr" in para, (
-        f"second-cleaning marginal range ${min(marginals)}-{max(marginals)}/yr not found")
-    assert f"${best_case}/yr" in para, f"best-case cleaning save1 (${best_case}/yr) not found"
-    return "the §12 cleaning-cadence paragraph's marginal range and best case match extra_results.json's cleaning"
+    """The frozen cadence block cannot support an unqualified purchase verdict."""
+    section = HTML[HTML.index('<h2 id="s12"'):HTML.index('<h2 id="s13"')]
+    assert "extra_results.json" in section and "does not reproduce the original calculation" in section
+    assert "optimal date" in section and "does not establish" in section
+    for unsupported in ("$7–52", "350–450", "approximately paid for itself", "bi-annual is not justified"):
+        assert unsupported not in section, unsupported
+    return "the cleaning section labels the frozen estimate and excludes unsupported purchase conclusions"
 
 
 def case_extra_results_trueup_ledger_matches_the_artifact():
@@ -2172,37 +2169,22 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
 
 
 def case_away_days_finding_matches_the_artifact():
-    """issue #113: the 'Away-days corroborate the baseload floor' bullet
-    said 12 strictly-away days while extended_results.json's away_days.
-    n_away has always said 11 (confirmed byte-identical on regeneration,
-    so this was never a stale artifact, only a hand-typed prose count that
-    drifted from it) -- a plain transcription error, since the bullet's
-    own median/occupied/implied-kW figures already matched the artifact
-    exactly. Pins the count, and joins the two same-shaped 'N kWh/day'
-    median figures with their own away/occupied labels so they can't
-    silently swap (the same defect class issue #112's own review found
-    repeatedly elsewhere in this file)."""
-    er_path = ROOT / "data" / "extended_results.json"
-    assert er_path.exists(), f"{er_path} is committed public data and must exist"
-    er = json.loads(er_path.read_text())
-    aw = er["away_days"]
-
-    m = re.search(r"<li><b>Away-days corroborate the baseload floor.*?</li>", HTML, re.S)
-    assert m, "'Away-days corroborate the baseload floor' bullet not found in index.html"
+    """Pin low-import selections without treating them as occupancy evidence."""
+    aw = json.loads((ROOT / "data/extended_results.json").read_text())["away_days"]
+    m = re.search(r"<li><b>Low-import days.*?</li>", HTML, re.S)
+    assert m, "low-import selection bullet missing"
     bullet = m.group(0)
-
-    assert f"the {aw['n_away']} strictly-away days" in bullet, (
-        f"away_days.n_away ({aw['n_away']}) not cited as 'the N strictly-away days'")
-    assert (f"import a median <b>{aw['away_median_import_kwh_day']} kWh/day "
-            f"≈ {aw['implied_unattended_kw']} kW of unattended draw</b> "
-            f"(occupied days: {aw['occupied_median_import_kwh_day']} kWh/day)") in bullet, (
-        "the away/occupied median kWh-day figures and implied unattended kW "
-        "not found together in their own ordered clause -- may be stale or swapped")
-    return "the away-days finding's day count and median figures match extended_results.json"
+    assert f"{aw['n_away']} days with little detected EV charging" in bullet
+    assert f"median imports of <b>{aw['away_median_import_kwh_day']} kWh/day</b>" in bullet
+    assert f"other days: {aw['occupied_median_import_kwh_day']} kWh/day" in bullet
+    assert "Occupancy is not established" in bullet
+    assert "does not measure unattended load" in bullet
+    assert "strictly-away" not in bullet and "independent corroboration" not in bullet
+    return "low-import count and medians match the artifact; occupancy remains undetermined"
 
 
 def case_gross_import_decomposition_section_matches_the_artifact():
-    """issue #112: the §9 'Gross imports are climbing' subsection is
+    """issue #112: the §9 load-shape decomposition subsection is
     hand-written, not templated -- lock its bill-ground-truth kWh figures
     and both shape-assumption decomposition splits against the live
     artifact.
@@ -2215,8 +2197,8 @@ def case_gross_import_decomposition_section_matches_the_artifact():
     dec = gd["decomposition"]
     robust = gd["decomposition_identifiability_robustness_check"]
 
-    m = re.search(r"<h3>Gross imports are climbing.*?</p>(?:\s*<p>.*?</p>){4}", HTML, re.S)
-    assert m, "§9 'Gross imports are climbing' subsection not found in index.html"
+    m = re.search(r"<h3>Two modeled load shapes attribute most of the printed NBC-usage increase to consumption</h3>.*?</p>(?:\s*<p>.*?</p>){4}", HTML, re.S)
+    assert m, "§9 load-shape decomposition subsection not found in index.html"
     section = m.group(0)
 
     checks = [
@@ -2226,9 +2208,9 @@ def case_gross_import_decomposition_section_matches_the_artifact():
         # subsection). Joined into the one ordered "2024-figure ... to
         # 2026-figure" clause the report actually prints.
         (f"{bgt['period_2024']['gross_kwh']:,.0f} kWh "
-         f"({bgt['period_2024']['period'].replace(' - ', '–')}, {bgt['period_2024']['days']} days) to "
+         f"({bgt['period_2024']['period'].replace(' - ', '–')}, {bgt['period_2024']['days']} days) and "
          f"{bgt['period_2026']['gross_kwh']:,.0f} kWh"),
-        f"{bgt['period_2024']['net_kwh']:,.0f} → {bgt['period_2026']['net_kwh']:,.0f} kWh",
+        f"{bgt['period_2024']['net_kwh']:,.0f} to {bgt['period_2026']['net_kwh']:,.0f} kWh",
         f"{bgt['observed_delta_gross_kwh']:,.0f} kWh",
         f"+{dec['consumption_term_kwh']:,.0f} kWh consumption against +{dec['production_term_kwh']:,.0f} kWh production",
         (f"+{round(robust['consumption_term_kwh_this_scenario']):,} kWh consumption against "
@@ -2236,7 +2218,7 @@ def case_gross_import_decomposition_section_matches_the_artifact():
     ]
     for value in checks:
         assert value in section, f"§9 gross-imports section: {value!r} not found in it"
-    return "the §9 'Gross imports are climbing' subsection matches gross_import_decomposition.json"
+    return "the §9 load-shape decomposition subsection matches gross_import_decomposition.json"
 
 
 def case_irreducible_bill_figures_match_the_artifact():
@@ -2251,7 +2233,7 @@ def case_irreducible_bill_figures_match_the_artifact():
     pf = ib["package_floor_fractions"]
 
     m = re.search(
-        r'<p class="small"><b>\$264\.10.*?</p>\s*<p class="small">Modeled at each package.*?</p>',
+        r'<p class="small"><b>The audited year\x27s fixed charge was \$264\.10.*?</p>\s*<p class="small">Modeled at each package.*?</p>',
         HTML, re.S)
     assert m, "§7 irreducible-bill-floor paragraphs not found in index.html"
     section = m.group(0)
@@ -2278,7 +2260,7 @@ def case_irreducible_bill_figures_match_the_artifact():
     for value in checks:
         assert value in section, f"§7 irreducible-bill paragraphs: {value!r} not found in it"
 
-    m2 = re.search(r'<p class="small"><b>That \$4,904/yr already includes the floor.*?</p>', HTML, re.S)
+    m2 = re.search(r'<p class="small"><b>That \$[\d,]+/yr already includes the floor.*?</p>', HTML, re.S)
     assert m2, "§7 baseline-floor recap sentence not found in index.html"
     recap = m2.group(0)
     # issue #112 Codex review round 2: each amount/percentage pair was
@@ -2310,7 +2292,7 @@ def case_lifetime_payback_recovered_figures_match_the_artifact():
     assert lp_path.exists(), f"{lp_path} is committed public data and must exist"
     lp = json.loads(lp_path.read_text())
 
-    m = re.search(r'<div class="rec"><b>The \$37,845 gross cost was recovered.*?</div>', HTML, re.S)
+    m = re.search(r'<div class="rec"><b>The model estimates recovery of the \$37,845 gross cost.*?</div>', HTML, re.S)
     assert m, "§11 lifetime-payback recommendation box not found in index.html"
     box = m.group(0)
 
@@ -2509,7 +2491,7 @@ def case_soiling_rate_bracket_matches_the_token_that_renders_it():
 _CLEANING_HEADING_RE = re.compile(
     r"<h3>The [^<]*?cleaning \([^)]*\): ([-+]?[\d.]+%) production gain")
 # The section's own conclusion, three lines below that heading.
-_CLEANING_DIFF_IN_DIFF_RE = re.compile(r"Difference-in-differences: <b>([-+]?[\d.]+%)</b>")
+_CLEANING_DIFF_IN_DIFF_RE = re.compile(r"(?:Difference-in-differences: |difference-in-differences estimate is )<b>([-+]?[\d.]+%)</b>")
 # The cleaned year's row in the per-year windows table -- the OTHER statistic,
 # each year's own raw post ÷ pre ratio.
 _CLEANING_RAW_RATIO_RE = re.compile(
@@ -2880,7 +2862,7 @@ def case_ev_fix_savings_100_and_80_render_bare_in_every_prose_site():
 # same reason as the EV-fix sites above (report-template.html's item-4 and
 # rec-box examples are TODO-comment prose, never live markup).
 _S0_BATTERY_CLAUSE_TEMPLATE = (
-    "one Powerwall 3 earns <b>{price_aware}/yr at current rates ({marginal} after "
+    "a hypothetical Powerwall 3 saves a modeled <b>{price_aware}/yr at June 1, 2026 rates ({marginal} after "
     "the EV fix, from a single integrated run of shift-then-battery)</b>:")
 
 
@@ -3117,47 +3099,39 @@ def case_sec12_teaser_is_rendered_verbatim():
     return f"index.html's §12 teaser is SEC12_TEASER rendered verbatim: {rendered}"
 
 
-_CHART_TITLE_PERIODS_LINE_RE = re.compile(
-    r"options:\{indexAxis:'y',plugins:\{title:\{display:true,text:'\{\{CHART_TITLE_PERIODS\}\}',"
-    r"color:PAL\.ink\}\}\}\}\);")
+_CHART_PERIODS_CAPTION_RE = re.compile(
+    r'<p class="small">Super off-peak accounts for .*?\{\{CHART_TITLE_PERIODS\}\}\.</p>')
 
 
 def case_chart_title_periods_matches_its_token():
-    """Found by a separate review of the same file family as issue #276: the
-    §5 periods chart's title read "17% of the energy causes ~42% of gross
-    import cost -- the on-peak problem in one picture" while CHART_TITLE_
-    PERIODS renders "17% of imports happen on-peak, driving 42% of gross
-    import cost" from the SAME report_data.json figures -- a paraphrase that
-    had drifted off the token's own current wording.
+    """The chart keeps a terse title; its adjacent caption retains derived facts.
 
-    This line lives inside a <script> block, which
-    case_template_fixed_prose_lines_all_appear_in_the_published_page's fixed-
-    prose gate strips out entirely before it ever looks for drift (see that
-    gate's own _FIXED_PROSE_SCRIPT_STYLE_RE) -- so a chart-title token can
-    drift with nothing else in this suite catching it. This is a direct pin
-    on that one line instead."""
-    m = _CHART_TITLE_PERIODS_LINE_RE.search(TEMPLATE_HTML)
-    assert m, ("report-template.html's periods-chart title line was not found by "
-               "this pin's regex -- its markup changed; re-anchor the pin")
-    line = m.group(0)
+    The old long title compressed on mobile screens. Keep every import share
+    and the artifact-derived cost-share finding pinned after moving them into
+    the caption, rather than dropping their source check with the title.
+    """
+    m = _CHART_PERIODS_CAPTION_RE.search(TEMPLATE_HTML)
+    assert m, "periods caption must retain its derived finding and import shares"
+    short_title = "options:{indexAxis:'y',plugins:{title:{display:true,text:'Imports by TOU period',color:PAL.ink}}}});"
+    assert short_title in TEMPLATE_HTML and short_title in HTML, (
+        "periods chart must retain the terse title in report and template")
     if str(ROOT / "analysis") not in sys.path:
         sys.path.insert(0, str(ROOT / "analysis"))
     import household
     archive, loader = household.PATH.is_file(), household.__file__
     rt = _report_tokens()
     try:
-        rendered = line.replace("{{CHART_TITLE_PERIODS}}", rt.resolve_token("CHART_TITLE_PERIODS"))
+        rendered = re.sub(r"\{\{([A-Z0-9_]+)\}\}",
+                          lambda match: rt.resolve_token(match.group(1)), m.group(0))
     except BaseException as e:                    # noqa: BLE001 - archive-gated
         assert _missing_archive_exit(e, archive, loader), (
-            f"the periods-chart title could not be rendered, and NOT because this "
-            f"checkout lacks the private archive (present: {archive}): "
-            f"{type(e).__name__}: {e}")
-        return f"periods-chart title not rendered: this checkout has no private archive ({e})"
-    assert rendered in HTML, (
-        f"index.html's periods chart title is not CHART_TITLE_PERIODS rendered:\n"
-        f"  template renders: {rendered}\n"
-        "the chart title has to match the token's current render, not an old paraphrase")
-    return f"index.html's periods chart title is CHART_TITLE_PERIODS rendered verbatim: {rendered}"
+            f"periods caption could not render despite available inputs: {type(e).__name__}: {e}")
+        return f"periods caption not rendered: this checkout has no private archive ({e})"
+    start = HTML.index('<canvas id="periods"')
+    caption = HTML[HTML.index('</div>', start) + len('</div>'):].split('</p>', 1)[0] + '</p>'
+    assert rendered == caption.strip(), (
+        f"adjacent periods caption must match its artifact-derived tokens: {rendered}")
+    return "periods chart retains a short title and its adjacent artifact-derived shares/cost caption"
 
 
 def case_cleaning_gain_is_not_determined_when_no_entry_matches():
@@ -3298,36 +3272,16 @@ def case_cleaning_gain_is_not_determined_when_two_entries_share_the_date():
 
 
 def case_weather_regression_paragraph_matches_the_artifact():
-    """issue #112: the §9 weather-regression paragraph is hand-written, not
-    templated -- lock its base load, cooling-degree-day coefficient, annual
-    cooling kWh, and pre-cooling/setpoint dollar values against the live
-    artifact."""
-    wr_path = ROOT / "data" / "weather_results.json"
-    assert wr_path.exists(), f"{wr_path} is committed public data and must exist"
-    wr = json.loads(wr_path.read_text())
-
-    m = re.search(r"<p>Regressing daily non-EV load against local daily temperatures.*?</p>", HTML, re.S)
-    assert m, "§9 weather-regression paragraph not found in index.html"
+    """Pin the retained archived estimate and its missing-owner limitation."""
+    wr = json.loads((ROOT / "data/weather_results.json").read_text())
+    m = re.search(r"<p><code>data/weather_results.json</code>.*?</p>", HTML, re.S)
+    assert m, "archived weather estimate paragraph missing"
     para = m.group(0)
-
-    def round10(v):
-        return int(round(v / 10.0)) * 10
-
-    checks = [
-        f"~{round(wr['base_kwh_day'])} kWh/day",
-        f"{wr['kwh_per_cdd65']} kWh per cooling-degree-day",
-        f"{round10(wr['annual_cooling_kwh']):,} kWh/yr",
-        # issue #112 Codex review: two bare "$X/yr" values (pre-cooling vs
-        # setpoint) with no label of their own baked in would still pass
-        # if swapped. Joined into the ordered "Pre-cooling ... $A/yr; ...
-        # setpoint ... $B/yr" clause the report actually prints.
-        (f"Pre-cooling in the 10am–2pm super-off-peak window (shifting ~half of "
-         f"on-peak cooling) is worth ≈ <b>${round10(wr['precool_shift_value'])}/yr</b>; "
-         f"a modest efficiency/setpoint improvement another ≈ <b>${round10(wr['setpoint_value'])}/yr"),
-    ]
-    for value in checks:
-        assert value in para, f"§9 weather-regression paragraph: {value!r} not found in it"
-    return "the §9 weather-regression paragraph matches weather_results.json"
+    value = int(round(wr['annual_cooling_kwh'] / 10)) * 10
+    assert f"{value:,} kWh/yr" in para
+    assert "does not contain a generator" in para and "not metered A/C consumption" in para
+    assert "780" not in para and "is worth" not in para
+    return "the retained weather estimate matches its archive and states the missing calculation"
 
 
 # ---------------------------------------------------------------------------
@@ -3999,9 +3953,9 @@ def case_s2_key_architectural_fact_matches_the_artifacts():
     and _midday_export_share_from_report_data already follow), so a bug
     inside report_tokens.py's own formula fails here instead of being
     reproduced by the pin that now checks against it."""
-    m = re.search(r'<p class="small">That last split is the fact behind every recommendation'
+    m = re.search(r'<p class="small">The array exports'
                   r'.*?</p>', HTML, re.S)
-    assert m, "§2's 'fact behind every recommendation' paragraph not found in index.html"
+    assert m, "§2's export-timing paragraph not found in index.html"
     para = m.group(0)
 
     export_pct = _export_share_pct()
@@ -4009,16 +3963,16 @@ def case_s2_key_architectural_fact_matches_the_artifacts():
     nights, eligible = _nights_with_ev_charging()
 
     checks = [
-        f"{export_pct}% of what the array makes leaves as exports",
-        f"{midday_pct}% of those exported kWh go out in the 10am–2pm window",
+        f"The array exports {export_pct}% of its production",
+        f"Of those exported kWh, {midday_pct}% leave in the 10am–2pm window",
         f"the EV charged between midnight and 6am on {nights} of the year's {eligible} nights",
     ]
     for value in checks:
         assert value in para, (
-            f"§2's 'key architectural fact' paragraph: {value!r} not found in it")
-    _assert_the_two_shares_stay_apart(para, "§2's 'key architectural fact' paragraph",
+            f"§2's export-timing paragraph: {value!r} not found in it")
+    _assert_the_two_shares_stay_apart(para, "§2's export-timing paragraph",
                                       export_pct, midday_pct)
-    return (f"§2's 'key architectural fact' line states {export_pct}% exported, "
+    return (f"§2's export-timing line states {export_pct}% exported, "
             f"{midday_pct}% of those exports in the 10am–2pm window (hourly_profile.csv, "
             f"report_data.json's seasonal hours and §2's own verdict line all agree), "
             f"and charging on {nights} of {eligible} nights (quiet_night_floor.json)")
@@ -4048,9 +4002,9 @@ def case_s2_key_architectural_fact_is_token_rendered():
     None on each, i.e. the guard alone would have republished the defect):
     the review's own example, and the issue's own two measured misses."""
     rt = _report_tokens_module()
-    m = re.search(r'<p class="small">That last split is the fact behind every recommendation'
+    m = re.search(r'<p class="small">The array exports'
                   r'.*?</p>', HTML, re.S)
-    assert m, "§2's 'fact behind every recommendation' paragraph not found in index.html"
+    assert m, "§2's export-timing paragraph not found in index.html"
     para = m.group(0)
     token_value = rt.resolve_token("S2_EXPORT_TIMING_NOTE")
     expected = f'<p class="small">{token_value}</p>'
@@ -4061,7 +4015,7 @@ def case_s2_key_architectural_fact_is_token_rendered():
         "let index.html follow it -- do not hand-edit the HTML")
 
     export_pct = _export_share_pct()
-    lead = f"{export_pct}% of what the array makes leaves as exports."
+    lead = f"The array exports {export_pct}% of its production."
     assert lead in para, (
         f"the probe below rewrites {lead!r}, which is no longer in the published "
         "paragraph -- update the probe to the current lead sentence")
@@ -4135,7 +4089,7 @@ def case_s2_export_timing_note_formula_is_blocklist_guarded():
     _assert_the_two_shares_stay_apart(fresh, "S2_EXPORT_TIMING_NOTE's own fresh output",
                                       export_pct, midday_pct)
 
-    lead = f"{export_pct}% of what the array makes leaves as exports."
+    lead = f"The array exports {export_pct}% of its production."
     assert lead in fresh, (
         "the probes below rewrite this lead sentence, which is no longer in "
         "S2_EXPORT_TIMING_NOTE's fresh output -- update them to the current lead")
@@ -5035,7 +4989,7 @@ def case_s8_specific_yield_matches_the_token_rendered_one():
     exactly why they can drift apart. Neither is recomputed here, because the
     array nameplate it divides by lives in private/household.yaml and this file
     runs without the private archive."""
-    m = re.search(r"<p><b>Repowering with higher-capacity panels: .*?</p>", HTML, re.S)
+    m = re.search(r"<p><b>Repowering has no demonstrated economic case in this analysis\..*?</p>", HTML, re.S)
     assert m, "§8's repowering paragraph not found in index.html"
     typed = re.search(r"([\d,]+) kWh/kW/yr", m.group(0))
     assert typed, "§8's repowering paragraph no longer states the array's specific yield"
@@ -5332,9 +5286,8 @@ def case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim():
         "whole export share exactly as the retired wording did, and it passes every "
         f"substring §2 checks -- the guard reports {leading!r}")
 
-    published = re.search(r'<p class="small">That last split is the fact behind every '
-                          r"recommendation.*?</p>", HTML, re.S)
-    assert published, "§2's 'fact behind every recommendation' paragraph not found in index.html"
+    published = re.search(r'<p class="small">The array exports.*?</p>', HTML, re.S)
+    assert published, "§2's export-timing paragraph not found in index.html"
     assert _referent_guard_rejects(published.group(0)) is None, (
         "§2's published paragraph attaches a time of day to the export share: "
         f"{_referent_guard_rejects(published.group(0))}")
@@ -5452,8 +5405,7 @@ def case_the_referent_guard_reads_across_a_sentence_boundary():
         "rejected may now be available -- re-measure it before keeping the "
         "figure-free-run rule, and delete this assertion if it is adopted")
 
-    for where, pattern in (("§2", r'<p class="small">That last split is the fact behind '
-                                  r"every recommendation.*?</p>"),
+    for where, pattern in (("§2", r'<p class="small">The array exports.*?</p>'),
                            ("§8", r"<p>The constraint is timing\..*?</p>"),
                            ("§0", r"<li><b>More solar\? [^<]*</b>.*?</li>")):
         m = re.search(pattern, HTML, re.S)
@@ -6372,12 +6324,13 @@ GLOSSARY = (ROOT / "GLOSSARY.md").read_text()
 _CARBON_RATIO_RE = re.compile(r"([\d.]+)× cleaner")
 # The two whole-home-load figures §1 reconciles, and the gap it states.
 _LOAD_BALANCE_RE = re.compile(r"Whole-home load is <b>([\d,]+) kWh/yr</b>")
-_LOAD_CT_RE = re.compile(r"totals ([\d,]+) kWh: ([\d.]+)% below the energy balance")
-# The naive degradation band, at both of the places §9 prints it.
+_LOAD_CT_RE = re.compile(r"SAM8760 load series totals ([\d,]+) kWh, 57 kWh \(([\d.]+)%\) below")
+# The naive degradation band appears in two separate report sentences.
 _NAIVE_BAND_RES = (
     re.compile(r"naïve fit reads ~([\d.]+)–([\d.]+)%/yr"),
     re.compile(r"~([\d.]+)–([\d.]+)%/yr naïve band"),
 )
+
 
 
 def case_midday_vs_overnight_carbon_ratio_is_one_comparison_in_both_documents():
@@ -6404,7 +6357,7 @@ def case_midday_vs_overnight_carbon_ratio_is_one_comparison_in_both_documents():
     overnight, midday = wm["sop_overnight_00_06"], wm["solar_midday_10_14"]
     expected = f"{overnight / midday:.1f}"
 
-    m = re.search(r"<li><b>Exploit the 10am–2pm weekday window.*?</li>", HTML, re.S)
+    m = re.search(r"<li><b>Use the 10am–2pm weekday super-off-peak window.*?</li>", HTML, re.S)
     assert m, "§0's 10am-2pm window bullet not found in index.html"
     bullet = m.group(0)
     entry = next((ln for ln in GLOSSARY.splitlines()
@@ -6445,13 +6398,13 @@ def case_whole_home_load_names_both_derivations_and_states_their_gap():
     """issue #166: ANNUAL_LOAD_KWH resolved to 29,914 while index.html §2
     published 29,857, and neither derivation was named.
 
-    They are two independent measurements of one quantity. 29,914 is the
+    They are two compared calculations; acquisition independence remains unresolved. 29,914 is the
     utility-meter energy balance -- imports + (production − exports), every
     term from a committed artifact (data/report_data.json:totals and
-    data/enphase_daily_production.csv). 29,857 is the Enphase consumption CT's
-    own annual total, which no committed artifact carries; it lives in the
-    gitignored SAM 8760 export. Both are right, and their 0.2% agreement is
-    evidence, so the report publishes the artifact-backed one and states the
+    data/enphase_daily_production.csv). 29,857 is the saved SAM hourly-load series'
+    annual total, which no committed artifact carries; it lives in the
+    gitignored SAM 8760 export. Their 0.2% agreement checks arithmetic consistency
+    without establishing independent sensing, so the report publishes the artifact-backed one and states the
     other as corroboration.
 
     This pins the published figure to the token that derives it, the balance's
@@ -6469,8 +6422,8 @@ def case_whole_home_load_names_both_derivations_and_states_their_gap():
         f"ANNUAL_LOAD_KWH renders {rendered} from data/report_data.json:totals and "
         "data/enphase_daily_production.csv -- the page and the token that derives it "
         "state different loads")
-    assert f"{rendered} kWh/yr load" in HTML, (
-        f"§2's 'covers N% of the home's ... kWh/yr load' bullet does not carry "
+    assert f"{rendered} kWh/yr use" in HTML, (
+        f"§2's production-to-use ratio bullet does not carry "
         f"{rendered}, the figure §1 and ANNUAL_LOAD_KWH agree on -- the two sections "
         "would publish two different whole-home loads")
 
@@ -6551,7 +6504,7 @@ def case_degradation_naive_band_contains_every_estimator_it_is_built_from():
 
 # §9's clipping sentence, the basis of GLOSSARY.md's clipping entry.
 _CLIPPING_SENTENCE_RE = re.compile(
-    r"peak power ([\d.]+) kW vs the ([\d.]+) kW AC ceiling on the year's best day")
+    r"sampled peak power was ([\d.]+) kW against the ([\d.]+) kW AC ceiling on the cited high-production spring day")
 
 
 def case_every_on_peak_bracket_on_the_page_is_the_rates_one():
@@ -6606,7 +6559,7 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
     11.7/14.0).
 
     The clipping entry is the one pin with no artifact behind its peak: §9's
-    "peak power 8.52 kW vs the 9.45 kW AC ceiling on the year's best day" is
+    "sampled peak power was 8.52 kW against the 9.45 kW AC ceiling" is
     hand prose from a one-day PVOutput 5-minute sample that no data/ file
     carries (the committed peaks file, cleaning_study_peaks_2024.csv, is a
     2024 summer window, a different statistic). So the glossary's peak is
@@ -6870,22 +6823,11 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
                   for t in ("STORED_KWH_COST_SOLAR_MIDDAY", "STORED_KWH_COST_GRID"))
         pins.append(("Arbitrage", f"storing ~{lo}–{hi}¢ energy",
                      "STORED_KWH_COST_SOLAR_MIDDAY and STORED_KWH_COST_GRID"))
-    # The clipping entry restates §9's sentence (see the docstring): peak from
-    # the page, ceiling from the token, the headroom computed from the two.
-    clip = _CLIPPING_SENTENCE_RE.search(HTML)
-    assert clip, ("§9 no longer states 'peak power N kW vs the M kW AC ceiling on the "
-                  "year's best day' -- that sentence is the glossary clipping entry's basis")
-    peak_kw, ceiling_kw = float(clip.group(1)), float(clip.group(2))
+    # The unarchived spring peak cannot be used as evidence. Pin the hardware ceiling only.
     if "AC_CEILING_KW" in resolved:
-        assert f"{ceiling_kw:.2f}" == resolved["AC_CEILING_KW"], (
-            f"§9 states a {clip.group(2)} kW AC ceiling but AC_CEILING_KW renders "
-            f"{resolved['AC_CEILING_KW']} from household.yaml:solar.kw_ac")
-    pins += [
-        ("Clipping", f"{clip.group(1)} kW", "index.html §9's peak-power sentence (no artifact)"),
-        ("Clipping", f"{clip.group(2)} kW AC ceiling", "index.html §9 / AC_CEILING_KW"),
-        ("Clipping", f"about {round((1 - peak_kw / ceiling_kw) * 100)}% below",
-         "1 − peak ÷ ceiling, from the two figures above"),
-    ]
+        pins.append(("Clipping", f"{resolved['AC_CEILING_KW']} kW AC ceiling",
+                     "household.yaml:solar.kw_ac via AC_CEILING_KW"))
+    assert "8.52 kW" not in GLOSSARY and "8,520 W" not in HTML
     # NIGHT_FLOOR_ANNUAL_COST renders both pricings in one sentence; the
     # glossary spreads them across its own. Pin the amounts, not the wording.
     if "NIGHT_FLOOR_ANNUAL_COST" in resolved:
@@ -6964,9 +6906,6 @@ _FIXED_PROSE_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 # NEW drift is never allowed in by this list, and neither is a new edit to a
 # line it already covers.
 _FIXED_PROSE_DRIFT_ALLOWED = {
-    ("s1", "Every 15-minute interval of the last"): ("50ada813f528",
-        "index derives whole-home load in prose (29,914 kWh energy balance, CT-meter "
-        "cross-check); no tokens exist for those figures"),
     ("s2", "kW DC nameplate"): ("702b1ea21f42",
         "index adds module arithmetic and mount/orientation facts no token renders"),
     ("s2", "<b>In service since:</b>"): ("848ed58632f5",
@@ -6974,12 +6913,9 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
     ("s2", "<b>Production:</b>"): ("b2b724534b3c",
         "index names the concrete sources (CT meter; PVOutput) the template keeps "
         "monitoring-agnostic per CLAUDE.md section 7"),
-    ("s2", "<b>Where it goes:</b>"): ("0b67c10d01b8",
-        "index adds MWh splits and share-of-production parentheticals with no tokens"),
-    ("s5", "the behaviors behind them"): ("4c9586423c95",
-        "index counts the behaviors (four); the count has no token"),
-    ("s5", "Behaviors driving the current bill"): ("783be563930c",
-        "index counts the behaviors (Four); the count has no token"),
+    ("s2", "<b>Where it goes:</b>"): ("112f5f2640fc",
+        "both state production as a share of annual use; index adds the §1 energy-"
+        "balance link, MWh splits, and share-of-production parentheticals without tokens"),
     ("s6", "Price-aware (all non-super-off-peak imports)"): ("c0c52fc7d519",
         "index's expansion cell adds cycles/day; no token for pw3x cycles exists"),
     ("s8", "The constraint is timing."): ("8ad8c6d8dd23",
@@ -6987,14 +6923,13 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
         "the template states the same export fraction and points to the token's midday "
         "share. The marginal-kW paragraph now matches the template exactly, including "
         "the conditional whole-facility NBT comparison"),
-    ("s9", "degradation trend</h3>"): ("8da8f6ba573b",
-        "index's heading carries the measured span (6-year); no token owns it"),
     ("s9", "Inverter clipping"): ("f861755778ff",
-        "index's heading bakes this household's verdict (none worth acting on)"),
+        "index's heading states the sampled-curve evidence and annual-loss limit"),
     ("s9", "Phantom / always-on load"): ("d47f1f64d6aa",
         "index's heading bakes this household's verdict (identified, de-prioritized)"),
-    ("s10", "detailed electric statements"): ("6f579ee69931",
-        "index adds the corpus date range and a findings count; neither has a token"),
+    ("s10", "detailed electric statements"): ("c6c9ebdc2a26",
+        "both distinguish the annual baseline from longer comparisons; index adds "
+        "the baseline date range without a token"),
     ("s10", "Generation billed at"): ("6d1752357deb",
         "index names the CCA (CEA) in fixed prose the template keeps provider-neutral"),
     ("s10", "Model vs. actual"): ("67147baaddde",
@@ -7012,9 +6947,9 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
         "rate changes'; the template's SPREAD_OBSERVATION_COUNT token renders a "
         "different description (priced cells across periods) -- token drift, not "
         "just prose"),
-    ("s14", "<b>Confidence labels:</b>"): ("df64676a5e46",
-        "index adds report-specific evidence claims (example list, 'Sections 1-10 "
-        "are measured/modeled throughout')"),
+    ("s14", "<b>Confidence labels:</b>"): ("83b30f3ba73a",
+        "index uses shorter evidence definitions and links §10 for the unresolved "
+        "bill gap; template names the bill section and retains the label pills"),
     ("s14", "not advice from any utility"): ("edec746468c0",
         "index names vendors (SDG&E, CEA, Enphase, Tesla) the template keeps generic"),
 }
@@ -7536,8 +7471,8 @@ def case_the_free_fix_naming_guard_rejects_the_claims_it_exists_to_catch():
     # (1b) the same defect worded differently, to prove the sweep is a
     # vocabulary check and not a second pin on one sentence.
     charger = clean.replace(
-        "Logged before the change",
-        "Reprogram the charger, then logged before the change")
+        "Record the criteria before the schedule change",
+        "Reprogram the charger, then record the criteria before the schedule change")
     assert charger != clean, "mutation 1b was a no-op -- re-anchor it"
     caught_b = _live_markup_ev_assertions(charger)
     assert caught_b and any('charger' in label for _n, label, _l in caught_b), (
@@ -7573,13 +7508,13 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
          "behavior/battery interaction is modeled so nothing is double-counted "
          "(overlap: {{OVERLAP_DEDUCTION}}/yr).",
          "s7", "double-counted"),
-        ("s0 NEM dropped from the netting-model name",
-         "re-billing with the bill-validated NEM netting model",
-         "re-billing with the bill-validated netting model",
-         "s0", "netting model"),
+        ("s0 rebilling dropped from the model description",
+         "The model moves energy between intervals and re-bills the result",
+         "The model moves energy between intervals and estimates savings",
+         "s0", "estimates savings"),
         ("s7 script token replaced by a wrong literal",
-         "the validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>)",
-         "the validated NEM netting model (<code>analysis/wrong.py</code>)",
+         "the NEM model and its stated limits (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>)",
+         "the NEM model and its stated limits (<code>analysis/wrong.py</code>)",
          "s7", "analysis/wrong.py"),
     ]
     for name, old, new, want_sid, want_frag in mutations:
@@ -7605,16 +7540,16 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
     # see it -- and only the PUBLIC gate applies the pin, which is why this
     # shape runs _fixed_prose_gate (the exact logic the real case calls),
     # not the bare drift function.
-    old = "maps when the money leaves"
-    new = "maps where the money leaves"
-    name = "s5 allowlisted line edited around its intact substring"
+    old = "annual production equals"
+    new = "annual production exceeds"
+    name = "s2 allowlisted line edited around its intact substring"
     assert TEMPLATE_HTML.count(old) == 1, (
         f"mutation {name!r} no longer has a unique anchor in the template "
         f"({TEMPLATE_HTML.count(old)} occurrences of {old!r}) -- re-anchor it")
     mutated = TEMPLATE_HTML.replace(old, new)
     assert mutated != TEMPLATE_HTML, f"mutation {name!r} was a no-op"
-    assert ("s5", "the behaviors behind them") in _FIXED_PROSE_DRIFT_ALLOWED, (
-        "the fourth mutation targets the s5 'the behaviors behind them' "
+    assert ("s2", "<b>Where it goes:</b>") in _FIXED_PROSE_DRIFT_ALLOWED, (
+        "the fourth mutation targets the s2 '<b>Where it goes:</b>' "
         "allowance, which no longer exists -- re-anchor the mutation")
     try:
         _fixed_prose_gate(mutated, HTML)
@@ -7624,10 +7559,10 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
             f"mutation {name!r} was rejected, but not AS an allowlisted line "
             f"drifting further -- the developer would hunt a new line instead "
             f"of re-deciding the entry: {msg}")
-        assert "section s5" in msg and new in msg, (
+        assert "section s2" in msg and new in msg, (
             f"mutation {name!r} was caught but the message does not name "
-            f"section s5 and the offending line: {msg}")
-        assert "the behaviors behind them" in msg, (
+            f"section s2 and the offending line: {msg}")
+        assert "<b>Where it goes:</b>" in msg, (
             f"mutation {name!r} was caught but the message does not name the "
             f"allowlist entry to re-decide: {msg}")
     else:
@@ -7641,16 +7576,17 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
     # digest, so neither the substring routing nor the digest pin objects --
     # only the exactly-one count can see that one allowance is now blessing
     # two lines, the second of which is NEW drift it never decided.
-    dup = ("<p>This section maps when the money leaves: your grid flows by "
-           "hour, season, and month, and the behaviors behind them.</p>")
-    name = "s5 allowlisted line duplicated whole"
+    dup = ("<li><b>Where it goes:</b> annual production equals {{SOLAR_COVERAGE_PCT}} "
+           "of the home's {{ANNUAL_LOAD_KWH}} kWh/yr use. Of that production, "
+           "{{SELF_CONSUMED_SHARE}} is self-consumed and {{EXPORTED_SHARE}} is exported</li>")
+    name = "s2 allowlisted line duplicated whole"
     assert TEMPLATE_HTML.count(dup) == 1, (
         f"mutation {name!r} no longer has a unique anchor in the template "
         f"({TEMPLATE_HTML.count(dup)} occurrences of {dup!r}) -- re-anchor it")
     mutated = TEMPLATE_HTML.replace(dup, dup + "\n" + dup)
     assert mutated != TEMPLATE_HTML, f"mutation {name!r} was a no-op"
-    assert ("s5", "the behaviors behind them") in _FIXED_PROSE_DRIFT_ALLOWED, (
-        "the fifth mutation targets the s5 'the behaviors behind them' "
+    assert ("s2", "<b>Where it goes:</b>") in _FIXED_PROSE_DRIFT_ALLOWED, (
+        "the fifth mutation targets the s2 '<b>Where it goes:</b>' "
         "allowance, which no longer exists -- re-anchor the mutation")
     try:
         _fixed_prose_gate(mutated, HTML)
@@ -7659,9 +7595,9 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
         assert "MORE THAN ONE drifted line" in msg, (
             f"mutation {name!r} was rejected, but not AS one allowance "
             f"blessing multiple lines: {msg}")
-        assert ("('s5', 'the behaviors behind them')" in msg
+        assert ("('s2', '<b>Where it goes:</b>')" in msg
                 and "matched 2 lines" in msg
-                and msg.count("maps when the money leaves") == 2), (
+                and msg.count("annual production equals") == 2), (
             f"mutation {name!r} was caught but the message does not name the "
             f"entry, the count, and both lines: {msg}")
     else:
@@ -7670,17 +7606,18 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
             "allowlisted line passed the public gate -- the exactly-one "
             "count per allowance is not being enforced")
 
-    # SIXTH defect shape (round-3 review): the allowlisted s5 paragraph
+    # SIXTH defect shape (round-3 review): the allowlisted s2 item
     # duplicated WRAPPED, every source line under the 30-fixed-char
     # threshold. Each wrapped line is too short to be checked, so the drift
     # detector, the digest pin, and the exactly-one count are all blind to
     # it -- only the one-element-per-source-line structural assert can see
-    # the <p> opened without closing on its line. The rejection must name
+    # the <li> opened without closing on its line. The rejection must name
     # the multi-line ELEMENT, not any allowance.
-    wrapped = ("<p>This section\nmaps when the\nmoney leaves: your\n"
-               "grid flows by hour,\nseason, and month,\nand the behaviors\n"
-               "behind them.</p>")
-    name = "s5 allowlisted paragraph duplicated wrapped across short lines"
+    wrapped = ("<li><b>Where it goes:</b>\nannual production equals\n"
+               "{{SOLAR_COVERAGE_PCT}} of\nthe home's {{ANNUAL_LOAD_KWH}}\n"
+               "kWh/yr use.\nOf that production,\n{{SELF_CONSUMED_SHARE}} is\n"
+               "self-consumed and\n{{EXPORTED_SHARE}} is exported</li>")
+    name = "s2 allowlisted item duplicated wrapped across short lines"
     for wline in wrapped.splitlines():
         content = _fixed_prose_content(re.sub(r"\s+", " ", wline).strip())
         assert len(content) < _FIXED_PROSE_MIN_CHARS, (
@@ -7699,8 +7636,8 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
         assert "OPENS on one source line without CLOSING" in msg, (
             f"mutation {name!r} was rejected, but not AS a multi-line prose "
             f"element -- the structural assert is not what fired: {msg}")
-        assert ("section s5" in msg and "<p> left open on" in msg
-                and "<p>This section" in msg), (
+        assert ("section s2" in msg and "<li> left open on" in msg
+                and "<li><b>Where it goes:</b>" in msg), (
             f"mutation {name!r} was caught but the message does not name the "
             f"section, the tag, and the opening line: {msg}")
         assert ("drifted FURTHER" not in msg

@@ -4,7 +4,7 @@
     "interval_end": "2026-07-26",
     "interval_days": 395,
     "periods_audited": 13,
-    "periods_skipped": 13,
+    "periods_skipped": 16,
     "audited": [
       "6/27/25 - 7/28/25",
       "7/29/25 - 8/26/25",
@@ -98,6 +98,24 @@
         "reason": "outside interval coverage",
         "days_in_period": 29,
         "days_outside_export": 29
+      },
+      {
+        "period": "6/27/26 - 7/28/26",
+        "reason": "outside interval coverage",
+        "days_in_period": 32,
+        "days_outside_export": 2
+      },
+      {
+        "period": "7/29/26 - 8/26/26",
+        "reason": "outside interval coverage",
+        "days_in_period": 29,
+        "days_outside_export": 29
+      },
+      {
+        "period": "8/27/26 - 9/25/26",
+        "reason": "outside interval coverage",
+        "days_in_period": 30,
+        "days_outside_export": 30
       }
     ]
   },

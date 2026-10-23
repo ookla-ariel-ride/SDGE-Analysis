@@ -21,37 +21,37 @@
   "source": "data/electric_bill_summary.csv"
  },
  "nem2": {
-  "annual_bill_usd_modeled": 4904.13,
-  "label": "modeled (rates.bill_nem, the canonical NEM 2.0 engine; see actual_billed_anchor for the audited total over the same window -- the model runs high, use the DELTA below)"
+  "annual_bill_usd_modeled": 4901.38,
+  "label": "modeled (rates.bill_nem, the canonical NEM 2.0 engine; see actual_billed_anchor for the separate 2025-06-27 through 2026-06-26 bill-audit window; this model uses 2025-07-24 through 2026-07-23. Use the modeled DELTA below, not an identity with that audit)"
  },
  "nbt_counterfactual": {
   "NBT00": {
    "annual_bill_usd": 7007.7,
    "export_credit_total_usd": 470.75,
    "export_credit_weighted_avg_usd_per_kwh": 0.04725,
-   "grandfathering_value_usd": 2103.58
+   "grandfathering_value_usd": 2106.33
   },
   "NBT26": {
    "annual_bill_usd": 7007.7,
    "export_credit_total_usd": 470.75,
    "export_credit_weighted_avg_usd_per_kwh": 0.04725,
-   "grandfathering_value_usd": 2103.58
+   "grandfathering_value_usd": 2106.33
   }
  },
  "grandfathering_value_range_usd_per_yr": {
-  "low": 2103.58,
-  "high": 2455.64,
+  "low": 2106.33,
+  "high": 2458.39,
   "vintages_priced": [
    "NBT00",
    "NBT26"
   ],
   "band_has_zero_width": false,
-  "primary_point_estimate_usd_per_yr": 2103.58,
+  "primary_point_estimate_usd_per_yr": 2106.33,
   "note": "The band's width comes ENTIRELY from the generation-component assumption (see generation_component_sensitivity below), not from vintage: NBT26 and NBT00 price this household's measured export shape identically this tariff year (see vintage_band below). The primary point estimate above (using CEA's own direct statement) is this band's LOW end; the Delivery-only alternative is the HIGH end."
  },
  "vintage_band_usd_per_yr": {
-  "low": 2103.58,
-  "high": 2103.58,
+  "low": 2106.33,
+  "high": 2106.33,
   "band_has_zero_width": true,
   "why_zero_width": "SDG&E's NBT26 and NBT00 calendar-year-2026 (YEAR 1 ONLY) rate tables are byte-identical (max|NBT00-NBT26| = 0.0 across all 1,152 rate cells in data/nbt_export_rates_2026.csv) -- both vintages price this household's measured export shape at the same dollar figure in this one year. NBT26 actually locks a 9-year SCHEDULE OF ESCALATING RATES from PTO, not this same table repeated (e.g. this household's own 'Jan Weekend HS0' Generation rate reads 0.087115 $/kWh in 2026 but 0.090474 in 2027 in the raw archive); NBT00 guarantees only the current year and resets annually to a table not yet published. This script prices only year 1 of each, so this zero width is a year-1 coincidence, not a claim that the two vintages track identically over their full guarantee periods -- widening this into a real multi-year band is out of this phase's one-year snapshot scope."
  },
@@ -69,11 +69,11 @@
   "alternative_bills": {
    "NBT00": {
     "annual_bill_usd": 7359.77,
-    "grandfathering_value_usd": 2455.64
+    "grandfathering_value_usd": 2458.39
    },
    "NBT26": {
     "annual_bill_usd": 7359.77,
-    "grandfathering_value_usd": 2455.64
+    "grandfathering_value_usd": 2458.39
    }
   },
   "note": "SDG&E's own export-pricing methodology page states its Generation component is 'applicable only to bundled customers' -- this household is on CCA (Clean Energy Alliance) generation, not SDG&E bundled generation. Against that, CEA's own 'Solar Impact' program page states unhedged that its export credit equals SDG&E's own published pricing plus the $0.01/kWh bonus, with no component breakdown. No CEA document describing an NBT-specific generation-component rate, separate from SDG&E's, was found. This is a genuine, unresolved public-data ambiguity, not a computational error -- the PRIMARY figures above use CEA's direct statement; this section discloses what the Delivery-only alternative would be instead, so the reader can see the range rather than one figure presented as certain."
@@ -101,7 +101,7 @@
    }
   },
   "reference_nbt_2039": {
-   "battery_marginal_under_nem2_usd_yr": 2466,
+   "battery_marginal_under_nem2_usd_yr": 2464,
    "battery_marginal_under_flat_nbt_usd_yr": {
     "3c": 2534,
     "5c": 2520,
@@ -111,7 +111,7 @@
   },
   "disagreement_vs_reference": {
    "NBT00": {
-    "vs_nem2_usd": 51.25,
+    "vs_nem2_usd": 53.25,
     "vs_flat_3c_usd": -16.75,
     "vs_flat_5c_usd": -2.75,
     "vs_flat_8c_usd": 17.25,
@@ -119,7 +119,7 @@
     "gap_from_flat_bracket_usd": 0.0
    },
    "NBT26": {
-    "vs_nem2_usd": 51.25,
+    "vs_nem2_usd": 53.25,
     "vs_flat_3c_usd": -16.75,
     "vs_flat_5c_usd": -2.75,
     "vs_flat_8c_usd": 17.25,

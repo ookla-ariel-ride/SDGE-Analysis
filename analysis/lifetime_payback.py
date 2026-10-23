@@ -4,7 +4,7 @@
 Method:
   1. Blended $/kWh TODAY = (no-solar counterfactual bill - with-solar bill) / annual
      production, both computed with the canonical engine (rates.bill_nem: monthly
-     per-period NEM netting, NBC on gross imports) at current rates. The production
+     per-period NEM netting, NBC on positive physical interval net) at current rates. The production
      denominator comes from the same rolling window as the two bills, by energy
      balance over the same series: whole-home load (samA/samB) - grid imports +
      grid exports (usage.csv). Computed under BOTH

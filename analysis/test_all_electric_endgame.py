@@ -47,6 +47,7 @@ import behavior_rebuild as br            # noqa: E402
 import heat_pump_conversion as hpc       # noqa: E402
 import service_headroom as sh            # noqa: E402
 import all_electric_endgame as A         # noqa: E402
+import parse_bills as pb                # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 USAGE_GLOB = str(ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")
@@ -149,9 +150,13 @@ class _GasDetailFixture:
     own floor_savings_by_period() reads these through the hpc module, not
     its own copies) at a temporary fixture pair."""
 
-    def __init__(self, periods_df, detail_rows):
+    def __init__(self, periods_df, detail_rows, statement_dates=None):
         self.periods_df = periods_df
         self.detail_rows = detail_rows
+        # Synthetic fixtures declare their own annual scope. Append tests pass
+        # the original dates explicitly so newer rows cannot redefine it.
+        self.statement_dates = (list(statement_dates) if statement_dates is not None
+                                else sorted(set(periods_df["statement_date"])))
 
     def __enter__(self):
         self._td = tempfile.TemporaryDirectory()
@@ -161,11 +166,14 @@ class _GasDetailFixture:
         self.periods_df.to_csv(periods_csv, index=False)
         pd.DataFrame(self.detail_rows).to_csv(detail_csv, index=False)
         self._real = (hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV)
+        self._statement_dates = pb.SUMMARY_STATEMENTS_GAS
+        pb.SUMMARY_STATEMENTS_GAS = self.statement_dates
         hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV = str(periods_csv), str(detail_csv)
         return self
 
     def __exit__(self, *exc):
         hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV = self._real
+        pb.SUMMARY_STATEMENTS_GAS = self._statement_dates
         self._td.cleanup()
         return False
 
@@ -1439,99 +1447,10 @@ def _rebill_with_added_series(d, series):
     return new_bill - base, float(absorbed.sum())
 
 
-@case
-def case_joint_electric_cost_scenario_not_equal_to_naive_sum_hand_example():
-    """The regression test for Finding 1 (round 2): proves the joint rebill
-    of the COMBINED furnace + water-heater added-load series is NOT equal
-    to the naive sum of the two INDEPENDENTLY rebilled scenarios -- this is
-    the exact bug (summing two independent rebills silently let both
-    conversions claim the same exported solar kWh at once).
-
-    Hand-derivable setup: a 10-day synthetic frame (_synthetic_frame) has
-    constant Generation=0.05 kWh/interval, 960 intervals total, so total
-    real export capacity is EXACTLY 0.05 x 960 = 48.0 kWh across the whole
-    window. Both the furnace's own uniform-distribution added load (HDD=1.0
-    every day, so it spreads across every interval of every day) and the
-    water heater's own uniform-distribution added load are sized to roughly
-    0.5 kWh/interval, far above the 0.05 kWh/interval export -- so EACH
-    one, computed independently, fully absorbs the entire 48.0 kWh of
-    export on its own (absorbed = min(Generation, added) = Generation in
-    every interval). Summed independently, the two rebills together claim
-    2 x 48.0 = 96.0 kWh of solar that only exists once. Computed JOINTLY
-    (both loads summed into one series before netting), only 48.0 kWh can
-    ever be absorbed, since that is all the real export there is -- the
-    other 48.0 kWh of "double-claimed" solar becomes real new grid import
-    in the joint case, which importing at a positive rate must cost more
-    than the naive sum implies.
-
-    Mutation-tested: reverting sequencing_and_paybacks()'s own electric_
-    interaction subtraction (see git history / commit message for this
-    fix) does not touch this test directly -- but reverting THIS function
-    to return `wh_electric_increase + furnace_electric_increase` (the
-    pre-fix naive approach) instead of running a real joint rebill would
-    make joint_electric_cost_scenario's own electric_cost_increase_usd
-    equal the naive sum, and this test's own strict inequality below would
-    fail -- confirmed by hand during development (temporarily replacing
-    joint_electric_cost_scenario's own body with the naive sum, this test
-    failed; restored, it passes)."""
+def _joint_interaction_inputs(export_kwh):
+    """Ten winter days, with each added load exactly 0.5 kWh per interval."""
     d = _synthetic_frame(n_days=10)
-    total_export_capacity = float(d["Generation"].sum())
-    assert abs(total_export_capacity - 48.0) < 0.01, total_export_capacity  # 0.05 * 960
-
-    cop = 3.5
-    ann_target_kwh = 480.0   # >> 0.05 kWh/interval export cap in every interval
-    dates = sorted(d["dt"].dt.date.unique())
-    furnace_iso = {
-        "hdd_by_day": {day: 1.0 for day in dates},
-        "total_hdd": float(len(dates)),
-        "annual_heating_therms": ann_target_kwh * cop / (hpc.KWH_PER_THERM * hpc.FURNACE_AFUE),
-    }
-    ann_wh_kwh = ann_target_kwh
-
-    furnace_added, ann_heat_kwh, _ = hpc.build_hp_load_series(d, furnace_iso, cop)
-    wh_added, _ = A.build_wh_load_series(d, ann_wh_kwh)
-    assert abs(ann_heat_kwh - ann_target_kwh) < 0.5, ann_heat_kwh
-
-    furnace_increase, furnace_absorbed = _rebill_with_added_series(d, furnace_added["uniform"])
-    wh_increase, wh_absorbed = _rebill_with_added_series(d, wh_added["uniform"])
-    naive_sum_increase = round(furnace_increase + wh_increase, 2)
-    independent_absorbed_sum = furnace_absorbed + wh_absorbed
-
-    # Hand-derivable energy check: each independent rebill claims (close
-    # to) the FULL 48.0 kWh export on its own, so their sum is close to
-    # double the real export that actually exists.
-    assert abs(furnace_absorbed - total_export_capacity) < 1.0, furnace_absorbed
-    assert abs(wh_absorbed - total_export_capacity) < 1.0, wh_absorbed
-    assert independent_absorbed_sum > 1.8 * total_export_capacity, (
-        independent_absorbed_sum, total_export_capacity)
-
-    joint = A.joint_electric_cost_scenario(d, furnace_iso, cop, ann_wh_kwh)
-    # Jointly, only the real 48.0 kWh of export can ever be absorbed once --
-    # NOT the 96.0 kWh the two independent rebills together claimed.
-    assert abs(joint["solar_absorbed_kwh"] - total_export_capacity) < 1.0, joint
-    assert joint["solar_absorbed_kwh"] < independent_absorbed_sum - 40, (
-        joint["solar_absorbed_kwh"], independent_absorbed_sum)
-
-    # The dollar consequence: the joint rebill must cost MORE than the
-    # naive sum of the two independent rebills (more real grid import in
-    # the joint case, and rates.bill_nem() prices import at a positive
-    # rate) -- this is the exact inequality the pre-fix code got wrong by
-    # never computing joint at all.
-    joint_increase = joint["electric_cost_increase_usd"]
-    assert joint_increase > naive_sum_increase + 0.01, (joint_increase, naive_sum_increase)
-    return (f"joint electric rebill (${joint_increase}/yr) exceeds the naive sum of two "
-           f"independent rebills (${naive_sum_increase}/yr) by "
-           f"${round(joint_increase - naive_sum_increase, 2)}/yr, matching the hand-derived "
-           "double-claimed-solar energy gap")
-
-
-@case
-def case_electric_interaction_overstatement_matches_hand_calc():
-    """A.electric_interaction_overstatement() must report exactly
-    joint - (wh + furnace), and must be positive on the same hand-worked
-    double-claimed-solar setup case_joint_electric_cost_scenario_not_
-    equal_to_naive_sum_hand_example uses."""
-    d = _synthetic_frame(n_days=10)
+    d["Generation"] = export_kwh
     cop = 3.5
     ann_target_kwh = 480.0
     dates = sorted(d["dt"].dt.date.unique())
@@ -1542,19 +1461,89 @@ def case_electric_interaction_overstatement_matches_hand_calc():
     }
     furnace_added, _, _ = hpc.build_hp_load_series(d, furnace_iso, cop)
     wh_added, _ = A.build_wh_load_series(d, ann_target_kwh)
-    furnace_increase, _ = _rebill_with_added_series(d, furnace_added["uniform"])
-    wh_increase, _ = _rebill_with_added_series(d, wh_added["uniform"])
-    joint = A.joint_electric_cost_scenario(d, furnace_iso, cop, ann_target_kwh)
+    assert len(d) == 960
+    assert np.allclose(furnace_added["uniform"], 0.5, atol=1e-12)
+    assert np.allclose(wh_added["uniform"], 0.5, atol=1e-12)
+    return d, furnace_iso, cop, ann_target_kwh, furnace_added["uniform"], wh_added["uniform"]
 
-    result = A.electric_interaction_overstatement(
-        wh_electric_increase_usd=round(wh_increase, 2),
-        furnace_electric_increase_usd=round(furnace_increase, 2),
-        joint_electric_increase_usd=joint["electric_cost_increase_usd"])
-    expected = round(joint["electric_cost_increase_usd"]
-                     - (round(wh_increase, 2) + round(furnace_increase, 2)), 2)
-    assert abs(result["overstatement_usd"] - expected) < 0.01, (result, expected)
-    assert result["overstatement_usd"] > 0, result
-    return f"electric_interaction_overstatement matches a hand-computed interaction of ${result['overstatement_usd']}"
+
+@case
+def case_joint_electric_cost_is_additive_inside_the_linear_region():
+    """Physical solar overlap alone does not imply a positive dollar gap.
+
+    Import 0.1 exceeds export 0.05 before either load. All monthly buckets
+    and physical intervals remain positive, so each added kWh costs allin().
+    Independent cases each absorb the same 48 kWh, but joint billing is linear.
+    """
+    d, iso, cop, wh_kwh, furnace_added, wh_added = _joint_interaction_inputs(0.05)
+    furnace_increase, furnace_absorbed = _rebill_with_added_series(d, furnace_added)
+    wh_increase, wh_absorbed = _rebill_with_added_series(d, wh_added)
+    joint = A.joint_electric_cost_scenario(d, iso, cop, wh_kwh)
+    expected_joint = sum(R.allin(s, p) for s, p in zip(d["seas"], d["p"]))
+    assert abs(furnace_increase + wh_increase - expected_joint) < 1e-9
+    assert joint["electric_cost_increase_usd"] == round(expected_joint, 2), joint
+    assert joint["solar_absorbed_kwh"] == 48, joint
+    assert abs(furnace_absorbed + wh_absorbed - 96.0) < 1e-9
+    assert joint["combined_added_kwh"] == 960, joint
+    return "linear positive-net region has zero dollar interaction despite physical solar overlap"
+
+
+@case
+def case_joint_electric_cost_crosses_zero_with_a_hand_derived_gap():
+    """Keep a strict regression guard where the bill is actually nonlinear.
+
+    Each interval starts at -0.75 net kWh (0.1 import, 0.85 export). Either
+    0.5-kWh load alone stays at -0.25; together they reach +0.25. Every row in
+    a monthly TOU bucket shares that sign. The independent sum costs credit()
+    per interval; joint costs 0.75*credit()+0.25*energy()+0.25*NBC. Their gap is
+    0.25*(energy()-credit()+NBC), derived from both zero boundaries, not from
+    the function under test or a copied dollar result.
+    """
+    d, iso, cop, wh_kwh, furnace_added, wh_added = _joint_interaction_inputs(0.85)
+    furnace_increase, furnace_absorbed = _rebill_with_added_series(d, furnace_added)
+    wh_increase, wh_absorbed = _rebill_with_added_series(d, wh_added)
+    expected_naive = sum(R.credit(s, p) for s, p in zip(d["seas"], d["p"]))
+    expected_gap = sum(0.25 * (R.energy(s, p) - R.credit(s, p) + R.NBC)
+                       for s, p in zip(d["seas"], d["p"]))
+    expected_joint = expected_naive + expected_gap
+    assert expected_gap > 0.01
+    assert abs(furnace_increase + wh_increase - expected_naive) < 1e-9
+    joint = A.joint_electric_cost_scenario(d, iso, cop, wh_kwh)
+    assert joint["electric_cost_increase_usd"] == round(expected_joint, 2), joint
+    assert joint["electric_cost_increase_usd"] > round(expected_naive, 2) + 0.01
+    assert joint["solar_absorbed_kwh"] == 816, joint
+    assert abs(furnace_absorbed + wh_absorbed - 960.0) < 1e-9
+    assert joint["combined_added_kwh"] == 960, joint
+    return (f"boundary gap ${expected_gap:.4f} is derived from energy-credit+NBC; "
+            f"joint ${joint['electric_cost_increase_usd']:.2f} exceeds independent "
+            f"${expected_naive:.2f} while absorbing solar once")
+
+
+@case
+def case_electric_interaction_overstatement_matches_hand_calc():
+    """Report zero in the linear region and the derived positive boundary gap."""
+    for export_kwh in (0.05, 0.85):
+        d, iso, cop, wh_kwh, furnace_added, wh_added = _joint_interaction_inputs(export_kwh)
+        furnace_increase, _ = _rebill_with_added_series(d, furnace_added)
+        wh_increase, _ = _rebill_with_added_series(d, wh_added)
+        joint = A.joint_electric_cost_scenario(d, iso, cop, wh_kwh)
+        result = A.electric_interaction_overstatement(
+            wh_electric_increase_usd=round(wh_increase, 2),
+            furnace_electric_increase_usd=round(furnace_increase, 2),
+            joint_electric_increase_usd=joint["electric_cost_increase_usd"])
+        hand_gap = (sum(0.25 * (R.energy(s, p) - R.credit(s, p) + R.NBC)
+                        for s, p in zip(d["seas"], d["p"])) if export_kwh == 0.85 else 0.0)
+        individual = 0.5 * sum(
+            (R.credit(s, p) if export_kwh == 0.85 else R.allin(s, p))
+            for s, p in zip(d["seas"], d["p"]))
+        # This reporting helper receives separately rounded input costs.
+        # Derive those cents from the tariff, not from the helper's result.
+        expected = round(round(2 * individual + hand_gap, 2)
+                         - 2 * round(individual, 2), 2)
+        assert result["overstatement_usd"] == expected, (result, expected)
+        if export_kwh == 0.85:
+            assert result["overstatement_usd"] > 0, result
+    return "interaction helper reports zero for the linear case and the hand-derived positive boundary gap"
 
 
 @case
@@ -1835,6 +1824,97 @@ def _twelve_monthly_periods(therms=20.0, billed=50.0, allowance=11.0,
             baseline_rate=baseline_rate, nonbaseline_rate=nonbaseline_rate,
             energy_rate=energy_rate, other_fees_rate=other_fees_rate)
     return _make_periods_df(rows), detail
+
+
+def _annual_window_fixture():
+    old, detail = _twelve_monthly_periods()
+    future, future_detail = _twelve_monthly_periods(
+        therms=200.0, billed=900.0, year=2026)
+    # Keep only the first new statement; even one append must not move the year.
+    extra = future.iloc[:1]
+    extra_date = extra.iloc[0]["statement_date"]
+    dates = list(old["statement_date"])
+    expanded = pd.concat([extra, old.iloc[::-1]], ignore_index=True)
+    expanded_detail = detail + [r for r in future_detail
+                                if r["statement_date"] == extra_date]
+    hdd = pd.Series(1.0, index=[dt.date(2025, 1, 1) + dt.timedelta(days=i)
+                                for i in range(365)])
+    iso = {"annual_total_therms": 240.0,
+           "hdd_regression": {"heating_therms_yr": 73.0, "floor_therms_yr": 167.0},
+           "floor_therms_per_day": 0.4, "annual_heating_therms": 73.0,
+           "total_hdd": 365.0, "hdd_by_day": hdd}
+    return old, detail, expanded, expanded_detail, dates, iso
+
+
+@case
+def case_gas_bill_cross_check_does_not_roll_when_new_statements_arrive():
+    old, detail, expanded, extra_detail, dates, iso = _annual_window_fixture()
+    with _GasDetailFixture(expanded, extra_detail, statement_dates=dates):
+        result = A.gas_end_use_enumeration(iso)["independent_bill_cross_check"]
+    # Twelve selected statements each contain 20 therms; the new one has 200.
+    assert result["trailing_12_statement_therms"] == 240.0, result
+    assert result["pct_difference"] == 0.0, result
+    return "a newer 200-therm bill cannot replace a selected 20-therm bill"
+
+
+@case
+def case_floor_savings_keep_the_pinned_year_after_append():
+    old, detail, expanded, extra_detail, dates, iso = _annual_window_fixture()
+    with _GasDetailFixture(old, detail, statement_dates=dates):
+        before = A.floor_savings_by_period(iso)
+    # Floor = .4 * 365 = 146 therms. Each month first removes 9 therms at
+    # $2.40 and the rest at $2.00, plus $.62/therm in flat charges.
+    assert before[1:] == (425.72, 146.0), before
+    with _GasDetailFixture(expanded, extra_detail, statement_dates=dates):
+        after = A.floor_savings_by_period(iso)
+        last = A.floor_savings_by_period(iso, n_trailing=1)
+    assert after == before, (before, after)
+    assert [r["statement_date"] for r in last[0]] == ["2026-01-03"], last
+    assert last[2] == 12.4, last
+    return "annual floor dollars/therms and selected-year suffix survive append and row reorder"
+
+
+@case
+def case_tier_interaction_keeps_the_pinned_year_after_append():
+    old, detail, expanded, extra_detail, dates, iso = _annual_window_fixture()
+    with _GasDetailFixture(old, detail, statement_dates=dates):
+        before = A.tier_interaction_overstatement(iso)
+    # Both independent removals claim the same $.40 tier premium on all
+    # 73 heating therms, so the combined correction is $29.20.
+    assert before["overstatement_usd"] == 29.2, before
+    with _GasDetailFixture(expanded, extra_detail, statement_dates=dates):
+        after = A.tier_interaction_overstatement(iso)
+    assert after == before, (before, after)
+    return "the joint gas correction keeps all selected heating months after append"
+
+
+def _expect_bad_annual_scope(periods, detail, dates, iso, diagnosis):
+    with _GasDetailFixture(periods, detail, statement_dates=dates):
+        for consumer in (A.gas_end_use_enumeration, A.floor_savings_by_period,
+                         A.tier_interaction_overstatement):
+            try:
+                consumer(iso)
+            except SystemExit as exc:
+                assert diagnosis in str(exc).lower(), str(exc)
+                assert "2025-02-03" in str(exc), str(exc)
+            else:
+                raise AssertionError(f"{consumer.__name__} accepted {diagnosis} annual statement")
+
+
+@case
+def case_missing_annual_gas_statement_is_not_replaced_by_a_newer_bill():
+    old, detail, expanded, extra_detail, dates, iso = _annual_window_fixture()
+    missing = expanded[expanded["statement_date"] != "2025-02-03"]
+    _expect_bad_annual_scope(missing, extra_detail, dates, iso, "missing")
+    return "every annual gas consumer rejects a missing selected statement even with 12 other rows"
+
+
+@case
+def case_duplicate_annual_gas_statement_is_not_double_counted():
+    old, detail, expanded, extra_detail, dates, iso = _annual_window_fixture()
+    duplicate = pd.concat([expanded, old.iloc[:1]], ignore_index=True)
+    _expect_bad_annual_scope(duplicate, extra_detail, dates, iso, "duplicate")
+    return "every annual gas consumer rejects duplicate selected statements"
 
 
 @case

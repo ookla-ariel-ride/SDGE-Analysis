@@ -1,34 +1,34 @@
 {
- "basis": "integrated pipeline: behavior_rebuild.py EV shift -> battery_dispatch_policies.py price-aware dispatch -> rates.bill_nem (canonical bill-derived rates, NBC on gross imports); baseline $4,904 at 6/1/2026 rates; actual 365-day billed baseline $3,282 (2025-vintage tariffs)",
- "model_baseline_current_rates": 4904,
+ "basis": "integrated pipeline: behavior_rebuild.py EV shift -> battery_dispatch_policies.py price-aware dispatch -> rates.bill_nem (canonical bill-derived rates, NBC on positive physical interval net); baseline $4,901 at 6/1/2026 rates; actual 365-day billed baseline $3,282 (2025-vintage tariffs)",
+ "model_baseline_current_rates": 4901,
  "packages": {
   "LOW": {
    "cost": 0,
-   "savings_yr": 1221,
+   "savings_yr": 1222,
    "savings_range": [
-    1009,
-    1700
+    1010,
+    1701
    ],
-   "note": "EV-only 100% compliance; 80% = $1,009; +25% flexible house load = $1,700; stretch (50%) = $2,179",
+   "note": "EV-only 100% compliance; 80% = $1,010; +25% flexible house load = $1,701; stretch (50%) = $2,180",
    "free_fix_scenario": "a",
-   "projected_bill_current_rates_yr": 3683
+   "projected_bill_current_rates_yr": 3679
   },
   "MID": {
    "cost": 14500,
-   "savings_yr": 3601,
-   "battery_alone_yr": 2466,
-   "battery_alone_post_ev_fix_yr": 2380,
+   "savings_yr": 3600,
+   "battery_alone_yr": 2464,
+   "battery_alone_post_ev_fix_yr": 2378,
    "battery_alone_payback_yr": 5.9,
    "battery_alone_payback_post_fix_yr": 6.1,
    "battery_alone_payback_evening_only_yr": 8.4,
-   "projected_bill_current_rates_yr": 1304,
+   "projected_bill_current_rates_yr": 1302,
    "note": "single integrated run: EV shift then price-aware PW3 dispatch, re-billed end-to-end"
   },
   "HIGH": {
    "cost": 20400,
-   "savings_yr": 3819,
+   "savings_yr": 3818,
    "marginal_vs_mid_yr": 218,
-   "projected_bill_current_rates_yr": 1085,
+   "projected_bill_current_rates_yr": 1083,
    "note": "post-behavior (EV shift) expansion marginal $218/yr (~27-yr marginal payback on $5,900) \u2014 outage endurance is the reason to buy it"
   }
  },

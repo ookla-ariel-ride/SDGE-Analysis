@@ -298,11 +298,11 @@ Round-three review found every one of these violated. Check them mechanically, n
   package_results.json kept publishing a retired 5.4-yr payback long after the prose fixed it.
 - **Code-implements-its-docs:** check each model's docstring against its code and tariff.
   The earlier NBC correction removed monthly energy netting (−$208/yr in that model).
-  The current engine uses the imported-energy channel. NEM-ST SC 1(f), however, specifies
-  consumption net of exports within each metered interval. The 308-versus-224-kWh bill
-  example rejects billing-period netting; it does not settle within-interval channel
-  semantics. Reconcile those quantities against meter and bill evidence before changing
-  the canonical engine. See TECHNICAL.md's NBC clarification and issue #304.
+  The canonical engine now uses positive physical interval net for NEM-ST NBC.
+  Keep physical exports separate from credited exports. The reconciliation owner compares
+  the 15-minute basis against printed NBC quantities; it does not prove exact utility
+  interval mapping or rounding mechanics. See TECHNICAL.md's NBC basis and
+  data/nbc_bill_reconciliation.json. NBT proxies retain a separate gross-import assumption.
 - **One rate vintage per projection:** never subtract current-rate model deltas from
   prior-year actual bills to project a future bill — that mixes tariff vintages. Project on
   one basis (the current-rate model), label it "at constant current rates," and note that the
@@ -396,8 +396,7 @@ Mono data — with system fallbacks).
   `<details id="advanced" class="advanced">`, CLOSED by default (no persistence, no
   position:sticky). Its <summary> is a loud full-width section divider: mono uppercase
   eyebrow "ADVANCED ANALYSIS" + display-font headline "The full evidence" + inventory
-  line "7 sections · the full audit trail · every figure traceable to a script and a
-  data artifact" + a ▸ affordance that rotates 90° when open (details[open]); hairline
+  line "7 sections · methods, source records, and stated evidence limits" + a ▸ affordance that rotates 90° when open (details[open]); hairline
   top/bottom rules like .meta rows; :focus-visible outline; cursor:pointer.
 - REQUIRED mitigations (all four, wired in JS; verify on every regeneration):
   1. Every deep link into the tier auto-opens it — on load-with-hash AND hashchange —

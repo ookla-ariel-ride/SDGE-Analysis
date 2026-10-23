@@ -2503,7 +2503,7 @@
   "source": "Enphase SAM 8760 whole-home consumption (samA.csv/samB.csv)",
   "midday_10to14_p10_kw": 0.9455,
   "sam_night_1to5_median_kw_for_reference_only": 5.6285,
-  "note": "the midday p10 (a low percentile of whole-home consumption when solar is most abundant) is the day-side analog of the night-import floor, and is the ONLY figure here used as corroboration; the two independent instruments agreeing supports (but does not prove) that the load runs continuously rather than only at night. sam_night_1to5_median_kw_for_reference_only is the SAME SAM instrument's own 1-5am median, shown for reference only (PR #77 review nitpick: an earlier version placed this next to the corroboration note in a way that could be misread as a second, independent corroborating figure -- it is not; it is just the SAM meter's own night reading, not a cross-instrument comparison)."
+  "note": "The midday p10 summarizes the saved SAM hourly load series. Agreement with the utility night floor is arithmetic corroboration. The SAM sensing point and acquisition independence are unresolved. The night median is another summary of the same SAM series; neither summary establishes occupancy or the load's cause."
  },
  "pricing": {
   "floor_kw_priced": 1.03,
@@ -2536,16 +2536,17 @@
    }
   },
   "method_a_price_map": {
-   "avoided_import_usd": 2389.01,
+   "nbc_saved_usd": 126.42,
+   "avoided_import_usd": 2387.14,
    "displaced_export_usd": 767.88,
-   "total_usd": 3156.89
+   "total_usd": 3155.02
   },
   "method_b_rebill": {
-   "baseline_bill_usd": 4904.13,
-   "counterfactual_bill_usd": 1707.85,
-   "avoided_import_usd": 2373.2,
+   "baseline_bill_usd": 4901.38,
+   "counterfactual_bill_usd": 1706.98,
+   "avoided_import_usd": 2371.33,
    "displaced_export_usd": 823.07,
-   "total_usd": 3196.27
+   "total_usd": 3194.4
   },
   "floor_assumption_violations": {
    "intervals": 4221,
@@ -2655,7 +2656,7 @@
     }
    ],
    "sign_flip_buckets_kwh": 1530.5,
-   "explanation": "the PRIMARY mechanism is PCIA (rates.PCIA, $0.02828/kWh) being priced differently by the two methods inside buckets whose net sign does NOT change: method (a)'s flat price_map prices every leftover (displaced-export) kWh at the plain export credit rate and every reduce (avoided-import) kWh at the full import rate, regardless of whether that (month, season, period) bucket is a net importer or net exporter for the month; method (b)'s monthly netting instead prices the marginal kWh at whatever the BUCKET's own net sign implies, which folds PCIA into a leftover kWh sitting inside an already net-positive bucket (undervalued by method (a), -PCIA/kWh) and strips PCIA from a reduce kWh sitting inside an already net-negative bucket (overvalued by method (a), +PCIA/kWh) -- see gap_decomposition for the exact kWh on each side and CLAUDE.md section 0. This pcia_effect_usd accounts for $-47.93 of the $-39.38 total gap. The SECONDARY, smaller contributor is the sign_flip_residual_usd ($8.55): buckets where the aggregate net sign genuinely flips between the billed year and the counterfactual are nonlinear and not decomposed further -- see sign_flip_buckets for exactly which 12 bucket(s), totalling 1530.5 kWh, those are. An earlier version of this module and artifact named sign flips as the SOLE cause of this gap; an independent review (PR #77) showed that explanation was wrong -- the sign-flip term alone is smaller than the total gap and can carry the opposite sign -- and this explanation replaces it, verified against a fixture with zero sign flips and a nonzero gap the PCIA mechanism alone predicts (test_quiet_night_floor.case_reconciliation_gap_is_explained_by_pcia_not_sign_flips).",
+   "explanation": "the PRIMARY mechanism is PCIA (rates.PCIA, $0.02828/kWh) being priced differently by the two methods inside buckets whose net sign does NOT change: method (a)'s flat price_map prices every leftover (displaced-export) kWh at the plain export credit rate and every reduce (avoided-import) kWh at the full energy rate plus the exact finite interval NBC change. The energy rate ignores whether that (month, season, period) bucket is a net importer or net exporter for the month; method (b)'s monthly netting instead prices the marginal kWh at whatever the BUCKET's own net sign implies, which folds PCIA into a leftover kWh sitting inside an already net-positive bucket (undervalued by method (a), -PCIA/kWh) and strips PCIA from a reduce kWh sitting inside an already net-negative bucket (overvalued by method (a), +PCIA/kWh) -- see gap_decomposition for the exact kWh on each side and CLAUDE.md section 0. This pcia_effect_usd accounts for $-47.93 of the $-39.38 total gap. The SECONDARY, smaller contributor is the sign_flip_residual_usd ($8.55): buckets where the aggregate net sign genuinely flips between the billed year and the counterfactual are nonlinear and not decomposed further -- see sign_flip_buckets for exactly which 12 bucket(s), totalling 1530.5 kWh, those are. An earlier version of this module and artifact named sign flips as the SOLE cause of this gap; an independent review (PR #77) showed that explanation was wrong -- the sign-flip term alone is smaller than the total gap and can carry the opposite sign -- and this explanation replaces it, verified against a fixture with zero sign flips and a nonzero gap the PCIA mechanism alone predicts (test_quiet_night_floor.case_reconciliation_gap_is_explained_by_pcia_not_sign_flips).",
    "scope_of_agreement": "what this reconciliation does and does not prove: both methods start from the IDENTICAL _split_floor allocation and draw every rate constant from the SAME rates.py module, so their agreement (or this small, now-explained gap) validates only the NETTING/AGGREGATION treatment (monthly re-bill vs. flat per-interval pricing) -- it does not independently validate the rate constants themselves (both methods would inherit an error in rates.py identically) and it does NOT validate the physical floor-allocation model in _split_floor, which pricing.floor_assumption_violations shows is where a larger, separately-quantified limitation actually lives."
   }
  },
@@ -2665,8 +2666,8 @@
   "steps": [
    {
     "reduction_w": 100,
-    "annual_savings_usd": 323.16,
-    "marginal_usd_per_100w": 323.16,
+    "annual_savings_usd": 322.66,
+    "marginal_usd_per_100w": 322.66,
     "exceeds_measured_floor": false,
     "requested_kwh": 876.0,
     "delivered_kwh": 875.93,
@@ -2675,8 +2676,8 @@
    },
    {
     "reduction_w": 200,
-    "annual_savings_usd": 644.29,
-    "marginal_usd_per_100w": 321.13,
+    "annual_savings_usd": 643.48,
+    "marginal_usd_per_100w": 320.81,
     "exceeds_measured_floor": false,
     "requested_kwh": 1752.0,
     "delivered_kwh": 1750.8,
@@ -2685,8 +2686,8 @@
    },
    {
     "reduction_w": 300,
-    "annual_savings_usd": 964.03,
-    "marginal_usd_per_100w": 319.74,
+    "annual_savings_usd": 962.97,
+    "marginal_usd_per_100w": 319.49,
     "exceeds_measured_floor": false,
     "requested_kwh": 2628.0,
     "delivered_kwh": 2623.6,
@@ -2695,8 +2696,8 @@
    },
    {
     "reduction_w": 400,
-    "annual_savings_usd": 1282.05,
-    "marginal_usd_per_100w": 318.03,
+    "annual_savings_usd": 1280.81,
+    "marginal_usd_per_100w": 317.84,
     "exceeds_measured_floor": false,
     "requested_kwh": 3504.0,
     "delivered_kwh": 3493.45,
@@ -2705,8 +2706,8 @@
    },
    {
     "reduction_w": 500,
-    "annual_savings_usd": 1597.06,
-    "marginal_usd_per_100w": 315.01,
+    "annual_savings_usd": 1595.67,
+    "marginal_usd_per_100w": 314.85,
     "exceeds_measured_floor": false,
     "requested_kwh": 4380.0,
     "delivered_kwh": 4359.28,
@@ -2715,8 +2716,8 @@
    },
    {
     "reduction_w": 600,
-    "annual_savings_usd": 1909.37,
-    "marginal_usd_per_100w": 312.31,
+    "annual_savings_usd": 1907.85,
+    "marginal_usd_per_100w": 312.19,
     "exceeds_measured_floor": false,
     "requested_kwh": 5256.0,
     "delivered_kwh": 5220.78,
@@ -2725,8 +2726,8 @@
    },
    {
     "reduction_w": 700,
-    "annual_savings_usd": 2219.01,
-    "marginal_usd_per_100w": 309.64,
+    "annual_savings_usd": 2217.39,
+    "marginal_usd_per_100w": 309.53,
     "exceeds_measured_floor": false,
     "requested_kwh": 6132.0,
     "delivered_kwh": 6076.95,
@@ -2735,8 +2736,8 @@
    },
    {
     "reduction_w": 800,
-    "annual_savings_usd": 2524.46,
-    "marginal_usd_per_100w": 305.45,
+    "annual_savings_usd": 2522.75,
+    "marginal_usd_per_100w": 305.36,
     "exceeds_measured_floor": false,
     "requested_kwh": 7008.0,
     "delivered_kwh": 6925.12,
@@ -2745,8 +2746,8 @@
    },
    {
     "reduction_w": 900,
-    "annual_savings_usd": 2823.94,
-    "marginal_usd_per_100w": 299.49,
+    "annual_savings_usd": 2822.16,
+    "marginal_usd_per_100w": 299.41,
     "exceeds_measured_floor": false,
     "requested_kwh": 7884.0,
     "delivered_kwh": 7758.28,
@@ -2755,8 +2756,8 @@
    },
    {
     "reduction_w": 1000,
-    "annual_savings_usd": 3113.07,
-    "marginal_usd_per_100w": 289.13,
+    "annual_savings_usd": 3111.22,
+    "marginal_usd_per_100w": 289.06,
     "exceeds_measured_floor": false,
     "requested_kwh": 8760.0,
     "delivered_kwh": 8569.38,
@@ -2765,8 +2766,8 @@
    },
    {
     "reduction_w": 1100,
-    "annual_savings_usd": 3382.28,
-    "marginal_usd_per_100w": 269.21,
+    "annual_savings_usd": 3380.36,
+    "marginal_usd_per_100w": 269.14,
     "exceeds_measured_floor": true,
     "requested_kwh": 9636.0,
     "delivered_kwh": 9326.95,
@@ -2775,8 +2776,8 @@
    },
    {
     "reduction_w": 1200,
-    "annual_savings_usd": 3631.31,
-    "marginal_usd_per_100w": 249.03,
+    "annual_savings_usd": 3629.33,
+    "marginal_usd_per_100w": 248.97,
     "exceeds_measured_floor": true,
     "requested_kwh": 10512.0,
     "delivered_kwh": 10031.5,
@@ -2786,55 +2787,55 @@
   ],
   "usd_per_100w_at_current_floor": {
    "reduction_w": 100,
-   "value_usd": 323.16,
+   "value_usd": 322.66,
    "note": "the marginal $/100W for the FIRST 100 W removed from the floor as measured (1030 W) -- the rate this household should expect for the next 100 W it strips, which is what a household standing at its own measured floor is asking. `reduction_w` counts watts REMOVED from that floor, not a resulting floor level: this is the ladder's first slice, and the ladder's later rungs price DEEPER removal (the 1000 W rung is the tenth 100 W, priced for a household that already stripped 900 W), not this one. See marginal_range for how far the rate moves across the ladder."
   },
   "marginal_range": {
    "reachable": {
-    "min_usd": 289.13,
+    "min_usd": 289.06,
     "min_at_reduction_w": 1000,
-    "max_usd": 323.16,
+    "max_usd": 322.66,
     "max_at_reduction_w": 100,
     "through_reduction_w": 1000,
     "min_marginal_delivery_ratio": 0.9259,
     "min_marginal_delivery_ratio_at_reduction_w": 1000
    },
    "full_ladder": {
-    "min_usd": 249.03,
+    "min_usd": 248.97,
     "min_at_reduction_w": 1200,
-    "max_usd": 323.16,
+    "max_usd": 322.66,
     "max_at_reduction_w": 100
    },
    "note": "the spread of the per-100W marginal, so its fall along the ladder is readable without recomputing it from `steps`. EVERY rung here is clamped to some degree, including any at or below the measured floor -- read each step's own `marginal_delivery_ratio` before reading any spread as a tariff effect. The REACHABLE range covers the rungs at or below the measured floor (1030 W). It is NOT a clamping-free reading of tariff curvature. `_split_floor` clamps each interval's requested reduction to THAT INTERVAL's own metered import, and the measured floor is a MEDIAN, so a reachable rung still exceeds the metered import of every interval drawing less than the median. The direct evidence for that shortfall is each rung's own `marginal_delivery_ratio`, which is measured per INTERVAL; night_floor.p10_kw is a decile of the quiet NIGHTS by their own medians, not of intervals, and cannot stand in for it. Restricting to the reachable rungs NARROWS that dilution; it does not remove it. Size the residual from the reachable rung that delivers least: at 1000 W the rung's own 100 W slice delivers 0.9259 of the energy it asks for (190.62 kWh of its 8760.0 kWh cumulative request is dropped, never credited). Read the per-100 W marginal's fall along EITHER range as mainly a DELIVERY effect -- each successive slice removes less energy than the one before -- not as evidence that deeper removal is worth less per delivered kWh. The FULL LADDER adds the rungs above the measured floor, where the same per-interval clamp bites harder still, so its minimum is the most diluted figure in this section."
   },
   "usd_per_100w_general_average": {
-   "value_usd": 310.86,
+   "value_usd": 310.72,
    "note": "linear-fit slope over the reachable 100-1000 W rungs only -- the rungs at or below the measured floor (1030 W) -- a general marginal rate for removal the floor can actually supply, not specific to the current floor level. Lower dilution than the full ladder, NOT zero dilution: the clamp is per interval and the measured floor is a median, so reachable rungs drop energy too (see marginal_range.reachable.min_marginal_delivery_ratio). See usd_per_100w_full_ladder_average for the identical fit over every rung, including the 2 (1100 W, 1200 W) that exceed the measured floor."
   },
   "usd_per_100w_full_ladder_average": {
-   "value_usd": 303.76,
+   "value_usd": 303.64,
    "note": "linear-fit slope across the full 100-1200 W ladder, all twelve rungs -- a general marginal rate, not specific to the current floor level. This fit spans 2 rung(s) (1100 W, 1200 W) that exceed the measured floor (1030 W), where _split_floor drops the energy the metered load cannot supply, so this value is pulled DOWN by rungs the household cannot reach. See usd_per_100w_general_average for the identical fit restricted to the reachable rungs alone."
   },
-  "linearity_note": "max deviation from the linear fit is $25.85 (0.83% of savings at 1000 W) across the reachable 100-1000 W rungs alone -- effectively linear over this range. Read that as a DELIVERY effect, not curvature: the reachable rungs are clamped too (the clamp is per interval, the floor is a median), so read the deviation as incomplete delivery, not residual tariff nonlinearity. See linearity_note_full_ladder for the same reading across every 100-1200 W rung, including the 2 (1100 W, 1200 W) that exceed the measured floor.",
-  "linearity_note_full_ladder": "max deviation from the linear fit is $73.89 (2.03% of total savings at 1200 W) across the full 100-1200 W ladder, all twelve rungs, including 2 (1100 W, 1200 W) that exceed the measured floor (1030 W) -- measurably nonlinear. Read that as a DELIVERY effect, not curvature: the full-ladder figure includes rungs above the measured floor (1030 W), whose marginals are diluted by energy _split_floor drops, and the rungs below the floor are diluted the same way for the same reason (per-interval clamp, median floor). See linearity_note for the same reading restricted to the reachable rungs alone."
+  "linearity_note": "max deviation from the linear fit is $25.71 (0.83% of savings at 1000 W) across the reachable 100-1000 W rungs alone -- effectively linear over this range. Read that as a DELIVERY effect, not curvature: the reachable rungs are clamped too (the clamp is per interval, the floor is a median), so read the deviation as incomplete delivery, not residual tariff nonlinearity. See linearity_note_full_ladder for the same reading across every 100-1200 W rung, including the 2 (1100 W, 1200 W) that exceed the measured floor.",
+  "linearity_note_full_ladder": "max deviation from the linear fit is $73.74 (2.03% of total savings at 1200 W) across the full 100-1200 W ladder, all twelve rungs, including 2 (1100 W, 1200 W) that exceed the measured floor (1030 W) -- measurably nonlinear. Read that as a DELIVERY effect, not curvature: the full-ladder figure includes rungs above the measured floor (1030 W), whose marginals are diluted by energy _split_floor drops, and the rungs below the floor are diluted the same way for the same reason (per-interval clamp, median floor). See linearity_note for the same reading restricted to the reachable rungs alone."
  },
  "battery_interaction": {
   "config": "13.5 kWh Powerwall 3 (bare unit), the published dispatch policy, raw measured year (no EV-shift behavior model stacked on top -- isolates the floor's own effect on the battery)",
-  "baseline_battery_marginal_usd": 2464.85,
-  "reduced_floor_battery_marginal_usd": 1388.43,
-  "delta_usd": -1076.42,
-  "delta_pct": -43.67,
+  "baseline_battery_marginal_usd": 2463.36,
+  "reduced_floor_battery_marginal_usd": 1388.1,
+  "delta_usd": -1075.26,
+  "delta_pct": -43.65,
   "direction": "removing the floor SHRINKS the battery's own marginal saving: the floor persists into the 4-9pm on-peak window the battery discharges into, so a smaller floor leaves less expensive import for the battery to displace",
   "caveat": "small confound (PR #77 review nitpick): run_batt's published EV-spillover gate (kw = imp*4 >= 2.5 kW is treated as non-battery-servable house/EV load) is evaluated on EACH series' OWN import values, so some intervals become servable ONLY in the floor-removed counterfactual purely because subtracting the floor pushed their import under 2.5 kW -- not because of any real behavioral change. Freezing the gate on the baseline series instead moves this delta by roughly $26/yr in the conservative direction (a smaller magnitude reduction in the battery's marginal saving); not corrected here since the gate is run_batt's own shared, unmodified logic."
  },
  "confidence_labels": {
-  "load_magnitude": "measured -- night_floor is read directly from 15-minute Green Button import data (no solar to mask it); hour_of_day is read directly from the Enphase SAM 8760 whole-home consumption meter, an independent instrument that sees self-consumed solar and so is the only one that can see a daytime floor",
+  "load_magnitude": "measured utility night imports; SAM daytime load is a separate saved series with unresolved sensing point and acquisition independence",
   "load_cause": "attested, not measured -- the owner identifies the floor as home-lab computer systems (report prose, index.html section 13; NOT independently recorded in any structured data file or TECHNICAL.md -- corrected citation, PR #77 review finding 3 caught an earlier version wrongly pointing this at TECHNICAL.md 3.11, which contains no such attribution either); this script does not verify that with a plug-meter study or device-level monitoring, and reports the load's cost regardless of cause",
   "pricing": "modeled -- both pricing methods apply the measured floor_kw as a CONSTANT across all 8,760 hours of the year, an assumption (continuous compute load) that is plausible but not separately verified outside the measured 1-5am night window and the SAM hour-of-day cross-check",
   "battery_interaction": "modeled -- battery_dispatch_policies.run_batt, the same engine behind every published battery figure in this repo, applied to a counterfactual load series"
  },
  "notes": {
-  "engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
+  "engine": "rates.bill_nem (monthly per-period NEM netting, NBC on positive physical interval net)",
   "quiet_night_method": "a NEW, independently-designed per-night rule (PR #77 review, finding 3 -- an earlier version wrongly cited this as inherited from TECHNICAL.md 3.11, which documents no extraction rule at all, only the phantom key's result values): 1-5am median import power per calendar night, excluding any night whose max 1-5am power >= 2 kW. This per-night rule is NOT the same as TECHNICAL.md 3.5 item 2's existing per-INTERVAL rule (deep_analyses.py: 3-5am window, Consumption <= 0.5 kWh per interval, 25th percentile) -- a per-interval filter can admit a night with a brief high-demand spike as 'quiet' as long as its OTHER intervals stay low, letting spillover contaminate the aggregate; a per-night gate excludes the WHOLE night once any interval in it crosses the threshold, which is the more appropriate shape for isolating an all-night continuous floor. The resulting per-night median/p10/p90 matches the phantom key's own values closely (see night_floor.cross_check_extra_results_json) even though this script is the first committed generator for either rule."
  }
 }

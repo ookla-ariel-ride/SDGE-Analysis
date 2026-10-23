@@ -12,8 +12,8 @@ it re-measures the floor directly from interval data (not by reading the phantom
 key's hand-recorded numbers), prices it two independent ways, and reconciles them.
 
 What "measured" covers and what it does not. The floor's MAGNITUDE is measured
-from two independent real instruments: the overnight import series (15-minute
-Green Button export, no solar to mask it) and the whole-home consumption meter
+from two source series with unresolved acquisition independence: the overnight import series (15-minute
+Green Button export, no solar to mask it) and the hourly load export
 (Enphase SAM 8760, which sees self-consumed solar and so is the only instrument
 that can see the floor at midday, where an import-only measurement cannot -- see
 `away_days` corroboration in the report's section 9, which makes the same point).
@@ -34,7 +34,7 @@ Methodology, acceptance-criterion by acceptance-criterion (issue #17):
    selection_caveat` for the resulting exclusion rate, which the field name is
    deliberately neutral about (a dryer or a heat-pump cycle trips the same
    gate an EV charge does)). `hour_of_day.profile` is a SEPARATE,
-   independently-sourced 24-hour distribution (p10/median/p90 of whole-home
+   SAM-based 24-hour distribution with unresolved sensing provenance (p10/median/p90 of whole-home
    consumption by hour of day, from the SAM meter, which sees the day floor an
    import-only measurement cannot) -- not derived from the night series.
 
@@ -113,7 +113,7 @@ Methodology, acceptance-criterion by acceptance-criterion (issue #17):
    battery's OWN marginal saving in both cases -- not a hand-wave.
 
 6. Confidence labels. `confidence_labels` distinguishes the measured LOAD
-   (real, two independent instruments) from the attested CAUSE (owner's word),
+   (real, two compared source series) from the attested CAUSE (owner's word),
    and separately labels the pricing and battery-interaction sections as
    modeled (they assume the measured floor magnitude holds constant across all
    8,760 hours of the year, which is plausible for continuously-running compute
@@ -650,7 +650,7 @@ def _stitched_sam_load(window_start, window_end):
 
 
 def hour_of_day_profile(window_start, window_end):
-    """A SEPARATE, independently-instrumented 24-hour distribution (issue AC1):
+    """A SEPARATE, separately summarized 24-hour distribution (issue AC1):
     whole-home consumption sees self-consumed solar, so it is the only signal
     that can show the floor persisting through daylight hours, where an
     import-only measurement reads near zero because solar is covering it."""
@@ -676,19 +676,11 @@ def hour_of_day_profile(window_start, window_end):
         "source": "Enphase SAM 8760 whole-home consumption (samA.csv/samB.csv)",
         "midday_10to14_p10_kw": midday_floor_p10_kw,
         "sam_night_1to5_median_kw_for_reference_only": sam_night_median_kw,
-        "note": ("the midday p10 (a low percentile of whole-home consumption "
-                "when solar is most abundant) is the day-side analog of the "
-                "night-import floor, and is the ONLY figure here used as "
-                "corroboration; the two independent instruments agreeing "
-                "supports (but does not prove) that the load runs "
-                "continuously rather than only at night. "
-                "sam_night_1to5_median_kw_for_reference_only is the SAME "
-                "SAM instrument's own 1-5am median, shown for reference "
-                "only (PR #77 review nitpick: an earlier version placed this "
-                "next to the corroboration note in a way that could be "
-                "misread as a second, independent corroborating figure -- it "
-                "is not; it is just the SAM meter's own night reading, not a "
-                "cross-instrument comparison)."),
+        "note": ("The midday p10 summarizes the saved SAM hourly load series. "
+                 "Agreement with the utility night floor is arithmetic corroboration. "
+                 "The SAM sensing point and acquisition independence are unresolved. "
+                 "The night median is another summary of the same SAM series; "
+                 "neither summary establishes occupancy or the load's cause."),
     }
 
 
@@ -771,9 +763,12 @@ def floor_assumption_violations(d, consumption, generation, floor_kwh_per_interv
 
 
 def price_method_a(d, price_map, reduce_from_import, leftover):
-    """Hour-by-hour against the marginal price map -- no monthly netting, no
-    NEM aggregation: each interval's own import/export sign and its own
-    season/period cell decide its price."""
+    """Flat energy prices, with exact finite physical-interval NBC changes.
+
+    Energy uses the import/export price map without monthly netting. Remove
+    its unconditional NBC adder and price NBC from the physical before/after
+    channels instead; otherwise both-positive intervals overstate savings.
+    """
     f = d[["seas", "p"]].copy()
     f["reduce"] = reduce_from_import
     f["leftover"] = leftover
@@ -783,9 +778,18 @@ def price_method_a(d, price_map, reduce_from_import, leftover):
         for p in PERIODS:
             key = f"{s}_{p}"
             sub = f[(f.seas == s) & (f.p == p)]
-            avoided_import += sub["reduce"].sum() * price_map[key]["import"]
+            avoided_import += sub["reduce"].sum() * (price_map[key]["import"] - R.NBC)
             displaced_export += sub["leftover"].sum() * price_map[key]["export"]
+    consumption = d.Consumption.to_numpy(dtype=float)
+    generation = d.Generation.to_numpy(dtype=float)
+    after_import = consumption - np.asarray(reduce_from_import)
+    nbc0 = R.nbc_kwh(consumption, generation)
+    nbc1 = R.nbc_kwh(after_import, generation)
+    nbc2 = R.nbc_kwh(after_import, generation + np.asarray(leftover))
+    avoided_import += R.NBC * float((nbc0 - nbc1).sum())
+    displaced_export += R.NBC * float((nbc1 - nbc2).sum())
     return {
+        "nbc_saved_usd": round(R.NBC * float((nbc0 - nbc2).sum()), 2),
         "avoided_import_usd": round(float(avoided_import), 2),
         "displaced_export_usd": round(float(displaced_export), 2),
         "total_usd": round(float(avoided_import + displaced_export), 2),
@@ -794,7 +798,7 @@ def price_method_a(d, price_map, reduce_from_import, leftover):
 
 def price_method_b(d, consumption, generation, reduce_from_import, leftover):
     """Re-bill the counterfactual year with the floor removed (monthly
-    per-period NEM netting, NBC on gross imports -- rates.bill_nem, the same
+    per-period NEM netting, NBC on positive physical interval net -- rates.bill_nem, the same
     engine every published battery/behavior figure in this repo uses). The
     avoided-import and displaced-export channels are isolated by billing THREE
     series and differencing, so the split reflects the REAL netting mechanics
@@ -882,8 +886,9 @@ def gap_decomposition(d, consumption, generation, new_consumption, new_generatio
       - a bucket that stays net-NEGATIVE throughout: netting values an avoided
         -import kWh (reduce_from_import) at rates.credit() (no PCIA), since
         it is really just deepening the same net-negative export. Method (a)
-        prices every reduce_from_import kWh at rates.allin() (WITH PCIA)
-        regardless of the bucket's state -- overvaluing it by PCIA per kWh
+        prices every reduce_from_import energy kWh at rates.energy() (WITH PCIA)
+        regardless of the bucket's state; NBC is priced separately and equally
+        by both methods -- overvaluing it by PCIA per kWh
         (contributes +PCIA per kWh to gap = a - b).
     Both effects are exact and linear wherever the bucket's sign does not
     change between baseline and counterfactual (verified: CLAUDE.md section 0
@@ -1315,13 +1320,9 @@ def confidence_labels():
     separately labels the modeled sections. A standalone function (not inlined
     into main()) so it is directly testable without running the full pipeline."""
     return {
-        "load_magnitude": ("measured -- night_floor is read directly from "
-                          "15-minute Green Button import data (no solar to "
-                          "mask it); hour_of_day is read directly from the "
-                          "Enphase SAM 8760 whole-home consumption meter, an "
-                          "independent instrument that sees self-consumed "
-                          "solar and so is the only one that can see a "
-                          "daytime floor"),
+        "load_magnitude": ("measured utility night imports; SAM daytime load "
+                           "is a separate saved series with unresolved sensing "
+                           "point and acquisition independence"),
         "load_cause": ("attested, not measured -- the owner identifies the "
                       "floor as home-lab computer systems (report prose, "
                       "index.html section 13; NOT independently recorded in "
@@ -1422,7 +1423,8 @@ def main():
                     "method (a)'s flat price_map prices every leftover "
                     "(displaced-export) kWh at the plain export credit rate "
                     "and every reduce (avoided-import) kWh at the full "
-                    "import rate, regardless of whether that (month, season, "
+                    "energy rate plus the exact finite interval NBC change. "
+                    "The energy rate ignores whether that (month, season, "
                     "period) bucket is a net importer or net exporter for "
                     "the month; method (b)'s monthly netting instead prices "
                     "the marginal kWh at whatever the BUCKET's own net sign "
@@ -1471,7 +1473,7 @@ def main():
         "battery_interaction": battery,
         "confidence_labels": confidence_labels(),
         "notes": {
-            "engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
+            "engine": "rates.bill_nem (monthly per-period NEM netting, NBC on positive physical interval net)",
             "quiet_night_method": (
                 "a NEW, independently-designed per-night rule (PR #77 review, "
                 "finding 3 -- an earlier version wrongly cited this as "

@@ -114,7 +114,7 @@
      state in both sections IS tr.win, which carries no badge to be wrong. */
   .pill{display:inline-block;font-family:var(--mono);font-size:.64rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;padding:2px 8px;border-radius:3px;border:1.5px solid;vertical-align:middle}
   .pill.g{color:var(--sop);border-color:var(--sop)} .pill.y{color:var(--offpeak);border-color:var(--offpeak)} .pill.r{color:var(--onpeak);border-color:var(--onpeak)}
-  .chartbox{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin:16px 0}
+  .chartbox{position:relative;height:clamp(320px,40vw,420px);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin:16px 0}
   .note{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--offpeak);padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0;font-size:.93rem}
   .rec{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--sop);padding:13px 18px;border-radius:0 8px 8px 0;margin:14px 0}
   .purpose{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--sop);padding:13px 18px;border-radius:0 8px 8px 0;margin:14px 0;font-size:.95rem}
@@ -136,8 +136,8 @@
   a{color:var(--sop)}
   .small{font-size:.82rem;color:var(--sub)}
   b,strong{font-weight:600}
-  code{font-family:var(--mono);font-size:.85em;background:color-mix(in srgb,var(--line) 40%,transparent);padding:1px 5px;border-radius:3px}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  code{font-family:var(--mono);font-size:.85em;background:color-mix(in srgb,var(--line) 40%,transparent);padding:1px 5px;border-radius:3px} .wrap code{overflow-wrap:anywhere}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px} .grid2 > *{min-width:0}
   .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
   @media(max-width:800px){.grid2{grid-template-columns:1fr}}
   nav.toc{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--paper) 93%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);margin:0 -20px;padding:8px 20px;display:flex;flex-direction:column;gap:5px}
@@ -221,6 +221,7 @@
   <div class="meta-row"><span class="meta-k">Sources</span><span class="meta-v">{{DATA_SOURCES_SUMMARY}} <!-- TODO: one-line inventory of every source actually used, e.g. "utility Green Button 15-min interval data · N detailed bill PDFs · inverter-platform hourly consumption + daily production · weather/precipitation records · grid-operator CO2 + demand history · solar install invoice" --></span></div>
 </div>
 
+
 <div class="dayband" aria-hidden="true">
   <!-- TARIFF DATA, not design: the segment widths and tick numbers below encode this
        tariff's weekday TOU windows (here 0-6-10-14-16-21 — super-off-peak 0-6 & 10-14,
@@ -244,7 +245,7 @@
   <div class="db-labels">
     <span style="width:25%">super-off-peak {{DAYBAND_SOP_PRICE}}</span><span style="width:16.67%">off-peak {{DAYBAND_OFFPEAK_PRICE}}</span><span style="width:16.67%">super-off {{DAYBAND_SOP_PRICE}}</span><span style="width:8.33%">off</span><span class="on" style="width:20.83%">on-peak {{DAYBAND_ONPEAK_PRICE}}</span><span style="width:12.5%">off-peak</span>
   </div>
-  <p class="db-caption">The weekday price clock ({{DAYBAND_SEASON_LABEL}} rates shown<!-- TODO: the tariff season whose rates the stamps show, e.g. "Jun–Oct" for a summer season -->) — every conclusion in this report is about moving energy across these windows.</p>
+  <p class="db-caption">The weekday price clock ({{DAYBAND_SEASON_LABEL}} rates shown<!-- TODO: the tariff season whose rates the stamps show, e.g. "Jun–Oct" for a summer season -->) — these windows explain why the timing of flexible loads and battery use matters.</p>
 </div>
 
 <nav class="toc" id="toc">
@@ -255,7 +256,7 @@
 </nav>
 
 <div class="purpose">
-<b>Purpose.</b> This report is a decision document for one household: given a full year of measured energy data, what should this home do about its rate plan, its behavior, storage, and its solar array? Every conclusion is computed from data by committed scripts; nothing is asserted from intuition or vendor claims. It works to answer these questions:
+<b>Purpose.</b> This report is a decision document for one household: given a full year of measured energy data, what should this home do about its rate plan, its behavior, storage, and its solar array? Calculations use the listed data sources. Equipment specifications and estimated inputs carry separate limits. The report answers these questions:
 
 <ol class="hang">
 <li><b>Am I on the best electric rate plan?</b> (§3)</li>
@@ -270,21 +271,21 @@
 <li><b>What is NEM grandfathering worth per year?</b> (§13)</li>
 </ol>
 <!-- TODO: adapt the question list to the analyses actually run (drop solar/gas questions if not applicable). Keep the evidence-label sentence. -->
-Every answer carries its evidence: <span class="pill g">measured</span>, <span class="pill y">modeled</span>, or <span class="pill r">estimated</span> (§14 legend). Absolute dollars anchor to real bills; projections are labeled with their rate basis.
+Every answer carries its evidence: <span class="pill g">measured</span>, <span class="pill y">modeled</span>, or <span class="pill r">estimated</span> (§14 legend). Actual costs come from bills; projected costs come from models with a stated rate basis.
 </div>
 
 <h2 id="s0">Bottom line</h2>
 <p class="verdict">{{S0_VERDICT}}</p>
 <div class="rec">
-<b>All dollar figures below are anchored to your actual bills</b>, a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods): <b>{{ACTUAL_ANNUAL_BILL}}/yr electric (~{{ACTUAL_MONTHLY_BILL}}/mo)</b>. Savings below are model <i>differences</i> at current rates, computed by physically moving energy between intervals and re-billing with the bill-validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>).<br><br>
+<b>The actual electric bill was {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo)</b> across a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods<!-- NOTE: give the exact service dates for the annual bill audit -->). Savings below compare modeled cases at {{RATES_EFFECTIVE_DATE}} rates. The model moves energy between intervals and re-bills the result (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). <!-- NOTE: state the unresolved absolute-bill gap and link to the bill section. --><br><br>
 <ol class="hang">
-<li><!-- TODO item 1 — PLAN VERDICT: which rate plan the artifacts price cheapest, with and without a battery; this house's margin against the runner-up; note whether the utility's own comparison tool agrees. THE STANDING IS NOT YOURS TO ASSERT. S0_BEST_PLAN_CARD and S0_VERDICT are among the values above and they state it — this house's plan may be the cheapest priced, may tie, may be beaten — so follow them, and never recommend staying on a plan the card says is beaten. The margin is SIGNED: a lead only where it is positive, and the amount this plan is behind where it is negative, so "clear of the runner-up" and "widens its lead" are claims to check before writing, not phrases to reuse. Reference voice for a house whose card says its plan is cheapest in every scenario tested: "Plan: stay on {{BEST_PLAN}} — cheapest with or without a battery ({{PLAN_MARGIN_VS_RUNNER_UP}}/yr against the runner-up), and a battery does not change that." Where the card or the verdict says otherwise, invert that sentence rather than softening it: name the plan, say plainly that it is not the cheapest priced here, keep the same signed margin figure, and send the reader to §3 for the ranking. --></li>
+<li><!-- TODO item 1 — PLAN VERDICT: which rate plan the artifacts price cheapest, with and without a battery; this house's margin against the runner-up; note whether the utility's own comparison tool agrees. THE STANDING IS NOT YOURS TO ASSERT. S0_BEST_PLAN_CARD and S0_VERDICT are among the values above and they state it — this house's plan may be the cheapest priced, may tie, may be beaten — so follow them, and never recommend staying on a plan the card says is beaten. The margin is SIGNED: a lead only where it is positive, and the amount this plan is behind where it is negative, so "clear of the runner-up" and "widens its lead" are claims to check before writing, not phrases to reuse. Reference voice for a house whose card says its plan is cheapest in every scenario tested: "Plan: stay on {{BEST_PLAN}} — cheapest with or without a battery ({{PLAN_MARGIN_VS_RUNNER_UP}}/yr against the runner-up), and a battery does not change that." Where the card or the verdict says otherwise, invert that sentence rather than softening it: name the plan, say plainly that it is not the cheapest priced here, keep the same signed margin figure, and send the reader to §3 for the ranking. Keep actual bill costs separate from modeled savings. State the exact service dates for the annual bill audit from bill evidence, distinct from the interval-analysis dates. State any unresolved absolute-bill gap and link to the bill section; do not call the billing model fully reconciled while that gap remains. --></li>
 <li><!-- TODO item 2 — FREE BEHAVIOR FIX: EV/large-load charging timing; session counts and kWh from session-level detection; savings at 100% and 80% compliance ({{EV_FIX_SAVINGS_100}} / {{EV_FIX_SAVINGS_80}}); call out where the money actually is (which TOU windows). THE HOUSEHOLD MAY HAVE NO EV. Both savings tokens then render behavior_rebuild.py's own "not applicable — household.has_ev is false" instead of a figure, and so do the session count and every other EV token: read them before writing, and never weld a unit ("/yr") onto a token that can render a sentence. The free fix on such a household is the one section 0's own card and verdict line name — shifting flexible house load — so write THAT item, cite the card's figure ({{S0_FREE_WIN_CARD_FIGURE}}) rather than an EV saving, and mention no charger. --></li>
 <li><!-- TODO item 3 — ALWAYS-ON BASELOAD: the overnight floor, measured on the quiet nights the meter allows ({{NIGHT_FLOOR_MEDIAN}}, from {{NIGHT_FLOOR_SAMPLE}}), the energy it implies ({{NIGHT_FLOOR_ANNUAL_KWH}}) and what that costs ({{NIGHT_FLOOR_ANNUAL_COST}}). Those are TWO PRICINGS OF ONE LOAD, both current, so state both and how far apart they land: {{PHANTOM_METHOD_DISCREPANCY}} — and claim no more for their agreement than that token does. Carry the qualifier the annual figures may not appear without ({{NIGHT_FLOOR_PRICING_BASIS}}). Then the practical read: what the load is and whether it is recoverable HERE (if the owner attests a cause, say it is attested rather than metered), what a household with an unidentified floor should do instead, and the rate that decides whether that is worth doing ({{NIGHT_FLOOR_SENSITIVITY_PER_100W}}). This is the basic tier: the lead sentence states the conclusion inside the density cap and the arithmetic follows it. --></li>
-<li><!-- TODO item 4 — BATTERY VERDICT: savings under the best dispatch policy ({{BATTERY_SAVINGS_PRICE_AWARE}}/yr) vs evening-only ({{BATTERY_SAVINGS_EVENING_ONLY}}/yr); simple payback range {{BATTERY_PAYBACK_RANGE}} on {{BATTERY_COST}}; cycles/day; backup as the co-benefit. --></li>
+<li><!-- TODO item 4 — BATTERY VERDICT: savings under the best dispatch policy ({{BATTERY_SAVINGS_PRICE_AWARE}}/yr) vs evening-only ({{BATTERY_SAVINGS_EVENING_ONLY}}/yr); simple payback range {{BATTERY_PAYBACK_RANGE}} on {{BATTERY_COST}}; cycles/day; backup as a conditional benefit. Label hypothetical hardware, estimated installed price, and modeled dispatch. Do not claim ordinary product settings implement the model unless product-specific evidence proves that. State battery ownership from direct household evidence before recommending hardware. A modeled configuration does not establish ownership. State that projections use {{RATES_EFFECTIVE_DATE}}, not a future-rate forecast. --></li>
 <li><!-- TODO item 5 — MORE SOLAR?: expansion verdict from the export-share/timing analysis; marginal payback years; the NEM-grandfathering value at risk ({{NEM_GRANDFATHER_VALUE_RANGE}}/yr). --></li>
-<li><!-- TODO item 6 — LIFETIME PAYBACK + CLEANING: whether the system has paid for itself ({{SYSTEM_GROSS_COST}} crossed ~{{PAYBACK_CROSSOVER_DATE}}); current value {{SOLAR_ANNUAL_VALUE}}/yr; measured cleaning effect and whether future paid cleanings pencil. --></li>
-<li><!-- TODO item 7 — STRUCTURAL TARIFF WINDOW: the cheap window this tariff gifts ({{CHEAP_WINDOW}}), what to run in it, and the grid-carbon co-benefit from real grid-operator data. --></li>
+<li><!-- TODO item 6 — LIFETIME PAYBACK + CLEANING: whether the system has paid for itself ({{SYSTEM_GROSS_COST}} crossed ~{{PAYBACK_CROSSOVER_DATE}}); current value {{SOLAR_ANNUAL_VALUE}}/yr; estimated cleaning effect and whether future paid cleanings pencil. --></li>
+<li><!-- TODO item 7 — STRUCTURAL TARIFF WINDOW: the tariff's cheap window ({{CHEAP_WINDOW}}), what to run in it, and the grid-carbon co-benefit from real grid-operator data. --></li>
 </ol>
 </div>
 
@@ -292,26 +293,26 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
   <div class="card"><div class="big">{{BEST_PLAN}}</div><div class="lbl">{{S0_BEST_PLAN_CARD}}</div></div>
   <div class="card"><div class="big blue">~{{ACTUAL_MONTHLY_BILL}}/mo</div><div class="lbl">Actual electric bill: {{ACTUAL_ANNUAL_BILL}}/yr from a complete {{ANALYSIS_DAYS}}-day bill audit</div></div>
   <div class="card"><div class="big">{{S0_FREE_WIN_CARD_FIGURE}}</div><div class="lbl">{{S0_FREE_WIN_CARD_LABEL}}</div></div>
-  <div class="card"><div class="big warn">~{{BATTERY_PAYBACK_RANGE}}</div><div class="lbl">Battery-alone payback with price-aware dispatch ({{BATTERY_PAYBACK_EVENING_ONLY}} evening-only)</div></div>
-  <div class="card"><div class="big">{{PAYBACK_STATUS_SHORT}}</div><div class="lbl">{{SYSTEM_GROSS_COST}} install recovered ~{{PAYBACK_CROSSOVER_DATE}}; now {{SOLAR_ANNUAL_VALUE}}/yr</div></div>
+  <div class="card"><div class="big warn">{{BATTERY_PAYBACK_RANGE}}</div><div class="lbl">Modeled battery-alone payback; price-aware controls and installed price need checks ({{BATTERY_PAYBACK_EVENING_ONLY}} evening-only)</div></div>
+  <div class="card"><div class="big">{{PAYBACK_STATUS_SHORT}}</div><div class="lbl">{{SYSTEM_GROSS_COST}} install recovered in the lifetime model ~{{PAYBACK_CROSSOVER_DATE}}; modeled value {{SOLAR_ANNUAL_VALUE}}/yr</div></div>
   <div class="card"><div class="big blue">{{CHEAP_WINDOW}}</div><div class="lbl">Weekday super-off-peak: {{SUPER_OFF_PEAK_RATE}} midday power, year-round. Run everything flexible here</div></div>
 </div>
 
-<h2 id="s1">1 · The data (triple-verified)</h2>
+<h2 id="s1">1 · Data sources and checks</h2>
 <p class="verdict">{{S1_VERDICT}}</p>
-<!-- TODO: one paragraph — interval coverage, import/export totals from the utility meter, whole-home load from consumption metering, and production verified across independent sources with agreement stats; close with the model-validation result (bill reconstruction error, plan-ranking agreement with the utility's tool). -->
-<p>Every 15-minute interval of the last {{ANALYSIS_DAYS}} days was analyzed. Grid flows come from the utility meter ({{ANNUAL_IMPORT_KWH}} kWh imported, {{ANNUAL_EXPORT_KWH}} kWh exported); production is verified across {{PRODUCTION_SOURCE_COUNT}} independent sources agreeing within {{PRODUCTION_AGREEMENT_PCT}}.</p>
+<!-- TODO: one paragraph — interval coverage, import/export totals from the utility meter, whole-home load from the stated source with its sensing-point limits, and production compared across sources with agreement stats and an explicit check of measurement independence; close with the model-validation result (bill reconstruction error, plan-ranking agreement with the utility's tool). Name the utility meter and its {{ANNUAL_IMPORT_KWH}} kWh imports and {{ANNUAL_EXPORT_KWH}} kWh exports; state load calculations and their gap without assuming acquisition independence. Compare production across {{PRODUCTION_SOURCE_COUNT}} sources agreeing within {{PRODUCTION_AGREEMENT_PCT}}, with each source's limits. -->
+<p>Every 15-minute interval in the stated {{ANALYSIS_DAYS}}-day analysis window was analyzed. <!-- Source-specific meter and production comparison continues here. --></p>
 
 <h2 id="s2">2 · Your solar system today</h2>
 <p class="verdict">{{S2_VERDICT}}</p>
-<p>Before any recommendation, the equipment it all rests on: what's on the roof, verified, and how it performed this year.</p>
+<p>The equipment below is installed. <!-- NOTE: distinguish proposed equipment from owned equipment; do not infer battery ownership from modeled configurations. --></p>
 <div class="grid2">
 <div>
 <h3>Hardware</h3>
 <ul>
 <li><b>Array:</b> {{SYSTEM_SIZE_KW_DC}} kW DC nameplate, <b>size verified</b>: {{PANEL_COUNT}} × {{PANEL_MODEL_WATTS}} modules, per {{SIZE_VERIFICATION_SOURCE}}</li>
 <li><b>Inverters:</b> {{INVERTER_DESCRIPTION}} ≈ {{AC_CEILING_KW}} kW AC max</li>
-<li><!-- TODO: gateway/metering configuration — note whether consumption metering exists (it is what makes whole-home-load and battery analysis possible) --></li>
+<li><!-- TODO: gateway/metering configuration — note whether consumption metering exists (it is what makes whole-home-load and battery analysis possible). Distinguish proposed equipment from owned equipment; do not infer battery ownership from modeled configurations. --></li>
 <li><!-- TODO: monitoring platforms in use --></li>
 <li><b>In service since:</b> {{PTO_DATE}} ({{NEM_STATUS}}, grandfathered to ~{{NEM_EXPIRY_YEAR}})</li>
 </ul>
@@ -323,17 +324,17 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><b>Specific yield:</b> {{SPECIFIC_YIELD}} kWh/kW/yr · capacity factor {{CAPACITY_FACTOR}}</li>
 <li><!-- TODO: daily range — mean ({{DAILY_PRODUCTION_MEAN}}), best ({{DAILY_PRODUCTION_BEST}}), worst ({{DAILY_PRODUCTION_WORST}}). --></li>
 <li><!-- TODO: health signal — the naive multi-year output trend ({{DEGRADATION_NAIVE_RANGE}}), and one clause saying the weather-corrected rate is not determined, with §9 named as where the workup lives. No per-panel claim: nothing committed records per-module output, so a laggard-panel check has no evidence here and must not be asserted either way. --></li>
-<li><b>Where it goes:</b> covers {{SOLAR_COVERAGE_PCT}} of the home's {{ANNUAL_LOAD_KWH}} kWh/yr load: {{SELF_CONSUMED_SHARE}} self-consumed, {{EXPORTED_SHARE}} exported</li>
+<li><b>Where it goes:</b> annual production equals {{SOLAR_COVERAGE_PCT}} of the home's {{ANNUAL_LOAD_KWH}} kWh/yr use. Of that production, {{SELF_CONSUMED_SHARE}} is self-consumed and {{EXPORTED_SHARE}} is exported</li>
 </ul>
 </div>
 </div>
 <p class="small">{{S2_EXPORT_TIMING_NOTE}}</p>
 
-<h2 id="s3">3 · Rate plan comparison (today, without a battery)</h2>
+<h2 id="s3">3 · Rate plan comparison (without a battery, {{RATES_EFFECTIVE_DATE}} rates)</h2>
 <p class="verdict">{{S3_VERDICT}}</p>
-<p><!-- TODO: how each plan was priced per-interval (delivery + generation + surcharges, export-credit treatment, daily fixed charge) and any ineligible plans. --></p>
+<p><!-- TODO: how each plan was priced per-interval (delivery + generation + surcharges, export-credit treatment, daily fixed charge) and any ineligible plans. Define NBC as non-bypassable charges on eligible grid consumption; credits from other meter intervals do not cancel them. Explain monthly TOU energy netting separately. State the canonical positive-physical-interval-net NBC basis and the remaining utility-mechanics limits. State the frozen rate date, {{RATES_EFFECTIVE_DATE}}, beside the comparison. --></p>
 <table>
-<thead><tr><th>Plan</th><th>Annual ({{GENERATION_PROVIDER_SHORT}} gen)</th><th>Annual ({{UTILITY_NAME}} bundled)</th><th>vs. current</th><th>{{UTILITY_NAME}}'s own tool says</th></tr></thead>
+<thead><tr><th>Plan</th><th>Modeled annual cost ({{GENERATION_PROVIDER_SHORT}} gen)</th><th>Modeled annual cost ({{UTILITY_NAME}} bundled)</th><th>vs. current</th><th>{{UTILITY_NAME}} tool (bundled generation)</th></tr></thead>
 <tbody>
 <tr class="{{S3_ROW_CLASS}}"><td>{{S3_ROW_PLAN_CELL}}</td><td>{{BEST_PLAN_ANNUAL_CCA}}</td><td>{{BEST_PLAN_ANNUAL_BUNDLED}}</td><td>—</td><td>{{UTILITY_TOOL_BEST_PLAN_FIGURE}} — "Your Best Plan" {{UTILITY_TOOL_BEST_PLAN_VERDICT}}</td></tr>
 <!-- TODO: one <tr> per remaining eligible plan, sorted by annual cost; mark footnoted plans (e.g. event-surcharge plans) with an asterisk. -->
@@ -344,7 +345,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <div class="note"><!-- TODO: generation-provider note — what the bills show about the CCA product, whether any relief credit applies, and what opting out would/wouldn't change. --></div>
 
 <h2 id="s4">4 · Does a battery change which plan is best? {{S4_VERDICT_SHORT}}</h2>
-<p><!-- TODO: framing — battery savings arbitrage the cheap/expensive gap; state that the table is the interval simulation at current rates, used for ranking and battery-value, not absolute bill levels. --></p>
+<p><!-- TODO: framing — battery savings arbitrage the cheap/expensive gap; state the exact rate effective date used by the interval simulation, used for ranking and battery-value, not absolute bill levels. --></p>
 <table>
 <thead><tr><th>Plan</th><th>No battery (modeled)</th><th>With 1 × {{BATTERY_MODEL}} (modeled)</th><th>Battery's value on this plan</th></tr></thead>
 <tbody>
@@ -356,14 +357,17 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <h2 id="s5">5 · Usage profile — where the money goes</h2>
 <p class="verdict">{{S5_VERDICT}}</p>
-<p>This section maps when the money leaves: your grid flows by hour, season, and month, and the behaviors behind them.</p>
-<p class="small"><!-- TODO: which data feeds the charts (meter vs inverter-platform). --></p>
+<p>The charts compare grid flows by hour, season, and month. <!-- NOTE: label battery profiles as simulated, and distinguish measured equipment from proposed equipment. --></p>
+<p class="small"><!-- TODO: which data feeds the charts (meter vs inverter-platform). Label battery profiles as simulated, and distinguish measured equipment from proposed equipment. --></p>
 <div class="chartbox"><canvas id="hourly" height="110"></canvas></div>
+<p class="small">{{CHART_TITLE_HOURLY}}.</p>
 <div class="chartbox"><canvas id="battery" height="110"></canvas></div>
-<p class="small"><!-- TODO: battery-chart caption — explain what the dispatch policy does to the grid profile, on-peak import reduction percentages for each config, and any deliberately unserved load (e.g. EV spillover awaiting the free schedule fix). --></p>
+<p class="small"><!-- TODO: battery-chart caption — carry {{CHART_TITLE_BATTERY}} as the derived finding; explain what the dispatch policy does to the grid profile, on-peak import reduction percentages for each config, and any deliberately unserved load (e.g. EV spillover awaiting the free schedule fix). --></p>
 <div class="chartbox"><canvas id="monthly" height="110"></canvas></div>
+<p class="small">Asterisks mark partial months. Costs use the modeled {{BEST_PLAN}} tariff.</p>
 <div class="chartbox"><canvas id="periods" height="90"></canvas></div>
-<p>Behaviors driving the current bill, which the packages in §7 attack in order of cost:</p>
+<p class="small">Super off-peak accounts for {{SOP_IMPORT_SHARE_PCT}}% of imports, off-peak {{OFFPEAK_IMPORT_SHARE_PCT}}%, and {{PEAK_WINDOW}} on-peak {{ONPEAK_IMPORT_SHARE_PCT}}%. {{CHART_TITLE_PERIODS}}.</p>
+<p>These four load patterns overlap. Use the integrated package results in §7 for savings; do not add the examples below together:</p>
 <ul>
 <li><!-- TODO behavior 1: large loads in the on-peak window — kWh/yr and $ at stake. --></li>
 <li><!-- TODO behavior 2: charging spilling past the cheap-window boundary — kWh/yr and rate delta. --></li>
@@ -371,14 +375,15 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><!-- TODO behavior 4: low-value midday exports vs self-consumption. --></li>
 </ul>
 
-<h2 id="s6">6 · Battery hardware — capability and cost</h2>
+<h2 id="s6">6 · Possible batteries — savings, cost, and backup</h2>
 <p class="verdict">{{S6_VERDICT}}</p>
 <p class="sub"><!-- TODO: framing — the two questions (annual savings, outage endurance); system context; whether storage affects NEM grandfathering; current incentive status ({{INCENTIVE_STATUS}}, a KNOWN_GAPS token: the CA program side is committed research, the federal residential storage credit's current status is not, so this block needs a human-supplied, dated answer). --></p>
 <div class="grid2">
 <div>
-<h3>Arbitrage value (current behavior)</h3>
+<h3>On-peak-only simulation (current behavior) <span class="pill y">modeled</span></h3>
+<p class="small">This table uses interval-valued savings from <code>analysis/battery_backup_sims.py</code> → <code>data/battery_sim.json</code>. The dispatch comparison below re-bills the full year through the NEM engine; its savings are a different calculation.</p>
 <table>
-<thead><tr><th>Config</th><th>kWh / kW</th><th>Savings/yr</th><th>Est. cost*</th></tr></thead>
+<thead><tr><th>Config</th><th>kWh / kW</th><th>Modeled savings/yr</th><th>Est. installed cost*</th></tr></thead>
 <tbody>
 <tr class="win"><td>1× {{BATTERY_MODEL}}</td><td>{{BATTERY_KWH}} / {{BATTERY_KW}}</td><td>{{BATTERY_SAVINGS_BASE}}</td><td>{{BATTERY_COST}}</td></tr>
 <!-- TODO: one <tr> per alternative config evaluated (smaller/larger packs, other ecosystems). -->
@@ -386,9 +391,9 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </table>
 </div>
 <div>
-<h3>Dispatch policy: price-aware beats evening-only, measured against the bills <span class="pill y">modeled</span></h3>
-<p><!-- TODO: the stored-kWh cost from solar surplus ({{STORED_KWH_COST_SOLAR}}, averaged over ALL the surplus this dispatch stores) vs the midday cell alone ({{STORED_KWH_COST_SOLAR_MIDDAY}}, which is only {{STORED_KWH_MIDDAY_SHARE}} of it -- say which is which, they are not interchangeable) vs grid top-up ({{STORED_KWH_COST_GRID}}), the import prices it competes against by window, and why the economically correct policy is price-aware rather than evening-only. --></p>
-<p><!-- TODO: deliberate exclusions (e.g. EV-spillover intervals the behavior fix moves for free) and why the battery does not serve them. --></p>
+<h3>Dispatch policy: price-aware saves more in the billing model <span class="pill y">modeled</span></h3>
+<p><!-- TODO: the stored-kWh cost from solar surplus ({{STORED_KWH_COST_SOLAR}}, averaged over ALL the surplus this dispatch stores) vs the midday cell alone ({{STORED_KWH_COST_SOLAR_MIDDAY}}, which is only {{STORED_KWH_MIDDAY_SHARE}} of it -- say which is which, they are not interchangeable) vs grid top-up ({{STORED_KWH_COST_GRID}}), the import prices it competes against by window, and why the modeled price-aware policy differs from evening-only. Describe the conservative (energy + NBC) / RTE finite charge bound, the minimum eligible credit floor and maximum eligible all-in best reference. State that the ledger updates running monthly positions and prices finite monthly-energy and physical interval NBC changes separately. Lot comparisons describe decision-time choices, not guaranteed final settled lot profit; keep whole-stream counterfactual reconciliation separate. --></p>
+<p><!-- TODO: deliberate exclusions (e.g. EV-spillover intervals the behavior fix moves for free) and why the battery does not serve them. Describe threshold-based EV classification as a model assumption, not proof of appliance identity. --></p>
 <table>
 <thead><tr><th>Dispatch policy</th><th>1 × {{BATTERY_MODEL}} ({{BATTERY_KWH}} kWh)</th><th>{{BATTERY_EXPANDED_MODEL}} ({{BATTERY_EXPANDED_KWH}} kWh)</th></tr></thead>
 <tbody>
@@ -396,9 +401,10 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <!-- TODO: one <tr> per additional policy simulated (evening-only, two-window, ...), so the policy spread is visible. -->
 </tbody>
 </table>
-<p class="small"><!-- TODO: simulation assumptions — charge order, round-trip efficiency, power cap, rate basis, warranty/throughput note; cite the dispatch script ({{DISPATCH_SCRIPT}}). Note the charge/discharge asymmetry too — the bare {{BATTERY_MODEL}} unit charges at {{BATTERY_CHARGE_KW}} kW vs its {{BATTERY_KW}} kW discharge rating; {{BATTERY_EXPANDED_MODEL}} raises the charge input to {{BATTERY_EXPANDED_CHARGE_KW}} kW (discharge unchanged), relevant to any co-scheduling caution (e.g. simultaneous EV charging on the same circuit). --></p>
+<p class="small"><!-- TODO: simulation assumptions — charge order, round-trip efficiency, power cap, rate basis, warranty/throughput note; check whether actual controller settings support the modeled rules rather than assuming they do; cite the dispatch script ({{DISPATCH_SCRIPT}}). Note the charge/discharge asymmetry too — the bare {{BATTERY_MODEL}} unit charges at {{BATTERY_CHARGE_KW}} kW vs its {{BATTERY_KW}} kW discharge rating; {{BATTERY_EXPANDED_MODEL}} raises the charge input to {{BATTERY_EXPANDED_CHARGE_KW}} kW (discharge unchanged), relevant to any co-scheduling caution (e.g. simultaneous EV charging on the same circuit). State the outage simulation horizon from the cited model, mark capped results, and keep the full-charge and demand-cap assumptions beside the endurance comparison. --></p>
 
 <h3>Outage endurance (simulated, 6pm start, solar recharge)</h3>
+<p class="small">These simulations start with a full battery and allow solar recharge. The table shows median duration across the tested starts. <!-- NOTE: state the simulation horizon and mark capped results. --> The model caps demand at each battery's discharge rating, so it does not establish that every peak load receives power. <code>analysis/battery_backup_sims.py</code> → <code>data/backup_endurance.json</code>.</p>
 <table>
 <thead><tr><th>Config</th><th>Essentials (~{{ESSENTIALS_KWH_DAY}} kWh/d)</th><th>{{HOUSE_LOAD_COLUMN_HEADER}}</th></tr></thead>
 <tbody>
@@ -408,12 +414,12 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </table>
 </div>
 </div>
-<p class="small"><!-- TODO: pricing footnote (get quotes), hardware trade-off notes between ecosystems, and any config to skip. --></p>
+<p class="small"><!-- TODO: pricing footnote (get quotes), hardware trade-off notes between ecosystems, and any config to skip. Do not claim a power rating starts every appliance or establishes connection compatibility. Keep starting loads, backed-up circuits, and controller support as installer checks. For VPP backtests, label revenue modeled even when inputs are measured; state calendar scope, dispatch basis, reserve assumptions, and enrollment limits. --></p>
 
 <h2 id="s7">7 · The decision: three packages</h2>
 <p class="verdict">{{S7_VERDICT}}</p>
-<p>All packages keep <b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}} <b>Baseline = your actual bills: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b></p>
-<p>Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated NEM netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). No year-end lump-sum shortcuts; behavior and battery are simulated in one integrated pipeline ({{FREE_FIX_SHORT_NAME}} shift first, then battery, re-billed end-to-end), so nothing is double-counted.</p>
+<p>All packages keep <b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}} <b>Actual electric cost: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b> The package projections compare modeled cases at the same {{RATES_EFFECTIVE_DATE}} rates.</p>
+<p>Savings are model differences at {{RATES_EFFECTIVE_DATE}} rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the NEM model and its stated limits (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). No year-end lump-sum shortcuts; behavior and battery are simulated in one integrated pipeline ({{FREE_FIX_SHORT_NAME}} shift first, then battery, re-billed end-to-end), so nothing is double-counted.</p>
 
 <div class="grid3">
 <div class="pkg">
@@ -422,12 +428,12 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><!-- TODO: the free behavior fix with savings at 100%/80% compliance and where the energy currently lands. --></li>
 <li><!-- TODO: the stretch add-on (shifting flexible house load) and its value. --></li>
 <li><!-- TODO: projected bill at constant current rates vs no-changes counterfactual. --></li>
-<li><b>ROI: infinite.</b> No hardware; do this regardless of the battery decision.</li>
+<li><b>No hardware cost.</b> Make this change before the battery decision.</li>
 <li>Backup capability: none (grid-tied solar shuts off in outages).</li>
 </ul>
 </div>
 <div class="pkg best">
-<h3>MID — {{BATTERY_COST}} · + 1 {{BATTERY_MODEL}} ⭐ recommended</h3>
+<h3>MID — {{BATTERY_COST}} · + 1 {{BATTERY_MODEL}} · quote candidate</h3>
 <ul>
 <li><!-- TODO: combined savings from the one integrated pipeline (EV shift first, then battery, re-billed end-to-end). --></li>
 <li><!-- TODO: projected bill at constant current rates vs no-changes counterfactual; note rate-vintage caveat vs last year's actual. --></li>
@@ -445,26 +451,26 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </div>
 </div>
 
-<div class="rec"><b>Recommendation: {{RECOMMENDED_PACKAGE_SUMMARY}}.</b> <!-- TODO: 3–4 sentences in the reference voice — e.g. "The EV-charging fix is free, immediate, and worth {{EV_FIX_SAVINGS_100}}/yr — do it this week regardless. One {{BATTERY_MODEL}} adds {{BATTERY_MARGINAL_SAVINGS}}/yr of its own savings (…payback) plus genuine outage resilience." Close with the action sequence (reprogram charging, get quotes, join incentive waitlist). THE REFERENCE VOICE ASSUMES AN EV AND THE HOUSEHOLD MAY NOT HAVE ONE: name the fix the way section 0's free-win card label and the Monday appendix's verdict line already name it, and where those name a house-load shift, open the action sequence with rescheduling that load rather than with a charger. --></div>
+<div class="rec"><b>Recommendation: {{RECOMMENDED_PACKAGE_SUMMARY}}.</b> <!-- TODO: 3–4 sentences in the reference voice — e.g. "The EV-charging fix is free, immediate, and worth {{EV_FIX_SAVINGS_100}}/yr — do it this week regardless. One {{BATTERY_MODEL}} adds {{BATTERY_MARGINAL_SAVINGS}}/yr of its own savings (…payback) subject to controller support and the installed quote." Close with the action sequence (check schedules, request quotes with electrical/controller assessment, and check optional program enrollment only if its revenue matters). THE REFERENCE VOICE ASSUMES AN EV AND THE HOUSEHOLD MAY NOT HAVE ONE: name the fix the way section 0's free-win card label and the Monday appendix's verdict line already name it, and where those name a house-load shift, open the action sequence with rescheduling that load rather than with a charger. --></div>
 
 <h2 id="s15">What to do Monday — the implementation appendix</h2>
 <p class="verdict">{{S15_VERDICT}}</p>
-<p>The whole analysis reduces to this short checklist. Nothing here is new analysis; each item cites the section that justifies it.</p>
+<p>Start with the free behavior change. The battery steps apply only if you seek a quote for conventional home storage.</p>
 <!-- TODO: content-only appendix (reusable-prompt.md Phase D spec) — no new analysis, no new artifacts; every item cites its justifying section. Four parts: -->
 <h3>{{S15_STEP1_HEADING}}</h3>
 <ul>
 <li><!-- TODO: concrete schedule changes — charger windows ({{CHEAP_WINDOW}}), load staggering to respect the service's coincident-draw limit, the midday plug-in habit. FOLLOW THE HEADING ABOVE AND THE VERDICT LINE UNDER THE h2 (both token-owned): where they name a house-load shift rather than a charger, write the schedule changes for THAT load (dishwasher, laundry, pool pump, water heater, pre-cooling) and drop the charger and plug-in items — this is the one instruction list in the report, and an item naming hardware the household does not own cannot be carried out. --></li>
 </ul>
-<h3>2 · Before any battery quote</h3>
+<h3>2 · What to request in a battery quote</h3>
 <ul>
-<li><!-- TODO: pre-battery checklist — panel/service headroom check, interconnection export-capability check, VPP enrollment step. --></li>
+<li><!-- TODO: quote checklist — include panel/service headroom and controller-support checks in the quote. Apply interconnection export checks and VPP enrollment only to the proposed conventional export use. Do not describe them as approval requirements for a qualifying SB 868 device. --></li>
 </ul>
-<h3>3 · Pre-registered success metrics for the {{FREE_FIX_SHORT_NAME}} fix <span class="pill y">modeled targets</span></h3>
-<p>Logged before the change so the evaluation can't be gamed. Check at the <b>next bill</b> and again after <b>two full billing cycles</b>:</p>
+<h3>3 · Check the {{FREE_FIX_SHORT_NAME}} change; keep battery scenarios separate <span class="pill y">modeled targets</span></h3>
+<p>Record the criteria before the schedule change. Check timing at the <b>next bill</b> and again after <b>two full billing cycles</b>. Dollar comparisons need matched usage, weather, and rate assumptions:</p>
 <table class="evidence">
-<thead><tr><th>Metric</th><th>Now</th><th>Target</th></tr></thead>
+<thead><tr><th>Metric</th><th>Now</th><th>Target or modeled reference</th></tr></thead>
 <tbody>
-<tr><td><!-- TODO: metric --></td><td>{{METRIC_NOW}}</td><td>{{METRIC_TARGET}}</td></tr>
+<tr><td><!-- TODO: metric; separate behavior-only targets from hypothetical battery results. A modeled annual saving is a reference, not a direct measurement from the next bill. --></td><td>{{METRIC_NOW}}</td><td>{{METRIC_TARGET}}</td></tr>
 </tbody>
 </table>
 <h3>4 · When to re-run this analysis</h3>
@@ -485,36 +491,36 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <summary>
  <span class="adv-eyebrow">Advanced analysis</span>
  <span class="adv-head">The full evidence</span>
- <span class="adv-inv">7 sections · the full audit trail · every figure traceable to a script and a data artifact</span>
+ <span class="adv-inv">7 sections · methods, source records, and limits for the report's findings</span>
 </summary>
 
 <h2 id="s8">8 · Array upgrades: more panels, bigger panels, or new microinverters? {{S8_VERDICT_SHORT}}</h2>
 <!-- TODO: four verdict paragraphs, each led by a bold claim, in the reference voice:
-     1. More panels — what the year's exports actually earn, and what the marginal import they would offset costs.
-        Example sentence: "Across the hours the array actually exports in, not the midday cell alone, an exported kWh is worth between {{EXPORT_VALUE_SURPLUS_BOUND}} if every export settles as surplus and {{EXPORT_VALUE_NETTING_BOUND}} if every export cancels an import in its own month and period, while the marginal import it would offset costs {{SUPER_OFF_PEAK_RATE}}."
-        Publish BOTH ends and say the settlement falls between them — a bound is not the value. Say too that the hourly profile behind them is a season-wide mean that has already discarded day type, so the weekday/off-peak-day split is an assumption the figures carry.
+     1. More panels — the monthly energy settlement value of the year's exports, and what the marginal import they would offset costs.
+        Example sentence: "Across the hours the array actually exports in, not the midday cell alone, an exported kWh has a monthly energy settlement value between {{EXPORT_VALUE_SURPLUS_BOUND}} if every export settles as surplus and {{EXPORT_VALUE_NETTING_BOUND}} if every export cancels an import in its own month and period, while the marginal import it would offset costs {{SUPER_OFF_PEAK_RATE}}."
+        Publish BOTH ends and say monthly energy settlement falls between them — a bound is not the value. State that this range excludes changes to NBC from changed physical interval flows; monthly energy credits alone do not erase NBC. Say too that the hourly profile behind them is a season-wide mean that has already discarded day type, so the weekday/off-peak-day split is an assumption the figures carry.
         Do NOT restate either figure as what one more kW of panels would earn: exports are the residual left after household load, not the shape of added production. That value is derived separately, by an interval-level counterfactual re-billed through the NEM engine (analysis/marginal_capacity_value.py, data/marginal_capacity_value.json, TECHNICAL.md 3.31), and the live paragraph below publishes it through its four MARGINAL_KW_* tokens with a modeled pill and a conditional whole-facility NBT comparison. Keep it in its own sentences, never inside the export-valuation sentence, and add no payback.
         The expansion payback ({{EXPANSION_PAYBACK_YEARS}}) stays unwritten and is a report_tokens.py KNOWN_GAPS token: the yield half is the artifact above, but a payback also needs a retrofit price per watt, a local-market fact nothing committed here collects. Do not supply a figure for it, here or in the paragraph below.
      2. The conventional rooftop tariff rule — NEM-ST SC 9(b), the greater of 10% of original interconnected capacity or 1 kW, annual onsite load, and separate eligible interconnection for larger additions. The 1 kW floor permits initial screening without the original capacity figure. Existing rooftop interconnection records and expansion history determine exact remaining headroom; prior additions can consume the allowance. Never infer unused headroom from current equipment or assume automatic whole-array forfeiture. Keep this rule separate from SB 868 plug-in-PV eligibility; its exemption takes effect January 1, 2027. Defer purchase pending connection, settlement, and installed price.
-     3. Repowering with bigger panels — health evidence says keep the hardware.
-     4. Microinverter upgrade / clipping — what the high-resolution power data shows vs the platform's clipping flags; recoverable value vs swap cost; warranty timeline.
+     3. Repowering with bigger panels — state whether the evidence establishes an economic case for replacement; agreement between meters does not establish panel health.
+     4. Microinverter upgrade / clipping — distinguish sampled power from an established annual loss bound. State recoverable value as conditional on its assumed loss and price; compare with an estimated swap cost, pending a quote. Average daily surplus does not establish interval-level battery charging coverage. Check warranty terms.
      Close with: when WOULD expansion make sense (structural load growth, V2H), and cheaper interim moves. -->
 <p><b>More panels: {{EXPANSION_VERDICT_SHORT}}.</b></p>
 <p>The constraint is timing. The array already exports {{EXPORTED_SHARE}} of what it makes, and the midday share above describes when the exports leave.</p>
-<p>One more kW of panels would earn about <b>{{MARGINAL_KW_VALUE_YR}}/yr</b> <span class="pill y">modeled</span> at constant current rates, re-billed interval by interval through the NEM 2.0 netting. It adds {{MARGINAL_KW_ADDED_KWH}} kWh/yr on the array's own shape; {{MARGINAL_KW_IMPORT_OFFSET_PCT}} of that displaces an import and the rest leaves the meter. If an option transfers the existing array to NBT, the grandfathering value is {{MARGINAL_KW_GRANDFATHERING_MULTIPLE}} that.</p>
+<p>One more kW of panels would earn about <b>{{MARGINAL_KW_VALUE_YR}}/yr</b> <span class="pill y">modeled</span> at constant {{RATES_EFFECTIVE_DATE}} rates, re-billed interval by interval through the NEM 2.0 netting. It adds {{MARGINAL_KW_ADDED_KWH}} kWh/yr on the array's own shape; {{MARGINAL_KW_IMPORT_OFFSET_PCT}} of that displaces an import and the rest leaves the meter. If an option transfers the existing array to NBT, the grandfathering value is {{MARGINAL_KW_GRANDFATHERING_MULTIPLE}} that.</p>
 
 <details class="sec" id="sec9" open>
 <summary><h2 id="s9">9 · Deeper analyses</h2><span class="teaser">{{SEC9_TEASER}}<!-- TODO: one line — the two or three headline findings from the deep dives. --></span></summary>
 <p>The questions that earned their own workups; each feeds a number used elsewhere in the report.</p>
 
 <h3>Array health: multi-year degradation trend</h3>
-<p><!-- TODO: the size-normalized yearly efficiency series ({{ARRAY_EFFICIENCY_SERIES}}), the naive trend it implies ({{DEGRADATION_NAIVE_RANGE}}), and the weather/soiling caveat that stops the naive trend being a degradation rate ({{DEGRADATION_WEATHER_CAVEAT}}). Close on the verdict the artifact itself publishes: the true, weather-corrected rate is NOT DETERMINED and is not bounded either, because no daily production or weather record exists for the earlier years to separate soiling and cloud cover from panel ageing. Say what would settle it (a multi-year daily production plus rainfall record, or a measured before/after gain at each cleaning). Do not narrow that to a tighter bracket. --></p>
+<p><!-- TODO: the size-normalized yearly efficiency series ({{ARRAY_EFFICIENCY_SERIES}}), the naive trend it implies ({{DEGRADATION_NAIVE_RANGE}}), and the weather/soiling caveat that stops the naive trend being a degradation rate ({{DEGRADATION_WEATHER_CAVEAT}}). Close on the verdict the artifact itself publishes: the true, weather-corrected rate is NOT DETERMINED and is not bounded either, because the inputs used for this study do not separate those effects. Existing collected history needs a separate quality check. Say what would settle it (a multi-year daily production plus rainfall record, or a measured before/after gain at each cleaning). Do not narrow that to a tighter bracket. --></p>
 
 <h3>Inverter clipping (high-resolution data)</h3>
-<p><!-- TODO: cross-reference the §8 finding; the largest output each independent instrument recorded ({{PV_PEAK_OBSERVED}}), how close the closest of them came to the inverter nameplate ({{PV_PEAK_HEADROOM}}), and the closest approach in the 2024 cleaning-study sample ({{PEAK_POWER_MULTIYEAR}}, which names the window it covers and is NOT a record-wide maximum — do not call it one) against the {{AC_CEILING_KW}} kW AC ceiling. The three maxima are NOT comparable readings of one quantity and the verdict must say so — carry {{PV_PEAK_BASIS}}, which states what each instrument measures and why the largest of them is not a per-interval ceiling. --></p>
+<p><!-- TODO: cross-reference the §8 finding; the largest output each source recorded ({{PV_PEAK_OBSERVED}}), how close the closest of them came to the inverter nameplate ({{PV_PEAK_HEADROOM}}), and the closest approach in the 2024 cleaning-study sample ({{PEAK_POWER_MULTIYEAR}}, which names the window it covers and is NOT a record-wide maximum — do not call it one) against the {{AC_CEILING_KW}} kW AC ceiling. The three maxima are NOT comparable readings of one quantity and the verdict must say so — carry {{PV_PEAK_BASIS}}, which states what each instrument measures and why the largest of them is not a per-interval ceiling. --></p>
 
-<h3>Weather-normalized cooling</h3>
-<p><!-- TODO: regression of daily non-EV load vs local temperature — base load ({{COOLING_BASE_LOAD}}), slope ({{COOLING_KWH_PER_CDD}}, r² {{COOLING_REGRESSION_R2}}), annual A/C load ({{ANNUAL_COOLING_KWH}}), the load sensitivity to 100 extra cooling-degree-days ({{COOLING_SENSITIVITY_PER_100_CDD}}), and the modeled value of pre-cooling ({{PRECOOL_SHIFT_VALUE}}) and of a setpoint change ({{SETPOINT_VALUE}}). --></p>
+<h3>Archived cooling regression</h3>
+<p><!-- TODO: identify data/weather_results.json as an archived regression estimate whose calculation this repository does not reproduce. If citing its base load ({{COOLING_BASE_LOAD}}), slope ({{COOLING_KWH_PER_CDD}}, r² {{COOLING_REGRESSION_R2}}), annual cooling estimate ({{ANNUAL_COOLING_KWH}}), sensitivity to 100 extra cooling-degree-days ({{COOLING_SENSITIVITY_PER_100_CDD}}), pre-cooling value ({{PRECOOL_SHIFT_VALUE}}), or setpoint value ({{SETPOINT_VALUE}}), keep the archived-estimate label and missing-calculation limit beside the numbers. These are not measured appliance consumption or established achievable savings. Do not use them as a purchase conclusion or invent an on-peak cooling split. --></p>
 
 <h3>{{SEC9_EV_HEADING}}</h3>
 <p><!-- TODO: session-level results — say what a session IS before counting them ({{EV_DETECTION_BASIS}}), since the count is that rule's output rather than a reading; then sessions ({{EV_SESSION_COUNT}}) and energy ({{EV_ANNUAL_KWH}}, averaging {{EV_AVG_SESSION_KWH}} a session), where that energy lands by window ({{EV_WINDOW_DECOMPOSITION}}), and the share already charging in the cheap window ({{EV_SOP_COMPLIANCE_PCT}}). Then, in a SEPARATE sentence, the free fix: what full compliance is worth ({{EV_FIX_SAVINGS_100}}) versus a realistic {{EV_FIX_SAVINGS_80}}. Those two savings figures come from re-billing whole shifted sessions, not from the compliance share above — do not present them as one basis. WHERE THE HOUSEHOLD HAS NO EV every token in this paragraph renders behavior_rebuild.py's own "not applicable — household.has_ev is false" instead of a figure, and the heading above this paragraph says so too: write ONE sentence stating that this household has no EV and that the detector therefore ran nothing, cite the reason those tokens carry, and write no session count, no kWh and no saving. --></p>
@@ -529,7 +535,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <h2 id="s10">10 · Actual bills: reconciliation, gas &amp; electrification</h2>
 <p class="verdict">{{S10_VERDICT}}</p>
 
-<p>All {{BILL_COUNT}} detailed electric statements ({{BILLING_PERIOD_COUNT}} billing periods) were parsed line-by-line. Findings:</p>
+<p>The annual baseline uses {{BILL_COUNT}} detailed electric statements ({{BILLING_PERIOD_COUNT}} billing periods). Longer comparisons can use a larger statement corpus. Findings:</p>
 <table>
 <thead><tr><th>Bill fact</th><th>What it establishes</th></tr></thead>
 <tbody>
@@ -543,11 +549,11 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <p><!-- TODO: annual therms, seasonal shape, heating/non-heating split, actual annual gas $ ({{ACTUAL_ANNUAL_GAS_BILL}}), combined household energy total. --></p>
 
 <h3>Should you electrify? {{ELECTRIFICATION_VERDICT_SHORT}}</h3>
-<p><!-- TODO: the appliance-by-appliance electrification math. EVERY water-heater figure here rests on an assumption about this household's gas appliance mix that was never verified, so the caveat is not optional: lead the whole passage with it ({{HPWH_SHARE_CAVEAT}}) and do NOT assert a definitive cost-effective sequence — {{ELECTRIFICATION_SEQUENCE}} states the order together with the share at which it reverses, and must be carried as a conditional, not a recommendation. Then the figures, each with its own qualifier: the water heater at {{HPWH_INSTALL_COST}} — {{HPWH_COST_BASIS}} — for {{HPWH_NET_SAVINGS}}, a {{HPWH_PAYBACK}} payback that moves to {{HPWH_PAYBACK_SENSITIVITY}} across the illustrative share scenarios, on a gas saving that is itself {{HPWH_SAVINGS_BOUND}}; the furnace at {{HEAT_PUMP_INSTALL_COST}} — {{HEAT_PUMP_COST_BASIS}} — for {{HEAT_PUMP_PAYBACK}}; both together, {{ELECTRIFICATION_COMBINED_PAYBACK}}, which inherits the same unverified assumption — and which is NOT a confirmed gas-meter removal: {{ELECTRIFICATION_METER_REMOVAL_CAVEAT}}. State what incentives are actually claimable and when that was checked ({{ELECTRIFICATION_INCENTIVES}}). Close on replace-on-failure, and price it with the branch that actually prices it: at the moment the air conditioner needs replacing anyway, the furnace conversion costs only the difference, {{HEAT_PUMP_MARGINAL_INSTALL_COST}} for a {{HEAT_PUMP_MARGINAL_PAYBACK}} payback, against {{HEAT_PUMP_INSTALL_COST}} / {{HEAT_PUMP_PAYBACK}} standalone. That gap IS the argument for waiting rather than acting now — make it explicitly, and do not support the recommendation with the standalone figures. --></p>
+<p><!-- TODO: the appliance-by-appliance electrification math. EVERY water-heater figure here rests on an assumption about this household's gas appliance mix that was never verified, so the caveat is not optional: lead the whole passage with it ({{HPWH_SHARE_CAVEAT}}) and do NOT assert a definitive cost-effective sequence — {{ELECTRIFICATION_SEQUENCE}} states the order together with the share at which it reverses, and must be carried as a conditional, not a recommendation. Then the figures, each with its own qualifier: the water heater at {{HPWH_INSTALL_COST}} — {{HPWH_COST_BASIS}} — for {{HPWH_NET_SAVINGS}}, a {{HPWH_PAYBACK}} payback that moves to {{HPWH_PAYBACK_SENSITIVITY}} across the illustrative share scenarios, on a gas saving that is itself {{HPWH_SAVINGS_BOUND}}; the furnace at {{HEAT_PUMP_INSTALL_COST}} — {{HEAT_PUMP_COST_BASIS}} — for {{HEAT_PUMP_PAYBACK}}; both together, {{ELECTRIFICATION_COMBINED_PAYBACK}}, which inherits the same unverified assumption — and which is NOT a confirmed gas-meter removal: {{ELECTRIFICATION_METER_REMOVAL_CAVEAT}}. Explain that combined electric costs come from one joint physical allocation and rebill. Convex monthly-energy and physical interval NBC charges give a nonnegative interaction before display rounding; strict dollar interaction needs a zero boundary, not physical solar overlap alone. State what incentives are actually claimable and when that was checked ({{ELECTRIFICATION_INCENTIVES}}). Close on replace-on-failure, and price it with the branch that actually prices it: at the moment the air conditioner needs replacing anyway, the furnace conversion costs only the difference, {{HEAT_PUMP_MARGINAL_INSTALL_COST}} for a {{HEAT_PUMP_MARGINAL_PAYBACK}} payback, against {{HEAT_PUMP_INSTALL_COST}} / {{HEAT_PUMP_PAYBACK}} standalone. That gap IS the argument for waiting rather than acting now — make it explicitly, and do not support the recommendation with the standalone figures. --></p>
 <p><!-- TODO: what the gas bills show about fixed vs volumetric charges and what that means for eventually closing the gas account. --></p>
 
 <h2 id="s11">11 · Lifetime value: {{S11_VERDICT_SHORT}}</h2>
-<p><span class="pill y">modeled</span> <span class="pill r">estimated index</span> <span class="small"><!-- TODO: one line on the method split — today's value from the validated netting engine; historical years scaled by a published rate index (crossovers ± a few months). --></span></p>
+<p><span class="pill y">modeled</span> <span class="pill r">estimated index</span> <span class="small"><!-- TODO: one line on the method split — value at the stated rate vintage from the netting model; historical years scaled by a published rate index. Describe the crossover as estimated, not an observed recovery of cash, and state the index uncertainty. --></span></p>
 <p>The install invoice shows <b>{{SYSTEM_GROSS_COST}}, paid {{INSTALL_PAYMENT_DATE}}</b>, with PTO on {{PTO_DATE}}. Valuing each year's <i>actual metered production</i> at that year's blended $/kWh:</p>
 <table>
 <thead><tr><th>Year</th><th>Production (kWh)</th><th>Value that year</th><th>Cumulative</th></tr></thead>
@@ -560,8 +566,8 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <div class="rec"><b>{{PAYBACK_HEADLINE}}</b> <!-- TODO: crossover dates with and without the federal ITC; current $/yr value from the no-solar counterfactual; blended $/kWh now vs under the prior TOU structure; index-precision caveat. Cite {{LIFETIME_SCRIPT}}. --></div>
 
 <details class="sec" id="sec12" open>
-<summary><h2 id="s12">12 · Panel cleaning &amp; soiling — measured, not assumed</h2><span class="teaser">{{SEC12_TEASER}}<!-- TODO: one line — did the historical cleaning work, and does paying for future cleanings pencil? --></span></summary>
-<p>Two questions: did the {{CLEANING_YEAR}} cleaning actually work, and is paying for future cleanings still worth it?</p>
+<summary><h2 id="s12">12 · Panel cleaning &amp; soiling</h2><span class="teaser">{{SEC12_TEASER}}<!-- TODO: one line — did the historical cleaning work, and does paying for future cleanings pencil? --></span></summary>
+<p>The historical study estimates the cleaning effect. Archived cadence estimates lack a reproduced calculation; future cleaning payback remains undetermined.</p>
 <h3>The {{CLEANING_DATE}} cleaning ({{CLEANING_PRICE}}): {{CLEANING_EFFECT_CLAIM}} <span class="pill {{CLEANING_EFFECT_PILL_CLASS}}">{{CLEANING_EFFECT_PILL_LABEL}}</span></h3>
 <p>Comparing the 30 days before vs after the cleaning, against the identical calendar windows in control years (which capture the normal seasonal decline). Each row below is one year's own raw post ÷ pre ratio; the heading's figure is the cleaned year's ratio measured against the control years':</p>
 <table>
@@ -571,11 +577,11 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <!-- TODO: one <tr> per control year, plus any window-coverage footnotes. -->
 </tbody>
 </table>
-<p><!-- TODO: the difference-in-differences result ({{CLEANING_EFFECT_PCT}} — the same figure the h3 above states, against the raw per-year ratios in the table), corroborating evidence (zero-production wash day, peak-power step), and the $ recovered vs the cleaning price. --></p>
+<p><!-- TODO: the difference-in-differences result ({{CLEANING_EFFECT_PCT}} — the same figure the h3 above states, against the raw per-year ratios in the table), corroborating evidence (zero-production wash day, peak-power step), and the limit that recovered seasonal energy and payback need a reproducible calculation. --></p>
 <h3>How fast do the panels re-soil? <span class="pill r">estimated</span></h3>
 <p>The defensible soiling rate here is the full bracket the evidence allows, <b>~{{SOILING_RATE_RANGE}}</b>. <!-- TODO: the evidence behind that bracket, which the fixed sentence ahead of this comment already states from {{SOILING_RATE_RANGE}} (do not restate the figure): the independent soiling study ({{SOILING_SCRIPT}}) at one end against the cleaning-implied rate at the other; reconcile them or say plainly why they cannot both describe one steady process; close on what the two ends of the bracket cost per year at the blended $/kWh value soiling_results.json prices them at, naming that value. --></p>
-<h3>Best cadence and month — and a caution about today's rates <span class="pill y">modeled</span></h3>
-<p><!-- TODO: the optimal single-cleaning month ({{CLEANING_BEST_MONTH}}), what that cleaning is worth ({{CLEANING_SINGLE_VALUE_RANGE}}), and whether a second one pencils ({{CLEANING_SECOND_MARGINAL_RANGE}}). Turn the first of those into the shop-below threshold against what was actually paid ({{CLEANING_PRICE}}). Caveat the verdict, and do NOT collapse the comparator to one figure: what a marginal midday kWh is worth today is a range, {{MIDDAY_MARGINAL_VALUE_RANGE}} — the low end is what a kWh earns as an export credit when it leaves the house, the high end the super-off-peak import it offsets when it does not, and the two seasons differ. The cadence model prices recovered kWh above that whole range (its own per-kWh basis is documented in TECHNICAL.md §3.11; data/extra_results.json does not state it), so present these savings as an upper bound. --></p>
+<h3>Archived cadence estimates and evidence limits <span class="pill y">modeled</span></h3>
+<p><!-- TODO: identify data/extra_results.json:cleaning as a frozen archived estimate whose cadence calculation this repository does not reproduce. If retaining the archived month ({{CLEANING_BEST_MONTH}}), single-cleaning value ({{CLEANING_SINGLE_VALUE_RANGE}}), or second-cleaning estimate ({{CLEANING_SECOND_MARGINAL_RANGE}}), state that limitation beside each figure. The historical paid price is {{CLEANING_PRICE}}. The tariff comparator {{MIDDAY_MARGINAL_VALUE_RANGE}} spans both seasons and export-credit/import-offset treatments; do not replace it with a single summer import rate. That comparator alone does not establish a valid cadence calculation, a proven bound, an optimum, or a purchase recommendation. Keep future cleaning payback not determined. State the frozen rate date {{RATES_EFFECTIVE_DATE}} separately from the event year {{CLEANING_YEAR}}. --></p>
 </details>
 
 <details class="sec" id="sec13" open>
@@ -583,9 +589,9 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <p>Short workups pricing the context around everything above: when grid power is cleanest, what NEM grandfathering is worth, how rate escalation moves battery payback, what the always-on floor is made of, and what a single kWh costs hour by hour.</p>
 <h3>Grid-carbon timing <span class="pill y">modeled · {{CARBON_SAMPLE_DESCRIPTION}}</span></h3>
 <div class="chartbox"><canvas id="carbon" height="110"></canvas></div>
-<p><!-- TODO: overnight vs midday grid CO2 intensity from grid-operator data; the household's current import emissions; the emissions swing from retiming flexible load; the price-and-carbon alignment (or tension) of the cheap window; sampling caveats. --></p>
+<p><!-- TODO: overnight vs midday grid CO2 intensity from grid-operator data ({{CHART_TITLE_CARBON}}); the household's current import emissions; the emissions swing from retiming flexible load; the price-and-carbon alignment (or tension) of the cheap window; sampling caveats. --></p>
 <h3>What NEM 2.0 grandfathering is worth: {{NEM_GRANDFATHER_VALUE_RANGE}}/yr <span class="pill y">modeled</span></h3>
-<p><!-- TODO: re-bill the year with successor-tariff export credits vs current NEM netting; the annual delta is the hard number behind §8's warning. --></p>
+<p><!-- TODO: re-bill the year with successor-tariff export credits vs current NEM netting; the annual delta is conditional on the stated export components and tariff treatment of the proposed addition. --></p>
 <h3>Battery payback vs rate escalation <span class="pill y">modeled</span></h3>
 <table>
 <thead><tr><th>Annual rate escalation</th><th>Battery-alone payback</th><th>10-yr NPV ({{DISCOUNT_RATE}} discount)</th></tr></thead>
@@ -596,12 +602,12 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </table>
 <p class="small"><!-- TODO: base-case assumptions and the downside bracket (conservative dispatch, Monte Carlo median). --></p>
 <h3 id="spreadesc">Level escalation vs spread escalation <span class="pill g">measured · {{SPREAD_OBSERVATION_COUNT}}</span></h3>
-<p><!-- TODO: why the ladder above is an assumption — it escalates every price by one rate,
-     which holds the on-peak-to-super-off-peak GAP constant. A battery sells that gap, not
-     the price level, so the two are separate measurements. State the corpus behind the gap
+<p><!-- TODO: why the ladder above is an assumption — it grows first-year savings by an assumed annual percentage
+     and applies capacity fade; it does not re-bill future charge/discharge prices. A battery earns the
+     difference between charging and discharging value, so level and spread need separate checks. State the corpus behind the gap
      (priced cells, billing periods, statements, date range) from data/tou_spread.json. --></p>
 <div class="chartbox"><canvas id="spread" height="110"></canvas></div>
-<p class="small"><!-- TODO: caption — one point per rate segment, dated at the segment midpoint;
+<p class="small"><!-- TODO: caption — carry {{CHART_TITLE_SPREAD}} as the derived finding; one point per rate segment, dated at the segment midpoint;
      what the dashed spans mean (pre-structural-break, excluded from the reported fit). --></p>
 <p><!-- TODO: per season, EITHER the surviving trend (escalation %/yr, 95% CI, r², span in days,
      distinct rate LEVELS, %/yr) OR "not determined" with the reason. Three rules decide it, all of
@@ -625,14 +631,14 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
      say what that costs the reader: the ladder's own rungs ({{PAYBACK_AT_HISTORICAL_ESCALATION}},
      {{NPV_AT_HISTORICAL_ESCALATION}}) stay an assumption about level escalation, not a measurement
      of the spread the battery actually sells. Tag the re-run figures modeled. --></p>
-<p class="small"><!-- TODO: scope caveat. If the corpus cannot price one component of the rate
-     (e.g. generation on community-choice dates, where statements print the utility's bundled
-     comparison rather than the charged rate), say which component the spread covers, that the
-     all-in spread is therefore not determined, and exactly what data would settle it. Cite
+<p class="small"><!-- TODO: scope caveat. If the spread model does not price one component of the rate, say which component it covers
+     and which data or integration is missing. Check the separate charged-CCA rate artifact before
+     describing generation data as unavailable. Do not treat a printed bundled comparison as a
+     charged CCA rate. Cite
      analysis/tou_spread.py -> data/tou_spread.json and the settlement-zero exclusion rule. --></p>
 <h3>Phantom baseload — decomposed <span class="pill g">measured</span></h3>
 <p><!-- TODO: quiet-night floor statistics — the median ({{NIGHT_FLOOR_MEDIAN}}), its spread ({{NIGHT_FLOOR_SPREAD}}), the sample it rests on ({{NIGHT_FLOOR_SAMPLE}}), the energy it implies ({{NIGHT_FLOOR_ANNUAL_KWH}}) and what that costs ({{NIGHT_FLOOR_ANNUAL_COST}}) — both of which are {{NIGHT_FLOOR_PRICING_BASIS}}, a qualifier the annual figures may not appear without, since the floor is measured and the year built from it is not; the within-night cycling ({{NIGHT_FLOOR_CYCLING}}) and the seasonal swing ({{NIGHT_FLOOR_SEASONALITY}}). The cost is priced two ways and both are live, so reconcile them here rather than printing one: {{PHANTOM_METHOD_DISCREPANCY}} — and do not read more into their closeness than that sentence allows. Keep the exclusion rate in view, since the floor is measured on the minority of nights that stayed quiet, and the load's CAUSE is attested by the owner, not metered. Close on what a household could act on: {{NIGHT_FLOOR_SENSITIVITY_PER_100W}}. Split this into two or three paragraphs rather than one long one. --></p>
-<h3>The marginal price map — what one kWh costs or earns, right now <span class="pill g">measured · bill rates</span></h3>
+<h3>The marginal price map at {{RATES_EFFECTIVE_DATE}} rates <span class="pill g">measured · bill rates</span></h3>
 <table>
 <thead><tr><th>Season · period</th><th>Import (all-in)</th><th>Export credit</th></tr></thead>
 <tbody>
@@ -654,7 +660,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <li><b>Behavior model:</b> <!-- TODO: session-detection thresholds, physical-energy-move method, conservation check. --></li>
 <li><b>Package math:</b> <!-- TODO: how package savings deltas are computed and anchored; payback conventions (simple, no escalation); incentive assumptions. --></li>
 <li><b>Bill validation:</b> <!-- TODO: statements parsed, coverage, penny-level rate matches, product/zone confirmations, actual annual total. --></li>
-<li><b>Confidence labels:</b> <span class="pill g">measured</span> = read directly from meters, bills, or multi-source-verified records; <span class="pill y">modeled</span> = computed with the validated billing/dispatch models at current rates; <span class="pill r">estimated</span> = approximate inputs — treat as order-of-magnitude. Labels are shown where evidence is thinner.</li>
+<li><b>Confidence labels:</b> <span class="pill g">measured</span> = read directly from meters, bills, or multi-source-verified records; <span class="pill y">modeled</span> = computed under the stated assumptions; <span class="pill r">estimated</span> = uses approximate inputs or limited observations. A modeled label does not establish complete bill reconciliation; the bill section states the remaining gap. Labels follow the evidence for each finding.</li>
 <li><b>Caveats:</b> <!-- TODO: rate-change cadence, unsimulated surcharges, price-estimate disclaimer. --></li>
 <li><b>Cleaning &amp; soiling (§12):</b> <!-- TODO: diff-in-diff window design and soiling-study method; cite data files and {{SOILING_SCRIPT}}. --></li>
 <li><b>Lifetime payback (§11):</b> <!-- TODO: counterfactual + rate-index method and precision; invoice/PTO provenance. --></li>
@@ -717,6 +723,8 @@ const V=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()
 const A=(hex,a)=>{const h=hex.replace('#','');return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${a})`};
 const PAL={ink:V('--ink'),sub:V('--sub'),line:V('--line'),on:V('--onpeak'),off:V('--offpeak'),sop:V('--sop'),solar:V('--solar')};
 Chart.defaults.color=PAL.sub; Chart.defaults.borderColor=PAL.line;
+Chart.defaults.maintainAspectRatio=false;
+Chart.defaults.animation=false;
 Chart.defaults.font.family='"IBM Plex Mono",ui-monospace,monospace'; Chart.defaults.font.size=11;
 // Signature: shade the tariff's on-peak window on every time-axis chart.
 // TARIFF DATA, not design: ONPEAK_START/ONPEAK_END are the tariff's on-peak hours
@@ -733,26 +741,26 @@ new Chart(document.getElementById('hourly'),{type:'line',data:{labels:hrs,datase
  {label:'Summer solar export (avg kW)',data:D.hourlyS_exp,borderColor:PAL.solar,borderDash:[6,3],tension:.3},
  {label:'Winter import (avg kW)',data:D.hourlyW_imp,borderColor:PAL.sub,backgroundColor:A(PAL.sub,.08),fill:true,tension:.3},
  {label:'Winter solar export (avg kW)',data:D.hourlyW_exp,borderColor:PAL.sop,borderDash:[6,3],tension:.3}]},
- // Title should state the finding, not just the axis — e.g. "Average demand by hour — the overnight charging block, and the evening peak inside the expensive window".
- options:{plugins:{title:{display:true,text:'{{CHART_TITLE_HOURLY}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'avg kW'}}}},plugins:[onpeakBand]});
+ // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
+ options:{plugins:{title:{display:true,text:'Hourly grid flows',color:PAL.ink}},scales:{y:{title:{display:true,text:'avg kW'}}}},plugins:[onpeakBand]});
 new Chart(document.getElementById('battery'),{type:'line',data:{labels:hrs,datasets:[
  {label:'Grid import now (summer, avg kW)',data:D.bat_now_S,borderColor:PAL.on,backgroundColor:A(PAL.on,.10),fill:true,tension:.3},
  {label:'With 1 × {{BATTERY_MODEL}}',data:D.bat_pw3_S,borderColor:PAL.sop,borderWidth:2,tension:.3},
  {label:'With {{BATTERY_EXPANDED_MODEL}} ({{BATTERY_EXPANDED_KWH}} kWh)',data:D.bat_pw3x_S,borderColor:PAL.off,borderDash:[5,3],tension:.3}]},
- // e.g. "Projected grid import with a battery — the evening peak (red) is erased; overnight rises slightly as the battery tops up on cheap power".
- options:{plugins:{title:{display:true,text:'{{CHART_TITLE_BATTERY}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'grid import avg kW'}}}},plugins:[onpeakBand]});
+ // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
+ options:{plugins:{title:{display:true,text:'Summer grid imports',color:PAL.ink}},scales:{y:{title:{display:true,text:'grid import avg kW'}}}},plugins:[onpeakBand]});
 new Chart(document.getElementById('monthly'),{data:{labels:D.mLabels,datasets:[
  {type:'bar',label:'Grid imports (kWh)',data:D.mImp,backgroundColor:A(PAL.sub,.55)},
  {type:'bar',label:'Solar exports (kWh)',data:D.mExp,backgroundColor:A(PAL.solar,.75)},
  {type:'line',label:'Modeled energy cost ($, {{BEST_PLAN}})',data:D.mCost,borderColor:PAL.on,yAxisID:'y2',tension:.3}]},
- options:{plugins:{title:{display:true,text:'Monthly energy flows and modeled cost (* partial months)',color:PAL.ink}},
+ options:{plugins:{title:{display:true,text:'Monthly energy and cost',color:PAL.ink}},
  scales:{y:{title:{display:true,text:'kWh'}},y2:{position:'right',grid:{display:false},title:{display:true,text:'$'}}}}});
 new Chart(document.getElementById('periods'),{type:'bar',data:{
- labels:['Super off-peak ({{SOP_IMPORT_SHARE_PCT}}% of imports)','Off-peak ({{OFFPEAK_IMPORT_SHARE_PCT}}%)','On-peak {{PEAK_WINDOW}} ({{ONPEAK_IMPORT_SHARE_PCT}}%)'],
+ labels:['Super off-peak','Off-peak','On-peak'],
  datasets:[{label:'Annual import kWh',data:[/* 3 values: kWh by TOU period */],backgroundColor:A(PAL.sub,.55)},
   {label:'Annual import cost $',data:[/* 3 values: gross import $ by TOU period */],backgroundColor:A(PAL.on,.75)}]},
- // e.g. "X% of imports happen on-peak, driving Y% of gross import cost".
- options:{indexAxis:'y',plugins:{title:{display:true,text:'{{CHART_TITLE_PERIODS}}',color:PAL.ink}}}});
+ // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
+ options:{indexAxis:'y',plugins:{title:{display:true,text:'Imports by TOU period',color:PAL.ink}}}});
 // LAZY CHART REGISTRY — keep this generic; do not special-case a single canvas.
 // A Chart.js canvas built while any ancestor <details> is closed measures 0x0 and never
 // recovers, so every canvas inside a collapsible section (the advanced tier, or any
@@ -775,9 +783,9 @@ const runLazyCharts=()=>{for(const c of lazyCharts){
  if(el&&revealed(el)){c.build(el);c.built=true;}
 }};
 lazyChart('carbon',el=>new Chart(el,{type:'line',data:{labels:hrs,datasets:[
- {label:'Grid CO₂ intensity (annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3}]},
- // e.g. "Grid carbon by hour (real grid-operator data) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest".
- options:{plugins:{title:{display:true,text:'{{CHART_TITLE_CARBON}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]}));
+ {label:'Annual mean',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3}]},
+ // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
+ options:{plugins:{title:{display:true,text:'Grid carbon by hour',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]}));
 // onpeakBand is deliberately NOT applied below: this chart's x-axis is calendar dates, not
 // hours of the day, so a 4-9pm band would shade arbitrary dates. The shading rule in
 // CLAUDE.md §10 applies to the hour-axis charts.
@@ -786,8 +794,8 @@ lazyChart('spread',el=>new Chart(el,{type:'line',data:{labels:D.spLabels,dataset
   segment:{borderDash:c=>c.p1DataIndex<=D.spBreak.summer?[5,3]:undefined}},
  {label:'Winter on-peak − super-off-peak ($/kWh)',data:D.spWinter,borderColor:PAL.sub,spanGaps:true,tension:0,pointRadius:2,
   segment:{borderDash:c=>c.p1DataIndex<=D.spBreak.winter?[5,3]:undefined}}]},
- // e.g. "Delivery spread by rate segment — dashed spans precede each structural break".
- options:{plugins:{title:{display:true,text:'{{CHART_TITLE_SPREAD}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'$/kWh spread'}}}}}));
+ // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
+ options:{plugins:{title:{display:true,text:'Delivery rate spread',color:PAL.ink}},scales:{y:{title:{display:true,text:'$/kWh spread'}}}}}));
 document.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',runLazyCharts));
 runLazyCharts();
 

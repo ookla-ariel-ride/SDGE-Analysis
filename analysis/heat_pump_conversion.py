@@ -470,12 +470,13 @@ def _capacity_capped_days(period_start, period_end, hdd_by_day, total_hdd, ann_h
     each real day's own capacity from its OWN real metered therms
     (`gas_daily`) wherever gas.csv actually covers that day: `max(0,
     real_day_therms - floor_per_day)`, not the period-wide proxy. This
-    household's real gas.csv covers 2025-07-25 through 2026-07-24, and
-    every one of the 25 real billing periods with nonzero HDD on any of its
-    own days (the only periods where this cap can ever bind, since a day
-    with zero HDD has zero demand regardless of its own capacity) falls
-    entirely inside that window -- verified before this fix landed, not
-    assumed. `heating_capable_per_day` is kept ONLY as the fallback for (a)
+    household's real gas.csv covers 2025-07-25 through 2026-07-24.
+    Every day with nonzero heating demand has its own gas reading; that
+    does not mean its whole billing period falls inside this window.
+    The 2026-07-30 statement spans 2026-06-27 through 2026-07-28 and has
+    0.2 HDD, but contributes zero capacity-capped heating. A missing daily
+    gas reading with positive demand still fails closed below.
+    `heating_capable_per_day` is kept ONLY as the fallback for (a)
     a day `gas_daily` genuinely has no reading for, when `gas_daily` itself
     is None (see below), or (b) the rare zero-demand day where which
     ceiling applies cannot matter (`min(0, anything) == 0`).
@@ -773,15 +774,14 @@ def gas_savings_by_period(iso):
     the Green Button daily export) for the HDD regression. Fixed by pricing
     each real day's own capacity from ITS OWN real metered therms wherever
     gas.csv covers that day (`max(0, real_day_therms - floor_per_day)`),
-    falling back to the day-proportional proxy only for a day gas.csv
-    genuinely has no reading for. Verified before fixing, not assumed: this
-    household's real gas.csv (2025-07-25 through 2026-07-24) fully covers
-    every real billing period that has any nonzero HDD on any of its own
-    days -- the only periods this cap can ever affect, since a zero-HDD day
-    has zero demand regardless of which ceiling applies -- so the real
-    archive never touches the proxy fallback for a day that matters, and
-    the fail-closed path below is exercised only by a deliberately-gapped
-    test fixture, never by this household's own real run. Real metered
+    using the day-proportional proxy only for zero-demand days without a
+    reading, or for test fixtures without daily gas data. This household's
+    real gas.csv (2025-07-25 through 2026-07-24) covers every day with
+    nonzero heating demand, not every whole billing period with nonzero
+    HDD. The 2026-07-30 statement extends through 2026-07-28 and records
+    0.2 HDD, but its capacity-capped heating contribution is zero. A missing
+    daily gas reading with positive demand still fails closed; the real
+    archive does not use a proxy for such a day. Real metered
     days' own totals don't exactly reproduce their period's own printed
     bill total (ordinary meter-read-date-vs-billing-date noise -- across
     every fully-gas.csv-covered period in this household's real corpus, the
@@ -1114,18 +1114,12 @@ def electric_cost_scenarios(d, iso):
     """{cop_key: {dist_key: annual electric cost increase usd}}, every kWh
     total verified to conserve against ann_heat_kwh before being trusted.
 
-    Added load is netted against that SAME interval's own solar Generation
-    before it ever becomes new Consumption (Codex adversarial review, issue
-    #1, pass 2, matching the established solar_absorbed_i convention
-    perfect_foresight_dispatch.py already uses): a real house's added
-    electric load is served first by whatever solar is being generated in
-    that instant, and only spills into new grid import once that interval's
-    export is exhausted. Adding the load straight into Consumption while
-    leaving Generation untouched would manufacture simultaneous gross
-    import AND export the household never actually has, and rates.py's own
-    non-bypassable charge (NBC) is billed on GROSS imports under NEM
-    (CLAUDE.md's own documented lesson) -- so an unnetted interval would
-    overstate NBC on import that never happened.
+    Added load consumes available exports first, then raises imports. This
+    retains the physical flow convention used by the storage models. Both
+    this allocation and adding the same load directly to Consumption produce
+    the same signed interval net, so the corrected NEM bill is identical.
+    Export absorption remains a modeled interval allocation, not evidence of
+    subinterval timing or instantaneous simultaneous flow.
     """
     base_bill = R.bill_nem(d, imp="Consumption", exp="Generation")
     out = {}

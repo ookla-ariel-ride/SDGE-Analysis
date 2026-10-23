@@ -28,7 +28,7 @@
   "n_away": 11,
   "away_median_import_kwh_day": 19.5,
   "occupied_median_import_kwh_day": 63.5,
-  "note": "away-day import is grid import only; unattended LOAD also eats solar midday, so this is a lower bound on unattended consumption",
+  "note": "Compatibility keys away_days/n_away/implied_unattended_kw describe days with detected EV energy <0.5 kWh and imports <40% of the median. Occupancy is not established. These are grid imports from the same meter series, not an independently measured unattended load.",
   "implied_unattended_kw": 0.81
  },
  "supercharge_delta": {
@@ -41,9 +41,9 @@
  },
  "weekend_sop": {
   "weekend_house_kwh_outside_sop": 1532,
-  "value_if_half_shifts_yr": 411,
-  "value_if_all_shifts_yr": 821,
-  "method": "physically moved: weekend non-EV import in hours >=14 relocated into the same day's 0-14 super-off-peak intervals (uniform spread), baseline and shifted series both billed with rates.bill_nem (monthly per-period NEM netting, NBC on gross imports); deltas, not kWh x rate-difference",
+  "value_if_half_shifts_yr": 415,
+  "value_if_all_shifts_yr": 829,
+  "method": "physically moved: weekend non-EV import in hours >=14 relocated into the same day's 0-14 super-off-peak intervals (uniform spread), baseline and shifted series both billed with rates.bill_nem (monthly per-period NEM netting, NBC on positive physical interval net); deltas, not kWh x rate-difference",
   "note": "weekend 0-14 window is super-off-peak year-round; realistic capture is a fraction (laundry/dish/pool timing), so half-shift is quoted. 'Weekend' means every day taking weekend TOU windows, which under the canonical holiday rule includes the eight tariff holidays; they contribute part of the kWh above"
  },
  "representative_year": {
@@ -68,7 +68,7 @@
  },
  "nbt_2039": {
   "nem2_expiry": "~Dec 2039 (PTO 2019-12-27 + 20 yr)",
-  "battery_marginal_under_nem2": 2466,
+  "battery_marginal_under_nem2": 2464,
   "battery_marginal_under_nbt": {
    "3c": {
     "battery_marginal_yr": 2534

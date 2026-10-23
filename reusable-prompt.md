@@ -13,7 +13,7 @@ electrifying gas pays — every number scripted, bill-validated, and privacy-aud
 - Written for an SDG&E customer with rooftop solar, an EV, a CCA, and NEM 2.0, but Claude
   adapts: any utility/CCA, no solar, no EV, no gas, NBT instead of NEM.
 - Solar monitoring is vendor-agnostic — Enphase, SolarEdge, Tesla, SMA, Fronius, and PVOutput
-  all expose the needed feeds (gross production, system size, metering config).
+  use different export formats. Check gross production, system size, metering configuration, and time coverage for the chosen source.
 
 ---
 
@@ -95,8 +95,8 @@ date across several years — uncleaned years are the control for seasonal decli
 soiling independently from rain recovery (daily precipitation from the free NOAA/RCC ACIS
 API, clear-sky-normalized production around rain-after-dry-spell events, plus a
 days-since-rain regression); if the two lines of evidence disagree, report the
-bracket. Then model optimal cleaning cadence, valuing recovered kWh at what a **marginal
-midday kWh** is worth on my tariff — not the blended rate.
+bracket. Only recommend a future cleaning cadence when a reproduced calculation supports it. Value recovered kWh at the **marginal
+midday kWh** rate. Label archived estimates without reproduced calculations and keep them out of purchase conclusions.
 
 **4. Lifetime solar payback (needs my install invoice: price, date, ITC claimed).** Build
 the cumulative-value curve: each year's ACTUAL production × that year's blended $/kWh under
@@ -165,8 +165,8 @@ for whether gas has a real fixed monthly charge before claiming an all-electric
 bill-derived totals anchor every absolute dollar in the report, so they fall under the
 "every artifact regenerable by its committed script" gate like everything else. Have the
 parser read billing periods from the statement TEXT (one statement can hold two periods when
-a rate change splits it), capture gross vs net kWh separately (non-bypassable charges are
-levied on gross), record which entity billed generation if that changes mid-corpus, refuse
+a rate change splits it), capture printed NBC usage and signed-net kWh separately (the legacy `gross_kwh`
+key means printed NBC usage; reconcile its interval basis rather than inferring raw Consumption), record which entity billed generation if that changes mid-corpus, refuse
 to publish when a statement is missing or periods fail to tile the window, and extract no
 personal identifiers. Where prior summaries exist, regenerating them byte-identically is the
 gate that validates the parser. This validates modeled rates to the penny, resolves what the
@@ -331,7 +331,7 @@ highlighted; h2 `scroll-margin-top` ≥ nav height; smooth scrolling gated by
 `prefers-reduced-motion`. The advanced tier (§8–§14) lives inside ONE closed-by-default
 `<details id="advanced">` whose summary is a loud full-width divider — mono uppercase eyebrow
 "ADVANCED ANALYSIS", display-font headline "The full evidence", inventory line ("7 sections ·
-the full audit trail · every figure traceable to a script and a data artifact"), and a ▸
+the full audit trail · methods, source records, and limits for the report's findings"), and a ▸
 affordance that rotates when open. Required mitigations: every deep link into the tier
 auto-opens it (load-with-hash AND hashchange) before scrolling; nav pills for tier content
 (s8–s14) dim to ~55% while it is closed but still navigate; the tier's charts lazy-init on

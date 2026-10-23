@@ -19,9 +19,9 @@ The schedule charges from permitted solar surplus and/or super-off-peak grid,
 and serves imports in off/on-peak intervals. No foresight or optimality claim.
 Hardware support, circuit coverage, phase controls, and grid-parallel eligibility
 remain unknown. Constant-load backup calculations assume no outage solar recharge.
-Billing preserves the canonical engine's gross-import NBC convention. NEM-ST
-instead specifies consumption net of exports within each metered interval; the
-meter-channel/billing-interval reconciliation remains open. Reproduction does
+Billing uses positive physical interval-net NBC, separately from export credit. NEM-ST
+SC 1(f) specifies this interval-net basis. Actual bills support the numerical
+choice; exact utility interval mapping, precision and grouped rounding remain open. Reproduction does
 not establish tariff accuracy. See research/sb868-portable-solar-storage.md.
 """
 from dataclasses import asdict, dataclass
@@ -211,18 +211,19 @@ def steady_dispatch(d, imports, exports, pv, batteries, *, tolerance=SOC_TOLERAN
     raise RuntimeError(f'annual SOC did not converge within {max_iterations} passes; residual={residual}')
 
 
-def _bill(d, imports, exports):
+def _bill(d, imports, exports, *, physical_exports=None):
     _frame(d)
     f = d[['dt', 'seas', 'p', 'ym']].copy()
     f['I'] = _array(imports, len(d), 'bill imports')
     f['E'] = _array(exports, len(d), 'bill credited exports')
-    bills = R.bill_nem_monthly(f, 'I', 'E')
+    f['physical_E'] = _array(exports if physical_exports is None else physical_exports, len(d), 'bill physical exports')
+    bills = R.bill_nem_monthly(f, 'I', 'E', physical_exp='physical_E')
     monthly = {}
     totals = dict.fromkeys(('delivery_usd', 'generation_usd', 'pcia_usd', 'nbc_usd', 'fixed_usd'), 0.)
     for ym, group in f.groupby('ym'):
         parts = dict.fromkeys(totals, 0.)
         parts['fixed_usd'] = group.dt.dt.date.nunique() * R.BSC
-        parts['nbc_usd'] = float(group.I.sum()) * R.NBC
+        parts['nbc_usd'] = float(R.nbc_kwh(group.I, group.physical_E).sum()) * R.NBC
         for (season, period), sub in group.groupby(['seas', 'p']):
             net = float(sub.I.sum() - sub.E.sum())
             parts['delivery_usd'] += net * R.UDC[season][period]
@@ -231,16 +232,17 @@ def _bill(d, imports, exports):
         if abs(sum(parts.values()) - bills[str(ym)]) > 1e-7:
             raise RuntimeError('bill component decomposition differs from canonical engine')
         monthly[str(ym)] = dict(total_usd=float(bills[str(ym)]), components=parts,
-                                imports_kwh=float(group.I.sum()), credited_exports_kwh=float(group.E.sum()))
+                                imports_kwh=float(group.I.sum()), credited_exports_kwh=float(group.E.sum()),
+                                physical_exports_kwh=float(group.physical_E.sum()))
         for key, value in parts.items():
             totals[key] += value
     return {'total_usd': float(sum(bills.values())), 'components': totals, 'monthly': monthly}
 
 
-def bill_comparison(d, imports_before, exports_before, imports_after, credited_exports_after):
+def bill_comparison(d, imports_before, exports_before, imports_after, credited_exports_after, *, physical_exports_after=None):
     """Rebill both complete flows at canonical June 2026 rates; no average-rate delta."""
     before = _bill(d, imports_before, exports_before)
-    after = _bill(d, imports_after, credited_exports_after)
+    after = _bill(d, imports_after, credited_exports_after, physical_exports=physical_exports_after)
     return {'before': before, 'after': after, 'savings_usd': before['total_usd'] - after['total_usd'],
             'component_savings_usd': {k: before['components'][k] - after['components'][k] for k in before['components']}}
 
@@ -357,7 +359,7 @@ def pv_profile(d, per_kw, dc_kw, shape='production_proxy'):
 
 
 def tariff_spread_comparison(d, imports_before, exports_before, imports_after,
-                             credited_exports_after, *, factor):
+                             credited_exports_after, *, factor, physical_exports_after=None):
     """Rebill BOTH flows with a canonical-rate-derived TOU spread stress.
 
     SOP delivery/generation stay fixed. Each other period's delivery/generation
@@ -371,7 +373,7 @@ def tariff_spread_comparison(d, imports_before, exports_before, imports_after,
         def scaled(table):
             return {s: {p: row['sop'] + factor * (rate - row['sop']) for p, rate in row.items()} for s, row in table.items()}
         R.UDC, R.CEA = scaled(old_udc), scaled(old_cea)
-        result = bill_comparison(d, imports_before, exports_before, imports_after, credited_exports_after)
+        result = bill_comparison(d, imports_before, exports_before, imports_after, credited_exports_after, physical_exports_after=physical_exports_after)
         result['hypothetical_rate_table'] = {'delivery': R.UDC, 'generation': R.CEA,
                                               'nbc': R.NBC, 'pcia': R.PCIA, 'daily_fixed': R.BSC,
                                               'spread_factor': factor}
@@ -402,7 +404,7 @@ def backup_runtime(battery, loads_w=(100, 300, 500, 1000)):
 
 def scenario_summary(d, baseline_imports, baseline_exports, result, batteries):
     """Aggregate dispatch accounts and complete monthly bills; publish no raw traces."""
-    comparison = bill_comparison(d, baseline_imports, baseline_exports, result['imports'], result['credited_exports'])
+    comparison = bill_comparison(d, baseline_imports, baseline_exports, result['imports'], result['credited_exports'], physical_exports_after=result['exports'])
     days = d.dt.dt.date.nunique()
     accounts = []
     for b, log, start, end in zip(batteries, result['controllers'], result['soc_start'], result['soc_end']):
@@ -588,7 +590,7 @@ def build_study(inputs, *, include_references=True):
                  '2030_note': 'Hypothetical 2027 commissioning, year 4 cost in 2030; operation continues. Neither automatic shutdown nor permanent exemption assumed.',
                  'tariff_spread_rebills': []}
     for factor in (.5, .75, 1.25):
-        comp = tariff_spread_comparison(d, post, exp, target_trace['imports'], target_trace['credited_exports'], factor=factor)
+        comp = tariff_spread_comparison(d, post, exp, target_trace['imports'], target_trace['credited_exports'], factor=factor, physical_exports_after=target_trace['exports'])
         financial['tariff_spread_rebills'].append({'spread_factor': factor, 'annual_savings_usd': comp['savings_usd'],
                                                   'bill_before': comp['before'], 'bill_after': comp['after'],
                                                   'hypothetical_rate_table': comp['hypothetical_rate_table'],
@@ -621,7 +623,7 @@ def build_study(inputs, *, include_references=True):
                 'economics': '5% real discount, 1% annual savings decline, zero real tariff escalation; no replacement/subscription/maintenance cost assumed because quote unknown; ceilings before those costs',
                 'equipment_price': '$1399 per 1.92kWh unit from supplied issue snapshot, observation date 2026-10-22; equipment-only marginal illustration, not installed price or available-stock claim',
                 'backup': 'constant-load conditional runtime only; known product/circuit surge limits absent; no existing Enphase outage production or solar recharge assumed',
-                'bill_limitations': 'calendar-month model differs from statement windows; frozen rate vintage differs from historical bills; documented historical residual remains unexplained. NBC uses gross imported energy, while NEM-ST specifies consumption net of exports within each metered interval; meter-channel/billing-interval reconciliation remains open. Absolute modeled bills are not actual bills; deltas retain this NBC convention.',
+                'bill_limitations': 'calendar-month model differs from statement windows; frozen rate vintage differs from historical bills; documented historical residual remains unexplained. NBC sums positive physical import minus physical export within each fifteen-minute interval. Actual bills support this basis; exact utility interval mapping, precision, and grouped rounding remain unresolved. Uncredited exports still enter physical NBC netting as a modeling assumption; compensation and interconnection eligibility remain separate unresolved questions. Absolute modeled bills are not actual bills.',
                 'fixed_costs': 'electric daily charge unchanged; gas unchanged and excluded from electric model',
                 'incentives': 'zero homeowner federal25D credit; other incentive/VPP eligibility and monetary backup value unknown'},
             'canonical_no_reserve_benchmarks': reference_rows, 'scenarios': scenarios,

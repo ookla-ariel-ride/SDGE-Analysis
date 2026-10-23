@@ -57,6 +57,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - name: NBC bill evidence guards
+        run: python analysis/test_nbc_bill_reconciliation.py
       - name: rates guard tests
         run: python analysis/test_rates.py
       - name: report/artifact consistency

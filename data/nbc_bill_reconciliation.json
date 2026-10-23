@@ -1,0 +1,655 @@
+{
+  "dst_days": [
+    {
+      "date": "2025-11-02",
+      "rows": 100
+    },
+    {
+      "date": "2026-03-08",
+      "rows": 92
+    }
+  ],
+  "excluded_periods": [
+    {
+      "days": 32,
+      "end": "2024-06-25",
+      "missing_days": 32,
+      "printed_nbc_kwh": 1438.0,
+      "printed_net_kwh": 346.0,
+      "reason": "incomplete interval coverage",
+      "start": "2024-05-25",
+      "wildfire_quantity_kwh": 1438.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 30,
+      "end": "2024-07-25",
+      "missing_days": 30,
+      "printed_nbc_kwh": 1592.0,
+      "printed_net_kwh": 710.0,
+      "reason": "incomplete interval coverage",
+      "start": "2024-06-26",
+      "wildfire_quantity_kwh": 1592.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 32,
+      "end": "2024-08-26",
+      "missing_days": 32,
+      "printed_nbc_kwh": 1814.0,
+      "printed_net_kwh": 852.0,
+      "reason": "incomplete interval coverage",
+      "start": "2024-07-26",
+      "wildfire_quantity_kwh": 1814.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 30,
+      "end": "2024-09-25",
+      "missing_days": 30,
+      "printed_nbc_kwh": 1603.0,
+      "printed_net_kwh": 802.0,
+      "reason": "incomplete interval coverage",
+      "start": "2024-08-27",
+      "wildfire_quantity_kwh": 1603.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 30,
+      "end": "2024-10-25",
+      "missing_days": 30,
+      "printed_nbc_kwh": 1678.0,
+      "printed_net_kwh": 646.0,
+      "reason": "incomplete interval coverage",
+      "start": "2024-09-26",
+      "wildfire_quantity_kwh": 1678.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 31,
+      "end": "2024-11-25",
+      "missing_days": 31,
+      "printed_nbc_kwh": 1394.0,
+      "printed_net_kwh": 511.0,
+      "reason": "incomplete interval coverage",
+      "start": "2024-10-26",
+      "wildfire_quantity_kwh": 1394.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 31,
+      "end": "2024-12-26",
+      "missing_days": 31,
+      "printed_nbc_kwh": 1776.0,
+      "printed_net_kwh": 1186.0,
+      "reason": "incomplete interval coverage",
+      "start": "2024-11-26",
+      "wildfire_quantity_kwh": 1776.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 32,
+      "end": "2025-01-27",
+      "missing_days": 32,
+      "printed_nbc_kwh": 1627.0,
+      "printed_net_kwh": 946.0,
+      "reason": "incomplete interval coverage",
+      "start": "2024-12-27",
+      "wildfire_quantity_kwh": 1627.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 30,
+      "end": "2025-02-26",
+      "missing_days": 30,
+      "printed_nbc_kwh": 1522.0,
+      "printed_net_kwh": 773.0,
+      "reason": "incomplete interval coverage",
+      "start": "2025-01-28",
+      "wildfire_quantity_kwh": 1522.0,
+      "wildfire_segments": 2
+    },
+    {
+      "days": 29,
+      "end": "2025-03-27",
+      "missing_days": 29,
+      "printed_nbc_kwh": 1391.0,
+      "printed_net_kwh": 458.0,
+      "reason": "incomplete interval coverage",
+      "start": "2025-02-27",
+      "wildfire_quantity_kwh": 1391.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 32,
+      "end": "2025-04-28",
+      "missing_days": 32,
+      "printed_nbc_kwh": 1516.0,
+      "printed_net_kwh": 417.0,
+      "reason": "incomplete interval coverage",
+      "start": "2025-03-28",
+      "wildfire_quantity_kwh": 1516.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 30,
+      "end": "2025-05-28",
+      "missing_days": 30,
+      "printed_nbc_kwh": 1813.0,
+      "printed_net_kwh": 892.0,
+      "reason": "incomplete interval coverage",
+      "start": "2025-04-29",
+      "wildfire_quantity_kwh": 1813.0,
+      "wildfire_segments": 1
+    },
+    {
+      "days": 29,
+      "end": "2025-06-26",
+      "missing_days": 29,
+      "printed_nbc_kwh": 1831.0,
+      "printed_net_kwh": 1118.0,
+      "reason": "incomplete interval coverage",
+      "start": "2025-05-29",
+      "wildfire_quantity_kwh": 1831.0,
+      "wildfire_segments": 1
+    }
+  ],
+  "interval_union": {
+    "days": 483,
+    "first_date": "2025-06-27",
+    "last_date": "2026-10-22",
+    "rows": 46368
+  },
+  "method": {
+    "arithmetic": "Decimal source arithmetic; no grouped rounding or historical TOU assumption enters these interval sums.",
+    "bill_quantity": "Printed Non Bypassable Charges Usage, checked against summed Wildfire Fund Charge kWh. The legacy bill table gross_kwh field denotes this printed quantity, not raw Consumption.",
+    "coverage": "Inclusive printed service dates; exact local-time multiplicities and repeated DST occurrences retained; exact overlap agreement required.",
+    "interpretation": "Compare candidate residuals as evidence for the numerical NBC basis. This does not establish exact utility replication or physical channel-register mechanisms.",
+    "limits": "Utility billing-interval mapping, source precision, grouped rounding, historical rate segments and exact midnight cutoffs remain unresolved.",
+    "nbc_model_basis": "Sum max(Consumption - Generation, 0) within each exported fifteen-minute interval.",
+    "tariff": "SDGE NEM-ST SC 1(f), sheet 6, revised CPUC sheet 37390-E, effective 2023-03-01; consumption net of exports in each metered interval.",
+    "tariff_url": "https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE"
+  },
+  "overlap_rows_by_export": [
+    0,
+    29568
+  ],
+  "periods": [
+    {
+      "candidate_difference_kwh": 8.76,
+      "days": 32,
+      "end": "2025-07-28",
+      "interval_rows": 3072,
+      "positive_interval_net_kwh": 1854.43,
+      "positive_net_minus_printed_nbc_kwh": 0.43,
+      "printed_nbc_kwh": 1854.0,
+      "printed_net_kwh": 806.0,
+      "raw_consumption_kwh": 1863.19,
+      "raw_consumption_minus_printed_nbc_kwh": 9.19,
+      "signed_interval_net_kwh": 806.705,
+      "signed_net_minus_printed_total_usage_kwh": 0.705,
+      "start": "2025-06-27",
+      "wildfire_quantity_kwh": 1854.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 9.81,
+      "days": 29,
+      "end": "2025-08-26",
+      "interval_rows": 2784,
+      "positive_interval_net_kwh": 2131.135,
+      "positive_net_minus_printed_nbc_kwh": 0.135,
+      "printed_nbc_kwh": 2131.0,
+      "printed_net_kwh": 1335.0,
+      "raw_consumption_kwh": 2140.945,
+      "raw_consumption_minus_printed_nbc_kwh": 9.945,
+      "signed_interval_net_kwh": 1334.915,
+      "signed_net_minus_printed_total_usage_kwh": -0.085,
+      "start": "2025-07-29",
+      "wildfire_quantity_kwh": 2131.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 10.81,
+      "days": 30,
+      "end": "2025-09-25",
+      "interval_rows": 2880,
+      "positive_interval_net_kwh": 2489.485,
+      "positive_net_minus_printed_nbc_kwh": -0.515,
+      "printed_nbc_kwh": 2490.0,
+      "printed_net_kwh": 1797.0,
+      "raw_consumption_kwh": 2500.295,
+      "raw_consumption_minus_printed_nbc_kwh": 10.295,
+      "signed_interval_net_kwh": 1797.145,
+      "signed_net_minus_printed_total_usage_kwh": 0.145,
+      "start": "2025-08-27",
+      "wildfire_quantity_kwh": 2490.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 2.95,
+      "days": 5,
+      "end": "2025-09-30",
+      "interval_rows": 480,
+      "positive_interval_net_kwh": 307.375,
+      "positive_net_minus_printed_nbc_kwh": -0.625,
+      "printed_nbc_kwh": 308.0,
+      "printed_net_kwh": 224.0,
+      "raw_consumption_kwh": 310.325,
+      "raw_consumption_minus_printed_nbc_kwh": 2.325,
+      "signed_interval_net_kwh": 223.835,
+      "signed_net_minus_printed_total_usage_kwh": -0.165,
+      "start": "2025-09-26",
+      "wildfire_quantity_kwh": 308.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 9.225,
+      "days": 27,
+      "end": "2025-10-27",
+      "interval_rows": 2592,
+      "positive_interval_net_kwh": 1903.935,
+      "positive_net_minus_printed_nbc_kwh": -0.065,
+      "printed_nbc_kwh": 1904.0,
+      "printed_net_kwh": 1204.0,
+      "raw_consumption_kwh": 1913.16,
+      "raw_consumption_minus_printed_nbc_kwh": 9.16,
+      "signed_interval_net_kwh": 1204.375,
+      "signed_net_minus_printed_total_usage_kwh": 0.375,
+      "start": "2025-10-01",
+      "wildfire_quantity_kwh": 1904.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 6.24,
+      "days": 29,
+      "end": "2025-11-25",
+      "interval_rows": 2788,
+      "positive_interval_net_kwh": 1637.225,
+      "positive_net_minus_printed_nbc_kwh": 0.225,
+      "printed_nbc_kwh": 1637.0,
+      "printed_net_kwh": 1002.0,
+      "raw_consumption_kwh": 1643.465,
+      "raw_consumption_minus_printed_nbc_kwh": 6.465,
+      "signed_interval_net_kwh": 1000.675,
+      "signed_net_minus_printed_total_usage_kwh": -1.325,
+      "start": "2025-10-28",
+      "wildfire_quantity_kwh": 1637.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 5.0,
+      "days": 31,
+      "end": "2025-12-26",
+      "interval_rows": 2976,
+      "positive_interval_net_kwh": 1780.125,
+      "positive_net_minus_printed_nbc_kwh": 0.125,
+      "printed_nbc_kwh": 1780.0,
+      "printed_net_kwh": 1152.0,
+      "raw_consumption_kwh": 1785.125,
+      "raw_consumption_minus_printed_nbc_kwh": 5.125,
+      "signed_interval_net_kwh": 1151.445,
+      "signed_net_minus_printed_total_usage_kwh": -0.555,
+      "start": "2025-11-26",
+      "wildfire_quantity_kwh": 1780.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 6.2,
+      "days": 32,
+      "end": "2026-01-27",
+      "interval_rows": 3072,
+      "positive_interval_net_kwh": 1772.29,
+      "positive_net_minus_printed_nbc_kwh": 0.29,
+      "printed_nbc_kwh": 1772.0,
+      "printed_net_kwh": 1183.0,
+      "raw_consumption_kwh": 1778.49,
+      "raw_consumption_minus_printed_nbc_kwh": 6.49,
+      "signed_interval_net_kwh": 1182.995,
+      "signed_net_minus_printed_total_usage_kwh": -0.005,
+      "start": "2025-12-27",
+      "wildfire_quantity_kwh": 1772.0,
+      "wildfire_segments": 2
+    },
+    {
+      "candidate_difference_kwh": 6.58,
+      "days": 30,
+      "end": "2026-02-26",
+      "interval_rows": 2880,
+      "positive_interval_net_kwh": 1720.49,
+      "positive_net_minus_printed_nbc_kwh": 0.49,
+      "printed_nbc_kwh": 1720.0,
+      "printed_net_kwh": 934.0,
+      "raw_consumption_kwh": 1727.07,
+      "raw_consumption_minus_printed_nbc_kwh": 7.07,
+      "signed_interval_net_kwh": 933.435,
+      "signed_net_minus_printed_total_usage_kwh": -0.565,
+      "start": "2026-01-28",
+      "wildfire_quantity_kwh": 1720.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 9.565,
+      "days": 29,
+      "end": "2026-03-27",
+      "interval_rows": 2780,
+      "positive_interval_net_kwh": 1789.915,
+      "positive_net_minus_printed_nbc_kwh": -1.085,
+      "printed_nbc_kwh": 1791.0,
+      "printed_net_kwh": 817.0,
+      "raw_consumption_kwh": 1799.48,
+      "raw_consumption_minus_printed_nbc_kwh": 8.48,
+      "signed_interval_net_kwh": 817.06,
+      "signed_net_minus_printed_total_usage_kwh": 0.06,
+      "start": "2026-02-27",
+      "wildfire_quantity_kwh": 1791.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 13.485,
+      "days": 32,
+      "end": "2026-04-28",
+      "interval_rows": 3072,
+      "positive_interval_net_kwh": 1894.38,
+      "positive_net_minus_printed_nbc_kwh": 0.38,
+      "printed_nbc_kwh": 1894.0,
+      "printed_net_kwh": 865.0,
+      "raw_consumption_kwh": 1907.865,
+      "raw_consumption_minus_printed_nbc_kwh": 13.865,
+      "signed_interval_net_kwh": 864.92,
+      "signed_net_minus_printed_total_usage_kwh": -0.08,
+      "start": "2026-03-28",
+      "wildfire_quantity_kwh": 1894.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 17.385,
+      "days": 30,
+      "end": "2026-05-28",
+      "interval_rows": 2880,
+      "positive_interval_net_kwh": 1775.195,
+      "positive_net_minus_printed_nbc_kwh": -0.805,
+      "printed_nbc_kwh": 1776.0,
+      "printed_net_kwh": 796.0,
+      "raw_consumption_kwh": 1792.58,
+      "raw_consumption_minus_printed_nbc_kwh": 16.58,
+      "signed_interval_net_kwh": 795.145,
+      "signed_net_minus_printed_total_usage_kwh": -0.855,
+      "start": "2026-04-29",
+      "wildfire_quantity_kwh": 1776.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 17.425,
+      "days": 29,
+      "end": "2026-06-26",
+      "interval_rows": 2784,
+      "positive_interval_net_kwh": 1932.44,
+      "positive_net_minus_printed_nbc_kwh": -1.56,
+      "printed_nbc_kwh": 1934.0,
+      "printed_net_kwh": 987.0,
+      "raw_consumption_kwh": 1949.865,
+      "raw_consumption_minus_printed_nbc_kwh": 15.865,
+      "signed_interval_net_kwh": 986.725,
+      "signed_net_minus_printed_total_usage_kwh": -0.275,
+      "start": "2026-05-29",
+      "wildfire_quantity_kwh": 1934.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 16.69,
+      "days": 32,
+      "end": "2026-07-28",
+      "interval_rows": 3072,
+      "positive_interval_net_kwh": 2149.36,
+      "positive_net_minus_printed_nbc_kwh": 0.36,
+      "printed_nbc_kwh": 2149.0,
+      "printed_net_kwh": 1202.0,
+      "raw_consumption_kwh": 2166.05,
+      "raw_consumption_minus_printed_nbc_kwh": 17.05,
+      "signed_interval_net_kwh": 1202.135,
+      "signed_net_minus_printed_total_usage_kwh": 0.135,
+      "start": "2026-06-27",
+      "wildfire_quantity_kwh": 2149.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 15.94,
+      "days": 29,
+      "end": "2026-08-26",
+      "interval_rows": 2784,
+      "positive_interval_net_kwh": 1982.655,
+      "positive_net_minus_printed_nbc_kwh": 0.655,
+      "printed_nbc_kwh": 1982.0,
+      "printed_net_kwh": 1246.0,
+      "raw_consumption_kwh": 1998.595,
+      "raw_consumption_minus_printed_nbc_kwh": 16.595,
+      "signed_interval_net_kwh": 1246.245,
+      "signed_net_minus_printed_total_usage_kwh": 0.245,
+      "start": "2026-07-29",
+      "wildfire_quantity_kwh": 1982.0,
+      "wildfire_segments": 1
+    },
+    {
+      "candidate_difference_kwh": 15.3,
+      "days": 30,
+      "end": "2026-09-25",
+      "interval_rows": 2880,
+      "positive_interval_net_kwh": 2133.57,
+      "positive_net_minus_printed_nbc_kwh": 0.57,
+      "printed_nbc_kwh": 2133.0,
+      "printed_net_kwh": 1353.0,
+      "raw_consumption_kwh": 2148.87,
+      "raw_consumption_minus_printed_nbc_kwh": 15.87,
+      "signed_interval_net_kwh": 1353.335,
+      "signed_net_minus_printed_total_usage_kwh": 0.335,
+      "start": "2026-08-27",
+      "wildfire_quantity_kwh": 2133.0,
+      "wildfire_segments": 1
+    }
+  ],
+  "sources": [
+    {
+      "bytes": 2521679,
+      "role": "interval_export",
+      "sha256": "c86bec4088e8739198402d9db5989156c2f7561aa2e6a4eaab73b8e591a450e8"
+    },
+    {
+      "bytes": 2529971,
+      "role": "interval_export",
+      "sha256": "8784b72444c91c430062873d2b6814e3a3ebf3bc0606101aa0b535b1f17cbe4f"
+    },
+    {
+      "bytes": 215059,
+      "role": "electric_statement",
+      "sha256": "9a534dcd420fbd6f81a565aa1888fae42c0bd483bd8a9fead54ffb931f95f813"
+    },
+    {
+      "bytes": 196612,
+      "role": "electric_statement",
+      "sha256": "91fe3e201a2795d4522de05bd4558d2d977500fb1bc14320b8d2f0b75cdf57b3"
+    },
+    {
+      "bytes": 200114,
+      "role": "electric_statement",
+      "sha256": "ab9a46e432b5125a405e26e4b984b878b1feef5cdc73fb838680026207d6e760"
+    },
+    {
+      "bytes": 197123,
+      "role": "electric_statement",
+      "sha256": "88db6a6008c98b5232ef5d7b1194abfb63316de77e5b25cd410b54e0ac438e88"
+    },
+    {
+      "bytes": 202971,
+      "role": "electric_statement",
+      "sha256": "4b249fc120da23cfa0ac377d9987bb1582039d05caef82c648ac3690baa2c7c7"
+    },
+    {
+      "bytes": 200215,
+      "role": "electric_statement",
+      "sha256": "2cb6f2365c7dfbb28f7d9b2f9998261cc8eafab00fa66fecdeb51b2d2c925bc1"
+    },
+    {
+      "bytes": 199895,
+      "role": "electric_statement",
+      "sha256": "6577b81b07acdf273e8362b50b126a618b0567c2b1c902588ba6339c5f4be921"
+    },
+    {
+      "bytes": 199862,
+      "role": "electric_statement",
+      "sha256": "54e4bbaa697bac1f8e1e80014c525cfbba6554446322536e31b9acd12f23dd74"
+    },
+    {
+      "bytes": 201597,
+      "role": "electric_statement",
+      "sha256": "91c28a231f3c8c1a0ae605b009fb63862ef98761f768db7d027684d2ca58476f"
+    },
+    {
+      "bytes": 196685,
+      "role": "electric_statement",
+      "sha256": "bf493ad70c98b1a0d1a24f03c08d30e3b08503dc9c088219fc2b639942f1a210"
+    },
+    {
+      "bytes": 203152,
+      "role": "electric_statement",
+      "sha256": "0ed0d2e88b0705accbdf57da57495f47a2d4482de962841865735f6dec5438be"
+    },
+    {
+      "bytes": 199131,
+      "role": "electric_statement",
+      "sha256": "cabbf1f991df0db22ff6a4c5f2a78776a2d63893f392db0617c34f4cc31f8995"
+    },
+    {
+      "bytes": 199579,
+      "role": "electric_statement",
+      "sha256": "9ec91e351cdaeb36c1f81bdb8f6377e04e4c8f375ecfd02e3f72fa6ca653eb41"
+    },
+    {
+      "bytes": 199699,
+      "role": "electric_statement",
+      "sha256": "1a93a61a97fdbef0eb590567ae2381a3bbd937268ec7c242f1c97e82c3d37968"
+    },
+    {
+      "bytes": 200499,
+      "role": "electric_statement",
+      "sha256": "a81ea870b4f6c7575559b237224a98afa026fd2b79ebf36963a3bb455a2b0ccc"
+    },
+    {
+      "bytes": 198181,
+      "role": "electric_statement",
+      "sha256": "8d6e144f8787c6fb29d01fbf6b1e8e6cbee1a532842386f6530a70fdbd26cef2"
+    },
+    {
+      "bytes": 211692,
+      "role": "electric_statement",
+      "sha256": "fc844754e448282d6424c8ce3d7aadf4d37c8864067ad220adf26f0c65d090b9"
+    },
+    {
+      "bytes": 203500,
+      "role": "electric_statement",
+      "sha256": "76dc8ce5f569a92333151d8962405c21049a3eda8609ecbc473be77cc5349dc1"
+    },
+    {
+      "bytes": 199858,
+      "role": "electric_statement",
+      "sha256": "448ef961ccf5b8ef8afc35366d5aff73dcff3d740004b3eeda33f0d6c21a3798"
+    },
+    {
+      "bytes": 200716,
+      "role": "electric_statement",
+      "sha256": "a3f467fbdd83f8fb7033e3da0eb22cd17f6a1c97856894bcec4275eb46d465bc"
+    },
+    {
+      "bytes": 200143,
+      "role": "electric_statement",
+      "sha256": "efce72eba4eea1b439ac565e324212bd42a1e49446d5becf7f62e6c0d407cb73"
+    },
+    {
+      "bytes": 234522,
+      "role": "electric_statement",
+      "sha256": "767f4794e0a6761afbe5fa749f36601af2a508f087c4e4bed6f9d9e8a7d7c7e6"
+    },
+    {
+      "bytes": 235551,
+      "role": "electric_statement",
+      "sha256": "e44b7a43e7408320493c6d9e6a9d36ecd60d6195047a5fc9d09921a62e7d901b"
+    },
+    {
+      "bytes": 233760,
+      "role": "electric_statement",
+      "sha256": "faa243bb7a608475efb84c7568b0bce84028ab4c52fe10945b7378b9623b4896"
+    },
+    {
+      "bytes": 236453,
+      "role": "electric_statement",
+      "sha256": "9917a3b0c900efdf1b136035bb1affb94eac7c3b807f38ca347c079821263c43"
+    },
+    {
+      "bytes": 214421,
+      "role": "electric_statement",
+      "sha256": "58b038540de24bc4ad24ae4f6d8a34206eb3930bf65f072e6a50e171c150d134"
+    },
+    {
+      "bytes": 223315,
+      "role": "electric_statement",
+      "sha256": "e3f4d9b41f6823e5396d36f3726504233797c490900ee79fc58cd4019e121762"
+    },
+    {
+      "bytes": 219654,
+      "role": "electric_statement",
+      "sha256": "0b4c771dd914565286ecb92ec26284007c8c4786ce0db847f56b7469b50f9907"
+    },
+    {
+      "bytes": 2520,
+      "role": "printed_bill_quantity_table",
+      "sha256": "363efdf2315b136fddf2ff8bc2f7f039bbb205a44cf4f38f8c33729a220a3951"
+    }
+  ],
+  "summary": {
+    "billed_nbc_kwh": 29255.0,
+    "candidate_difference_kwh": 171.365,
+    "covered_days": 456,
+    "covered_period_count": 16,
+    "covered_rows": 43776,
+    "positive_interval_net_kwh": 29254.005,
+    "positive_net_max_absolute_residual_kwh": 1.56,
+    "positive_net_mean_absolute_residual_kwh": 0.5196875,
+    "positive_net_sum_residual_kwh": -0.995,
+    "raw_consumption_kwh": 29425.37,
+    "raw_consumption_max_absolute_residual_kwh": 17.05,
+    "raw_consumption_mean_absolute_residual_kwh": 10.648125,
+    "raw_consumption_sum_residual_kwh": 170.37,
+    "signed_net_max_absolute_residual_kwh": 1.325,
+    "signed_net_mean_absolute_residual_kwh": 0.369375,
+    "signed_net_sum_residual_kwh": -1.91
+  },
+  "unbilled_interval_days": [
+    "2026-09-26",
+    "2026-09-27",
+    "2026-09-28",
+    "2026-09-29",
+    "2026-09-30",
+    "2026-10-01",
+    "2026-10-02",
+    "2026-10-03",
+    "2026-10-04",
+    "2026-10-05",
+    "2026-10-06",
+    "2026-10-07",
+    "2026-10-08",
+    "2026-10-09",
+    "2026-10-10",
+    "2026-10-11",
+    "2026-10-12",
+    "2026-10-13",
+    "2026-10-14",
+    "2026-10-15",
+    "2026-10-16",
+    "2026-10-17",
+    "2026-10-18",
+    "2026-10-19",
+    "2026-10-20",
+    "2026-10-21",
+    "2026-10-22"
+  ]
+}

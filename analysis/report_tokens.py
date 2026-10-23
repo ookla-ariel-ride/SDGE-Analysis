@@ -1790,7 +1790,7 @@ def _sec9_teaser(ctx):
         sessions, = _figures(
             "SEC9_TEASER", "how many charging sessions section 9 found",
             ev_sessions=det["sessions"])
-        lead = f"{sessions} EV charging sessions logged"
+        lead = f"{sessions} EV charging sessions detected"
     cost, = _amounts("SEC9_TEASER", "what the always-on overnight floor costs",
                      price_map_usd=_night_floor_pricing()["method_a_price_map"]["total_usd"])
     return (f"{lead}; an always-on overnight floor of "
@@ -1829,71 +1829,18 @@ def _a_or_an(n):
 
 
 def _sec12_teaser(ctx):
-    """Section 12's own one-line conclusion: what the measured cleaning
-    recovered, AND whether paying for a routine one still pencils -- or, for
-    a household that never had a measured cleaning, that it is not determined
-    and why.
-
-    ISSUE #167. This used to subscript the sanity-check block for
-    known_cleaning_gain_pct. soiling_analysis.py writes that block in TWO
-    shapes, and the other one -- the ordinary outcome for any household whose
-    cleaning_history does not contain the dated event the gain was measured on
-    -- carries a `status` string and no gain at all. The subscript raised
-    KeyError, resolve_all() failed, and the household lost the WHOLE report
-    over one <summary> line.
-
-    So it reads through _measured_cleaning(), the same binding CLEANING_EFFECT_
-    PCT uses, and for the same reason: the teaser states a figure and names the
-    event beside it, so both halves come off one record. When that binding
-    cannot be made the answer is rendered, not raised -- _claim(...,
-    NOT_DETERMINED, ...) is a SystemExit and would reproduce the total failure
-    this fix removes.
-
-    ISSUE #276. A <summary> teaser is section 12's own one-line CONCLUSION
-    (CLAUDE.md section 10), and the section asks two questions -- did the
-    measured cleaning work, and does paying for a future one still pencil --
-    so the teaser is wrong stating only the first half's figure while the
-    page beside it prints a full verdict sentence covering both. The second
-    half is read off the same cadence model CLEANING_SINGLE_VALUE_RANGE
-    already publishes (data/extra_results.json:cleaning[*].save1): the best a
-    modeled cleaning is worth in ANY scenario is compared against what this
-    entry's own cleaning actually cost, so the verdict is computed, not
-    asserted -- a household whose cadence model clears its own cleaning price
-    gets the opposite sentence rather than a copy-pasted one.
-
-    ROUND 1 (parent meaning-check): the first draft dropped the tariff the
-    payback is priced at and the cadence timing, and read as a sentence
-    fragment (lowercase open, "a 11.8%", "modelled" beside 56 uses of
-    "modeled" elsewhere in the page). Fixed: a capitalized, complete verdict
-    sentence; _CURRENT_TARIFF_YEAR names the tariff; the cadence clause is
-    read from data/extra_results.json:cleaning[*].best1 (never a literal like
-    "early-to-mid July") and is only stated when every soiling scenario
-    modeled agrees on one month -- when they do not, the sentence stops
-    after the pay/no-pay verdict rather than picking one scenario's date to
-    state as if it were the only one."""
+    """Report the reproducible event estimate and the archived cadence limit."""
     entry, why = _measured_cleaning()
     if entry is None:
         return (f"What a cleaning recovers on this array is "
-                f"{_NOT_DETERMINED_VERDICT} — {why}")
+                f"{_NOT_DETERMINED_VERDICT}. {why}")
     sc = _cleaning_sanity_check()
     gain, = _figures("SEC12_TEASER", "how much production the cleaning recovered",
                      known_cleaning_gain_pct=sc["known_cleaning_gain_pct"])
-    price, = _amounts("SEC12_TEASER", "what the measured cleaning cost",
-                       cleaning_price=entry["cost_usd"])
-    cad, keys = _cleaning_cadence()
-    best_case, = _amounts(
-        "SEC12_TEASER", "the most a modeled cleaning is worth in any scenario",
-        best_case_save1=max(cad[k]["save1"] for k in keys))
-    if best_case >= price:
-        verdict = (f"a ${price:,.0f} routine cleaning pays for itself at every "
-                   "soiling rate modeled")
-    else:
-        verdict = (f"a ${price:,.0f} routine cleaning does not pay for itself — "
-                   f"the most any modeled scenario recovers is ${best_case:,.0f}/yr")
-    months = {cad[k]["best1"] for k in keys}
-    cadence = f", and at most once a year, near {next(iter(months))}" if len(months) == 1 else ""
-    return (f"The {sc['cleaning_date']} cleaning measured {_a_or_an(gain)} {gain}% "
-            f"production gain, but under the {_CURRENT_TARIFF_YEAR} TOU {verdict}{cadence}.")
+    return (f"The {sc['cleaning_date']} study estimates {_a_or_an(gain)} {gain}% "
+            "production gain relative to control years. Future cleaning payback "
+            "and optimal cadence are not determined; the archived cadence "
+            "calculation is not reproduced.")
 
 
 _tok("SEC12_TEASER", phrase=True, kind="derived", get=_sec12_teaser,
@@ -4561,8 +4508,11 @@ _tok("MARGINAL_KW_GRANDFATHERING_MULTIPLE", kind="derived",
               "data/marginal_capacity_value.json:verdict_check (cross-check only)"])
 
 _tok("RECOMMENDED_PACKAGE_SUMMARY", kind="derived",
-     get=lambda ctx: f"MID — behavior fix plus {TOKENS['BATTERY_MODEL']['value']}",
-     sources=["data/package_results.json (MID is the starred package)",
+     get=lambda ctx: (
+         f"compare changes to {_free_fix_move('RECOMMENDED_PACKAGE_SUMMARY', _free_fix_scenario_key('RECOMMENDED_PACKAGE_SUMMARY'))[1]} "
+         f"with a hypothetical {_battery_model_short()} quote; check cost and controller support"),
+     sources=["data/package_results.json:packages.LOW.free_fix_scenario",
+              "data/behavior_rebuild.json:detection (EV applicability)",
               "analysis/battery_dispatch_policies.py"])
 
 
@@ -4629,8 +4579,11 @@ _tok("PAYBACK_STATUS_SHORT", kind="derived",
      f"{_crossover_season_year('gross')[1]}",
      sources=["data/lifetime_payback.json:crossover.gross", "system clock"])
 _tok("S11_VERDICT_SHORT", phrase=True, kind="derived",
-     get=lambda ctx: "the solar array has already paid for itself" if _paid_off(ctx) else
-     (lambda s, y, m: f"on pace to pay for itself by {s} {y}")(*_crossover_season_year("gross")),
+     get=lambda ctx: (lambda s, y, m: (
+         f"the model estimates recovery of the solar installation cost around {s} {y}"
+         if _paid_off(ctx) else
+         f"the model projects recovery of the solar installation cost around {s} {y}"))(
+             *_crossover_season_year("gross")),
      sources=["data/lifetime_payback.json:crossover.gross", "system clock"])
 _tok("PAYBACK_HEADLINE", phrase=True, kind="derived",
      get=lambda ctx: (lambda s, y, m, cost: (
@@ -4996,7 +4949,7 @@ def _pill_class(label):
     """The CSS class report-template.html's legend gives an evidence label.
 
     Matched on the label's FIRST segment so the qualified forms the template
-    already uses ("measured · single event", "modeled · 364 days") style as
+    already uses ("estimated · single event", "modeled · 364 days") style as
     what they are. Returns None for anything the legend does not define."""
     legend = {"measured": "g", "modeled": "y", "estimated": "r",
               _NOT_DETERMINED_VERDICT: "r"}
@@ -5063,7 +5016,9 @@ _tok("CLEANING_EFFECT_CLAIM", phrase=True, kind="derived", get=_cleaning_effect_
 _evidence_pill_tokens(
     "CLEANING_EFFECT",
     determined=lambda: _measured_cleaning()[0] is not None,
-    on="measured · single event",
+    # The meter readings support an attributed effect from one event; the
+    # difference-in-differences result is an estimate, not a direct measurement.
+    on="estimated · single event",
     sources=["data/soiling_results.json:sanity_check_2024_cleaning"
              ".known_cleaning_gain_pct",
              "private/household.yaml:cleaning_history"])
@@ -5680,8 +5635,7 @@ def _s0_verdict(ctx):
         _free_fix_saving("S0_VERDICT")
     fix_clause = _free_fix_clause(
         low, free_fix_saves, move_noun,
-        lambda: f"the free {fix_name} fix saves a modeled {_usd0(low)}/yr "
-                "whatever you buy")
+        lambda: f"the free {fix_name} fix saves a modeled {_usd0(low)}/yr")
     # Whether the battery repays its own cost is decided in ONE place, off ONE
     # scenario, shared with section 7 and with the payback card -- the three
     # used to read the package independently and could publish opposite
@@ -5713,8 +5667,8 @@ def _s0_verdict(ctx):
         warranty = _battery_warranty_years("S0_VERDICT")
         span = _payback_span(quotable)
         if max(quotable) <= warranty:
-            battery_clause = (f"a {_battery_model_short()} is a sound optional buy at a "
-                              f"{span}-year hardware-alone payback")
+            battery_clause = (f"a {_battery_model_short()} has a conditional "
+                              f"{span}-year modeled hardware-alone payback")
         else:
             battery_clause = (f"a {_battery_model_short()} repays in {span} years, past "
                               f"its {warranty:g}-year warranty")
@@ -5904,16 +5858,15 @@ def _s1_verdict(ctx):
                     weakest_pairwise_daily_correlation=r)
     if r < MIN_AGREEMENT_CORRELATION:
         raise SystemExit(
-            f"report_tokens: S1_VERDICT refuses to say the independent production series "
+            f"report_tokens: S1_VERDICT refuses to say the compared production series "
             f"agree -- data/threeway_production_validation.csv's weakest pair correlates "
             f"at {r:.4f} daily, under the {MIN_AGREEMENT_CORRELATION:.4f} floor "
             f"analysis/threeway_production_validation.py's own publication gate implies")
     # No apostrophe, no ampersand, no tag anywhere in these sentences: token
     # values are HTML-escaped at render (an apostrophe would ship as &#x27;),
     # so the plain text is also the rendered text.
-    return (f"{VERDICT_STEM}all {ab['buckets']} billed TOU buckets rebuild from the raw "
-            "meter intervals to the whole-kWh rounding digit the statements print, and "
-            f"the independent production series agree at "
+    return (f"{VERDICT_STEM}all {ab['buckets']} billed TOU energy buckets match within "
+            "statement rounding, and the compared production series agree at "
             f"{r:.4f} daily correlation.")
 
 
@@ -6089,16 +6042,15 @@ def _assert_profiles_rebuild_the_year(token, subject, total):
 #   NETTING  rates.energy()  = UDC + CEA + PCIA  -- a kWh that cancels an import
 #                                                   in its own month and period
 #
-# THE NETTING END IS energy(), NOT allin(), under the current engine's
-# gross-channel NBC convention. allin() = energy() + NBC; bill_nem_monthly()
-# charges NBC on m[imp].sum() before energy netting. Its model therefore does
-# not credit an export with avoiding NBC. This is not proof of the tariff's
-# treatment: NEM-ST SC 1(f) uses consumption net of exports within each metered
-# interval, and meter-interval/channel reconciliation remains open. The engine
-# check adds 1 kWh of export to a netting cell and moves rates.bill_nem() by
-# exactly energy(), and to a surplus cell by exactly credit(). The case
-# case_the_two_export_bounds_are_the_two_settlement_treatments in
-# test_report_tokens.py re-runs that model probe.
+# THE NETTING END IS energy(), NOT allin(), because these bounds describe
+# MONTHLY ENERGY settlement only. For changes that do not cross zero, the
+# monthly TOU bucket's net sign determines energy() versus credit(); the
+# physical interval's net sign independently determines the NBC effect.
+# Varying credited exports with physical flows fixed changes only energy
+# settlement. Increasing physical exports also reduces NBC while that interval
+# remains net-importing, regardless of its monthly bucket's sign. The test's
+# one-row probes align those two signs; they do not establish a general link.
+# See case_the_two_export_bounds_are_the_two_settlement_treatments.
 #
 # WHICH END DOMINATES, and why neither may be published alone. Imports exceed
 # exports in all six season/period cells of data/report_data.json:period_split,
@@ -6121,7 +6073,7 @@ def _assert_profiles_rebuild_the_year(token, subject, total):
 # section 8 states the import side separately as SUPER_OFF_PEAK_RATE.
 # ---------------------------------------------------------------------------
 def _export_value_bound(token, subject, rate, rate_name):
-    """The year's exports priced hour by hour through `rate`, in $/kWh.
+    """The year's monthly energy export value through `rate`, in $/kWh.
 
     `rate_name` is the rates.py function's own name, carried in rather than
     read off `rate.__name__`: the rate map entries are lambdas, so the
@@ -6193,7 +6145,7 @@ _EXPORT_BOUND_SOURCES = [
 _tok("EXPORT_VALUE_SURPLUS_BOUND", kind="derived", fmt="cents1",
      get=lambda ctx: _export_value_bound(
          "EXPORT_VALUE_SURPLUS_BOUND",
-         "the surplus end of what an exported kWh is worth", R.credit, "credit"),
+         "the surplus end of monthly energy export value", R.credit, "credit"),
      sources=["analysis/rates.py:credit() (UDC+CEA, what NEM 2.0 pays a surplus "
               "export -- the LOW end, every exported kWh settled as surplus)"]
              + _EXPORT_BOUND_SOURCES)
@@ -6201,12 +6153,12 @@ _tok("EXPORT_VALUE_SURPLUS_BOUND", kind="derived", fmt="cents1",
 _tok("EXPORT_VALUE_NETTING_BOUND", kind="derived", fmt="cents1",
      get=lambda ctx: _export_value_bound(
          "EXPORT_VALUE_NETTING_BOUND",
-         "the netting end of what an exported kWh is worth", R.energy, "energy"),
+         "the netting end of monthly energy export value", R.energy, "energy"),
      sources=["analysis/rates.py:energy() (UDC+CEA+PCIA, the netted energy rate an "
               "export cancels inside its own month and period -- the HIGH end, "
               "every exported kWh netted against an import; NOT allin(), because "
-              "rates.bill_nem_monthly() uses gross-import NBC as a model convention; "
-              "NEM-ST SC 1(f) meter-interval netting needs reconciliation)"]
+              "rates.bill_nem_monthly() prices NBC on positive physical interval net; "
+              "monthly credited exports do not automatically avoid that separate charge)"]
              + _EXPORT_BOUND_SOURCES)
 
 
@@ -6445,12 +6397,10 @@ def _s2_export_timing_note(ctx):
         ev_clause = (f", while the EV charged between midnight and {overnight_end} "
                      f"on {charging} of the year's {observed} nights")
     return (
-        "That last split is the fact behind every recommendation in this report: "
-        f"{export_pct}% of what the array makes leaves as exports. The exports "
-        f"concentrate in the middle of the day: {midday_pct}% of those exported kWh "
-        f"go out in the {_cheap_window()} window{ev_clause}. Plan, behavior, "
-        "battery, and the §8 expansion verdict all follow from that timing "
-        "mismatch.")
+        f"The array exports {export_pct}% of its production. Of those exported kWh, "
+        f"{midday_pct}% leave in the {_cheap_window()} window{ev_clause}. "
+        "This timing helps explain the plan, behavior, battery, and §8 expansion "
+        "results.")
 
 
 _tok("S2_EXPORT_TIMING_NOTE", phrase=True, kind="derived", get=_s2_export_timing_note,
@@ -6539,14 +6489,14 @@ def _s5_verdict(ctx):
                     onpeak_import_share=kwh_share, onpeak_share_of_energy_cost=cost_share)
     kwh_pct, cost_pct = round(kwh_share * 100), round(cost_share * 100)
     if cost_pct > kwh_pct:
-        claim = (f"{kwh_pct}% of imported kWh but {cost_pct}% of the import energy cost, "
-                 "so timing, more than total consumption, sets this bill.")
+        claim = (f"{kwh_pct}% of imported kWh and {cost_pct}% of import energy cost, "
+                 "so moving flexible loads can reduce costs.")
     elif cost_pct == kwh_pct:
-        claim = (f"{kwh_pct}% of imported kWh and the same share of the import energy "
-                 "cost, so timing does not drive this bill on its own.")
+        claim = (f"{kwh_pct}% of imported kWh and the same share of import energy "
+                 "cost, so this comparison shows no extra cost concentration.")
     else:
-        claim = (f"{kwh_pct}% of imported kWh but only {cost_pct}% of the import energy "
-                 "cost, so total consumption, more than timing, sets this bill.")
+        claim = (f"{kwh_pct}% of imported kWh and only {cost_pct}% of import energy "
+                 "cost, so its cost share is lower than its energy share.")
     return f"{VERDICT_STEM}the {_peak_window()} on-peak window takes {claim}"
 
 
@@ -6584,20 +6534,21 @@ def _s6_verdict(ctx):
     # the whole sentence, including the branches today's data never takes:
     # the lead spends 18, leaving 17 for the tail.
     if policy_gap <= 0 and capacity_gap <= 0:
-        tail = "and neither the dispatch settings nor a bigger pack adds any saving"
+        tail = "neither modeled dispatch changes nor a bigger pack adds any saving"
     elif policy_gap == capacity_gap:
-        tail = "and the dispatch settings and a bigger pack are worth the same"
+        tail = "modeled dispatch changes and a bigger pack are worth the same"
     elif policy_gap > capacity_gap:
-        tail = "so the dispatch settings are worth more than a bigger pack"
+        tail = "modeled dispatch changes are worth more than a bigger pack"
     else:
-        tail = "so a bigger pack is worth more than the dispatch settings"
+        tail = "a bigger pack is worth more than the modeled dispatch changes"
     # _usd0_signed, not _usd0: both figures are modeled savings and either can
     # come back negative on another household's dispatch run, which _usd0
     # would print as "$-120/yr" (issue #131 review round 2, finding 5's
     # sweep). Identical output at every non-negative value.
-    return (f"{VERDICT_STEM}one {_battery_model_short()} on price-aware dispatch models "
-            f"{_usd0_signed(published)}/yr against {_usd0_signed(evening)} on an "
-            f"evening-only schedule, {tail}.")
+    return (f"{VERDICT_STEM}one hypothetical {_battery_model_short()} models "
+            f"{_usd0_signed(published)}/yr with the published policy versus "
+            f"{_usd0_signed(evening)} with evening-only dispatch; "
+            f"{tail}; check controller support.")
 
 
 _tok("S6_VERDICT", phrase=True, kind="derived", get=_s6_verdict,
@@ -6620,7 +6571,7 @@ def _s7_verdict(ctx):
     fix_clause = _free_fix_clause(
         low_savings, free_fix_saves, move_noun,
         lambda: f"the free {fix_name} fix is worth a modeled "
-                f"{_usd0(low_savings)}/yr whatever you buy")
+                f"{_usd0(low_savings)}/yr")
     if low["cost"]:
         raise SystemExit(f"report_tokens: S7_VERDICT refuses to call the behavior package "
                           f"free -- data/package_results.json:packages.LOW.cost is "
@@ -6634,10 +6585,10 @@ def _s7_verdict(ctx):
     # than a reason to withhold the section, so that state renders too.
     repays, mid_saving, mid_payback, _quotable = _battery_alone("S7_VERDICT")
     if repays:
-        battery_clause = (f"one {_battery_model_short()} adds its own "
+        battery_clause = (f"a hypothetical {_battery_model_short()} models its own "
                           f"{_usd0(mid_saving)}/yr (~{mid_payback:.1f}-yr payback)")
     else:
-        battery_clause = f"one {_battery_model_short()} never repays its own cost"
+        battery_clause = f"a hypothetical {_battery_model_short()} never repays its own cost"
     # _usd0_signed, not an inline f"${...}": this refusal fires PRECISELY when
     # the difference is non-positive, so the one branch that ever prints it is
     # the one that printed "$-500" -- the same minus-inside-the-sigil defect
@@ -6853,11 +6804,11 @@ def _s15_verdict(ctx):
     chargers = fix_name == "EV-charging"
     window = _overnight_cheap_window()
     if free_fix_saves:
-        lead = ((f"reprogramming the chargers this week to finish inside the "
-                 f"{window} super-off-peak window captures the free savings")
+        lead = ((f"check EV charging first and use the {window} super-off-peak "
+                 "window where feasible")
                 if chargers else
-                (f"moving {move_noun} into the {window} super-off-peak window "
-                 "this week captures the free savings"))
+                (f"check {move_noun} timing and use the {window} super-off-peak "
+                 "window where feasible"))
     elif low == 0:
         lead = ((f"reprogramming the chargers into the {window} "
                  "super-off-peak window adds no modeled saving here")
@@ -6874,8 +6825,8 @@ def _s15_verdict(ctx):
                 if chargers else
                 (f"leave the load where it runs; moving it into the {window} "
                  f"super-off-peak window costs a modeled {_usd0(-low)}/yr here"))
-    return (f"{VERDICT_STEM}{lead}; everything else on the list is verification "
-            "before spending money.")
+    return (f"{VERDICT_STEM}{lead}; check battery cost, electrical capacity, "
+            "and controller support before purchase.")
 
 
 _tok("S15_VERDICT", phrase=True, kind="derived", get=_s15_verdict,
@@ -6910,9 +6861,9 @@ def _s15_step1_heading(ctx):
     # scenario, so a fourth branch there cannot silently pick one of these
     # imperatives -- the lookup raises instead.
     imperatives = {
-        "EV-charging": "Reprogram charging",
-        "EV-and-house-load": "Reprogram charging and reschedule flexible house load",
-        "load-shift": "Reschedule flexible house load",
+        "EV-charging": "Check EV charging",
+        "EV-and-house-load": "Check EV charging and flexible house load",
+        "load-shift": "Check flexible house load",
     }
     if fix_name not in imperatives:
         raise SystemExit(
@@ -6920,7 +6871,7 @@ def _s15_step1_heading(ctx):
             f"Monday -- _free_fix_move named the free fix {fix_name!r}, which has no "
             f"imperative here (known: {', '.join(sorted(imperatives))}). A new fix name "
             "needs the instruction that goes with it, not one of the existing ones")
-    return f"1 · {imperatives[fix_name]} (this week, $0)"
+    return f"1 · {imperatives[fix_name]} ($0)"
 
 
 _tok("S15_STEP1_HEADING", phrase=True, kind="derived", get=_s15_step1_heading,

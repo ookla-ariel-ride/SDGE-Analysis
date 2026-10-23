@@ -487,18 +487,9 @@ def case_on_peak_distribution_costs_at_least_as_much_as_off_peak():
 
 @case
 def case_added_load_absorbs_contemporaneous_solar_before_creating_new_import():
-    """Codex adversarial review, issue #1, pass 2: added heat-pump load must
-    reduce that SAME interval's own Generation first (solar self-consumption),
-    spilling into new Consumption only once that interval's export is used
-    up -- never added straight into Consumption while Generation sits
-    untouched, which would manufacture simultaneous gross import and export
-    the house never actually has and overstate rates.py's non-bypassable
-    charge (billed on GROSS imports under NEM). Proves this two ways: (1)
-    solar_absorbed_kwh is reported and positive whenever there is real
-    Generation to absorb into, (2) the netted bill is never MORE expensive
-    than a naive (unnetted, straight-into-Consumption) version of the same
-    scenario -- absorbing solar can only reduce or match billed cost,
-    never increase it."""
+    """Physical solar-first allocation preserves the same interval net as
+    an added-import allocation; corrected NBC bills both representations alike.
+    """
     d = _synthetic_frame(n_days=30)
     hdd_by_day = pd.Series({(dt.date(2026, 1, 5) + dt.timedelta(days=i)): 10.0
                             for i in range(30)})
@@ -521,12 +512,12 @@ def case_added_load_absorbs_contemporaneous_solar_before_creating_new_import():
     naive["Consumption"] = d["Consumption"] + series
     naive_bill = R.bill_nem(naive, imp="Consumption", exp="Generation")
     netted_increase = electric["central_3.5"]["uniform"]["electric_cost_increase_usd"]
-    naive_increase = round(naive_bill - base_bill, 2)
-    assert netted_increase <= naive_increase, (
-        "netting solar first must never cost MORE than the naive unnetted "
+    naive_increase = round(naive_bill - R.bill_nem(d), 2)
+    assert netted_increase == naive_increase, (
+        "identical signed interval net must produce identical NBC and energy "
         f"approach: netted={netted_increase}, naive={naive_increase}")
-    return (f"solar absorption reduces the netted electric cost increase "
-           f"({netted_increase}) below or equal to the naive unnetted one ({naive_increase})")
+    return (f"solar-first and added-import representations have the same "
+            f"modeled cost increase ({netted_increase} = {naive_increase})")
 
 
 @case
@@ -1463,15 +1454,14 @@ def case_not_applicable_when_has_gas_is_false():
 @case
 def case_real_archive_baseline_bill_matches_the_canonical_figure():
     """The real household's baseline electric bill, computed inside this
-    script via BR.load() + R.bill_nem(), must match the SAME $4,904.13
-    figure already independently validated and published elsewhere in this
-    report (reprice_by_vintage.py, index.html) -- a real cross-check, not
-    just an internal consistency check against this script's own math."""
+    script via BR.load() + R.bill_nem(), must match the SAME $4,901.38
+    fixed-window model baseline as rates.bill_nem. This is a regression
+    check on the model result, not an independent utility-bill reconciliation."""
     _require_archive()
     out = hpc.build()
     assert out["applicable"], out
-    assert abs(out["baseline_electric_bill_usd"] - 4904.13) < 0.01, out["baseline_electric_bill_usd"]
-    return f"real baseline bill {out['baseline_electric_bill_usd']} matches the canonical $4,904.13"
+    assert abs(out["baseline_electric_bill_usd"] - 4901.38) < 0.01, out["baseline_electric_bill_usd"]
+    return f"real baseline bill {out['baseline_electric_bill_usd']} matches the canonical $4,901.38"
 
 
 @case

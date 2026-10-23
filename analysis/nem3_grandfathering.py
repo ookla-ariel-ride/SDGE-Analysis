@@ -87,8 +87,9 @@ IMPORT-SIDE RATE (NEM 3.0/NBT customers under a CCA): rates.py does not define a
 separate "NBT import rate" because none is needed -- what changes under NBT is the
 NETTING STRUCTURE (no monthly per-period netting of imports against exports at
 retail rate), not the per-kWh import PRICE. A CCA customer still pays the same TOU
-delivery+generation+PCIA+NBC schedule per kWh of gross import regardless of NEM
-version; rates.allin(season, period) already IS that gross per-kWh price. This
+delivery+generation+PCIA+NBC schedule per kWh of gross import in this NBT
+proxy. This is a separate assumption from NEM-ST interval netting;
+rates.allin(season, period) supplies the gross per-kWh price. This
 script reuses the SAME assumption extended_findings.py's existing bill_flat_export()
 already encodes for its own (battery-marginal-only) NBT proxy: import billed GROSS
 at rates.allin() per (month, season, TOU period), no netting; export credited
@@ -665,8 +666,9 @@ def main():
         "nem2": {
             "annual_bill_usd_modeled": round(nem2_model_bill, 2),
             "label": "modeled (rates.bill_nem, the canonical NEM 2.0 engine; see "
-                     "actual_billed_anchor for the audited total over the same "
-                     "window -- the model runs high, use the DELTA below)",
+                     "actual_billed_anchor for the separate 2025-06-27 through 2026-06-26 "
+                     "bill-audit window; this model uses 2025-07-24 through 2026-07-23. "
+                     "Use the modeled DELTA below, not an identity with that audit)",
         },
         "nbt_counterfactual": nbt_bills,
         "grandfathering_value_range_usd_per_yr": {

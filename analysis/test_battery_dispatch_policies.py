@@ -454,8 +454,8 @@ def case_value_policy_stores_no_shoulder_surplus_and_all_the_midday_surplus():
     skipped = sum(r["kwh"] for r in skips)
     assert abs(skipped - SHOULDER_KWH) < 1e-6, skipped
     for r in skips:
-        assert abs(r["cost"] - R.energy("S", "off") / RTE) < 1e-9, r
-        assert abs(r["value"] - R.allin("S", "off")) < 1e-9, r
+        assert abs(r["cost"] - R.allin("S", "off") / RTE) < 1e-9, r
+        assert abs(r["value"] - R.credit("S", "off")) < 1e-9, r
         assert r["cost"] >= r["value"], r
     # This day's super-off-peak bucket is net-export (12 kWh out, nothing in),
     # so its stored kWh is priced at the surplus end, credit(S, sop) / RTE =
@@ -480,28 +480,20 @@ def case_value_policy_stores_no_shoulder_surplus_and_all_the_midday_surplus():
 
 
 @case
-def case_value_policy_prices_a_bucket_on_the_side_of_zero_its_net_lands_on():
-    """Acceptance criterion: the comparison uses bill_nem_monthly()'s own
-    `net >= 0` bucket test, not a rate card. With the 10 kWh morning import
-    the day's off-peak bucket is net-import (10 + 1 in, 8 out; the 12 kWh
-    on-peak import is another bucket), so the shoulder kWh is priced at
-    energy(); with no morning import the bucket is net-export and the same
-    kWh is priced at credit(). Both figures come off the trace."""
-    costs = {}
+def case_value_gate_bounds_charge_across_monthly_signs():
+    costs = []
     for morning in (MORNING_IMPORT_KWH, 0.0):
         d, imp0, gen0 = _shoulder_day(morning_import_kwh=morning)
-        net = float(imp0[d.p.values == "off"].sum() - gen0[d.p.values == "off"].sum())
-        tr = []
-        _run(d, imp0, gen0, "value", trace=tr)
-        skips = {round(r["cost"], 9) for r in tr if r["kind"] == "skip_surplus"}
-        assert len(skips) == 1, skips
-        costs[net >= 0] = skips.pop()
-    assert abs(costs[True] - R.energy("S", "off") / RTE) < 1e-9, costs
-    assert abs(costs[False] - R.credit("S", "off") / RTE) < 1e-9, costs
-    assert costs[True] > costs[False], costs
-    return (f"shoulder kWh priced {costs[True]*100:.2f}c delivered in a net-import "
-            f"off-peak bucket (energy) and {costs[False]*100:.2f}c in a net-export "
-            "one (credit); the PCIA gap between them is the bracket, not a rate card")
+        gate = B.value_charge_gate(d, imp0, gen0)
+        costs.append(gate['surplus_cost'][d.p.values == 'off'])
+        assert np.allclose(costs[-1], R.allin('S', 'off') / RTE)
+        assert np.all(gate['ref'] == R.credit('S', 'off'))
+    # The upper bound must cover a charge large enough to turn a monthly
+    # export bucket into import, regardless of its initial sign.
+    for net in (-.1, .1):
+        value, _ = B._span_value(1., net, 'S', 'off')
+        assert (value + R.NBC) / RTE <= costs[0][0] + 1e-12
+    return 'charge bounds cover monthly sign transitions and physical NBC'
 
 
 def _assert_no_import_served_below_its_energy_cost(trace):
@@ -739,6 +731,23 @@ def _greedy_loop_with_gate(d, imp0, gen0, cap, charge_kw, gate):
 
 
 # ---------------------------------------------------------------------------
+@case
+def case_nbc_charge_and_discharge_cross_physical_zero():
+    d = _frame().iloc[:3].copy()
+    d['p'] = ['sop', 'on', 'on']
+    i = np.array([1., 1., 0.]); e = np.array([.6, .6, 0.])
+    tr = []
+    B.run_batt(d, i, e, 2., 'value', soc0=0., trace=tr)
+    charge = [x for x in tr if x['kind'] == 'charge_surplus']
+    assert charge and abs(charge[0]['cost'] - (R.energy('W', 'sop') + R.NBC) / .9) < 1e-10
+    discharge = [x for x in tr if x['kind'] == 'discharge']
+    assert len(discharge) == 2, discharge
+    assert abs(discharge[0]['kwh'] - .4) < 1e-10
+    assert abs(discharge[0]['value'] - R.energy('W', 'on') - R.NBC) < 1e-10
+    assert abs(discharge[1]['value'] - R.credit('W', 'on')) < 1e-10
+    return 'solar capture incurs NBC and discharge splits at both physical and monthly zero'
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), \

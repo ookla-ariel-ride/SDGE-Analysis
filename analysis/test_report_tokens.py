@@ -1640,8 +1640,8 @@ def case_battery_verdicts_say_plainly_when_the_battery_never_repays():
     widths = {}
     with _stub_plan(cheapest, provider):
         published = {t: rt.resolve_token(t) for t in ("S0_VERDICT", "S7_VERDICT")}
-        assert "sound optional buy" in published["S0_VERDICT"], published["S0_VERDICT"]
-        assert "adds its own" in published["S7_VERDICT"], published["S7_VERDICT"]
+        assert "has a conditional" in published["S0_VERDICT"], published["S0_VERDICT"]
+        assert "models its own" in published["S7_VERDICT"], published["S7_VERDICT"]
 
         for label, saving, payback in (("saves nothing", 0, float("inf")),
                                        ("loses money", -400, -36.25)):
@@ -1653,10 +1653,10 @@ def case_battery_verdicts_say_plainly_when_the_battery_never_repays():
                 s7 = rt.resolve_token("S7_VERDICT")
             assert "does not repay its own cost" in s0, (
                 f"S0_VERDICT still calls a battery that {label} a sound buy: {s0}")
-            assert "sound optional buy" not in s0 and "payback" not in s0, s0
+            assert "has a conditional" not in s0 and "payback" not in s0, s0
             assert "never repays its own cost" in s7, (
                 f"S7_VERDICT still quotes a payback for a battery that {label}: {s7}")
-            assert "adds its own" not in s7, s7
+            assert "models its own" not in s7, s7
             # The expansion tail loses its comparator, so it must stop
             # comparing rather than measure against a payback that is gone.
             marginal = pk["HIGH"]["marginal_vs_mid_yr"]
@@ -1695,7 +1695,7 @@ def case_battery_verdicts_say_plainly_when_the_battery_never_repays():
 @case
 def case_s0_verdict_refuses_a_payback_range_its_own_artifact_contradicts():
     """Section 0's headline quotes both battery-alone paybacks as a RANGE
-    under "a sound optional buy". Each is the package's cost divided by one of
+    under a conditional modeled payback. Each is the package's cost divided by one of
     its battery-alone savings, so a payback that is zero, negative or infinite
     WHILE both savings stay positive is the artifact contradicting itself --
     the quotients and the savings cannot both be right, and no branch can be
@@ -1746,21 +1746,21 @@ def case_s5_verdict_inverts_when_timing_stops_driving_the_bill():
         f"data/report_data.json already puts the on-peak cost share ({real}) at or below "
         f"its kWh share ({kwh_share}); the published branch is no longer the live one")
     published = rt.resolve_token("S5_VERDICT")
-    assert "timing, more than total consumption, sets this bill" in published, published
+    assert "moving flexible loads can reduce costs" in published, published
     widths = {"published": _assert_within_density_cap(
         "S5_VERDICT", published, "the published branch")}
 
     for label, bad, expected in (
             ("cheaper on-peak energy", kwh_share / 2,
-             "so total consumption, more than timing, sets this bill"),
+             "so its cost share is lower than its energy share"),
             ("an exact tie", kwh_share,
-             "so timing does not drive this bill on its own")):
+             "so this comparison shows no extra cost concentration")):
         with _swapped(rd["onpeak"], "share_of_energy_cost", bad):
             value = rt.resolve_token("S5_VERDICT")
         assert expected in value, (
             f"S5_VERDICT does not state the {label} conclusion at a cost share of {bad} "
             f"against a kWh share of {kwh_share}: {value}")
-        assert "timing, more than total consumption" not in value, (
+        assert "moving flexible loads can reduce costs" not in value, (
             f"S5_VERDICT still claims timing sets this bill at {label}: {value}")
         widths[label] = _assert_within_density_cap("S5_VERDICT", value, label)
     assert rt.resolve_token("S5_VERDICT") == published, (
@@ -1830,7 +1830,7 @@ def case_s1_verdict_guards_the_rounding_digit_its_sentence_claims():
         f"S1_VERDICT must declare the residual it is guarded on: {declared}")
 
     published = rt.resolve_token("S1_VERDICT")
-    assert "whole-kWh rounding digit" in published, published
+    assert "match within statement rounding" in published, published
     # Residuals that PASS tou_audit's own rule (its 1.0 kWh floor, and the
     # 6.9 kWh band the largest committed bucket earns at 0.5%) but blow the
     # digit the sentence quotes.
@@ -1904,17 +1904,17 @@ def case_s5_verdict_compares_the_rounded_shares_the_reader_sees():
         f"{same_pct} is not a cost share that beats {kwh_share} yet prints the same")
     with _swapped(rd["onpeak"], "share_of_energy_cost", same_pct):
         value = rt.resolve_token("S5_VERDICT")
-    assert "timing, more than total consumption" not in value, (
+    assert "moving flexible loads can reduce costs" not in value, (
         f"S5_VERDICT concluded that timing sets this bill while showing the reader "
         f"{kwh_pct}% against {kwh_pct}%: {value}")
-    assert "the same share of the import energy cost" in value, (
+    assert "the same share of import energy cost" in value, (
         f"S5_VERDICT does not call two figures that print alike the same share: {value}")
 
     # Discriminates: one whole percent of divergence is still the published
     # claim, so this is a rounding check and not a blanket refusal.
     with _swapped(rd["onpeak"], "share_of_energy_cost", (kwh_pct + 1) / 100):
         value = rt.resolve_token("S5_VERDICT")
-    assert f"but {kwh_pct + 1}% of the import energy" in value, value
+    assert f"and {kwh_pct + 1}% of import energy" in value, value
     assert rt.resolve_token("S5_VERDICT") == published, (
         "the substituted cost share leaked out of this case")
     return (f"S5_VERDICT refuses the timing conclusion whenever its two printed figures "
@@ -4046,8 +4046,9 @@ def case_free_fix_verdicts_invert_rather_than_refusing_when_there_is_no_free_sav
     with _stub_plan(cheapest, provider):
         published = {t: rt.resolve_token(t) for t in tokens}
         for t in tokens:
-            assert "free" in published[t], (
-                f"{t} no longer sells the free move this case guards: {published[t]}")
+            marker = "check EV charging first" if t == "S15_VERDICT" else "free"
+            assert marker in published[t], (
+                f"{t} no longer names the positive free-move branch this case guards: {published[t]}")
 
         # 1. Both artifacts agree there is nothing to capture: invert.
         with _swapped(scenario, "saved", 0), _swapped(low, "savings_yr", 0):
@@ -4058,7 +4059,8 @@ def case_free_fix_verdicts_invert_rather_than_refusing_when_there_is_no_free_sav
                     "nothing to capture: {}".format(token, value))
                 assert value != published[token], (
                     f"{token} renders its published sentence at a 0/yr free fix: {value}")
-                for sold in ("captures the free savings", "whatever you buy"):
+                for sold in ("check EV charging first", "where feasible",
+                             "is worth a modeled", "saves a modeled"):
                     assert sold not in value, (
                         f"{token} still sells the free move at 0/yr ({sold!r}): {value}")
                 widths[f"{token} at 0"] = _assert_within_density_cap(
@@ -4152,7 +4154,7 @@ def case_free_fix_verdicts_state_a_modeled_loss_as_a_loss_not_as_a_non_event():
                         f"agree on: {value}")
                     assert "$-" not in value, (
                         f"{token} prints a minus inside the dollar sigil: {value}")
-                    for sold in ("captures the free savings", "whatever you buy",
+                    for sold in ("check EV charging first", "where feasible",
                                  "is worth a modeled", "saves a modeled"):
                         assert sold not in value, (
                             f"{token} still sells the free move at a {loss}/yr loss "
@@ -4464,38 +4466,11 @@ def case_each_export_bound_prices_the_whole_export_profile_not_one_period():
 
 @case
 def case_the_two_export_bounds_are_the_two_settlement_treatments():
-    """issue #182, the finding this pair of tokens exists to answer: one
-    profile-weighted figure was published as "what an exported kWh earns" when
-    it was only the ALL-SURPLUS end of the answer.
-
-    rates.bill_nem_monthly() settles NEM 2.0 by monthly per-period netting, so
-    an exported kWh either cancels an import inside its own month and period or
-    is paid the surplus credit. Two treatments, two prices, and the artifacts
-    do not resolve which one any individual month took -- so both are
-    published, and neither may be published as the settled value.
-
-    Four pins, and the fourth is the one that fails if a bound is dressed up as
-    the value:
-
-      1. the ORDER is right: surplus is the low end, netting the high end. A
-         swap of the two rate functions renders the range backwards, and pins
-         1-3 of the sibling case survive it, since each end would still be a
-         valid profile weighting of a real price map;
-      2. the gap between them IS the difference between the two rates -- PCIA,
-         the only term rates.energy() adds to rates.credit() -- rather than
-         some other quantity that happens to sit between the two figures;
-      3. the netting end is rates.energy() and NOT rates.allin(). MEASURED
-         AGAINST THE ENGINE, not argued from the constants: one more exported
-         kWh in a netting cell moves rates.bill_nem() by exactly energy(), and
-         in a surplus cell by exactly credit(). allin() = energy() + NBC is
-         what a GROSS import costs in the model. bill_nem_monthly() bills NBC
-         on gross imports before energy netting, so an export never avoids it
-         in this engine. This check pins the model convention; it does not
-         establish tariff-correct meter-interval netting;
-      4. NEITHER END IS PUBLISHED AS THE VALUE. index.html must state both, and
-         must say the settlement lies between them. A page that names one and
-         drops the other, or names both and calls either one the answer, fails
-         here -- which is the whole failure class this issue closes."""
+    """The two bounds describe monthly ENERGY settlement, not the full bill
+    impact of changing physical export. Pin ordering, the PCIA gap, both real
+    engine settlement treatments with fixed physical flows, and the separate
+    NBC effect when physical exports change. The report must name the range's
+    energy-only scope and keep both ends together."""
     import pandas as pd
 
     surplus = rt.resolve_token("EXPORT_VALUE_SURPLUS_BOUND")
@@ -4527,32 +4502,37 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
         f"adds only PCIA ({rt.R.PCIA:.6f}) to rates.credit() -- one of the ends is not "
         "the price map it claims to be")
 
-    # 3. The netting end, measured against the billing engine itself.
+    # 3. Credit treatment and physical flow are separate engine inputs.
+    # Hold physical exports fixed while varying credited exports, so this
+    # probe isolates exactly the monthly ENERGY bounds published above.
     frame = pd.DataFrame([
         dict(dt=pd.Timestamp("2025-07-10 12:00"), seas="S", p="sop", ym="2025-07",
-             Consumption=100.0, Generation=40.0)])
-    bumped = frame.copy()
-    bumped.loc[0, "Generation"] += 1.0
-    netting_delta = rt.R.bill_nem(frame) - rt.R.bill_nem(bumped)
-    assert abs(netting_delta - rt.R.energy("S", "sop")) < 1e-9, (
-        f"one more exported kWh in a NETTING cell moves rates.bill_nem() by "
-        f"{netting_delta:.6f}, not rates.energy() ({rt.R.energy('S', 'sop'):.6f}) -- "
-        "the high end of the published range is not the engine's own netting value")
-    assert abs(netting_delta - rt.R.allin("S", "sop")) > 1e-6, (
-        "an exported kWh in a netting cell is worth rates.allin() to this engine, so "
-        "NBC is netted away by an export, inconsistent with the current "
-        "gross-import convention in bill_nem_monthly(); tariff reconciliation "
-        "must update the model and its bounds together")
-    surplus_frame = frame.copy()
-    surplus_frame.loc[0, "Generation"] = 200.0
-    bumped = surplus_frame.copy()
-    bumped.loc[0, "Generation"] += 1.0
-    surplus_delta = rt.R.bill_nem(surplus_frame) - rt.R.bill_nem(bumped)
-    assert abs(surplus_delta - rt.R.credit("S", "sop")) < 1e-9, (
-        f"one more exported kWh in a SURPLUS cell moves rates.bill_nem() by "
-        f"{surplus_delta:.6f}, not rates.credit() "
-        f"({rt.R.credit('S', 'sop'):.6f}) -- the low end of the published range is "
-        "not the engine's own surplus value")
+             Consumption=100.0, Generation=40.0, PhysicalExport=40.0)])
+    for netting_cell, credited_export, expected_energy in (
+            (True, 40.0, rt.R.energy("S", "sop")),
+            (False, 200.0, rt.R.credit("S", "sop"))):
+        credited = frame.copy()
+        credited.loc[0, "Generation"] = credited_export
+        bumped = credited.copy()
+        bumped.loc[0, "Generation"] += 1.0
+        energy_delta = (rt.R.bill_nem(credited, physical_exp="PhysicalExport")
+                        - rt.R.bill_nem(bumped, physical_exp="PhysicalExport"))
+        assert abs(energy_delta - expected_energy) < 1e-9, (
+            f"fixed physical flows, netting={netting_cell}: changing credited "
+            f"export moves energy settlement by {energy_delta}, expected "
+            f"{expected_energy}")
+        # Now vary physical exports with the credited exports. A positive
+        # interval loses one NBC kWh; an already-exporting interval has none.
+        physical_delta = rt.R.bill_nem(credited) - rt.R.bill_nem(bumped)
+        expected_physical = (rt.R.allin("S", "sop") if netting_cell
+                             else rt.R.credit("S", "sop"))
+        assert abs(physical_delta - expected_physical) < 1e-9, (
+            f"changed physical flows, netting={netting_cell}: bill difference "
+            f"{physical_delta}, expected {expected_physical}")
+        assert abs((physical_delta - energy_delta)
+                   - (rt.R.NBC if netting_cell else 0.0)) < 1e-9, (
+            "the physical-flow difference must be exactly the positive-interval "
+            "NBC effect, separate from the monthly energy credit")
 
     # 4. The page publishes the range, not one end of it.
     html = (rt.ROOT / "index.html").read_text()
@@ -4571,18 +4551,17 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
     claim = re.search(r"an exported kWh on this profile.*?\.(?=\s|<|$)", html, re.S)
     assert claim, ("index.html no longer says what an exported kWh on this profile is "
                    "worth, so the range this pair of tokens publishes cannot be found")
-    assert re.search(r"is worth between\b", claim.group(0)), (
-        "section 8 no longer frames the export value as a range between two "
+    assert re.search(r"monthly energy settlement value between\b", claim.group(0)), (
+        "section 8 no longer frames monthly energy export value as a range between two "
         f"settlement treatments: {claim.group(0)!r}")
     for rendered in (surplus, netting):
         assert rendered in claim.group(0), (
             f"the valuation sentence names only one end of the range: "
             f"{claim.group(0)!r} does not carry {rendered}")
-    return (f"the export value is published as the range {surplus}-{netting}, the two "
-            f"NEM 2.0 settlement treatments, ordered low-to-high and separated by "
-            f"exactly PCIA; the netting end is the engine's own marginal value for an "
-            f"export that cancels an import, measured against rates.bill_nem() rather "
-            f"than assumed, and is rates.energy() rather than rates.allin()")
+    assert "This range excludes changes to NBC from changed physical interval flows" in html
+    return (f"monthly energy export value is the range {surplus}-{netting}, ordered "
+            "and separated by PCIA; fixed-physical credit changes yield energy/credit, "
+            "while changed physical exports separately avoid NBC only in a positive interval")
 
 
 def _export_bound_recomputed_on_the_weekday_schedule(rate_name):
@@ -5008,9 +4987,9 @@ def case_s6_verdict_ranks_the_larger_gain_whenever_one_option_really_gains():
         assert max(policy_gap, capacity_gap) > 0, (
             f"grid entry {(greedy, evening, expanded)} has no winning option, so it "
             "belongs in the both-lose case, not this one")
-        expected = ("so the dispatch settings are worth more than a bigger pack"
+        expected = ("modeled dispatch changes are worth more than a bigger pack"
                     if policy_gap > capacity_gap else
-                    "so a bigger pack is worth more than the dispatch settings")
+                    "a bigger pack is worth more than the modeled dispatch changes")
         assert expected in value, (
             f"S6_VERDICT ranks the wrong side at policy gap {policy_gap} vs capacity gap "
             f"{capacity_gap}: {value}")
@@ -5071,7 +5050,7 @@ def case_s6_verdict_does_not_sell_the_better_of_two_losing_options():
         assert "are worth the same" not in value, (
             f"S6_VERDICT calls two non-gains equal marginal value at "
             f"{policy_gap:+d}/{capacity_gap:+d}: {value}")
-        assert "neither the dispatch settings nor a bigger pack adds any saving" in value, (
+        assert "neither modeled dispatch changes nor a bigger pack adds any saving" in value, (
             f"S6_VERDICT must say neither option adds anything at "
             f"{policy_gap:+d}/{capacity_gap:+d}: {value}")
         widths[f"{policy_gap:+d}/{capacity_gap:+d}"] = _assert_within_density_cap(
@@ -5142,19 +5121,19 @@ def _battery_reading(s0, s7):
     two words a reader would take away."""
     def read(value, sells, denies):
         # Section 0's selling clause has TWO shapes since round 6's finding 6
-        # -- "a sound optional buy at a 6.2-6.5-year payback" where every
+        # -- a conditional modeled hardware-alone payback where every
         # payback lands inside the warranted life, and "repays in N years,
         # past its 10-year warranty" where it does not. Both say the battery
-        # repays; only one recommends buying it, which is a distinction this
-        # helper is not the place to make.
+        # repays; only one lands inside the warranty. This helper checks
+        # repayment, not whether the purchase is recommended.
         if any(s in value for s in sells):
             return "repays"
         if denies in value:
             return "does not repay"
         raise AssertionError(f"neither battery clause is present: {value}")
-    return (read(s0, ("sound optional buy", "-year warranty"),
+    return (read(s0, ("has a conditional", "-year warranty"),
                  "does not repay its own cost"),
-            read(s7, ("adds its own",), "never repays its own cost"))
+            read(s7, ("models its own",), "never repays its own cost"))
 
 
 @case
@@ -6899,7 +6878,7 @@ def case_section_3s_published_chrome_round_trips_into_index_html():
 #
 # Restore this literal and the trails state goes straight back to that, which
 # is what the case below fails on.
-_S7_FOOTING_FIXED = "<b>{{BEST_PLAN}}</b>. <b>Baseline"
+_S7_FOOTING_FIXED = "<b>{{BEST_PLAN}}</b>. <b>Actual electric cost:"
 # WHAT REPLACED IT: one slot, immediately after the bold plan name, carrying
 # the sentence's own punctuation. The plan name cannot come out of the slot --
 # generate_report.render() HTML-escapes every token value, so no token can emit
@@ -6909,7 +6888,7 @@ _S7_FOOTING_SLOT = "<b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}}"
 # Where the half these tokens own stops. Everything from here is the baseline
 # and method half of the paragraph, which states no standing and is not this
 # case's to read.
-_S7_FOOTING_STOP = "<b>Baseline"
+_S7_FOOTING_STOP = "<b>Actual electric cost:"
 
 
 def _s7_footing_line():
@@ -7361,7 +7340,8 @@ def case_the_utility_tools_verdict_is_attested_rather_than_asserted():
     template = rt.TEMPLATE.read_text()
 
     # 1. THE CELL IS ATTRIBUTED, and its fixed half states nothing.
-    headers = [ln for ln in template.splitlines() if "'s own tool says" in ln]
+    headers = [ln for ln in template.splitlines()
+               if " tool (bundled generation)</th>" in ln]
     assert len(headers) == 1 and "{{UTILITY_NAME}}" in headers[0], (
         "section 3's fifth column no longer carries exactly one header naming whose "
         f"tool it reports ({headers}); without it the cell below reads as this report's "
@@ -10749,15 +10729,20 @@ _EV_VOCABULARY = re.compile(r"\bEVs?\b(?!-TOU)|\bcharger\b|\bcharging\b|"
 # EV_FIX_SAVINGS_80 read the same behavior_rebuild.json scenario field at the
 # same precision and were already bare. The token now renders bare too, so
 # this control literal is bare to match -- an intentional presentation
-# change, not a figure drift (the digits, 1,221, are unchanged).
+# change, not a figure drift at that issue. Task 2's interval-net NBC
+# regeneration later moved behavior_rebuild.scenarios.a.saved to $1,222.26;
+# the same whole-dollar control now reads $1,222.
+# The first Monday instruction now asks for a charging check; the report
+# review removed the unsupported assumption that a schedule change is feasible.
+# The success-metrics heading separates that check from hypothetical batteries.
 _EV_HOUSEHOLD_LITERALS = (
     ("section 0's free-win card",
-     '<div class="card"><div class="big">$1,221/yr</div><div class="lbl">Free win: '
+     '<div class="card"><div class="big">$1,222/yr</div><div class="lbl">Free win: '
      'fully super-off-peak EV charging (session-level, 100% compliance)</div></div>'),
     ("the Monday appendix's first instruction",
-     "<h3>1 · Reprogram charging (this week, $0)</h3>"),
+     "<h3>1 · Check EV charging ($0)</h3>"),
     ("the Monday appendix's success-metrics heading",
-     '<h3>3 · Pre-registered success metrics for the EV fix '
+     '<h3>3 · Check the EV change; keep battery scenarios separate '
      '<span class="pill y">modeled targets</span></h3>'),
     ("section 9's charging subsection",
      "<h3>EV charging report card</h3>"),
@@ -10858,7 +10843,7 @@ def case_the_markup_around_the_no_ev_tokens_names_no_ev_either():
     assert "flexible house load" in step1, (
         f"the first Monday instruction does not name the load this household can "
         f"actually move: {step1!r}")
-    assert "(this week, $0)" in step1, (
+    assert "($0)" in step1, (
         f"the first Monday instruction lost the fact that makes it FREE: {step1!r}")
 
     # 4. SECTION 9'S HEADINGS. The EV subsection's six tokens all render
@@ -12105,7 +12090,7 @@ def case_the_two_figures_for_the_batterys_own_saving_quote_one_scenario():
             assert token == rt.FORMATTERS["usd0_signed"](post), (
                 f"BATTERY_MARGINAL_SAVINGS reads {token!r} while the post-EV-fix "
                 f"scenario section 7 is written on is {post}/yr")
-            assert f"adds its own {token}/yr" in s7, (
+            assert f"models its own {token}/yr" in s7, (
                 f"section 7 quotes a different figure for the same battery than "
                 f"BATTERY_MARGINAL_SAVINGS does ({token!r}): {s7}")
             seen.append(f"{pre}/{post} -> {token}")
@@ -12303,7 +12288,7 @@ def case_a_plan_total_that_models_below_zero_still_gets_a_report():
 
 @case
 def case_a_battery_repaying_past_its_warranty_is_not_called_a_sound_buy():
-    """ROUND 6, FINDING 6. Section 0's "is a sound optional buy" was selected
+    """ROUND 6, FINDING 6. Section 0's former "is a sound optional buy" was selected
     by battery_alone_post_ev_fix_yr > 0 and nothing else, so a battery saving
     $50/yr against a ~$14,500 purchase read as a sound buy in the report's
     most prominent sentence, with a 290-year payback printed beside it.
@@ -12326,12 +12311,12 @@ def case_a_battery_repaying_past_its_warranty_is_not_called_a_sound_buy():
     widths, seen = {}, {}
     with _stub_plan(cheapest, provider):
         published = rt.resolve_token("S0_VERDICT")
-        assert "sound optional buy" in published, published
+        assert "has a conditional" in published, published
 
         # A saving that repays only long past the warranted life.
         with _mid_battery_at(mid, 50.0, 50.0):
             slow = rt.resolve_token("S0_VERDICT")
-        assert "sound optional buy" not in slow, (
+        assert "has a conditional" not in slow, (
             f"S0_VERDICT calls a battery repaying in {cost / 50:.0f} years a sound "
             f"optional buy: {slow}")
         assert f"past its {warranty:g}-year warranty" in slow, slow
@@ -12347,7 +12332,7 @@ def case_a_battery_repaying_past_its_warranty_is_not_called_a_sound_buy():
             save = cost / payback
             with _mid_battery_at(mid, save, save):
                 value = rt.resolve_token("S0_VERDICT")
-            assert ("sound optional buy" in value) is sound, (
+            assert ("has a conditional" in value) is sound, (
                 f"a {payback}-year payback against a {warranty}-year warranty read "
                 f"{'un' if sound else ''}sound: {value}")
             widths[label] = _assert_within_density_cap("S0_VERDICT", value, label)
@@ -12358,7 +12343,7 @@ def case_a_battery_repaying_past_its_warranty_is_not_called_a_sound_buy():
         fast, slow_save = cost / (warranty - 2), cost / (warranty + 5)
         with _mid_battery_at(mid, fast, slow_save):
             mixed = rt.resolve_token("S0_VERDICT")
-        assert "sound optional buy" not in mixed, (
+        assert "has a conditional" not in mixed, (
             f"S0_VERDICT calls the purchase sound while the top of the range it prints "
             f"is past the warranty: {mixed}")
         widths["range straddling"] = _assert_within_density_cap(
@@ -12378,7 +12363,7 @@ def case_a_battery_repaying_past_its_warranty_is_not_called_a_sound_buy():
                     assert "S0_VERDICT" in str(e) and "warrant" in str(e), e
         assert rt.resolve_token("S0_VERDICT") == published, (
             "the substituted battery figures leaked out of this case")
-    return ("section 0 calls the battery a sound optional buy only where every payback "
+    return ("section 0 states a conditional modeled payback only where every payback "
             f"it prints lands inside the {warranty:g}-year warranted life "
             f"(at {warranty:g} yr: sound; at {warranty + 0.1:g} yr: not), and states the "
             "payback plainly otherwise: "
@@ -12779,7 +12764,7 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     A short repeated number is not flagged, and neither is a figure repeated
 #     in a DIFFERENT CONTAINER. The live example of the latter is the lifetime
 #     table, which prints the first year's value in both the annual and the
-#     cumulative cell (report-template.html:555) -- and be precise about WHICH
+#     cumulative cell (report-template.html:561) -- and be precise about WHICH
 #     rule spares it, because there are two and only one of them is load-
 #     bearing. Today's FIRST_YEAR_VALUE happens to be 7 characters, one under
 #     _SEAM_MIN_ECHO, so the length floor would exclude it anyway; that is an
@@ -13128,7 +13113,7 @@ _SEAM_INLINE_TAGS = frozenset((
 # or list items are not one run of text however few characters of markup the
 # author put between them, so the echo rule does not compare ACROSS one at all
 # -- not "at a distance", not at all. That is what spares the lifetime table's
-# cumulative column (report-template.html:555, which prints FIRST_YEAR_VALUE in
+# cumulative column (report-template.html:561, which prints FIRST_YEAR_VALUE in
 # both the annual and the cumulative cell) no matter how long that value grows,
 # and it does so without a second threshold to tune.
 #
@@ -13298,7 +13283,7 @@ _SEAM_CLASSES = ("doubled-sigil", "missing-unit", "echoed-phrase")
 #
 # ONE STATED LIMIT: a marker cannot separate two occurrences of the SAME token
 # on the SAME line. Several template lines print a token twice -- the lifetime
-# table's row (report-template.html:555, FIRST_YEAR_VALUE in both the annual
+# table's row (report-template.html:561, FIRST_YEAR_VALUE in both the annual
 # and the cumulative cell) is the one this file has reason to name elsewhere --
 # and none of them is allowlisted, so an entry for one would excuse both.
 # Line numbers are the next granularity down and they do not help here either.
@@ -13317,28 +13302,26 @@ _SEAM_ALLOWLIST = {
         "number of PDFs the audit read. There is no unit a statement count "
         "could have lost.",
     ("PRODUCTION_SOURCE_COUNT", "missing-unit",
-     "{{PRODUCTION_SOURCE_COUNT}} independent sources"):
-        "a COUNT of monitoring feeds ('2 independent sources'). Dimensionless "
+     "{{PRODUCTION_SOURCE_COUNT}} sources agreeing"):
+        "a COUNT of production sources ('2 sources'). Dimensionless "
         "by construction -- the figure it qualifies, the agreement percentage, "
         "carries its own sign two tokens later.",
-    ("BILL_COUNT", "missing-unit", "All {{BILL_COUNT}} detailed electric statements"):
+    ("BILL_COUNT", "missing-unit",
+     "The annual baseline uses {{BILL_COUNT}} detailed electric statements"):
         "the same statement COUNT at its second occurrence, on the bills "
         "section's opening line. A separate entry on purpose: the two "
         "occurrences are excused one at a time, so a lost unit at either one "
         "is still reported at the other.",
     ("BILLING_PERIOD_COUNT", "missing-unit",
-     "({{BILLING_PERIOD_COUNT}} billing periods) were parsed"):
+     "The annual baseline uses {{BILL_COUNT}} detailed electric statements ({{BILLING_PERIOD_COUNT}} billing periods)"):
         "a COUNT of billing periods. One statement PDF can carry two periods, "
         "which is why this count differs from BILL_COUNT and why neither is a "
         "quantity with a unit.",
     ("BILLING_PERIOD_COUNT", "missing-unit",
-     "statements ({{BILLING_PERIOD_COUNT}} billing periods):"):
+     "-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods<!-- NOTE:"):
         "the same billing-period COUNT at its second occurrence, on the bottom "
         "line's anchoring sentence. A separate entry on purpose: the two "
         "occurrences are excused one at a time.",
-    ("CLEANING_YEAR", "missing-unit", "did the {{CLEANING_YEAR}} cleaning actually work"):
-        "a calendar YEAR used as an adjective ('the 2024 cleaning'). A year "
-        "has no unit; the token is a date part, not a measurement.",
 }
 
 # The committed entries, frozen at import. The allowlist case below MUTATES
@@ -16083,17 +16066,17 @@ def case_the_lifetime_tables_cumulative_cell_is_not_an_echo():
     So the row is driven here with today's value AND with longer ones that
     clear the floor, and a case that passed only because of the floor fails.
 
-    The line number is pinned too. Two comments in this file name
-    report-template.html:555 as this row; the last pair of comments to name a
-    line number here named five of them and every one was stale."""
+    The line number is pinned too. Three contextual comments in this file name
+    report-template.html:561 as this row. Keep those citations synchronized
+    when template edits move it."""
     text = rt.TEMPLATE.read_text()
     row = _seam_template_line("FIRST_YEAR_VALUE", text)
     lineno = text.splitlines().index(row) + 1
-    assert lineno == 555, (
+    assert lineno == 561, (
         f"the lifetime table's repeated-value row is report-template.html:{lineno}, "
-        "not 555. Update the two comments in this file that name that line -- the "
-        "class 3 paragraph in the block comment and the _SEAM_INLINE_TAGS policy "
-        "comment -- in the same edit, which is what this assertion exists to force")
+        "not 561. Update the three contextual comments that name that line -- "
+        "the class 3 explanation, container-boundary policy, and allowlist "
+        "limitation -- in the same edit, which is what this assertion exists to force")
     assert row.count("{{FIRST_YEAR_VALUE}}") == 2, (
         f"report-template.html:{lineno} no longer prints FIRST_YEAR_VALUE twice "
         f"({row!r}); if the cumulative column is gone, this case and the comments that "
@@ -17426,7 +17409,8 @@ def case_the_cleaning_heading_pill_follows_the_determination_state():
     Renders the template's actual h3 line in BOTH states and checks the whole
     line, not the tokens in isolation: the defect was in how the fixed wording
     and the varying value fit together, which only the assembled heading
-    shows."""
+    shows. The determined effect is an estimate from one event, so it earns
+    the red estimated pill rather than a green measurement label."""
     _require_household()
     line, = [ln for ln in (rt.TEMPLATE.read_text()).splitlines()
              if "{{CLEANING_EFFECT_CLAIM}}" in ln]
@@ -17451,8 +17435,8 @@ def case_the_cleaning_heading_pill_follows_the_determination_state():
     with _example_household([{"date": "2023-01-01", "cost_usd": 150}]):
         headings["a history without the measured cleaning"] = heading()
 
-    assert pill(determined) == ("g", "measured · single event"), (
-        f"the determined heading lost its measured pill: {determined}")
+    assert pill(determined) == ("r", "estimated · single event"), (
+        f"the determined heading lost its estimated single-event pill: {determined}")
     assert "difference-in-differences" in determined, (
         f"the determined heading no longer names the method: {determined}")
     for why, text in headings.items():
@@ -17475,7 +17459,7 @@ def case_the_cleaning_heading_pill_follows_the_determination_state():
         cls, _label = pill(text)
         assert re.search(rf"\.pill\.{cls}\b", style), (
             f"the pill class {cls!r} is not painted by report-template.html's <style>")
-    return (f"§12's h3 ({len(names)} tokens) renders 'measured · single event' with the "
+    return (f"§12's h3 ({len(names)} tokens) renders 'estimated · single event' with the "
             f"gain and a red 'not determined' pill without it, across {len(headings)} "
             "routes to the undetermined state, claiming no difference-in-differences "
             "method in either")
@@ -17922,6 +17906,23 @@ def main():
             raise SystemExit(1)
     tail = f" ({skipped} skipped)" if skipped else ""
     print(f"\n{ran}/{len(CASES)} passed{tail}")
+
+
+@case
+def case_archived_cleaning_cadence_does_not_support_a_purchase_verdict():
+    """Frozen cadence observations cannot establish reproduced purchase economics."""
+    def expensive(doc):
+        for row in doc["cleaning"].values():
+            row["save1"] = 100000
+    # Match the public study's event with an invented price. This exercises
+    # the measured-event branch without reading private household answers.
+    cleaning_date = rt._json("soiling_results.json")[rt._MEASURED_CLEANING_BLOCK]["cleaning_date"]
+    with _example_household([{"date": cleaning_date, "cost_usd": 150}]):
+        with _patched(rt, "_json", _stub_for("extra_results.json", expensive)):
+            text = _renders("SEC12_TEASER")
+    assert "not determined" in text.lower(), text
+    assert "covers the" not in text and "modeled schedule" not in text, text
+    assert "production gain" in text, text
 
 
 if __name__ == "__main__":

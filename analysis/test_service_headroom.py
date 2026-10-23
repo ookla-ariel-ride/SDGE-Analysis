@@ -3598,7 +3598,7 @@ def case_the_artifact_flags_an_unmeasured_binding_hour():
         assert lag["lag_hours"] > 0, lag
         for c in d["cases"]:
             if c["ampacity_verdict"] == "not_determined":
-                assert "Enphase consumption-CT export pulled through" in \
+                assert "SAM hourly load export pulled through" in \
                     c["what_would_settle_it"], c
     return "the artifact says in one field whether an unmeasured hour sets the conservative basis"
 

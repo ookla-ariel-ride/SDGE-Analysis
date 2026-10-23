@@ -538,22 +538,9 @@ _FIGURE_NEEDS_QUALIFIER = {
 
 @case
 def case_the_cleaning_caveat_compares_against_a_range_not_a_summer_import_rate():
-    """ISSUE #132, CODEX PASS 2. s12#5's caveat compared the cadence model's
-    pricing against {{SUPER_OFF_PEAK_RATE}} and called it "what a marginal
-    midday kWh earns on today's tariff". That token is rates.allin("S", "sop")
-    -- the SUMMER SUPER-OFF-PEAK IMPORT rate -- so the instruction told the
-    model to state as fact a single figure that is wrong for every exported
-    kWh (which earns the export credit, not an import it never offsets) and
-    silent about winter.
-
-    The conclusion was right and had to survive: the cadence model prices
-    recovered kWh above ANY of those readings, so the upper-bound framing
-    holds. What changed is the comparator.
-
-    Four properties, so neither half can regress alone: the block sees the
-    range, the range really does span both sides and both seasons, the old
-    single-rate comparator is gone from this block, and the upper-bound
-    instruction is still there."""
+    """The tariff comparator spans both seasons and settlement treatments.
+    That arithmetic alone cannot establish an archived cadence calculation as
+    a proven bound, optimum or purchase recommendation. Keep both limits."""
     _require_household()
     html = rt.TEMPLATE.read_text()
     block = {b.id: b for b in rb.parse_todo_blocks(html)}["s12#5"]
@@ -587,12 +574,29 @@ def case_the_cleaning_caveat_compares_against_a_range_not_a_summer_import_rate()
     assert "MIDDAY_MARGINAL_VALUE_RANGE" in named, (
         "s12#5's TODO no longer names the range it must compare against")
 
-    # And the caveat itself survives.
-    assert "upper bound" in block.text, (
-        "s12#5's TODO lost the upper-bound caveat, which the corrected comparator "
-        "still supports")
-    return (f"s12#5 compares against {rendered!r} -- a both-seasons, both-sides range "
-            "from rates.py -- and keeps its upper-bound caveat")
+    # A valid price range cannot restore the missing cadence calculation.
+    assert "data/extra_results.json:cleaning" in block.text
+    assert "does not reproduce" in block.text
+    assert "does not establish" in block.text
+    assert "proven bound" in block.text and "purchase recommendation" in block.text
+    assert "future cleaning payback not determined" in block.text
+    return (f"s12#5 keeps {rendered!r}, the archived source, missing-calculation "
+            "limit and unresolved future payback")
+
+
+@case
+def case_archived_cooling_cannot_become_measured_appliance_savings():
+    """A future fill must carry the missing calculation beside archived values."""
+    html = rt.TEMPLATE.read_text()
+    blocks = rb.parse_todo_blocks(html)
+    candidates = [b for b in blocks if "ANNUAL_COOLING_KWH" in rb.tokens_mentioned(b.text)]
+    assert len(candidates) == 1, "one block must own the annual cooling estimate"
+    text = candidates[0].text
+    assert "data/weather_results.json" in text and "archived regression estimate" in text
+    assert "does not reproduce" in text and "beside the numbers" in text
+    assert "not measured appliance consumption or established achievable savings" in text
+    assert "Do not use them as a purchase conclusion" in text
+    return "cooling values retain their archived source, missing calculation and use limits"
 
 
 # ---------------------------------------------------------------------------

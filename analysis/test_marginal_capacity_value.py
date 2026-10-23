@@ -93,8 +93,8 @@ def case_the_value_is_the_bill_delta_and_no_single_rate_times_the_kwh_reproduces
     """The defect issue #190 names: pricing added production as kWh x a
     rate. On a frame where the increment both displaces imports and pushes
     one bucket net-negative, the engine's delta equals the tariff
-    decomposition (netted kWh at energy(), surplus kWh at credit(), NBC on
-    the offset imports) and equals NO cell of the price map times the added
+    decomposition (netted kWh at energy(), surplus kWh at credit(), finite
+    positive-interval NBC change) and equals NO cell of the price map times the added
     kWh, at either the surplus or the netting treatment."""
     days = [dt.date(2026, 4, 6) + dt.timedelta(days=i) for i in range(2)]   # Mon, Tue
     # Daytime import is small (0.05 kWh a quarter against a 0.075 kWh

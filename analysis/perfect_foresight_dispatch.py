@@ -18,8 +18,7 @@ matters: the bill is NOT a simple per-kWh price. `rates.bill_nem_monthly` nets
 import against export per (month, season, TOU-period) bucket -- 36 buckets
 across the year -- charging the bucket's NET position at the higher "energy"
 rate if it lands positive, crediting it at the lower "credit" rate (no PCIA) if
-negative, and separately charges non-bypassable costs (NBC) on GROSS monthly
-imports regardless of netting. A naive optimizer that just chases the biggest
+negative, and separately charges non-bypassable costs (NBC) on positive physical interval net regardless of netting. A naive optimizer that just chases the biggest
 per-interval price spread can genuinely produce a schedule that BILLS WORSE,
 because it doesn't account for which side of zero a bucket's net position ends
 up on, or that NBC keeps accruing even when energy is "free" to net out.
@@ -89,9 +88,8 @@ actions (rather than as free variables tied only to the signed net
 imp0_i-gen0_i) is deliberate, matching run_batt's own convention exactly:
 an earlier version used free imp_i/exp_i variables, which silently
 discarded the ~6.3% of real intervals that carry BOTH gross import and
-gross export simultaneously (collapsing them to a signed net erases that
-gross import for free, understating the NBC genuinely owed on it with no
-battery action required), and let the optimizer manufacture brand-new
+gross export simultaneously (collapsing them changes the physical dispatch
+envelope even though the NBC basis is interval net), and let the optimizer manufacture brand-new
 export beyond what the house ever generated -- a capability the shipping
 shipping policy's own discharge cap never uses, undermining the "same
 hardware, same envelope" comparison this whole bound depends on (Codex
@@ -101,8 +99,8 @@ flows included, and discharge/solar-absorption are capped so the battery
 can never move imp_i or exp_i outside [0, imp0_i] / [0, gen0_i].
 
 Objective (minimize; BSC is dispatch-invariant, excluded):
-  NBC*sum(imp0_i) [a constant, added back after solving]
-  + sum_i [ NBC*grid_topup_i - NBC*discharge_i ]
+  NBC*sum(npos_i), with npos_i >= 0 and
+  npos_i >= imp0_i - gen0_i + grid_topup_i + solar_absorbed_i - discharge_i
   + for each of the ~36-39 (month, season, period) buckets b with
     net_b = x_b - y_b (x_b, y_b >= 0, the standard convex-piecewise-
     linear-as-LP split):
@@ -226,7 +224,7 @@ def ev_spillover_mask(imp0, p):
 
 _METHOD_EV = ("linear program minimizing the exact rates.bill_nem_monthly "
               "objective (36 month/season/period netting buckets + NBC on "
-              "gross imports), solved via scipy.optimize.linprog (HiGHS), "
+              "positive physical interval net), solved via scipy.optimize.linprog (HiGHS), "
               "at identical capacity/power/efficiency/EV-exclusion "
               "constraints as battery_dispatch_policies.run_batt's published "
               "policy, with a cyclic (steady-state) SOC boundary")
@@ -356,9 +354,8 @@ def _solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
     free imp_i/exp_i variables tied only to the SIGNED net (imp0_i-gen0_i),
     which (a) silently discarded the ~6.3% of real intervals that carry
     BOTH gross import and gross export simultaneously -- collapsing them to
-    a signed net erases that gross import for free, understating the NBC
-    genuinely owed on it, with no battery action required to "earn" that
-    saving -- and (b) let the optimizer manufacture brand-new export beyond
+    a signed net changes the physical dispatch envelope -- and (b) let the
+    optimizer manufacture brand-new export beyond
     what the house ever actually generated, a capability the shipping
     shipping policy's own discharge cap (`min(imp[i], soc*ETA, pwrq)`) never
     uses, undermining the "same hardware, same envelope" comparison this
@@ -395,16 +392,13 @@ def _solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
     GT, SA, DC, SOC = 0, n, 2 * n, 3 * n
     SOC_INIT = 4 * n
     X, Y = SOC_INIT + 1, SOC_INIT + 1 + n_b
-    n_vars = SOC_INIT + 1 + 2 * n_b
+    NPOS = SOC_INIT + 1 + 2 * n_b
+    n_vars = NPOS + n
 
-    # NBC applies to the DERIVED imp_i = imp0_i - discharge_i + grid_topup_i.
-    # The imp0_i term is a constant (added back to the objective after
-    # solving, since linprog's c@x has no constant term); grid_topup_i and
-    # -discharge_i are the decision-variable coefficients.
-    imp0_nbc_constant = float(NBC * imp0.sum())
+    # Epigraph of positive physical interval net. The optimum sets each
+    # nonnegative NPOS_i to max(imp0_i - gen0_i + GT_i + SA_i - DC_i, 0).
     c = np.zeros(n_vars)
-    c[GT:GT + n] = NBC
-    c[DC:DC + n] = -NBC
+    c[NPOS:NPOS + n] = NBC
     for b, (er, cr) in enumerate(bucket_rates):
         c[X + b] = er
         c[Y + b] = -cr
@@ -537,6 +531,14 @@ def _solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
     A_ub = sp.coo_matrix((data4, (rows4, cols4)), shape=(n, n_vars)).tocsr()
     b_ub = np.full(n, P_dis)
 
+    nbc_rows = np.repeat(np.arange(n), 4)
+    nbc_cols = np.column_stack((GT + np.arange(n), SA + np.arange(n),
+                               DC + np.arange(n), NPOS + np.arange(n))).ravel()
+    nbc_matrix = sp.coo_matrix((np.tile([1., 1., -1., -1.], n),
+                               (nbc_rows, nbc_cols)), shape=(n, n_vars)).tocsr()
+    A_ub = sp.vstack((A_ub, nbc_matrix), format='csr')
+    b_ub = np.r_[b_ub, -house_net]
+
     bounds = [(0, P_chg)] * n                                          # grid_topup
     bounds += [(0, min(float(gen0[i]), P_chg)) for i in range(n)]      # solar_absorbed
     bounds += [(0, 0) if ev_spillover[i] else (0, min(float(imp0[i]), P_dis))
@@ -546,10 +548,11 @@ def _solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
     bounds += [(0, None)] * n_b                                        # x
     bounds += [(0, None)] * n_b                                        # y
 
+    bounds += [(0, None)] * n                                          # positive interval net
+
     res = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
     if not res.success:
         raise SystemExit(f"perfect_foresight_dispatch: LP did not solve: {res.message}")
-    res.fun = res.fun + imp0_nbc_constant  # restore the constant NBC-on-imp0 term
 
     x = res.x
     grid_topup = x[GT:GT + n]
@@ -581,7 +584,7 @@ def solve(d, imp0, gen0, cap=CAP_KWH, power_kw=POWER_KW, charge_kw=None):
 
     return imp, exp, {
         "lp_status": res.message,
-        "lp_objective_usd": round(res.fun, 2),
+        "lp_objective_usd": float(res.fun),
         "n_intervals": n,
         "n_buckets": len(bucket_rates),
         "charge_kwh_total": round(float(charge.sum()), 2),
@@ -1003,17 +1006,16 @@ def main():
             "n_days": int(n_days),
             "lp_objective_plus_bsc_usd": round(lp_bill_with_bsc, 2),
             "rebilled_via_rates_bill_nem_usd": round(true_bill, 2),
-            "agreement_usd": round(abs(lp_bill_with_bsc - true_bill), 4),
+            "agreement_usd": float(abs(lp_bill_with_bsc - true_bill)),
         },
     }
-    # AC's own explicit requirement: the LP's objective, re-billed through the
-    # canonical engine, must agree to within $1 -- enforced HERE (fail closed
-    # on every run), not only in a separate test that could go stale.
-    if out["verification"]["agreement_usd"] > 1.0:
+    # Check the unrounded objective; publication rounding must not hide a
+    # mismatch between the optimized NBC basis and the canonical bill.
+    if out["verification"]["agreement_usd"] > 1e-6:
         raise SystemExit(
             "perfect_foresight_dispatch: LP objective diverges from "
-            f"rates.bill_nem by ${out['verification']['agreement_usd']:.2f}, "
-            "more than the required $1 agreement")
+            f"rates.bill_nem by ${out['verification']['agreement_usd']:.9f}, "
+            "more than the unrounded $0.000001 numerical tolerance")
     if canon is not None:
         # The PUBLISHED policy, named by the artifact itself (issue #240), so
         # the gap this script reports is always the gap against the dispatch the

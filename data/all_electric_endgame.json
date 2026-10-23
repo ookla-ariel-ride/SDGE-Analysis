@@ -8,7 +8,7 @@
      "Gas Service: 1 therm @ $2.04568 (4 of 32 days) + 8 therms @ $2.03321 (28 of 32 days) = $18.32",
      "Gas Energy Charge, Public Purpose Programs, State Regulatory Fee: each a flat $/therm rate on every therm (page 2-3 of the PDF)"
     ],
-    "note": "the lowest-usage statement in the corpus -- if a minimum or fixed charge existed, it would be most visible here, and it is not present",
+    "note": "a low-usage statement from the fixed annual window -- its printed line items contain no flat minimum or fixed charge",
     "pdf": "private/1-raw-data/gas-bills/sdge_gas_2025-07-30.pdf",
     "period": "Jun 27, 2025 - Jul 28, 2025",
     "statement_date": "2025-07-30",
@@ -31,11 +31,11 @@
    }
   ],
   "regression": {
-   "intercept_std_error_usd": 3.55,
-   "intercept_usd": -2.46,
-   "n_periods": 25,
-   "note": "the fitted per-statement intercept is small relative to a typical bill and within roughly one standard error of zero given this corpus's own scatter -- consistent with, not merely suggestive of, a genuinely zero fixed charge; the bill PDFs above are the harder evidence, this regression is a cross-check on the same claim, not a replacement for reading the bill",
-   "slope_usd_per_therm": 2.6155
+   "intercept_std_error_usd": 3.03,
+   "intercept_usd": -2.24,
+   "n_periods": 28,
+   "note": "full-corpus diagnostic: all 28 parsed periods, statement dates 2024-06-27 through 2026-09-29; newer statements extend this evidence without moving the fixed annual savings window. The fitted per-statement intercept is small relative to a typical bill and within roughly one standard error of zero given this corpus's own scatter -- consistent with, not merely suggestive of, a genuinely zero fixed charge; the bill PDFs above are the harder evidence, this regression is a cross-check on the same claim, not a replacement for reading the bill",
+   "slope_usd_per_therm": 2.612
   },
   "resolution": "no tension between index.html's existing 'near-zero fixed floor' regression claim and a per-meter fixed charge -- the regression is correct because there genuinely is no such charge on this rate, confirmed by reading two real bill PDFs directly (a 9-therm summer statement and a 61-therm winter statement) line by line, not merely inferred from the regression's own intercept alone",
   "verdict": "confirmed -- GR-Residential has no separate fixed/customer gas charge; every line item on both bill PDFs read directly is a $/therm rate or a percentage of one"
@@ -45,22 +45,22 @@
   "install_cost_marginal_over_ac_usd": 4098,
   "install_cost_standalone_usd": 14529,
   "payback_central_cop_3_5": {
-   "annual_electric_cost_increase_usd": 329.37,
+   "annual_electric_cost_increase_usd": 329.59,
    "annual_gas_savings_usd": 416.25,
-   "annual_net_savings_usd": 86.88,
+   "annual_net_savings_usd": 86.66,
    "marginal_over_ac_replacement": {
     "npv": {
-     "4pct": -3132,
-     "5pct": -3196
+     "4pct": -3134,
+     "5pct": -3198
     },
-    "payback_years": 47.2
+    "payback_years": 47.3
    },
    "standalone": {
     "npv": {
-     "4pct": -13563,
-     "5pct": -13627
+     "4pct": -13565,
+     "5pct": -13629
     },
-    "payback_years": 167.2
+    "payback_years": 167.7
    }
   },
   "source": "data/heat_pump_conversion.json (issues #1/#109, reused directly)"
@@ -69,7 +69,7 @@
   "annual_total_therms_meter": 342,
   "independent_bill_cross_check": {
    "daily_meter_annual_total_therms": 342,
-   "note": "a genuinely independent check: 12 real monthly statement reads (data/bill_periods_gas.csv, most recent 12 of 25) against the daily Green Button export's own annual sum -- two different meter-read processes agreeing within 0.29% is real corroboration, not circular",
+   "note": "an independent check: 12 monthly statement reads selected by parse_bills.SUMMARY_STATEMENTS_GAS (2025-07-30 through 2026-06-30; statement dates) against the unchanged daily Green Button export's own annual sum -- two different meter-read processes agreeing within 0.29% is real corroboration, not circular",
    "pct_difference": 0.29,
    "trailing_12_statement_therms": 341.0
   },
@@ -121,7 +121,7 @@
  "joint_electric_cost_scenario": {
   "basis": "uniform distribution for both loads, furnace at central COP 3.5, water heater at the headline UEF -- matching each conversion's own headline scenario basis",
   "combined_added_kwh": 1556,
-  "electric_cost_increase_usd": 553.61,
+  "electric_cost_increase_usd": 554.08,
   "furnace_added_kwh": 948,
   "solar_absorbed_kwh": 447,
   "water_heater_added_kwh": 608
@@ -174,8 +174,8 @@
   },
   "water_heater_vs_extended_results_gas_decomposition": {
    "gap_note": "the two are expected to differ -- they price the SAME conversion by genuinely different methods, one of them (this script's) at this repo's own established real-interval-billing rigor and one (extended_findings.py's) at a flat-rate proxy",
-   "gap_usd": -68.73,
-   "new_estimate_net_usd_yr": 136.27,
+   "gap_usd": -69.03,
+   "new_estimate_net_usd_yr": 135.97,
    "new_method": "real 15-minute intervals, solar absorbed first, whole year re-billed with rates.bill_nem() (this script, CLAUDE.md section 1b)",
    "old_estimate_net_usd_yr": 205,
    "old_method": "flat 'midday solar timer' rate estimate (extended_findings.py's gas_decomposition), not real-interval billed"
@@ -184,16 +184,16 @@
  "sequencing_and_paybacks": {
   "basis": "cost-effectiveness: whichever step's own marginal payback is shorter goes first. AC1's own finding (a genuinely $0 fixed gas charge on this rate) makes the issue's own 'credit the meter-release value only to the final step' rule trivially satisfied either way -- crediting $0 to whichever step is last changes nothing, so there is no fixed-charge-driven reason to sequence one way over the other, unlike a rate WITH a real per-meter charge would produce. This order is derived from the 100%-water-heater-share basis alone -- see this section's own share_robustness (added separately, in build()) for whether it survives the water-heater-share uncertainty water_heater_share_sensitivity establishes.",
   "complete_transition_payback": {
-   "combined_annual_net_savings_usd": 194.28,
+   "combined_annual_net_savings_usd": 193.81,
    "combined_install_usd": 18729,
-   "electric_interaction_note": "combined_annual_net_savings_usd also subtracts this correction -- see electric_interaction_overstatement() (Finding 1, Codex adversarial review, issue #20 round 2): summing each step's own independently-rebilled electric-cost increase understates the true combined electric cost, since both conversions' independent rebills let their own added load claim the SAME exported solar kWh, which cannot really happen once both loads are real.",
-   "electric_interaction_overstatement_usd": 0.13,
-   "naive_summed_annual_net_savings_usd": 223.15,
+   "electric_interaction_note": "combined_annual_net_savings_usd also subtracts this correction -- see electric_interaction_overstatement() (Finding 1, Codex adversarial review, issue #20 round 2): summing each step's own independently-rebilled electric-cost increase can understate the joint cost across monthly-energy or physical interval NBC zero boundaries. Physical overlap alone does not imply a positive dollar interaction.",
+   "electric_interaction_overstatement_usd": 0.08,
+   "naive_summed_annual_net_savings_usd": 222.63,
    "npv": {
-    "4pct": -16569,
-    "5pct": -16712
+    "4pct": -16574,
+    "5pct": -16717
    },
-   "payback_years": 96.4,
+   "payback_years": 96.6,
    "tier_interaction_note": "combined_annual_net_savings_usd is the naive sum of each step's own independently-computed marginal GAS savings, minus BOTH the tier_interaction_overstatement_usd correction (this field) AND the electric_interaction_overstatement_usd correction (below) -- see tier_interaction_overstatement() and electric_interaction_overstatement() (CLAUDE.md section 9: composite figures must not silently add numbers from two separate models). naive_summed_annual_net_savings_usd is kept alongside for transparency, not used in the payback below.",
    "tier_interaction_overstatement_usd": 28.74
   },
@@ -204,17 +204,17 @@
    "step": "furnace",
    "with_fixed_charge_credit": {
     "npv": {
-     "4pct": -13563,
-     "5pct": -13627
+     "4pct": -13565,
+     "5pct": -13629
     },
-    "payback_years": 167.2
+    "payback_years": 167.7
    },
    "without_fixed_charge_credit": {
     "npv": {
-     "4pct": -13563,
-     "5pct": -13627
+     "4pct": -13565,
+     "5pct": -13629
     },
-    "payback_years": 167.2
+    "payback_years": 167.7
    }
   },
   "fixed_charge_release_usd": 0.0,
@@ -226,12 +226,12 @@
   ],
   "share_robustness": {
    "basis": "checks whether the headline sequencing order (water heater first, furnace last, computed on the 100%-water-heater-share basis) survives the SAME share uncertainty water_heater_share_sensitivity() already establishes -- the true share is not verified and could sit below every scenario shown there. Checked against the furnace's own STANDALONE install-cost basis (matching combined_install's own basis above, CLAUDE.md section 2) by default; a SECOND check against the furnace's own marginal-over-AC-replacement install-cost basis is also reported below (marginal_basis) -- that basis is NOT the one combined_install actually uses, so marginal_basis is a diagnostic on a different hypothetical, not a second combined-savings figure",
-   "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 167.2-year standalone payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
-   "crossover_water_heater_share": 0.1632,
+   "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 167.7-year standalone payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
+   "crossover_water_heater_share": 0.163,
    "marginal_basis": {
-    "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 47.2-year marginal_over_ac_replacement payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
-    "crossover_water_heater_share": 0.6266,
-    "furnace_payback_years": 47.2,
+    "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 47.3-year marginal_over_ac_replacement payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
+    "crossover_water_heater_share": 0.6269,
+    "furnace_payback_years": 47.3,
     "furnace_payback_years_basis": "marginal_over_ac_replacement",
     "named_scenarios": {
      "100pct_full_floor": {
@@ -240,8 +240,8 @@
        "water_heater",
        "furnace"
       ],
-      "water_heater_annual_net_savings_usd": 136.27,
-      "water_heater_payback_years": 30.8,
+      "water_heater_annual_net_savings_usd": 135.97,
+      "water_heater_payback_years": 30.9,
       "water_heater_share": 1.0
      },
      "21pct_if_dryer_present_at_benchmark_high": {
@@ -250,8 +250,8 @@
        "furnace",
        "water_heater"
       ],
-      "water_heater_annual_net_savings_usd": 32.32,
-      "water_heater_payback_years": 130.0,
+      "water_heater_annual_net_savings_usd": 32.25,
+      "water_heater_payback_years": 130.2,
       "water_heater_share": 0.212
      },
      "72pct_if_dryer_present_at_benchmark_low": {
@@ -260,8 +260,8 @@
        "water_heater",
        "furnace"
       ],
-      "water_heater_annual_net_savings_usd": 101.8,
-      "water_heater_payback_years": 41.3,
+      "water_heater_annual_net_savings_usd": 101.57,
+      "water_heater_payback_years": 41.4,
       "water_heater_share": 0.723
      }
     },
@@ -274,8 +274,8 @@
       "water_heater",
       "furnace"
      ],
-     "water_heater_annual_net_savings_usd": 136.27,
-     "water_heater_payback_years": 30.8,
+     "water_heater_annual_net_savings_usd": 135.97,
+     "water_heater_payback_years": 30.9,
      "water_heater_share": 1.0
     },
     "21pct_if_dryer_present_at_benchmark_high": {
@@ -284,8 +284,8 @@
       "water_heater",
       "furnace"
      ],
-     "water_heater_annual_net_savings_usd": 32.32,
-     "water_heater_payback_years": 130.0,
+     "water_heater_annual_net_savings_usd": 32.25,
+     "water_heater_payback_years": 130.2,
      "water_heater_share": 0.212
     },
     "72pct_if_dryer_present_at_benchmark_low": {
@@ -294,8 +294,8 @@
       "water_heater",
       "furnace"
      ],
-     "water_heater_annual_net_savings_usd": 101.8,
-     "water_heater_payback_years": 41.3,
+     "water_heater_annual_net_savings_usd": 101.57,
+     "water_heater_payback_years": 41.4,
      "water_heater_share": 0.723
     }
    },
@@ -323,7 +323,7 @@
   "water_heater_code_load_basis": "NEC 422.13 (water heater as a continuous load, 125% of nameplate) applied to a 4,500 W backup resistance element at 240.0 V -- matches the standard 30 A/240 V dedicated circuit every manufacturer spec sheet found calls for"
  },
  "water_heater_conversion": {
-  "baseline_electric_bill_usd": 4904.13,
+  "baseline_electric_bill_usd": 4901.38,
   "electric_cost_by_scenario": {
    "central_3.88": {
     "_fallback_days": {
@@ -332,17 +332,17 @@
     },
     "on_peak": {
      "added_kwh": 608,
-     "electric_cost_increase_usd": 432.86,
+     "electric_cost_increase_usd": 433.2,
      "solar_absorbed_kwh": 105
     },
     "super_off_peak": {
      "added_kwh": 608,
-     "electric_cost_increase_usd": 72.18,
+     "electric_cost_increase_usd": 72.35,
      "solar_absorbed_kwh": 219
     },
     "uniform": {
      "added_kwh": 608,
-     "electric_cost_increase_usd": 224.11,
+     "electric_cost_increase_usd": 224.41,
      "solar_absorbed_kwh": 193
     }
    },
@@ -353,17 +353,17 @@
     },
     "on_peak": {
      "added_kwh": 590,
-     "electric_cost_increase_usd": 419.86,
+     "electric_cost_increase_usd": 420.2,
      "solar_absorbed_kwh": 102
     },
     "super_off_peak": {
      "added_kwh": 590,
-     "electric_cost_increase_usd": 70.02,
+     "electric_cost_increase_usd": 70.18,
      "solar_absorbed_kwh": 212
     },
     "uniform": {
      "added_kwh": 590,
-     "electric_cost_increase_usd": 217.39,
+     "electric_cost_increase_usd": 217.68,
      "solar_absorbed_kwh": 188
     }
    },
@@ -374,17 +374,17 @@
     },
     "on_peak": {
      "added_kwh": 674,
-     "electric_cost_increase_usd": 479.88,
+     "electric_cost_increase_usd": 480.25,
      "solar_absorbed_kwh": 115
     },
     "super_off_peak": {
      "added_kwh": 674,
-     "electric_cost_increase_usd": 80.03,
+     "electric_cost_increase_usd": 80.21,
      "solar_absorbed_kwh": 242
     },
     "uniform": {
      "added_kwh": 674,
-     "electric_cost_increase_usd": 248.46,
+     "electric_cost_increase_usd": 248.78,
      "solar_absorbed_kwh": 214
     }
    }
@@ -474,81 +474,81 @@
   "not_verified_caveat": "payback below (and every figure derived from it, including sequencing_and_paybacks) is the PURE 100%-water-heater computation and is NOT VERIFIED against this household's own actual appliance fuel mix, which is not determined (see cooking_fuel_evidence). See water_heater_share_sensitivity for the same figures propagated across explicit, illustrative water-heater-share scenarios (NOT a proven bound -- the true share could be lower still) rather than asserting this one as the true answer -- CLAUDE.md section 0 (no false precision on an unverified input).",
   "payback": {
    "central_3.88": {
-    "annual_electric_cost_increase_usd": 224.11,
+    "annual_electric_cost_increase_usd": 224.41,
     "annual_gas_savings_usd": 360.38,
-    "annual_net_savings_usd": 136.27,
+    "annual_net_savings_usd": 135.97,
     "central_install": {
      "npv": {
-      "4pct": -2685,
-      "5pct": -2786
+      "4pct": -2688,
+      "5pct": -2789
      },
-     "payback_years": 30.8
+     "payback_years": 30.9
     },
     "high_install": {
      "npv": {
-      "4pct": -6485,
-      "5pct": -6586
+      "4pct": -6488,
+      "5pct": -6589
      },
-     "payback_years": 58.7
+     "payback_years": 58.8
     },
     "low_install": {
      "npv": {
-      "4pct": -1285,
-      "5pct": -1386
+      "4pct": -1288,
+      "5pct": -1389
      },
-     "payback_years": 20.5
+     "payback_years": 20.6
     }
    },
    "high_4.0": {
-    "annual_electric_cost_increase_usd": 217.39,
+    "annual_electric_cost_increase_usd": 217.68,
     "annual_gas_savings_usd": 360.38,
-    "annual_net_savings_usd": 142.99,
+    "annual_net_savings_usd": 142.7,
     "central_install": {
      "npv": {
-      "4pct": -2610,
-      "5pct": -2716
+      "4pct": -2613,
+      "5pct": -2719
      },
      "payback_years": 29.4
     },
     "high_install": {
      "npv": {
-      "4pct": -6410,
-      "5pct": -6516
+      "4pct": -6413,
+      "5pct": -6519
      },
-     "payback_years": 55.9
+     "payback_years": 56.1
     },
     "low_install": {
      "npv": {
-      "4pct": -1210,
-      "5pct": -1316
+      "4pct": -1213,
+      "5pct": -1319
      },
      "payback_years": 19.6
     }
    },
    "low_3.5": {
-    "annual_electric_cost_increase_usd": 248.46,
+    "annual_electric_cost_increase_usd": 248.78,
     "annual_gas_savings_usd": 360.38,
-    "annual_net_savings_usd": 111.92,
+    "annual_net_savings_usd": 111.6,
     "central_install": {
      "npv": {
-      "4pct": -2956,
-      "5pct": -3038
+      "4pct": -2959,
+      "5pct": -3042
      },
-     "payback_years": 37.5
+     "payback_years": 37.6
     },
     "high_install": {
      "npv": {
-      "4pct": -6756,
-      "5pct": -6838
+      "4pct": -6759,
+      "5pct": -6842
      },
-     "payback_years": 71.5
+     "payback_years": 71.7
     },
     "low_install": {
      "npv": {
-      "4pct": -1556,
-      "5pct": -1638
+      "4pct": -1559,
+      "5pct": -1642
      },
-     "payback_years": 25.0
+     "payback_years": 25.1
     }
    }
   },
@@ -567,38 +567,38 @@
    "headline_uef": "central_3.88",
    "scenarios": {
     "100pct_full_floor": {
-     "annual_net_savings_usd": 136.27,
-     "electric_cost_increase_usd": 224.11,
+     "annual_net_savings_usd": 135.97,
+     "electric_cost_increase_usd": 224.41,
      "floor_savings_annual_usd": 360.38,
      "floor_therms_annual": 134.2,
      "payback": {
       "central_install": {
        "npv": {
-        "4pct": -2685,
-        "5pct": -2786
+        "4pct": -2688,
+        "5pct": -2789
        },
-       "payback_years": 30.8
+       "payback_years": 30.9
       },
       "high_install": {
        "npv": {
-        "4pct": -6485,
-        "5pct": -6586
+        "4pct": -6488,
+        "5pct": -6589
        },
-       "payback_years": 58.7
+       "payback_years": 58.8
       },
       "low_install": {
        "npv": {
-        "4pct": -1285,
-        "5pct": -1386
+        "4pct": -1288,
+        "5pct": -1389
        },
-       "payback_years": 20.5
+       "payback_years": 20.6
       }
      },
      "water_heater_share": 1.0
     },
     "21pct_if_dryer_present_at_benchmark_high": {
-     "annual_net_savings_usd": 32.32,
-     "electric_cost_increase_usd": 48.56,
+     "annual_net_savings_usd": 32.25,
+     "electric_cost_increase_usd": 48.63,
      "floor_savings_annual_usd": 80.88,
      "floor_therms_annual": 29.09,
      "payback": {
@@ -607,51 +607,51 @@
         "4pct": -3841,
         "5pct": -3865
        },
-       "payback_years": 130.0
+       "payback_years": 130.2
       },
       "high_install": {
        "npv": {
         "4pct": -7641,
         "5pct": -7665
        },
-       "payback_years": 247.5
+       "payback_years": 248.1
       },
       "low_install": {
        "npv": {
         "4pct": -2441,
         "5pct": -2465
        },
-       "payback_years": 86.6
+       "payback_years": 86.8
       }
      },
      "water_heater_share": 0.212
     },
     "72pct_if_dryer_present_at_benchmark_low": {
-     "annual_net_savings_usd": 101.8,
-     "electric_cost_increase_usd": 165.68,
+     "annual_net_savings_usd": 101.57,
+     "electric_cost_increase_usd": 165.91,
      "floor_savings_annual_usd": 267.48,
      "floor_therms_annual": 99.22,
      "payback": {
       "central_install": {
        "npv": {
-        "4pct": -3068,
-        "5pct": -3143
+        "4pct": -3071,
+        "5pct": -3146
        },
-       "payback_years": 41.3
+       "payback_years": 41.4
       },
       "high_install": {
        "npv": {
-        "4pct": -6868,
-        "5pct": -6943
+        "4pct": -6871,
+        "5pct": -6946
        },
-       "payback_years": 78.6
+       "payback_years": 78.8
       },
       "low_install": {
        "npv": {
-        "4pct": -1668,
-        "5pct": -1743
+        "4pct": -1671,
+        "5pct": -1746
        },
-       "payback_years": 27.5
+       "payback_years": 27.6
       }
      },
      "water_heater_share": 0.723

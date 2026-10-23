@@ -363,6 +363,16 @@ def case_discharge_mask_matches_comparator_load_access_without_stopping_charge()
     assert r['soc_end'][0] == .25
     rejects(lambda: m.dispatch(d, [0, 1], [0, 0], [0, 0], [b], discharge_allowed=[.5, 0]))
 
+@case
+def case_uncredited_physical_export_changes_nbc_only():
+    m = model()
+    d = frame(['2026-06-01 12:00'])
+    result = m.bill_comparison(d, [1.], [.6], [1.], [0.], physical_exports_after=[.6])
+    assert abs(result['after']['components']['nbc_usd'] - .4 * m.R.NBC) < 1e-12
+    assert abs(result['before']['components']['nbc_usd'] - .4 * m.R.NBC) < 1e-12
+    assert abs(result['savings_usd'] + .6 * m.R.energy('S', 'sop')) < 1e-12
+
+
 def main():
     passed = 0
     for fn in CASES:

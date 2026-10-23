@@ -189,7 +189,7 @@ def _glob_matches(text, receiver_pattern):
 
 
 def _referenced_1raw_data_paths():
-    """{leaf_name: {generator filenames that reference it}}, scanning every
+    """{relative_path: {generator filenames that reference it}}, scanning every
     non-test .py file in analysis/. Test files build their own throwaway
     private trees (test_parse_bills.py's own ELEC/GAS fixtures) and are not
     part of what a real worktree's stage-private-data.sh run has to cover."""
@@ -199,6 +199,13 @@ def _referenced_1raw_data_paths():
             continue
         text = f.read_text()
         root_vars = set(_ROOT_VAR.findall(text))
+        for var in re.findall(r"^\s*(\w+)\s*=\s*root\s*/\s*['\"]private/1-raw-data['\"]", text, re.M):
+            for pattern in _glob_matches(text, re.escape(var)):
+                found.setdefault(pattern, set()).add(f.name)
+            nested = r"\(\s*" + re.escape(var) + r"\s*/\s*['\"]([^'\"/]+)['\"]\s*\)"
+            for match in re.finditer(nested + r"\.glob\(\s*['\"]([^'\"]+)['\"]\s*\)", text):
+                found.setdefault(f"{match[1]}/{match[2]}", set()).add(f.name)
+
         for pat in (_DIRECT, _OS_JOIN):
             for m in pat.finditer(text):
                 found.setdefault(m.group(1), set()).add(f.name)
@@ -225,7 +232,7 @@ class SkipCase(Exception):
     """Raised by a case whose preconditions this checkout cannot meet."""
 
 
-_CP_ARG = re.compile(r'^\s*cp\s+(?:-R\s+)?"?\$SRC"?/private/1-raw-data/([^\s"\\]+)', re.M)
+_CP_ARG = re.compile(r'^\s*cp\s+(?:(?:-R|-P|--)\s+)*"?\$SRC"?/private/1-raw-data/([^\s"\\]+)', re.M)
 
 # issue #213, round 2: electric-bills/, gas-bills/ and caiso_raw/ are no
 # longer copied by a literal `cp -R "$SRC/.../<name>" ...` line -- they go
@@ -240,13 +247,13 @@ _SKIP_METADATA_CALL_ARG = re.compile(
 
 
 def _staged_basenames(script_text):
-    """Every source basename (or glob pattern) an actual cp/cp -R INVOCATION
+    """Every relative source path (or glob pattern) an actual cp/cp -R INVOCATION
     line, or a _copy_subtree_skipping_os_metadata call, copies out of
     private/1-raw-data/ -- e.g. "Electric_15_Minute_*.csv",
     "enphase_sam8760_2025.csv", "electric-bills". Anchored to a leading `cp`
     (or the wrapper call) so the script's own unrelated caiso_raw
     existence-check `ls` line is never mistaken for a real copy."""
-    return ({pathlib.PurePosixPath(m.group(1)).name for m in _CP_ARG.finditer(script_text)}
+    return ({m.group(1) for m in _CP_ARG.finditer(script_text)}
             | {m.group(1) for m in _SKIP_METADATA_CALL_ARG.finditer(script_text)})
 
 
@@ -269,6 +276,10 @@ def _is_staged(name, script_text):
     (Codex review, issue #33, pass 2)."""
     import fnmatch
     staged = _staged_basenames(script_text)
+    subtrees = {m.group(1) for m in re.finditer(
+        r'^\s*_copy_subtree_skipping_os_metadata\s+"([^"\n]+)"', script_text, re.M)}
+    if any(name.startswith(subtree + "/") for subtree in subtrees):
+        return True
     if "*" not in name:
         return name in staged or any("*" in s and fnmatch.fnmatch(name, s) for s in staged)
     return name in staged
@@ -401,6 +412,8 @@ def _synthetic_src(td, household_yaml_text, has_gas_bills_dir, with_venv=True):
     (raw / "electric_billing_history_2024-2026.csv").touch()
     (raw / "electric-bills").mkdir()
     (raw / "Electric_15_Minute_test.csv").touch()
+    (raw / "sdge-downloads-20261022").mkdir()
+    (raw / "sdge-downloads-20261022" / "Electric_15_Minute_october.csv").write_bytes(b"October interval bytes\n")
     (raw / "enphase_sam8760_2025.csv").touch()
     (raw / "enphase_sam8760_2026.csv").touch()
     if has_gas_bills_dir:
@@ -4768,6 +4781,192 @@ def case_service_telemetry_copy_failure_keeps_existing_archive_bytes():
             assert "weather.csv" in log.read_text()
             assert _content_snapshot(dst) == before, "a failed telemetry copy changed the archive"
     return "a failed telemetry copy preserves every existing archive byte"
+
+
+_NBC_ARCHIVE = "sdge-downloads-20261022"
+
+
+@case
+def case_nbc_contract_detects_both_owner_globs_without_collapsing_archive_paths():
+    referenced = _referenced_1raw_data_paths()
+    nested = f"{_NBC_ARCHIVE}/Electric_15_Minute_*.csv"
+    for name in ("Electric_15_Minute_*.csv", nested):
+        assert "nbc_bill_reconciliation.py" in referenced.get(name, set()), (name, referenced)
+        assert _is_staged(name, SCRIPT.read_text()), name
+    root_only = 'cp "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv "$OUT/"\n'
+    nested_only = 'cp "$SRC"/private/1-raw-data/sdge-downloads-20261022/Electric_15_Minute_*.csv "$OUT/"\n'
+    assert not _is_staged(nested, root_only)
+    assert not _is_staged("Electric_15_Minute_*.csv", nested_only)
+    assert not _is_staged("service-telemetry/unmanaged.csv", SCRIPT.read_text())
+    return "the actual NBC owner requires two distinct staged interval globs"
+
+
+@case
+def case_nbc_required_archive_absence_and_ambiguity_refuse_before_writes():
+    for shape in ("missing_directory", "zero_matches", "two_matches"):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+            raw = src / "private" / "1-raw-data" / _NBC_ARCHIVE
+            if shape == "two_matches":
+                (raw / "Electric_15_Minute_other.csv").write_bytes(b"other\n")
+            else:
+                next(raw.iterdir()).unlink()
+                if shape == "missing_directory":
+                    raw.rmdir()
+            with _linked_worktree(td) as dst:
+                before, contents = _snapshot(dst), _content_snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=120)
+                _assert_source_refused(result, dst, before, shape, _NBC_ARCHIVE)
+                assert _content_snapshot(dst) == contents
+    return "a missing directory, empty glob, or ambiguous archive refuses before writes"
+
+
+@case
+def case_nbc_stages_separate_bytes_and_exact_whitespace_names_without_source_extras():
+    for name in ("Electric_15_Minute_October export.csv", "Electric_15_Minute_October\nexport\n.csv"):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+            raw = src / "private" / "1-raw-data"
+            canonical = raw / "Electric_15_Minute_test.csv"
+            canonical.write_bytes(b"canonical interval bytes\n")
+            archive = raw / _NBC_ARCHIVE
+            next(archive.iterdir()).rename(archive / name)
+            for extra in ("helper.py", ".hidden", "unrelated.csv"):
+                (archive / extra).write_bytes(b"source extra\n")
+            (archive / "child").mkdir()
+            source_bytes = _content_snapshot(src)
+            with _linked_worktree(td) as dst:
+                for repeat in range(2):
+                    result = _run_script(src, dst, cwd=src, timeout=120)
+                    assert result.returncode == 0, result.stderr
+                    target = dst / "private" / "1-raw-data"
+                    assert (target / canonical.name).read_bytes() == b"canonical interval bytes\n"
+                    assert (dst / "private" / "verify" / "usage.csv").read_bytes() == b"canonical interval bytes\n"
+                    assert (target / _NBC_ARCHIVE).is_dir(), "NBC archive was not staged"
+                    assert {p.name for p in (target / _NBC_ARCHIVE).iterdir()} == {name}
+                    copied = target / _NBC_ARCHIVE / name
+                    assert copied.read_bytes() == b"October interval bytes\n"
+                    for output, original in ((copied, archive / name), (target / canonical.name, canonical),
+                                             (dst / "private" / "verify" / "usage.csv", canonical)):
+                        assert not output.is_symlink() and output.stat().st_nlink == 1
+                        assert not os.path.samefile(output, original)
+                assert _content_snapshot(src) == source_bytes
+    return "canonical, October, and usage copies keep distinct bytes, exact names, and independent inodes on restage"
+
+
+@case
+def case_nbc_unsafe_source_slots_refuse_before_writes():
+    for shape in ("private_symlink", "raw_symlink", "archive_symlink", "archive_dangling", "archive_file",
+                  "file_symlink", "file_dangling", "hardlink", "fifo", "matching_directory"):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+            archive = src / "private" / "1-raw-data" / _NBC_ARCHIVE
+            path = next(archive.iterdir())
+            sentinel = pathlib.Path(td) / "outside.csv"
+            sentinel.write_bytes(b"outside sentinel\n")
+            if shape in ("private_symlink", "raw_symlink", "archive_symlink"):
+                slot = {"private_symlink": src / "private", "raw_symlink": archive.parent,
+                        "archive_symlink": archive}[shape]
+                moved = pathlib.Path(td) / "outside-directory"
+                slot.rename(moved)
+                slot.symlink_to(moved, target_is_directory=True)
+            elif shape.startswith("archive_"):
+                path.unlink()
+                archive.rmdir()
+                if shape == "archive_file":
+                    archive.write_bytes(b"not a directory\n")
+                else:
+                    archive.symlink_to(pathlib.Path(td) / "missing-directory")
+            else:
+                path.unlink()
+                if shape == "file_symlink": path.symlink_to(sentinel)
+                elif shape == "file_dangling": path.symlink_to(pathlib.Path(td) / "missing.csv")
+                elif shape == "hardlink": os.link(sentinel, path)
+                elif shape == "fifo": os.mkfifo(path)
+                else: path.mkdir()
+            with _linked_worktree(td) as dst:
+                before, contents = _snapshot(dst), _content_snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=120)
+                _assert_source_refused(result, dst, before, shape, _NBC_ARCHIVE)
+                assert _content_snapshot(dst) == contents
+                assert sentinel.read_bytes() == b"outside sentinel\n"
+    return "NBC source parents, archive, and matched file reject redirects, hardlinks, special files, and directories"
+
+
+@case
+def case_nbc_unsafe_destination_slots_refuse_before_writes():
+    for shape in ("archive_symlink", "archive_dangling", "archive_file", "file_symlink", "file_dangling",
+                  "hardlink", "fifo", "matching_directory"):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+            with _linked_worktree(td) as dst:
+                archive = dst / "private" / "1-raw-data" / _NBC_ARCHIVE
+                archive.parent.mkdir(parents=True)
+                outside = pathlib.Path(td) / "outside"
+                outside.mkdir()
+                sentinel = outside / "Electric_15_Minute_october.csv"
+                sentinel.write_bytes(b"outside sentinel\n")
+                if shape == "archive_symlink": archive.symlink_to(outside, target_is_directory=True)
+                elif shape == "archive_dangling": archive.symlink_to(outside / "missing")
+                elif shape == "archive_file": archive.write_bytes(b"not a directory\n")
+                else:
+                    archive.mkdir()
+                    path = archive / sentinel.name
+                    if shape == "file_symlink": path.symlink_to(sentinel)
+                    elif shape == "file_dangling": path.symlink_to(outside / "missing.csv")
+                    elif shape == "hardlink": os.link(sentinel, path)
+                    elif shape == "fifo": os.mkfifo(path)
+                    else: path.mkdir()
+                before, contents = _snapshot(dst), _content_snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=120)
+                _assert_refused(result, dst, before, shape)
+                assert _content_snapshot(dst) == contents
+                assert sentinel.read_bytes() == b"outside sentinel\n"
+    return "NBC destination directory and file slots refuse unsafe shapes before writes"
+
+
+@case
+def case_nbc_destination_extras_refuse_without_removal():
+    for name in ("Electric_15_Minute_old.csv", "helper.py", ".hidden", "child", "Electric_15_Minute_october.csv extra",
+                 "Electric_15_Minute_october.csv\nextra"):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+            with _linked_worktree(td) as dst:
+                archive = dst / "private" / "1-raw-data" / _NBC_ARCHIVE
+                archive.mkdir(parents=True)
+                extra = archive / name
+                if name == "child":
+                    extra.mkdir()
+                    (extra / "nested.csv").write_bytes(b"unmanaged\n")
+                else:
+                    extra.write_bytes(b"unmanaged\n")
+                    if not name.startswith("Electric_15_Minute_"):
+                        (src / "private" / "1-raw-data" / _NBC_ARCHIVE / name).write_bytes(b"source extra\n")
+                before, contents = _snapshot(dst), _content_snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=120)
+                _assert_refused(result, dst, before, name)
+                assert _content_snapshot(dst) == contents
+    return "all unmanaged archive children refuse without removal, including matching source helpers and whitespace names"
+
+
+@case
+def case_nbc_archive_copy_failure_preserves_fresh_and_existing_destinations():
+    for restage in (False, True):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n", False)
+            with _linked_worktree(td) as dst:
+                if restage:
+                    control = _run_script(src, dst, cwd=src, timeout=120)
+                    assert control.returncode == 0, control.stderr
+                    (src / "private" / "1-raw-data" / _NBC_ARCHIVE /
+                     "Electric_15_Minute_october.csv").write_bytes(b"new October bytes\n")
+                before = _content_snapshot(dst)
+                env, log = _failing_tool_shim(td, "cp", _NBC_ARCHIVE, partial=True)
+                result = _run_script(src, dst, cwd=src, env=env, timeout=120)
+                assert result.returncode != 0 and _NBC_ARCHIVE in result.stderr, result.stderr
+                assert _NBC_ARCHIVE in log.read_text()
+                assert _content_snapshot(dst) == before, "failed NBC copy changed final archive bytes"
+    return "an injected partial NBC copy failure preserves fresh and existing final archives"
 
 
 def run():
