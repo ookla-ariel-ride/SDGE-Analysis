@@ -411,7 +411,8 @@ def voltage_association(joined):
         if 'coefficients' in results['nighttime_leg_mean_v']:
             results['nighttime_leg_mean_v']['coefficients'] = {'net_import_kw': results['nighttime_leg_mean_v']['coefficients']['net_import_kw']}
     results['interpretation'] = ('Associations condition on same-day effects and local-clock harmonics. Solar and inferred gross load share generation data. '
-                                 'Nighttime check reduces that coupling. Slopes cannot separate upstream impedance from premise conductor drop/rise without a calibrated service-point comparison.')
+                                 'Nighttime check reduces that coupling. These slopes do not separate upstream variation from premise conductor drop/rise. '
+                                 'Synchronized service-point and inverter-side readings with known accuracy could help answer that location question.')
     return results
 
 
@@ -468,7 +469,7 @@ def production_association(hourly):
         interval = model['coefficients']['mean_leg_v']['ci95']
         base['inverse_association_at_95pct'] = bool(interval[1] < 0)
         base['finding'] = ('The conditional model estimates an inverse association within observed voltage support; causation and lost energy remain unproved.'
-                           if interval[1] < 0 else 'The conditional model does not establish an inverse voltage-production association at the stated uncertainty level. This does not prove zero production loss.')
+                           if interval[1] < 0 else 'The conditional model does not establish an inverse voltage-production association at the stated uncertainty level. This does not prove no relationship or zero production loss.')
     for result in [model, no_load]:
         if 'coefficients' in result:
             result['voltage_w_per_v'] = result['coefficients']['mean_leg_v']
@@ -499,11 +500,13 @@ def disposition(data):
     status = ('investigate_observed_outside_range' if outside.any() else
               'monitored_samples_within_range_a' if sufficient else 'insufficient_window')
     if outside.any():
-        action = 'Investigate the monitored excursion or measurement-chain inconsistency. Obtain calibrated service-point comparison and event-duration evidence before a utility compliance complaint.'
+        action = ('Investigate the recorded excursion and measurement-chain consistency. SDG&E accepts suspected voltage problems and can supply service-entrance measurements. '
+                  'Customer calibration is not a prerequisite to request investigation. Calibration, sensing location, and event duration matter before asserting a proved compliance breach.')
     elif not sufficient:
         action = 'Collect at least 60 local observation dates over a 60-day elapsed span before a within-range study disposition. No formal service-compliance closure follows from the current samples.'
     else:
-        action = 'Continue monitoring; no sampled Range A excursion supports a utility voltage complaint in this window. Formal within-specification closure remains unsupported.'
+        action = ('Continue monitoring. This window documents no Range A excursion to support alleging a utility voltage violation. Formal within-specification closure remains unsupported. '
+                  'SDG&E accepts suspected voltage problems and can supply service-entrance measurements. Customer calibration is not a prerequisite to request investigation.')
     return {'status': status, 'elapsed_observation_days': span,
             'local_dates_with_paired_leg_samples':int(paired.ts.dt.tz_convert(TZ).dt.date.nunique()),
             'local_dates_with_any_voltage_samples':int(observed_dates),
@@ -647,10 +650,10 @@ def build_study(input_dir):
             'weather_shift_minus_one_hour':production_association(hourly_context(joined,data['weather'],-1)),
             'weather_shift_plus_one_hour':production_association(hourly_context(joined,data['weather'],1))},
         'disposition':disposition(combined),
-        'missing_evidence':['Calibrated voltage comparison at the utility service point and established physical sensing point/accuracy.',
-                            'Inverter trip/curtailment event records and sufficiently fast synchronized voltage and production.',
-                            'On-site irradiance/module-temperature evidence or a verified unconstrained production reference.',
-                            'Simultaneous upstream/service and inverter-side voltage to separate utility variation from conductor drop/export rise.'],
+        'missing_evidence':['Service compliance: physical sensing point, voltage accuracy, and sustained event duration remain unestablished. SDG&E can supply service-entrance measurements for suspected problems; customer calibration is not a prerequisite to request investigation.',
+                            'Event-related production response: inverter trip/curtailment records and faster synchronized voltage/production could test suspected events that five-minute samples miss.',
+                            'Causal loss: on-site irradiance/module temperature or another independently checked production reference could strengthen attribution. The production-source disagreement needs resolution before assigning it a loss mechanism.',
+                            'Location of voltage variation: synchronized service-point and inverter-side readings with known accuracy could help separate upstream variation from premise conductor drop/export rise. These follow-ups answer specific questions; they are not requirements for the current sampled finding.'],
         'causal_loss_kwh':None,'causal_cost_usd':None,
         'pricing':'No identified loss or aligned counterfactual exists; no kWh or dollar estimate. Any future counterfactual needs canonical tariff re-billing of aligned interval flows.',
         'sources':{'service_limits':LIMIT_SOURCE,'modeled_weather_time_semantics':WEATHER_SOURCE}}

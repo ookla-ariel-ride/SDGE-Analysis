@@ -2251,7 +2251,7 @@ def case_irreducible_bill_figures_match_the_artifact():
     pf = ib["package_floor_fractions"]
 
     m = re.search(
-        r'<p class="small"><b>\$264\.10.*?</p>\s*<p class="small">Priced at each package.*?</p>',
+        r'<p class="small"><b>\$264\.10.*?</p>\s*<p class="small">Modeled at each package.*?</p>',
         HTML, re.S)
     assert m, "§7 irreducible-bill-floor paragraphs not found in index.html"
     section = m.group(0)
@@ -4219,8 +4219,10 @@ def case_s8_more_panels_timing_matches_the_artifacts():
 # report publishes both and neither is the value.
 #
 # THE HIGH END IS energy() AND NOT allin(). allin() = energy() + NBC is what a
-# GROSS import costs; bill_nem_monthly() bills NBC on gross imports before any
-# netting, so an export never avoids it. That is measured against the engine in
+# GROSS import costs in the current model; bill_nem_monthly() bills NBC on
+# gross imports before energy netting. The export does not avoid it under this
+# model convention; meter-interval tariff reconciliation remains open. The
+# current engine is checked in
 # test_report_tokens.case_the_two_export_bounds_are_the_two_settlement_
 # treatments rather than argued from the constants here.
 _EXPORT_BOUNDS = (
@@ -4871,7 +4873,7 @@ def case_s0_expansion_cap_matches_the_s8_one():
     assert m, "§0's 'More solar?' bullet not found in index.html"
     s0 = _assert_expansion_qualification(m.group(0), "§0")
     assert re.search(r"[Dd]efer", s0), "§0 must defer expansion pending missing inputs"
-    for evidence in ("original approval", "connection", "settlement", "installed price"):
+    for evidence in ("connection", "settlement", "installed price"):
         assert evidence in s0, f"§0 must name missing {evidence}"
     _assert_expansion_qualification(_s8_section(), "§8", full_rule=True)
     assert '<a href="#s8">' in m.group(0), "§0 must link §8's complete tariff rule"
@@ -4943,7 +4945,7 @@ def case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering():
     assert s0 and published in s0.group(0), (
         f"§0 must match §8 and the artifact-backed grandfathering {published}")
     text = re.sub(r"<[^>]*>", " ", section)
-    for evidence in (r"[Dd]efer (?:expansion|purchase)", r"original approval", r"connection",
+    for evidence in (r"[Dd]efer (?:(?:rooftop )?expansion|purchase)", r"connection",
                      r"settlement", r"installed price"):
         assert re.search(evidence, text), f"§8 must defer purchase pending {evidence}"
     return f"§8 qualifies expansion under SC 9(b) and retains {published} of grandfathering"
@@ -5063,7 +5065,7 @@ def case_s0_more_solar_bullet_keeps_the_two_shares_apart():
 
     §0 is basic tier, so the item states the two shares and nothing about the
     export price: what it needs to settle the question is already in the clause
-    beside it (original approval, the separate tariff path, and conditional grandfathering value) and the
+    beside it (the separate tariff path and conditional grandfathering value) and the
     derivation is §8's job. Same guard as §2 and §8, on the same two
     artifact-derived figures."""
     m = re.search(r"<li><b>More solar\? [^<]*</b>.*?</li>", HTML, re.S)

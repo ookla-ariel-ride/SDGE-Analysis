@@ -1033,8 +1033,11 @@ The path-less declaration resolves the intake field; it does not scan raw docume
 These document fields apply only to a requested high-cadence feasibility study. They add no
 mandatory answers to `household.yaml`. Record document receipt in gitignored
 `private/intake-status.md`. Keep the documents in gitignored
-`private/1-raw-data/high-cadence/`. See the [prospective protocol](research/high-cadence-feasibility.md)
-for the collection and controlled-test prerequisites.
+`private/1-raw-data/high-cadence/`. See the [evidence and optional protocol](research/high-cadence-feasibility.md)
+for existing diagnostics, original requirements, and the unadopted stronger option.
+The original study needs at least 60 continuous days and controlled tests of at least three
+known loads. Define continuity and adopt a pre-stated feasibility criterion before scoring.
+The extra coverage, small-step, repetition, and context thresholds remain optional choices.
 
 **Privacy decision: private-only.** Raw readings and test records can reveal household
 activity. Their timestamps, device or circuit identifiers, load labels, and occupancy notes
@@ -1046,7 +1049,7 @@ id: high_cadence_consumption_export
 question: "Can you supply the stored high-cadence consumption series for the requested feasibility study?"
 type: file
 required_if: "A high-cadence feasibility study is requested; not required for the standard household analysis."
-where: "Export a stable copy from the existing meter or monitoring archive to private/1-raw-data/high-cadence/. Include timezone-aware measurement and collection times where available, power in watts, net-versus-gross meaning, missing values, and quality or freshness flags. Include the qualifying continuous 60-day window before performance analysis. Stored EAGLE demand history is a candidate; a Sense stream is not mandatory. Keep all raw readings and identifiers private."
+where: "Use an existing stable private export if its permitted scope and fields fit the study; put any additional export in private/1-raw-data/high-cadence/. Include timezone-aware measurement and collection times where available, power in watts, net-versus-gross meaning, missing values, and quality or freshness flags. Include at least 60 continuous days before performance analysis, with all gaps and the stated continuity definition. Stored EAGLE demand history and collection diagnostics exist; a new Sense stream is not mandatory. Keep all raw readings and identifiers private."
 privacy: private-only
 ```
 
@@ -1061,10 +1064,10 @@ privacy: private-only
 
 ```yaml
 id: high_cadence_controlled_test_log
-question: "Can you supply independent timestamped on/off ground truth for at least three known loads, including small steps?"
+question: "Can you supply independent timestamped on/off ground truth and power references for at least three known loads?"
 type: file
 required_if: "A high-cadence feasibility study is requested; not required for the standard household analysis."
-where: "Keep the log and independent meter records in private/1-raw-data/high-cadence/. Record anonymous load labels, timezone-aware on/off times, clock uncertainty, measured watts and reference-meter accuracy, repetitions, calibration versus blinded held-out cycles, solar conditions, and concurrent loads. Include steps at or below the proposed 300 W limit and smaller steps to bound minimum detection. Use ordinary appliance controls and correctly rated metering; no owner electrical work is needed. Software appliance detections are not independent ground truth."
+where: "Keep the log and independent meter records in private/1-raw-data/high-cadence/. Record anonymous load labels, timezone-aware on/off times, clock uncertainty, measured watts and reference-meter accuracy, repetitions, calibration versus held-out cycles, solar conditions, and concurrent loads. Match the tests to the adopted pre-stated criterion. The 300 W limit, smaller probes, and specified blinded repetitions belong to the optional stronger protocol; they are not original requirements. Use ordinary appliance controls and correctly rated metering; no owner electrical work is needed. Software appliance detections are not independent ground truth."
 privacy: private-only
 ```
 

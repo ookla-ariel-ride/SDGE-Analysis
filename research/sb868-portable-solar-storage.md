@@ -1,8 +1,8 @@
-# SB 868: wait for grid-parallel equipment; measure selected loads first
+# SB 868: qualifying plug-in PV needs no utility approval; equipment evidence remains open
 
-**Decision as of 2026-10-22: WAIT for a grid-parallel purchase.** Exact system certification, NEM/CEA treatment, and the household connection remain unresolved. Full installed costs are unknown. Conditional modeled price ceilings do not establish a purchase budget.
+**Decision as of 2026-10-22: WAIT for a grid-parallel purchase.** Exact system certification, household connection, supported performance, and full installed costs remain unresolved. SB 868 bars prior SDG&E approval for qualifying devices once its exemption takes effect on January 1, 2027. NEM/CEA compensation affects the economics; it is a separate question from statutory eligibility.
 
-A selected-appliance pilot can answer useful questions with an owned, borrowed, or returnable supported battery. It needs measured selected loads first. It does not justify a household-wiring pilot or a battery purchase from whole-house savings.
+A selected-appliance pilot can answer useful questions with a borrowed or returnable supported battery if the owner later chooses that pilot. The household owns no battery. Selected-load measurements can improve the desk evaluation without a battery purchase or field pilot. Conditional modeled price ceilings do not establish a purchase budget.
 
 This study separates electricity savings from backup. It does not authorize purchases, utility applications, or electrical work. Publication of portable-study recommendations remains deferred. The existing report and glossary include the supported tariff qualifications. Issue #304 remains incomplete where the acceptance map names missing evidence.
 
@@ -20,33 +20,39 @@ The owner confirmed **no installed battery** on 2026-10-22. Every battery here i
 
 Source: the documented project inventory, with public equipment values also recorded in [`installed_baseline` and `provenance`](../data/portable_solar_storage.json). Circuit labels have partial confidence. Equipment ratings do not establish spare service capacity or a permitted connection.
 
-The inventory records a December 2019 permission-to-operate date. The original approval's capacity field and interconnection agreement are absent. Current panel DC capacity, inverter AC capacity, and utility-approved capacity are different quantities. A date alone does not settle expansion headroom.
+The inventory records a December 2019 permission-to-operate date. The original approval's capacity field and interconnection agreement are absent. Current panel DC capacity, inverter AC capacity, and utility-approved capacity are different quantities. Original capacity helps determine conventional expansion headroom under §4. It is not an SB 868 eligibility condition.
 
 ## 2. Five approaches answer different questions
 
 | Approach | Useful comparison | Decision now |
 |---|---|---|
-| A. Plug-in PV without storage | Daytime import offsets versus the value of incremental exports | WAIT for exact listing, lawful connection, settlement treatment, and site yield |
-| B. Plug-in PV with modular storage | Later import offsets versus the same battery without new panels | WAIT; shared PV-plus-discharge cap applies to the modeled system |
+| A. Plug-in PV without storage | Daytime import offsets versus the value of incremental exports | WAIT for exact certification, supported code-compliant connection, site yield, and costs; compare settlement scenarios separately |
+| B. Plug-in PV with modular storage | Later import offsets versus the same battery without new panels | WAIT for exact combination certification, connection, controls, and costs; shared PV-plus-discharge cap applies to the modeled system |
 | C. Storage using existing solar or cheap grid hours | Avoid new-panel cost; price charging and forgone existing export credit | Study a lawful storage connection independently; no blanket SB 868 battery exemption |
 | D. Portable battery with directly connected appliances | Only measured selected-appliance energy and backup needs | Conditional measurement pilot; no household receptacle backfeed |
 | E. Professionally connected home battery | Larger supported loads and transfer/backup capability versus a hypothetical Powerwall | WAIT for a design, exact controls, quote, and NEM treatment |
 
 The model prices hardware **after the free EV schedule change**. That free change saves a modeled **$1,220.85/year**. Hardware never receives credit for that saving.
 
-## 3. Law: a prospective exemption with unresolved household application
+## 3. Law: qualifying devices need no prior utility approval from January 1, 2027
 
 SB 868 is Chapter 985, signed/filed September 30, 2026. The Governor lists the signature. The official text endpoint returned HTTP 403; the chaptered text came from the disclosed [LegiScan mirror](https://legiscan.com/CA/text/SB868/2025). The ordinary **January 1, 2027** effective date follows from the [Secretary of State's rule](https://www.sos.ca.gov/administration/bill-chapters). The exemption is not effective on this study date. [Governor's signed-bill list](https://www.gov.ca.gov/2026/09/30/governor-newsom-issues-legislative-update-9-30-2026/)
 
-Sections 8530–8532 require photovoltaic equipment, receptacle connection, onsite-consumption intent, current electrical-code compliance, plug-in-PV-system certification, and certified outage isolation. The limit is **1,200 W aggregate AC per dwelling**, across qualifying devices. Section 8531 removes specified interconnection, approval, fee, and extra-equipment requirements. Utilities may require simple online notification of address, make, model, and size. Notification is not approval. Section 8531 repeals January 1, 2030; a separate sales restriction starts then. [Chaptered text](https://legiscan.com/CA/text/SB868/2025)
+Section 8530(c) defines qualifying photovoltaic equipment or combinations through six conditions. They cover receptacle connection, onsite-consumption intent, current electrical-code compliance, NRTL plug-in-PV-system certification, and certified outage isolation. The limit is **1,200 W aggregate AC per dwelling**, across qualifying devices. NRTL means nationally recognized testing laboratory. [Chaptered text, §8530(c)](https://legiscan.com/CA/text/SB868/2025)
 
-The text does not settle existing-rooftop NEM coexistence, battery-only operation, expansion accounting, incremental compensation, or later obligations. These interpretations remain **not determined**. Neither automatic shutdown nor permanent exemption in 2030 follows from this evidence. Local code, fire, siting, mounting, and circuit checks remain separate. Recheck the [official chapter](https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB868) before deployment.
+Section 8531(a) exempts qualifying devices from all interconnection requirements imposed by state law, the CPUC, and utility rules, including interconnection agreements. Section 8531(b) bars prior utility approval, device-related fees, and extra utility-required controls or equipment. Utilities may require simple online notification of address, make, model, and size. **Notification cannot require approval.** [Chaptered text, §8531(a)–(d)](https://legiscan.com/CA/text/SB868/2025)
 
-No SB 868 notification form or implementation notice appeared in the checked SDG&E pages and official-domain research. That limited search does not prove absence. A vendor article is not authority for broader permit relief.
+Existing rooftop PV does not disqualify a household under these conditions. The hardwired rooftop array is distinct from the receptacle-connected devices that the definition covers. Original rooftop capacity and an individualized utility letter are not additional statutory eligibility conditions. Exact export compensation and battery-only qualification remain **not determined**. These questions do not remove the approval exemption. [Chaptered text, §§8530–8531](https://legiscan.com/CA/text/SB868/2025)
+
+Section 8531 repeals January 1, 2030. Section 8532 then restricts sales of receptacle-connected PV devices that fail its specified code, certification, and isolation conditions. Neither automatic shutdown nor permanent exemption follows. Local code, fire, siting, mounting, and circuit checks remain separate. Recheck the [official chapter](https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB868) before deployment.
+
+No SB 868 notification form or implementation notice appeared in the checked SDG&E pages and official-domain research. That limited search does not prove absence or add an approval requirement. A vendor article is not authority for broader permit relief.
 
 ## 4. NEM protection needs the exact use and connection
 
-The current compiled [NEM-ST tariff](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE) was retrieved on 2026-10-22. Sheet dates vary. SC 9(b), sheet 27, effective February 14, 2024, sets the expansion limit. It is the greater of **10% of original interconnected nameplate capacity or 1 kW**, subject to onsite-load limits. Larger additions have separate-tariff or other authorized pathways. Household headroom remains **not determined** without the original approval and applicable capacity method.
+The current compiled [NEM-ST tariff](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE) was retrieved on 2026-10-22. Sheet dates vary. SC 9(b), sheet 27, effective February 14, 2024, governs conventional expansion. Its limit is the greater of **10% of original interconnected nameplate capacity or 1 kW**, subject to onsite-load limits. Larger additions have separate-tariff or other authorized pathways.
+
+The 1 kW floor allows a small-addition screen without the original capacity figure. Prior expansion can consume that allowance, so 1 kW of remaining headroom is not established. Original capacity, the applicable capacity method, expansion history, and onsite load determine the exact remaining allowance. This conventional rule is separate from SB 868's 1,200 W portable-device limit and approval exemption. [NEM-ST, SC 9(b)](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE)
 
 SC 9(d), sheet 28, effective September 3, 2024, preserves the remaining legacy period for storage-only additions. Its **SGIP exception matters**. SGIP means Self-Generation Incentive Program. Under this exception, specified reservations accepted on/after June 4, 2024 require NBT transition, except the stated equity categories. An incentive cannot enter the purchase case without its tariff consequences. [NEM-ST, SC 9](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE)
 
@@ -56,7 +62,7 @@ SC 10 measures separate-inverter storage by AC nameplate power. Solar-paired sto
 
 [CEA Personal Impact](https://thecleanenergyalliance.org/personal-impact/) accumulates generation charges and credits through the annual relevant period. Its published net-surplus rate is $0.06/kWh; direct payment starts at $100. Those terms do not establish SB 868 compensation. This study keeps avoided CEA imports, forgone existing-PV credit, and hypothetical new-export credit separate. San Diego Community Power programs do not establish this CEA household's eligibility.
 
-The tariff prices NBC from consumption net of exports within each metered interval, without cross-interval credit offsets. The canonical model retains separate imported-energy accounting. Fifteen-minute import/export channels cannot resolve subinterval timing; this remains a model limitation. [NEM-ST, SC 1(f) and 3(d)](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE)
+The tariff prices NBC from consumption net of exports within each metered interval, without cross-interval credit offsets. The canonical model instead charges NBC on its gross import channel. Its fifteen-minute channels need reconciliation with the utility's billing interval and channel definitions. They cannot resolve subinterval timing. All savings and ceilings here retain that disclosed model convention; reproduction alone does not establish its tariff accuracy. [NEM-ST, SC 1(f) and 3(d)](https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&tarfKey=871&utilId=SDGE)
 
 ## 5. Exact system certification remains unproved
 
@@ -64,7 +70,7 @@ UL's January 8, 2026 [plug-in solar framework](https://www.ul.com/news/ul-soluti
 
 The [UL Product iQ search](https://productiq.ulprospector.com/en/search?term=EcoFlow) was inaccessible. The [CSA directory](https://www.csagroup.org/testing-certification/product-listing/) yielded no established exact-model result. The [Intertek directory](https://ramuk.intertekconnect.com/WebClients/ITS/DLP/products.nsf/$$Search?OpenForm) search returned EcoFlow records, but no checked scope established these candidate systems under UL 3700. This is a limited search, not proof that no certificate exists. A [connector listing](https://ramuk.intertekconnect.com/WebClients/ITS/DLP/products.nsf/4c8700f3b75987a08525777700583333/f495aa2862b2cfdd86258a8600343a37?OpenDocument) cannot establish the complete system's scope.
 
-NRTL means nationally recognized testing laboratory. The certificate needs that laboratory's identity, file number, current directory record, and exact U.S. models. Its scope must cover the component combination, cables/receptacles, output/isolation conditions, instructions, firmware, and multi-unit use. **No candidate receives an unconditional eligible label.**
+The certificate needs the NRTL's identity, file number, current directory record, and exact U.S. models. Check the component combination, connections, output/isolation conditions, firmware, and multi-unit use against the certificate's scope and installation instructions. The statute permits UL or an equivalent NRTL; it does not name UL 3700 as the exclusive route. **No candidate receives an unconditional eligible label.**
 
 ### Prospective SB 868 classification for STREAM uses
 
@@ -72,7 +78,7 @@ These classifications concern use after the exemption's effective date. They do 
 
 | Exact use | Classification | Missing evidence or reason |
 |---|---|---|
-| STREAM Ultra EF-EA-HD-U2K-1K2U plus PV through the supported receptacle connection | **Not determined** | Exact system certificate, circuit/code check, NEM coexistence, utility implementation |
+| STREAM Ultra EF-EA-HD-U2K-1K2U plus PV through the supported receptacle connection | **Not determined** | Exact system certificate and circuit/code check; billing treatment belongs in the separate economic assessment |
 | Same STREAM, battery-only, charged from existing rooftop/grid AC, with receptacle feed-in | **Not determined** | Photovoltaic statutory scope and independent storage/interconnection treatment |
 | STREAM Ultra plus Microinverter, or multiple Ultra units within the dwelling cap | **Not determined** | Combination certificate and aggregate control; no separate allowance per unit |
 | U.S. STREAM Microinverter plus panels, without storage | **Not determined** | Exact model/certificate and installation scope; the bundle store SKU is not a certificate |
@@ -86,7 +92,7 @@ These classifications concern use after the exemption's effective date. They do 
 | DELTA Pro Ultra EFYJ751-PCS-US + EFYJ751-BP; supported appliance outputs | **Ineligible/outside scope** | Direct-appliance operation; only connected loads count |
 | DELTA Pro Ultra X EF-DU-001 + EFYJ751-BP; supported appliance outputs | **Ineligible/outside scope** | Direct-appliance operation; only connected loads count |
 | Any DELTA output connected to an ordinary household receptacle for backfeed | **Ineligible as evaluated** | No supported feed-in connection or qualifying system certificate established; do not use |
-| These DELTA models with supported inlet/transfer equipment or smart panel | **Ineligible for the receptacle-PV exemption** | Household wiring/storage route needs electrician, permit, isolation, and utility checks |
+| These DELTA models with supported inlet/transfer equipment or smart panel | **Ineligible for the receptacle-PV exemption** | Check the actual topology for electrical, permit, and isolation conditions; utility interconnection rules depend on whether the system operates in parallel |
 
 “Ineligible/outside scope” does not mean ordinary supported appliance use is illegal. Transfer equipment does not become exempt plug-in PV merely because it uses a cord.
 
@@ -141,6 +147,8 @@ All numerical model results come from [`data/portable_solar_storage.json`](../da
 
 The comparison uses **2025-07-24 through 2026-07-23**, **35,040 meter intervals**, and frozen **June 2026 EV-TOU-5/CEA Clean Impact Plus rates**. It does not forecast 2027 prices. The unchanged-behavior modeled bill is $4,904.13; after the free fix it is $3,683.28. These are model levels, not actual billed costs.
 
+Every bill and savings figure retains the model's gross-import NBC convention. NEM-ST instead specifies consumption net of exports within each metered interval. The meter-channel interpretation remains open, as §4 explains. These calculations are conditional estimates, not an actual-bill reconciliation.
+
 The historical statement windows differ from the interval year. The documented historical residual remains unexplained; see [TECHNICAL.md, historical bill reconciliation](../TECHNICAL.md). Frozen rates also differ from historical rates. Hardware deltas compare complete bills on the same model basis; they do not repair historical reconciliation.
 
 ### Reproduction evidence
@@ -150,7 +158,7 @@ The historical statement windows differ from the interval year. The documented h
 | Staged meter series | `c86bec4088e8739198402d9db5989156c2f7561aa2e6a4eaab73b8e591a450e8` |
 | SAM A | `13a4f04d28852871adaeb0de97fcefe29ef3f11e90d74bb067e273f7642cd637` |
 | SAM B | `98dd23beb5f50f2996c1c5a01ff59243bf3a333fb748bad01031f19a0353b094` |
-| Canonical rates | `22a24dc3e3edef224e9725caf9b417ab41927265f68f2576eb144a831035fd8f` |
+| Canonical rates | `cdebce2656d00a29ff9d9575a7d40ba9bfe7c677eb7b1df26ba3f73c481e804c` |
 | Public equipment parameters | `3a2965954f9127925edf79f7855b0e1342ad9d07fb8b25bceae80905779583b8` |
 
 The JSON also hashes both production evidence artifacts and the canonical sizing reference. Raw meter/household records stay private.
@@ -184,6 +192,8 @@ The 13.5 kWh canonical row reproduces the committed benchmark within $0.002. It 
 ## 8. Revised storage results: a conditional ceiling for each configuration
 
 Every result below assumes access to the modeled household load. A directly connected refrigerator or office cannot claim these savings. Output/charge ratings in this table describe model inputs, not approved product installations.
+
+The annual savings and price ceilings retain the NBC convention and unresolved meter-interval interpretation stated in §§4 and 7.
 
 Five- and ten-year columns are **discounted break-even installed-price ceilings before unknown ownership costs**. They use 5% real discount, 1% annual savings decline, and zero real tariff escalation. Installed price, installed-price NPV, and actual asset payback remain unknown.
 
@@ -311,7 +321,7 @@ Its modeled equivalent full cycles are **1.30/day**. Its peak import rises from 
 | `nbc_usd` | $6.51 |
 | `fixed_usd` | $0.00 |
 
-PCIA is the power charge indifference adjustment. NBC means non-bypassable charges. The unchanged daily electric charge and gas costs do not disappear through storage.
+PCIA is the power charge indifference adjustment. NBC means non-bypassable charges. The NBC row uses modeled gross imports; it does not establish the tariff's metered-interval energy base. The unchanged daily electric charge and gas costs do not disappear through storage.
 
 ### Monthly modeled electric bills: comparison, not statement totals
 
@@ -372,7 +382,7 @@ Solar-only, grid-only, and mixed charging give **$436.31/$751.88/$666.84 per yea
 
 Assume hypothetical 2027 commissioning. Continued lawful operation without extra cost keeps the generic 3.84 kWh ceilings at **$2,832.66/$4,943.34**. An assumed $500 compliance cost in year four lowers them to **$2,421.30/$4,531.99**. An assumed $1,500 cost lowers them to **$1,598.60/$3,709.29**.
 
-These cases continue operation. Neither cost is a quote or legal determination. Restricted operation, delayed adoption, future tariffs, and any actual interconnection obligation need evidence before a purchase. A lawful post-2029 route remains a purchase gate.
+These cases continue operation. Neither cost is a quote or legal determination. Restricted operation, delayed adoption, future tariffs, and possible later obligations remain scenario questions. The sunset creates uncertainty; it does not establish a present extra approval requirement or known future compliance cost. A purchaser can weigh that uncertainty without a guaranteed post-2029 outcome.
 
 ### Complete quote template: all rows remain open
 
@@ -384,7 +394,7 @@ These cases continue operation. Neither cost is a quote or legal determination. 
 | Ongoing ownership | Subscription fee, financing/interest, maintenance, downtime, insurance implications, battery replacement | Unknown |
 | Service and transition | Warranty shipping/labor, removal/reinstallation, integration repair, 2030 compliance/retirement | Unknown |
 
-The maximum worthwhile **actual installed price remains not determined**. The tables give conditional model ceilings before those costs. An equipment price below a ceiling does not establish positive installed NPV. Backup willingness-to-pay belongs in a separate owner decision, not an invented bill saving.
+The tables give conditional break-even installed-price ceilings before unknown ownership costs. A quote is not needed to calculate these ceilings. A supported product-specific ceiling still needs the applicable load access, performance, billing, and ownership-cost assumptions. Actual installed cost, asset payback, and NPV need a complete quote. An equipment advertisement alone does not establish positive installed NPV. Backup willingness-to-pay belongs in a separate owner decision.
 
 ## 12. Backup: assume no existing rooftop recharge
 
@@ -400,11 +410,11 @@ Which household circuits work, their surge needs, overnight/cloudy/multi-day run
 
 ## 13. Conditional selected-appliance pilot: measure before purchase
 
-**First measure one selected appliance's input energy and startup demand.** Choose a supported direct-output connection only. Do not backfeed an ordinary receptacle. Any proposed household-wiring pilot first needs an electrician-reviewed single-line connection concept, permitted isolation, circuit/service checks, and applicable utility treatment.
+**First measure one selected appliance's input energy and startup demand if an appliance-specific comparison is wanted.** Choose a supported direct-output connection only. Do not backfeed an ordinary receptacle. A household-wiring pilot first needs an electrician-reviewed connection concept and applicable electrical, permit, isolation, circuit, and service checks. Utility interconnection requirements depend on the topology and any statutory exemption.
 
-The following is a proposed measurement protocol, not completed field evidence:
+The following is a proposed measurement protocol for a later justified pilot. The desk evaluation can recommend waiting without a battery purchase or completed pilot. The issue's matched-baseline field comparison remains conditional and unexecuted:
 
-1. Record the chosen load, owner-required backup duration, spending limit, meter accuracy, surge demand, and normal duty cycle. Keep raw appliance traces private. Use an owned, borrowed, or returnable supported unit only after compatibility checks.
+1. Record the chosen load, owner-required backup duration, spending limit, meter accuracy, surge demand, and normal duty cycle. Keep raw appliance traces private. Use a borrowed or returnable supported unit only after compatibility checks and an owner decision to proceed.
 2. Meter at least 14 representative baseline days with the free EV fix already applied. Record appliance energy by tariff period, occupancy/use, and weather where relevant. Keep the appliance's service unchanged.
 3. Meter at least 14 matched battery days. Record AC charging input, delivered appliance output, idle consumption, SOC endpoints, reserve, outages, and failed service. Record firmware/app versions, exact ports, charge power, schedule, and subscription. Use interval energy plus a suitable surge measurement.
 4. Check the schedule with internet available and absent. Check reserve enforcement, output memory, recovery, and supported outage transfer. Do not accept a control result that stops the selected appliance's needed service. Restore equal SOC for the energy comparison or account for its change.
@@ -450,15 +460,15 @@ Large DP3/Ultra X PDFs exceeded the web reader's size limit; the manufacturer PD
 |---|---|---|
 | Final law, effective date, sunset, aggregate limit, notification; unresolved interpretations stated | **Achieved as documented research, with disclosed text fallback** | §3 and source register; recheck official text before deployment |
 | Every candidate classified for exact use/connection; appliance versus parallel separated | **Achieved as an evidence classification** | §5; qualifying candidate status remains not determined, not eligible |
-| NEM/CEA treatment and expansion headroom, or prevent purchase while open | **Achieved through purchase prevention** | WAIT; original approval/capacity method and written exact-use SDG&E/CEA treatment remain absent |
+| NEM/CEA treatment and expansion headroom, or prevent purchase while open | **Achieved through purchase deferral** | WAIT recommendation remains. Compensation cases are conditional; conventional expansion needs capacity-method/history/load evidence. Original rooftop records and an individualized utility letter are not SB 868 eligibility conditions |
 | Exact U.S. model, listing scope, configuration, controls, dated price/stock, full installation cost | **Incomplete** | §6 documents models/manuals/prices; exact system certificate, firmware tests, complete configuration and installed quote absent |
-| Code versus interconnection distinction; electrician-reviewed household-wiring concept before pilot | **Incomplete** | Distinction stated; electrician-reviewed diagram, circuit/service/phase checks, local electrical/fire/permit determination absent |
+| Code versus interconnection distinction; electrician-reviewed household-wiring concept before pilot | **Distinction stated; pre-pilot condition unmet** | No household-wiring pilot is underway. An electrician-reviewed diagram and applicable circuit/service/phase/code/permit checks remain necessary before that type of pilot |
 
 ### Model and economics
 
 | Issue criterion | State | Evidence or exact missing input |
 |---|---|---|
-| Baseline/reference reproduction; window, rates, hashes, limitations | **Achieved for the frozen comparison** | §7; artifact `baseline`, `provenance`, `canonical_no_reserve_benchmarks`; historical residual stays disclosed |
+| Baseline/reference reproduction; window, rates, hashes, limitations | **Achieved for the implemented model** | §7; artifact `baseline`, `provenance`, `canonical_no_reserve_benchmarks`; historical residual and gross-import NBC convention stay disclosed; tariff reconciliation remains open |
 | Solar-only, storage-only, combined, selected-load, larger options; standalone/incremental savings | **Incomplete** | Generic families and increments exist; real selected-appliance/circuit interval energy, surge, access and wiring are absent |
 | Conservation, SOC/reserve, charge/discharge/shared caps, annual balance; losses/standby counted | **Achieved for stated interval assumptions** | Model and synthetic tests; measured losses, subinterval flows and real controller performance remain separate unknowns |
 | Monthly bills/flows/self-use/sources/cycles/peaks/curtailment/runtime/installed cost/payback/NPV | **Incomplete** | JSON carries modeled accounts and conditional runtime; actual circuit runtime, complete quote, ownership costs, installed payback/NPV absent |
@@ -469,8 +479,8 @@ Large DP3/Ultra X PDFs exceeded the web reader's size limit; the manufacturer PD
 | Issue criterion | State | Evidence or exact missing input |
 |---|---|---|
 | Buy/pilot/wait/do-not-buy decision with reasons/dependencies | **Achieved** | WAIT for grid-parallel; conditional direct-appliance measurement only; §§1–6 and 13 |
-| Maximum worthwhile installed price; each battery/panel increment | **Incomplete** | Conditional discounted ceilings and increments in §§8–11; product-capable load/loss/connection evidence and full ownership costs needed for an actual maximum |
-| Justified pilot with meters/reserve/control/load/success criteria and matched baseline | **Incomplete** | Proposed protocol in §13; selected load, duration/budget, exact unit, completed metering and control tests absent |
+| Maximum worthwhile installed price; each battery/panel increment | **Partly achieved** | Conditional discounted ceilings and increments exist in §§8–11 without a quote. Supported product-specific ceilings need load/loss/connection evidence and ownership-cost assumptions |
+| If justified, pilot with meters/reserve/control/load/success criteria and matched baseline | **Conditional and unexecuted** | Proposed protocol in §13; selected load, duration/budget, exact unit, completed metering and control tests absent. A pilot is not an unconditional prerequisite to a desk recommendation to wait |
 | Backup priced separately; circuits established; no unsupported rooftop recharge | **Incomplete** | No rooftop recharge assumed; owner backup value, essential circuits/surges, supported transfer/PV design and outage evidence absent |
 | Report/glossary/consistency updates only after study supports claims | **Portable-study publication deferred** | Portable-study prerequisites remain open. The existing report and glossary include supported tariff qualifications; those changes do not establish portable-equipment eligibility |
 
@@ -480,7 +490,7 @@ Large DP3/Ultra X PDFs exceeded the web reader's size limit; the manufacturer PD
 |---|---|
 | Site-specific south/west/shade/seasonal PV | Chosen placement, measured shade/horizon, orientation/tilt, permitted mounting, appropriate irradiance/yield model |
 | Daylight EV or flexible appliances before storage | Vehicle presence, charging sessions, appliance flexibility and measured schedules |
-| Adoption after NEM grandfathering | Applicable future tariff and supported connection; the NEM2 model cannot substitute for a future tariff engine |
+| Adoption after NEM grandfathering | Exact future tariff and supported connection remain unknown. A separately modeled, clearly labeled present-NBT counterfactual could still support sensitivity analysis |
 | Real control interaction and split-phase access | Circuit/leg/CT diagram, supported controller topology, transient/feedback and offline tests |
 | Measured equipment and multi-day backup | Usable AC capacity, loss/standby curves, reserve behavior, essential-load traces, surge and outage-weather/design evidence |
 

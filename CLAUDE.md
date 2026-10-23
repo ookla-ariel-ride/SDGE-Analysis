@@ -296,9 +296,13 @@ Round-three review found every one of these violated. Check them mechanically, n
 - **Artifact–prose diff:** every figure in the report must match the committed data artifacts
   (data/*.json, *.csv). When prose is re-based, REGENERATE the artifacts — a stale
   package_results.json kept publishing a retired 5.4-yr payback long after the prose fixed it.
-- **Code-implements-its-docs:** verify each model's docstring against its code. Our netting
-  model described NBC on gross imports but netted it (−$208/yr). Non-bypassable charges are
-  charged on GROSS imported kWh under NEM — verify against a bill line, then implement it.
+- **Code-implements-its-docs:** check each model's docstring against its code and tariff.
+  The earlier NBC correction removed monthly energy netting (−$208/yr in that model).
+  The current engine uses the imported-energy channel. NEM-ST SC 1(f), however, specifies
+  consumption net of exports within each metered interval. The 308-versus-224-kWh bill
+  example rejects billing-period netting; it does not settle within-interval channel
+  semantics. Reconcile those quantities against meter and bill evidence before changing
+  the canonical engine. See TECHNICAL.md's NBC clarification and issue #304.
 - **One rate vintage per projection:** never subtract current-rate model deltas from
   prior-year actual bills to project a future bill — that mixes tariff vintages. Project on
   one basis (the current-rate model), label it "at constant current rates," and note that the

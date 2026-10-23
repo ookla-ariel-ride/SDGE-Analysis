@@ -1,7 +1,8 @@
-# High-cadence consumption: prospective feasibility protocol
+# High-cadence consumption: evidence and optional feasibility protocol
 
-**Status: undetermined.** Stored EAGLE history exists. A qualifying continuous collection
-window, device freshness evidence, and independent controlled-load records remain missing.
+**Status: household detection remains undetermined.** Stored EAGLE history and scripted
+collection diagnostics exist. Continuity qualification, device freshness, and controlled-load
+performance remain unresolved.
 This document prepares [issue #18](https://github.com/ookla-ariel-ride/SDGE-Analysis/issues/18).
 It contains no completed detection study, performance result, or main-report section.
 
@@ -10,19 +11,33 @@ It contains no completed detection study, performance result, or main-report sec
 The private telemetry availability audit dated 2026-10-22 checked the sibling observatory's
 stored records and collector semantics. EAGLE supplies signed net-grid power history with
 import positive and export negative. The audit found multi-hour gaps. Collector row times
-do not establish fresh device measurements. These limits prevent a readiness claim.
+do not establish fresh device measurements. These limits prevent a detection-readiness claim.
 The private audit retains its queries, source references, and gap results.
 
 Earlier issue comments treated the absent sustained Sense stream as absent high-cadence
-history. EAGLE is an existing candidate. Sense daily energy history is not a substitute for
-high-cadence samples or controlled on/off ground truth. No controlled-test record appeared
-in the audit's checked sources. That search cannot establish whether an undocumented test
-occurred elsewhere.
+history. EAGLE is an existing candidate; a new Sense campaign is not mandatory.
+The earlier Sense daily-only history claim was incorrect. The recorded local check, corrected
+on 2026-07-31 and reviewed on 2026-10-22, found hourly breakdown arrays in `scale=DAY` responses.
+This historical check does not establish current API behavior, a stored high-cadence stream,
+or controlled on/off ground truth. No controlled-test record appeared in the audit's checked
+sources. That search cannot establish whether an undocumented test occurred elsewhere.
 
-This update deliberately publishes no household sampling statistics. A later script must
-measure the actual interval distribution, missingness, longest gap, freshness, and detection
-performance from a stable private export. Nominal cadence and output rounding cannot supply
-those results. Database history alone does not satisfy continuous collection.
+[`analysis/service_voltage.py`](../analysis/service_voltage.py) already produces collection
+diagnostics from a frozen private export and manifest. The existing de-identified artifact,
+[`data/service_voltage.json`](../data/service_voltage.json), contains these evidence paths:
+
+| Existing diagnostic | Artifact path and limit |
+|---|---|
+| Retained interval distribution | `coverage.eagle.interval_seconds` and `latest_60_local_dates.eagle.interval_seconds`; intervals between retained collector timestamps, not device update times. |
+| Scheduled-slot missingness | `occupied_slots`, `possible_slots`, and `coverage_pct` under both EAGLE objects. Missing-slot fraction is `(possible_slots - occupied_slots) / possible_slots` on the script's stated schedule. It is not a device failure rate. |
+| Gaps and daily coverage | `max_gap_seconds`, `gap_counts`, and `daily` under both EAGLE objects. The maximum covers adjacent retained timestamps; missing boundary time needs separate treatment. |
+
+The overall coverage denominator uses the study's common source window, including time before
+EAGLE's retained history starts. The latest-window object covers 60 local dates; local dates
+and 60 elapsed days can differ across daylight-saving changes. Its `rows` counts the input
+frame; `valid_rows` counts observations within the window. These diagnostics partly address
+the original collection and resolution criteria. They do not establish freshness or a
+reliably detectable watt step. This correction adds no household sampling statistics.
 
 ## What the study can test
 
@@ -38,11 +53,36 @@ methodological reference. Our inference: sparse real-power records can test sust
 but cannot establish that short transients or overlapping appliances remain separable.
 No universal sampling rate guarantees useful NILM.
 
-The proposed target is correct load and on/off-event detection for at least three known
-loads with sustained power plateaus, including steps at or below 300 W. The maximum acceptable
-minimum reliable step is **300 W**. Passing this study permits a later scoped build decision;
-it does not establish arbitrary appliance recognition, annual appliance energy, or reliable
-detection below the smallest tested passing step. No model is built in this preparation.
+Fifteen-minute data can support some appliance-specific disaggregation.
+[Zufferey, Valverde, and Hug](https://arxiv.org/abs/2104.03120) demonstrate water-heater
+disaggregation from low-resolution smart-meter data. This corrects the issue's categorical
+impossibility claim; it does not establish performance for this household's loads.
+Coarse intervals still limit short-event timing and overlapping-load separation.
+
+## Original requirements and the stronger option
+
+The original issue requirements remain unchanged. The numerical rules in sections 2–4 form
+an **unadopted, optional stronger protocol**, not mandatory issue blockers or an external
+standard. The issue uses 300 W as an example criterion; it does not require that threshold.
+
+| Original requirement | Additional choices in the optional protocol |
+|---|---|
+| At least 60 continuous days before analysis, with gap statistics | 99% overall and 95% daily fresh-slot coverage, maximum gap `5A`, and the specified slot/freshness model. |
+| Actual intervals, missing-sample rate, and smallest reliably detectable step | Fixed probe bands, timing limits, and the reference-error bound `B`. |
+| Controlled timestamped tests of at least three known loads, with measured accuracy | A target at or below 300 W, 10 calibration plus 60 held-out cycles per state, three contexts, and their background exposure. |
+| Recommendation against a pre-stated criterion | The particular accuracy, uncertainty, background-error, step-error, and 300 W rules below. |
+
+The original word “continuous” needs an explicit operational definition before performance
+scoring. Retain the 60-day minimum and report all gaps. Justify the definition against the
+measurement task; do not choose thresholds to make the known archive pass. Failure of the
+optional bounded-gap rule alone does not require a new campaign under the original wording.
+It also does not establish that the original continuity requirement is satisfied.
+
+The optional target covers correct load and on/off-event detection for at least three known
+loads with sustained plateaus, including small steps. A supported result stays limited to
+the tested loads, contexts, and criterion. It does not establish arbitrary appliance
+recognition, annual appliance energy, or detection below the smallest tested passing step.
+No model or smaller numerical protocol is introduced here.
 
 ## 1. Keep intake private and preserve the source
 
@@ -53,7 +93,8 @@ Keep raw exports, manifests, reference-meter records, load labels, and event tim
 gitignored `private/1-raw-data/high-cadence/`. Keep credentials only in gitignored `.env`.
 These are document prerequisites; they add no mandatory `household.yaml` answers.
 
-Create a stable export with a fixed cutoff and retained missing values. Record its query or
+Use the existing frozen export where its permitted scope and fields fit the study.
+For any additional export, use a fixed cutoff and retain missing values. Record its query or
 export method, source code/schema revisions, units, snapshot bounds, row counts, and file
 hashes in the private manifest. Keep device/account identifiers and physical locations
 private. Never replace a gap with an interpolated value described as measured.
@@ -65,13 +106,15 @@ activity traces, event sequences, and occupancy notes. Check each proposed outpu
 activity inference before publication. The path-less registry does not scan raw documents;
 its declaration is not proof that their contents cannot escape.
 
-## 2. Qualify the measurement chain and continuous window
+## 2. Optional protocol: qualify the measurement chain and continuous window
 
-Complete source checks and collection diagnostics before any feasibility performance
-analysis. Freeze the private manifest, acquisition schedule, quality rules, target list, probe
-list, watt-bound calculation, and scoring rules first.
-These thresholds are proposed study criteria, not an external standard or measured findings.
-A later change needs a new protocol version and new held-out tests.
+Sections 2–4 apply only if this stronger option is adopted. Source checks and existing
+collection diagnostics can continue before adoption. Before performance scoring, record the
+chosen protocol, private manifest, acquisition schedule, quality rules, target and probe
+lists, watt-bound calculation, and scoring rules. Explain the decision value of the chosen
+thresholds. No held-out performance data exists in this preparation, so this proposal can
+change transparently before adoption. Changes after performance labels are examined need
+a new protocol version and fresh held-out evidence; do not fit criteria to known outcomes.
 
 1. Establish the physical sensing point, units, sign, and net-versus-gross meaning from source documentation and independent checks.
    The owner states that no battery is installed. With that configuration, gross load equals
@@ -91,9 +134,9 @@ A later change needs a new protocol version and new held-out tests.
    Use UTC elapsed time for duration and the bounded-gap rules below for qualification.
    Keep all expected acquisition slots, including missing, invalid, and stale slots.
    Do not concatenate separate periods, trim failures out of the denominator, or increase
-   `A` retrospectively to hide missing observations. A campaign that fails needs another
-   qualifying campaign; one dropped sample alone does not reset an otherwise qualifying campaign.
-5. Compute collection diagnostics with a reproducible script before selecting controlled-test windows.
+   `A` retrospectively to hide missing observations. Failure disqualifies that campaign for
+   this optional protocol; it does not impose an unconditional restart under original AC1.
+5. Use the existing scripted diagnostics before selecting controlled-test windows, then add missing measurement-chain diagnostics.
    Report device, retained measurement, and collector interval distributions separately
    where available. Include counts, duplicates, out-of-order and stale records, expected
    acquisition slots, missing/invalid fraction, and longest fresh-sample gap. Show overall
@@ -108,20 +151,19 @@ A later change needs a new protocol version and new held-out tests.
 | Independent freshness | Each occupied valid slot needs a new source timestamp/counter or an independent update comparison. A repeat source timestamp is stale despite a new collector row. Freeze an age cap `F = D + J_D + u_source`, where `u_source` bounds the device-to-collector clock error. Check that actual source age is between zero and `F`, separately from acquisition coverage. Unknown update bounds, source age, or clock error leave freshness undetermined. Neither a new collector time nor a larger `A` proves freshness. |
 | Test-window completeness | Every planned source and independent reference observation, plus aligned solar where needed, remains valid throughout each plateau and matching window. No missing, invalid, or stale acquisition slots are permitted in controlled windows. Apply a frozen quality mask, record exclusions, and obtain replacement cycles. Missing ground truth is never a detector miss or a success. |
 
-The 99% overall, 95% complete-local-day, and `5A` limits are prospective project choices.
-They permit occasional collection losses without accepting long unobserved periods. They
-also reduce the collection burden compared with a window that fails after one dropout.
+The 99% overall, 95% complete-local-day, and `5A` limits are optional prospective project choices.
+They permit occasional collection losses without accepting long unobserved periods.
 The tighter overall limit constrains total loss; the daily and maximum-gap limits constrain
 its concentration. These limits are not externally mandated or completed performance results.
 
 Losses can still bias the represented solar and load contexts. Report every failed slot,
-gap, and context's coverage, and retain complete controlled windows. If this policy proves
-inadequate, revise it prospectively and obtain new held-out tests. Do not relax it to admit
-an existing archive. The audited multi-hour gaps still exceed this policy's maximum gap.
-Freshness and controlled ground truth also remain missing. None of these collection limits
-establishes NILM failure or a household pass.
+gap, and context's coverage. The optional policy keeps controlled windows complete.
+The audited multi-hour gaps exceed its maximum-gap rule. That finding disqualifies the
+archive for this optional policy; it establishes neither NILM failure nor a household pass.
+Freshness and controlled ground truth remain unresolved. Check available source metadata
+and collector behavior before treating either gap as a request for new owner measurements.
 
-## 3. Obtain independent ground truth across the target range
+## 3. Optional protocol: obtain independent ground truth across the target range
 
 Use ordinary appliance controls and metering rated for the appliance and connection.
 Do not open panels, change wiring, attach sensors inside electrical equipment, or use
@@ -136,9 +178,10 @@ ordinary plug-in metering does not apply. Respect manufacturer cycling and opera
    a probe if both roles are declared before held-out tests. More loads or safe ordinary operating states
    may be needed to cover these bands. Nominal bands guide selection; measured reference
    power and its error bound determine the actual step. Three large obvious loads alone
-   cannot settle the minimum reliable step. Freeze list membership before held-out tests;
-   never relabel a failed target as a probe. A failed lower probe bounds the minimum step
-   without independently vetoing passing targets. Missing probe coverage leaves the minimum undetermined.
+   cannot test this optional small-step scope. Freeze list membership before held-out tests;
+   never relabel a failed target as a probe. A failed lower probe records a load-specific
+   failure without independently vetoing passing targets. Missing probe coverage leaves
+   those step/load combinations untested.
 2. Record independent, timezone-aware on/off timestamps and reference watts for every cycle.
    Record anonymous load/state labels, instrument specifications, reference error bounds,
    clock uncertainty, plateaus, concurrent loads, solar context, and cycle exclusions.
@@ -164,21 +207,25 @@ Let `e_i` be its absolute instrument error bound, including accuracy, resolution
 calibration limits. Define `B = max_i(w_i + e_i)` across every valid held-out cycle, for both
 on and off transitions and all required contexts. The maximum includes cycle variation;
 do not replace it after tests with a favorable percentile or median. Unknown reference
-error leaves `B` undetermined. This finite-test upper bound is not a guarantee about future cycles.
+error leaves `B` undetermined. This bounds the amplitudes of the tested cycles only, if the
+reference-error bounds are valid. It does not bound the amplitude of future cycles.
 
-Use `B` to order the tested steps and compare the smallest reliable step with 300 W.
-Report both the reference distribution and `B`. Report a failed lower probe below the
-first passing step in the threshold bracket; it does not become a required target.
-If a lower neighbor remains untested, report that unresolved interval. Do not estimate a
-watt limit solely from aggregate noise or an algorithm threshold.
+Use `B` to order the tested steps and compare the smallest passing tested step with 300 W.
+Report both the reference distribution and `B`, plus each load/state's outcome.
+Different appliance signatures can make detection non-monotonic in watts: a larger step
+need not be easier to detect. Failed lower probes and untested intervals describe only
+the tested ladder. They do not establish a universal minimum appliance threshold.
+Do not estimate a watt limit solely from aggregate noise or an algorithm threshold.
 
-## 4. Score a fixed feasibility gate
+## 4. Optional protocol: score a fixed feasibility gate
 
 Use the frozen acquisition period `A`, slot jitter allowance `j = A/4`, and combined
 clock/timestamp uncertainty `u` to set the matching tolerance `A + 2j + u` before predictions.
 Two slot deviations can separate adjacent retained observations by `A + 2j`; `u` allows
-clock error. Only complete controlled windows use this tolerance. Observed gaps cannot
-inflate it. Report the measured interval distribution and event timing errors separately;
+bounded clock and timestamp error between source and reference observations. This expression
+does not bound arbitrary detector delay or source age. Before adoption, define the prediction
+timestamp convention and check that the tolerance fits it. Only complete controlled windows
+use this tolerance. Observed gaps cannot inflate it. Report measured intervals and timing errors separately;
 do not change `A`, `j`, `u`, or the tolerance after missed events.
 
 Match predictions one-to-one to ground-truth events within that tolerance. A true positive
@@ -196,35 +243,51 @@ using the same accuracy rules to classify each tested step as passing or failing
 | Proposed performance criterion | Pass rule and reason |
 |---|---|
 | Detection and separation | Precision and recall each reach 0.90 for every target load/state, separately for on and off events. Each context also reaches 0.90. Correct labels test separation rather than event counting alone. |
-| Repetition and uncertainty | Complete the stated repetitions for targets and declared probes. Show two-sided 95% Wilson intervals for precision and recall; a step passes only if both lower bounds reach 0.80 for each direction. Required targets must pass; failed probes remain failed measurements that bound the threshold. Report dependence between cycles and day-level variability; add a day-block uncertainty estimate before any stronger confidence claim. These are limited-sample criteria, not guaranteed confidence. |
-| Background errors | No more than one false positive per 24 observed background hours in each context. Report a Poisson rate interval and the raw aggregate count/exposure. A short quiet test alone cannot establish a low error rate. |
-| Step estimate | The median absolute event-step error is at most 20% of independent reference watts in each target band. Include reference-meter uncertainty and cycle variation. This tests whether detected steps retain useful magnitude. |
-| Minimum reliable step | Find the smallest tested target or probe step that passes the accuracy, uncertainty, background, and step-error rules, with the larger tested steps also passing. Its pre-defined bound `B` is at most 300 W. A failed lower probe sets the lower end of the unresolved threshold bracket; it does not veto otherwise passing targets. Report untested intervals and context limits. Passing one small event is insufficient. |
+| Repetition and uncertainty | Complete the stated repetitions for targets and declared probes. Show two-sided 95% Wilson intervals for precision and recall; both lower bounds must reach 0.80 for each direction. Before adoption, specify whether that bound pools contexts within each direction or applies separately to each context; that choice remains unresolved. Required targets must pass; failed probes retain their load-specific outcomes. Report cycle dependence and day-level variability; add a day-block uncertainty estimate before any stronger confidence claim. These are limited-sample criteria, not guaranteed confidence. |
+| Background errors | No more than one false positive per 24 observed background hours in each context. This rule uses the observed rate, not its confidence bound or a guaranteed future rate. Report a Poisson rate interval and the aggregate count/exposure. A short quiet test alone cannot establish a low future error rate. |
+| Step estimate | The proposed 20% limit is not scoreable until its statistic is defined. Before adoption, specify whether it means median per-event relative error or median absolute watt error divided by a stated reference. Define which events enter it and how reference-meter uncertainty and cycle variation enter the result. Freeze this definition before scoring. |
+| Smallest passing tested step | Find the smallest tested target or probe step that passes the accuracy, uncertainty, background, and defined step-error rules, with the larger tested steps also passing. Its pre-defined bound `B` is at most 300 W. This is an optional consistency rule for the tested ladder, not a universal monotonic detection threshold. Report each load/state's outcome, untested intervals, and context limits. Passing one small event is insufficient. |
 
-A **go** needs the qualifying 60-day window, complete independent ground truth, and every
-required-target criterion, plus a smallest reliable step with `B <= 300 W`. Lower probes
-need adequate data, but they need not pass. Their failures bound the minimum.
+A **go under this optional protocol** needs its qualifying 60-day window, complete independent
+ground truth, and every required-target criterion, plus a smallest passing tested step with
+`B <= 300 W`. Lower probes need adequate data, but they need not pass. Their failures remain
+specific to the tested loads and contexts.
 
 A **no-go for this target scope** needs the same adequate quality and ground truth, plus
 demonstrated failure of the frozen criteria.
 For example, successful larger controls with failure of adequately repeated steps at or below
-300 W can support a no-go when the smallest reliable tested step exceeds 300 W. A failed
+300 W can support a no-go for this small-load scope. A failed
 required target also fails the frozen target scope; a failed lower probe alone does not.
 Do not generalize that result to all NILM methods or every appliance.
 
 Insufficient continuity, freshness, small-step coverage, repetitions, blinding, or reference
-quality means **undetermined**, not no-go. Report failures and uncertainty without changing
-the frozen gate to fit the results. Any eventual public result needs a committed script and
-the repository's publication checks. No main-report section appears unless the gate passes.
+quality means **undetermined for this optional scope**, not no-go. Report failures and
+uncertainty without changing the adopted gate to fit results. A different prospective scope
+can support a limited recommendation if it meets the original criteria and states its limits.
+It cannot silently waive the original 60-day or three-load requirements.
+Any eventual public result needs a committed script and the repository's publication checks.
+No main-report section appears unless the adopted feasibility gate passes.
 
 ## Acceptance criteria and exact missing inputs
 
 | Issue #18 criterion | Current disposition | Evidence still needed |
 |---|---|---|
-| 1. At least 60 continuous days, with gap statistics | Open. Stored history exists; multi-hour gaps prevent qualification under this protocol. | Stable private export and manifest; a qualifying continuous window; scripted gap and freshness diagnostics. |
-| 2. Effective resolution and smallest reliable watt step | Open. No performance result. | Actual interval distribution, missingness, longest fresh-sample gap, clock/freshness checks, and independently measured step ladder with uncertainty. |
-| 3. Three known loads and measured detection accuracy | Open. No controlled-test records in checked sources. | Independent timestamped logs, rated reference measurements, small-step coverage, calibration and blinded repetitions, context/background exposure, and scored results. |
-| 4. Recommendation against a pre-stated criterion | Open. Proposed 300 W and accuracy criteria appear above. | Quality-qualified held-out results before any go/no-go recommendation. |
+| 1. At least 60 continuous days, with gap statistics | Partly evidenced. A frozen private export, manifest, and scripted gap statistics exist. The archive fails the optional bounded-gap rule; original continuity qualification remains open. | Justify and state the operational continuity rule without changing the 60-day minimum, then assess the archive. Check measurement freshness separately. Existing gaps alone do not impose a new Sense campaign. |
+| 2. Effective resolution and smallest reliable watt step | Partly evidenced. The artifact contains retained collector intervals, scheduled-slot missingness, and gap diagnostics. No reliable watt-step result exists. | Device timing/freshness evidence and independently measured step outcomes with uncertainty. Collector intervals do not establish physical updates. |
+| 3. Three known loads and measured detection accuracy | Open. No independent controlled-test record appeared in checked sources. | Independent timestamped on/off logs and suitable power references for at least three known loads, followed by measured accuracy. Choose and justify scope, repetition, and context rules before scoring; the stronger option is not mandatory. |
+| 4. Recommendation against a pre-stated criterion | Partly prepared, still open. A candidate criterion exists; it is unadopted and needs the stated scoring definitions. | Adopt and state a criterion before scoring, then produce a supported recommendation. A candidate 300 W target is a project choice, not an original requirement. |
 | 5. Privacy tier and standard intake fields | Addressed by the cheatsheet and matching path-less registry. | Keep actual documents private; check every future aggregate before publication. |
 | 6. NILM glossary entry | Addressed in [GLOSSARY.md](../GLOSSARY.md#methods-data--statistics), with primary sources. | No additional field evidence for the definition. |
 | 7. No report section unless the gate passes | Preserved. No main-report section is part of this work. | Keep that restriction until a supported go result. |
+
+## Next work and external inputs
+
+1. Check the existing export's reuse scope and source metadata for timing, retention, and freshness evidence.
+2. Justify and adopt the continuity definition and feasibility criterion before performance scoring.
+   Preserve the original 60-day and three-load requirements. Resolve the optional scoring
+   ambiguities only if that stronger protocol is chosen. Do not tune rules to admit known gaps.
+3. Obtain independent timestamped controlled tests for at least three actual loads if no suitable record exists.
+   Physical switching and suitable reference measurements need outside participation.
+   Daytime claims also need aligned solar evidence; a narrower context needs an explicit limit.
+4. Score the chosen scope with a committed script and report uncertainty against the pre-stated criterion.
+   Keep #18 open until every original acceptance criterion has supporting evidence.

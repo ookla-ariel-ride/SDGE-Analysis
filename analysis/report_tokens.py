@@ -2136,8 +2136,10 @@ _tok("CYCLES_PER_DAY", kind="derived", fmt="num2",
 # of this window's super-off-peak buckets is net-IMPORT and a super-off-peak export
 # therefore cancels an import and settles at rates.energy(), the NETTING end. Same
 # bracket as EXPORT_VALUE_SURPLUS_BOUND / EXPORT_VALUE_NETTING_BOUND above, and the
-# netting end is energy() and NOT allin() for the reason stated there: an export
-# does not reduce the gross imports NBC is charged on.
+# netting end is energy() and NOT allin() under the current model convention:
+# an export does not reduce the gross-import channel used for NBC. The tariff
+# uses consumption net of exports within each metered interval; reconciling
+# that requirement with the meter channels remains open.
 #
 # WHAT STORED_KWH_COST_SOLAR IS AVERAGED OVER, because the name invites a narrower
 # reading than the figure. Solar surplus on this tariff is not a super-off-peak
@@ -4427,10 +4429,10 @@ def _all_hours_export_pct(ctx):
 def _s8_verdict_short(ctx):
     bracket = _grandfathering_bracket("S8_VERDICT_SHORT")
     exp_pct = _all_hours_export_pct(ctx)
-    # Current DC inventory does not establish original approved headroom.
+    # Current DC inventory does not establish remaining rooftop headroom.
     # Keep export fraction separate from timing and defer the purchase until
     # the proposed tariff path and installed price can settle its economics.
-    return ("Defer expansion pending original approval, connection, settlement, and installed "
+    return ("Defer rooftop expansion pending connection, settlement, and installed "
             f"price; keep healthy hardware — {exp_pct}% of production is exported, with "
             f"{bracket} of NEM 2.0 grandfathering")
 
@@ -4445,7 +4447,7 @@ def _expansion_verdict_short(ctx):
     # unknown headroom nor assumed whole-array forfeiture supports a blanket
     # no. Only the midday slice, not exports/production, describes timing.
     share = _midday_export_share(ctx, "EXPANSION_VERDICT_SHORT")
-    return ("Defer purchase pending original approval, connection, settlement, and installed "
+    return ("Defer purchase pending connection, settlement, and installed "
             f"price — {round(share * 100)}% of the year's exports leave in the "
             f"{_cheap_window()} window")
 
@@ -6087,16 +6089,16 @@ def _assert_profiles_rebuild_the_year(token, subject, total):
 #   NETTING  rates.energy()  = UDC + CEA + PCIA  -- a kWh that cancels an import
 #                                                   in its own month and period
 #
-# THE NETTING END IS energy(), NOT allin(). allin() = energy() + NBC is what a
-# GROSS IMPORT costs, and an export does not reduce gross imports:
-# bill_nem_monthly() charges NBC on m[imp].sum() before any netting, so the NBC
-# on the cancelled import is billed either way. Pricing an export at allin()
-# would credit it with avoiding a non-bypassable charge that is still on the
-# statement -- the same NBC-netting error CLAUDE.md section 9 records, one
-# level up. Measured against the engine rather than argued: adding 1 kWh of
-# export to a netting cell moves rates.bill_nem() by exactly energy(), and to a
-# surplus cell by exactly credit(). case_the_two_export_bounds_are_the_two_
-# settlement_treatments in test_report_tokens.py re-runs that probe.
+# THE NETTING END IS energy(), NOT allin(), under the current engine's
+# gross-channel NBC convention. allin() = energy() + NBC; bill_nem_monthly()
+# charges NBC on m[imp].sum() before energy netting. Its model therefore does
+# not credit an export with avoiding NBC. This is not proof of the tariff's
+# treatment: NEM-ST SC 1(f) uses consumption net of exports within each metered
+# interval, and meter-interval/channel reconciliation remains open. The engine
+# check adds 1 kWh of export to a netting cell and moves rates.bill_nem() by
+# exactly energy(), and to a surplus cell by exactly credit(). The case
+# case_the_two_export_bounds_are_the_two_settlement_treatments in
+# test_report_tokens.py re-runs that model probe.
 #
 # WHICH END DOMINATES, and why neither may be published alone. Imports exceed
 # exports in all six season/period cells of data/report_data.json:period_split,
@@ -6203,8 +6205,8 @@ _tok("EXPORT_VALUE_NETTING_BOUND", kind="derived", fmt="cents1",
      sources=["analysis/rates.py:energy() (UDC+CEA+PCIA, the netted energy rate an "
               "export cancels inside its own month and period -- the HIGH end, "
               "every exported kWh netted against an import; NOT allin(), because "
-              "rates.bill_nem_monthly() charges NBC on gross imports and an export "
-              "does not reduce them)"]
+              "rates.bill_nem_monthly() uses gross-import NBC as a model convention; "
+              "NEM-ST SC 1(f) meter-interval netting needs reconciliation)"]
              + _EXPORT_BOUND_SOURCES)
 
 
