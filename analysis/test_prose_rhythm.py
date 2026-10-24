@@ -288,15 +288,23 @@ def case_committed_index_html_clears_every_limit_in_both_tiers():
 @case
 def case_seeded_em_dash_run_fails_the_committed_page():
     html = PAGE.read_text(encoding="utf-8")
-    baseline = prose_rhythm.measure(html, "basic")["em_dashes"]
+    before = prose_rhythm.measure(html, "basic")
+    baseline = before["em_dashes"]
     line = "<p>alpha — beta — gamma — delta — epsilon — zeta — eta</p>"
-    seeded = _seed_into_basic(html, "\n".join([line] * 5))
+    limit = prose_rhythm.LIMITS["em_per_1k"]
+    # Each paragraph adds six dashes and thirteen words. Solve the strict
+    # rate inequality, including the added words in its denominator.
+    copies = max(1, int((limit * before["prose_words"] - 1000 * baseline)
+                        // (6000 - 13 * limit)) + 1)
+    seeded = _seed_into_basic(html, "\n".join([line] * copies))
     m = prose_rhythm.measure(seeded, "basic")
-    assert m["em_dashes"] == baseline + 30 and m["em_per_1k"] > 3.0, (baseline, m)
+    assert m["em_dashes"] == baseline + 6 * copies, (baseline, m)
+    assert m["prose_words"] == before["prose_words"] + 13 * copies, (before, m)
+    assert m["em_per_1k"] > limit, (baseline, m)
     v = prose_rhythm.check(seeded, "basic")
     assert _kinds(v) == {"em dashes"}, v
     assert m["em_sites"] and m["em_sites"][0].startswith("L"), m["em_sites"][:1]
-    return (f"seeded 30 extra em dashes into the basic tier ({baseline} -> "
+    return (f"seeded {6 * copies} extra em dashes into the basic tier ({baseline} -> "
             f"{m['em_dashes']}, {m['em_per_1k']:.1f}/1k): the em-dash rule fires "
             "and nothing else does")
 
@@ -304,15 +312,23 @@ def case_seeded_em_dash_run_fails_the_committed_page():
 @case
 def case_seeded_x_not_y_tails_fail_the_committed_page():
     html = PAGE.read_text(encoding="utf-8")
-    baseline = prose_rhythm.measure(html, "basic")["tails"]
+    before = prose_rhythm.measure(html, "basic")
+    baseline = before["tails"]
     line = ("<p>the meter reads load, not export, and stores charge, not heat, "
             "and bills demand, not energy</p>")
-    seeded = _seed_into_basic(html, "\n".join([line] * 5))
+    limit = prose_rhythm.LIMITS["tails_per_1k"]
+    # Each paragraph adds three tails and sixteen words; headings stay in
+    # this metric's denominator, unlike the em-dash metric above.
+    copies = max(1, int((limit * before["words"] - 1000 * baseline)
+                        // (3000 - 16 * limit)) + 1)
+    seeded = _seed_into_basic(html, "\n".join([line] * copies))
     m = prose_rhythm.measure(seeded, "basic")
-    assert m["tails"] == baseline + 15 and m["tails_per_1k"] > 1.5, (baseline, m)
+    assert m["tails"] == baseline + 3 * copies, (baseline, m)
+    assert m["words"] == before["words"] + 16 * copies, (before, m)
+    assert m["tails_per_1k"] > limit, (baseline, m)
     v = prose_rhythm.check(seeded, "basic")
     assert _kinds(v) == {"'X, not Y' tails"}, v
-    return (f"seeded 15 extra 'X, not Y' tails into the basic tier ({baseline} -> "
+    return (f"seeded {3 * copies} extra 'X, not Y' tails into the basic tier ({baseline} -> "
             f"{m['tails']}, {m['tails_per_1k']:.1f}/1k): the tail rule fires and "
             "nothing else does")
 

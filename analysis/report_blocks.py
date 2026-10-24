@@ -283,10 +283,24 @@ CLASSIFICATION = {
     "s6#24": "data",    # checked standalone capacity-sweep basis
     "s6#25": "data",    # checked capacity increments
 
+    "s6#26": "data",  # checked decision-support view
+    "s6#27": "data",  # checked decision-support view
+    "s6#28": "data",  # checked decision-support view
+    "s6#29": "data",  # checked decision-support view
+    "s6#30": "data",  # checked decision-support view
+    "s6#31": "data",  # checked decision-support view
+    "s6#32": "data",  # checked decision-support view
+    "s6#33": "data",  # checked decision-support view
+    "s6#34": "data",  # checked decision-support view
+    "s6#35": "data",  # checked decision-support view
+    "s6#36": "data",  # checked decision-support view
+
     # --- s7 The decision: three packages ---------------------------------
     "s7#1": "prose", "s7#2": "prose", "s7#3": "prose", "s7#4": "prose",
     "s7#5": "prose", "s7#6": "prose", "s7#7": "prose", "s7#8": "prose",
     "s7#9": "prose", "s7#10": "prose", "s7#11": "prose",
+
+    "s7#12": "data",  # common-assumption decision comparison
 
     # --- s15 What to do Monday --------------------------------------------
     "s15#1": "data",   # content-only appendix intro -- authoring note, nothing to render
@@ -910,7 +924,222 @@ def _balcony_capacity_rows():
     return "\n".join(rows)
 
 
+def _depth_quote_priority():
+    candidates = {c['id']: c for c in rt._balcony_decision_support()['candidate_allowances']}
+    dpu, ultra = candidates['dpu_two_battery'], candidates['ultrax_base']
+    return _depth_paragraphs(
+        f"For bill savings, compare a supported storage quote before buying added panels. The generic two-battery Delta Pro Ultra case saves {_balcony_money(dpu['annual_savings_usd'])}/yr at an advertised {_balcony_money(dpu['equipment_price_usd'])}. "
+        f"The higher-output Ultra X-shaped case saves {_balcony_money(ultra['annual_savings_usd'])}/yr at {_balcony_money(ultra['equipment_price_usd'])}. "
+        "Their nearly equal savings give little bill-savings reason to pay for the extra output under this schedule.",
+        "The Delta Pro Ultra connection and measured eligible load decide whether that comparison applies. Request a complete supported-storage quote if whole-meter access and these controls are feasible. "
+        "If only a selected appliance is accessible, measure that appliance first. Stream's small budget and unavailable stock make it a separate feed-in case; it is not the generic combined system.")
+
+
+_DEPTH_LABELS = {
+    "pv_0.8kw_credited": "PV only; hypothetical extra credit",
+    "pv_0.8kw_zero_credit": "PV only; no extra credit",
+    "battery_power_0.8kw": "Portable storage only; 0.8 kW output",
+    "combined_0.8kw_credited": "PV + portable; hypothetical extra credit",
+    "combined_0.8kw_zero_credit": "PV + portable; no extra credit",
+    "large_13.5kwh_11.5kw": "Home storage; 13.5 kWh",
+    "large_27kwh_11.5kw": "Home storage; 27 kWh",
+    "home_13.5kwh_combined_0.8kw_zero_credit_home_first": "Home 13.5 kWh + PV + portable; no extra credit",
+}
+_DEPTH_CANDIDATES = {
+    "stream_default": "STREAM; default feed-in",
+    "stream_conditional": "STREAM; conditional feed-in",
+    "dp3_base": "DP3; bare equipment",
+    "dpu_base": "DPU; bare equipment",
+    "dpu_shp2_bundle": "DPU + Smart Home Panel 2",
+    "dpu_two_battery": "DPU; two batteries, no panel",
+    "ultrax_base": "Ultra X; bare equipment",
+    "ultrax_shp3_bundle": "Ultra X + Smart Home Panel 3",
+}
+
+
+def _depth_paragraphs(*texts):
+    return '\n'.join('<p>' + _esc(text) + '</p>' for text in texts)
+
+
+def _depth_common_rows():
+    d = rt._balcony_decision_support()
+    rows = []
+    for family in d['common_options']:
+        for c in family['cases']:
+            sid = c['scenario_id']
+            track = 'Home-storage track' if family['family'].startswith('home_') else 'Receptacle-PV / portable track'
+            cells = (track, _DEPTH_LABELS[sid], _balcony_money(c['annual_savings_usd']),
+                     _balcony_money(c['five_year']['total_affordable_initial_cost_usd']),
+                     _balcony_money(c['ten_year']['total_affordable_initial_cost_usd']))
+            rows.append(f'<tr data-scenario="{_esc(sid)}" data-baseline="post_behavior">' + ''.join('<td>'+_esc(v)+'</td>' for v in cells) + '</tr>')
+    return '\n'.join(rows)
+
+
+def _depth_evening_intro():
+    e = rt._balcony_decision_support()['evening_output_example']
+    return _depth_paragraphs(
+        f"{e['output_kw']:g} kW is instantaneous power. Held from 4pm to midnight for {e['end_hour']-e['start_hour']:g} hours, it delivers {e['delivered_kwh']:g} kWh. "
+        f"That includes {e['period_delivered_kwh']['on']:g} kWh in on-peak and {e['period_delivered_kwh']['off']:g} kWh in off-peak. "
+        "The table gives illustrative frozen June 2026 tariff arithmetic.")
+
+
+def _depth_evening_rows():
+    e = rt._balcony_decision_support()['evening_output_example']
+    rows = []
+    for name, season in e['seasons'].items():
+        values = (name.capitalize(),) + tuple(_balcony_money(season[key],2) for key in (
+            'gross_avoided_import_usd_per_day','grid_charge_cost_usd_per_day','net_before_standby_and_equipment_usd_per_day'))
+        rows.append('<tr>'+''.join('<td>'+_esc(v)+'</td>' for v in values)+'</tr>')
+    return '\n'.join(rows)
+
+
+def _depth_evening_limits():
+    e = rt._balcony_decision_support()['evening_output_example']
+    repeat = [_balcony_money(s['thirty_day_repeat']['net_before_standby_and_equipment_usd'],2) for s in e['seasons'].values()]
+    return _depth_paragraphs(
+        f"At {e['round_trip_efficiency']*100:g}% round-trip efficiency, grid recharge needs {e['grid_charge_kwh']:.2f} kWh. "
+        f"A full starting battery needs {e['nominal_capacity_kwh']:.2f} kWh nominal capacity to reach {e['reserve_fraction']*100:g}% reserve under symmetric losses, before standby. "
+        f"Thirty identical days repeat to {repeat[0]} in summer or {repeat[1]} in winter. This is not an annual forecast.",
+        "These values need the full output to replace eligible grid imports in every quarter-hour, a full starting battery, and no outage. "
+        "Charging power and duration feasibility remain unestablished. Monthly NEM netting, rooftop generation and home storage can reduce marginal value. "
+        "Solar charging has forgone export value. This example excludes standby and all equipment/ownership costs; it proves no product eligibility.")
+
+
+def _depth_evening():
+    return (_depth_evening_intro() + '\n<table id="balcony-evening-results">\n'
+            '<thead><tr><th>Season</th><th>Avoided purchases/day</th><th>Grid recharge/day</th><th>Net/day before standby and equipment</th></tr></thead>\n'
+            '<tbody>\n' + _depth_evening_rows() + '\n</tbody>\n</table>\n' + _depth_evening_limits())
+
+
+def _depth_purchase_rules():
+    d = rt._balcony_decision_support()
+    panels = [r for r in d['purchase_increments'] if r['before'] == 'battery_power_0.8kw']
+    portable = [r for r in d['purchase_increments'] if r['before'] == 'home_27kwh_pv_0.8kw_credited']
+    expansion = d['ownership_stresses']['dpu_battery_increment']
+    return _depth_paragraphs(
+        f"Price panels against their own saving. After matched {rt._balcony_row(panels[0]['before'])['batteries'][0]['discharge_kw']:g} kW portable output, "
+        f"panels add {_balcony_money(panels[0]['annual_savings_usd'])}/yr with hypothetical extra credit or {_balcony_money(panels[1]['annual_savings_usd'])}/yr without it. "
+        f"Their five-/ten-year extra-cost ceilings are {_balcony_money(panels[0]['five_year']['total_affordable_initial_cost_usd'])}/{_balcony_money(panels[0]['ten_year']['total_affordable_initial_cost_usd'])} "
+        f"or {_balcony_money(panels[1]['five_year']['total_affordable_initial_cost_usd'])}/{_balcony_money(panels[1]['ten_year']['total_affordable_initial_cost_usd'])}, respectively. "
+        "The supported export treatment and measured placement yield decide which panel budget applies. "
+        "The AC-coupled proxy clips production before storage. These budgets exclude direct-DC clipping recovery. Exact equipment topology remains unproved.",
+        f"After {rt._balcony_row(portable[0]['before'])['batteries'][0]['capacity_kwh']:g} kWh home storage plus credited PV, portable storage adds only "
+        f"{_balcony_range([r['annual_savings_usd'] for r in portable])}/yr. Its own ten-year extra-cost ceiling is "
+        f"{_balcony_range([r['ten_year']['total_affordable_initial_cost_usd'] for r in portable])}. "
+        "Controller priority sets this range; it is not uncertainty bounds. Price each addition separately; standalone savings cannot be added.",
+        f"A different increment can support more cost: the generic Delta Pro Ultra second battery adds {_balcony_money(expansion['annual_savings_usd'])}/yr. "
+        f"Its advertised {_balcony_money(expansion['equipment_price_usd'])} increment leaves {_balcony_money(expansion['five_year']['remaining_allowance_usd'])} at five years "
+        f"or {_balcony_money(expansion['ten_year']['remaining_allowance_usd'])} at ten years before other costs. "
+        "This holds the same generic connection and power assumptions; it is not an installed expansion quote.")
+
+
+def _depth_operating_rows():
+    rows = []
+    for c in rt._balcony_decision_support()['operating_cases']:
+        sid = c['scenario_id']
+        values = (_DEPTH_LABELS[sid], _balcony_money(c['annual_savings_usd']),
+                  _balcony_money(c['seasons']['summer']['annual_savings_usd']),
+                  _balcony_money(c['seasons']['winter']['annual_savings_usd']), f"{c['physical']['peak_import_kw']:.2f} kW")
+        rows.append(f'<tr data-scenario="{_esc(sid)}">'+''.join('<td>'+_esc(v)+'</td>' for v in values)+'</tr>')
+    return '\n'.join(rows)
+
+
+def _depth_operating_prose():
+    d = rt._balcony_decision_support()
+    c = d['operating_cases'][0]; b = c['battery']; p = c['physical']
+    combined = next(c for c in d['operating_cases'] if c['scenario_id'] == 'combined_0.8kw_zero_credit')
+    cp = combined['physical']; cb = combined['battery']
+    return _depth_paragraphs(
+        f"The matched portable-only case buys {b['grid_charge_kwh']:,.0f} kWh of grid charging and diverts {b['existing_solar_charge_kwh']:,.0f} kWh of existing solar. "
+        f"It delivers {b['served_kwh']:,.0f} kWh, loses {b['loss_kwh']:,.0f} kWh in conversion and uses {p['standby_kwh']:.1f} kWh in standby. "
+        f"Annual imports are {p['imports_kwh']:,.0f} kWh and physical/credited exports are {p['exports_kwh']:,.0f} kWh. Delivered energy is not dollar saving.",
+        f"With panels and no extra credit, the battery charges from {cb['grid_charge_kwh']:,.0f} grid, {cb['existing_solar_charge_kwh']:,.0f} existing-solar and "
+        f"{cb['new_solar_charge_kwh']:,.0f} new-solar kWh. It delivers {cb['served_kwh']:,.0f} kWh, loses {cb['loss_kwh']:,.0f} kWh and uses {cp['standby_kwh']:.1f} kWh in standby. "
+        f"Imports are {cp['imports_kwh']:,.0f} kWh; physical exports are {cp['exports_kwh']:,.0f} kWh, but only {cp['credited_exports_kwh']:,.0f} kWh receive modeled credit.",
+        f"Cheap-hour charging does not cut the annual peak. The no-hardware peak is {p['baseline_peak_import_kw']:.2f} kW. "
+        "The table shows each hardware peak and tariff-season contribution. Summer and winter together cover the observation year, not weather uncertainty.")
+
+
+def _depth_equipment_rows():
+    rows = []
+    for c in rt._balcony_decision_support()['candidate_allowances']:
+        b = c['modeled_batteries'][0]
+        label = _DEPTH_CANDIDATES[c['id']]
+        warranty = f"{c['warranty_years']:g} yr " + ('unit' if c['id'].startswith('stream') else 'inverter/batteries')
+        values = (f"{b['capacity_kwh']:g} kWh; {b['discharge_kw']:g}/{b['charge_kw']:g} kW", _balcony_money(c['equipment_price_usd']),
+                  _balcony_money(c['annual_savings_usd']), _balcony_money(c['five_year']['remaining_allowance_usd']),
+                  _balcony_money(c['ten_year']['remaining_allowance_usd']), warranty, 'Available' if c['available'] else 'Unavailable')
+        rows.append(f'<tr data-scenario="{_esc(c["scenario_id"])}" data-candidate="{_esc(c["id"])}"><td><a href="{_esc(c["source_url"])}">{_esc(label)}</a></td>' + ''.join('<td>'+_esc(v)+'</td>' for v in values)+'</tr>')
+    return '\n'.join(rows)
+
+
+def _depth_ownership_rows():
+    d = rt._balcony_decision_support(); rows = []
+    for candidate in ('stream_default','dp3_base','dpu_base','ultrax_base'):
+        for annual, service in ((0,0),(50,500),(100,1500)):
+            selected = [r for r in d['ownership_stresses']['cases'] if r['candidate_id']==candidate and r['assumptions']['annual_cost_usd']==annual and r['assumptions']['service_cost_usd']==service]
+            if len(selected) != 2 or {r['years'] for r in selected} != {5,10}: raise SystemExit('report_blocks: balcony ownership ladder needs matched horizons')
+            selected.sort(key=lambda r:r['years'])
+            values = (_DEPTH_CANDIDATES[candidate], _balcony_money(annual), _balcony_money(service)) + tuple(_balcony_money(r['remaining_allowance_usd']) for r in selected)
+            rows.append(f'<tr data-candidate="{candidate}">'+''.join('<td>'+_esc(v)+'</td>' for v in values)+'</tr>')
+    return '\n'.join(rows)
+
+
+def _depth_monthly_rows():
+    cases = rt._balcony_decision_support()['operating_cases']
+    rows = []
+    for month in cases[0]['monthly_savings_usd']:
+        rows.append('<tr><td>'+month+'</td>'+''.join('<td>'+_balcony_money(c['monthly_savings_usd'][month],2)+'</td>' for c in cases)+'</tr>')
+    rows.append('<tr><th>Annual sum</th>'+''.join('<td>'+_balcony_money(c['annual_savings_usd'],2)+'</td>' for c in cases)+'</tr>')
+    return '\n'.join(rows)
+
+
+def _depth_sensitivity():
+    d = rt._balcony_decision_support()
+    saving = lambda sid: rt._balcony_row(sid)['annual_savings_usd']
+    charging = [saving('battery_charging_'+kind) for kind in ('solar','grid','mixed')]
+    reserve = [saving(sid) for sid in d['existing_sensitivity_ids']['reserve']]
+    standby = [saving(sid) for sid in d['existing_sensitivity_ids']['standby']]
+    study = rt._json(rt._BALCONY_ARTIFACT)
+    nbt = study['present_2026_nbt_sensitivity']
+    if nbt['economics'] is not None or nbt['payable_bill_established'] is not False or nbt['settlement_credit_limits_applied'] is not False:
+        raise SystemExit('report_blocks: balcony NBT remains before settlement with no economics')
+    def nbt_range(sid):
+        values = [rt._balcony_number(c['scenarios'][sid]['annual_hardware_signed_ledger_delta_usd'], 'NBT signed delta') for c in nbt['cases'].values()]
+        return _balcony_range(values)
+    runtime_case = rt._balcony_row('battery_power_0.8kw')
+    runtime = runtime_case['conditional_backup_runtime'][0][1]
+    capacity = runtime_case['batteries'][0]['capacity_kwh']
+    return _depth_paragraphs(
+        f"For the separate generic 3.84 kWh/1.2 kW storage case, solar-only/grid-only/mixed charging saves "
+        + '/'.join(_balcony_money(v) for v in charging) + "/yr. Grid-only beats this simple mixed policy because charging priorities and forgone export credits matter. "
+        "It does not prove that grid-only is best for every controller or connection.",
+        f"For that same standalone case, reserve from 10% to 30% changes saving from {_balcony_money(reserve[0])} to {_balcony_money(reserve[-1])}/yr. "
+        f"Standby from 0 W to 30 W changes it from {_balcony_money(standby[0])} to {_balcony_money(standby[-1])}/yr. "
+        "These are separate one-variable stresses; they do not describe combined downside or joint-system results. Measure actual losses and controls before a product quote.",
+        f"Present-NBT repricing gives the matched portable-only row {nbt_range('battery_power_0.8kw')} and credited PV-only {nbt_range('pv_0.8kw_credited')} "
+        "in annual signed ledger deltas before settlement. It reprices the whole account's unchanged flows, including existing rooftop exports. "
+        "It does not optimize NBT dispatch or establish payable-bill savings, an NBT price ceiling, NPV or payback. NEM retained with no extra credit is a different case.",
+        f"The {capacity:g} kWh portable runtime example gives {runtime['runtime_from_full_hours']:.2f} hours at a constant {runtime['constant_load_w']:g} W from full charge to reserve, "
+        f"or {runtime['runtime_from_preserved_reserve_hours']:.2f} hours from the reserve if outage control releases it. "
+        "It includes assumed standby and conversion loss with zero rooftop recharge. These are arithmetic runtimes, not measured appliance or household outage coverage. "
+        "Supported outlets, transfer design and measured startup demand decide which loads work.")
+
+
 DATA_BUILDERS = {
+    "s6#26": _depth_quote_priority,
+    "s6#27": _depth_purchase_rules,
+    "s6#28": _depth_evening_intro,
+    "s6#29": _depth_evening_rows,
+    "s6#30": _depth_evening_limits,
+    "s6#31": _depth_operating_prose,
+    "s6#32": _depth_operating_rows,
+    "s6#33": _depth_equipment_rows,
+    "s6#34": _depth_ownership_rows,
+    "s6#35": _depth_monthly_rows,
+    "s6#36": _depth_sensitivity,
+
+    "s7#12": _depth_common_rows,
     "s6#12": lambda: _esc(rt._balcony_configuration(None)),
     "s6#13": _balcony_summary_rows,
     "s6#14": lambda: _esc(rt._balcony_generic_baselines(None)),

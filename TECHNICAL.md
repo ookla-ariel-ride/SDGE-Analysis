@@ -5014,6 +5014,66 @@ NPV do not establish an actual quote or equipment life. Negative savings retain 
 sign and no positive-payback value. `provenance.joint_extension` dates and hashes this
 extension separately from the inherited baseline provenance.
 
+**Decision-support interface.** The outer artifact remains schema 3. Its appended
+`decision_support` block uses schema 1. `build_decision_support(study)` consumes the
+existing scenarios, monthly bills, canonical references, marginal rows and frozen
+manufacturer observations. It adds no dispatch, physical scenario or NBT repricing.
+All 117 scenario objects, 138 marginal objects, nine canonical references and NBT
+objects retain their values. The inherited joint provenance hash names current source.
+
+`common_options` compares five families: PV, matched-cap portable storage, both,
+13.5 kWh home storage and 27 kWh home storage. It retains both added-export treatments.
+The common model uses the post-free-fix baseline, frozen June 2026 rates, simple
+schedule, 20% reserve, 85% RTE and 10 W standby per controller. Whole-meter access
+is hypothetical. The canonical price-aware/no-reserve purchase result stays separate.
+
+`operating_cases` copies annual physical/battery accounts and derives monthly savings
+from matched complete bills. It retains thirteen calendar buckets, including both
+partial Julys. Seasonal contributions use `rates.SUMMER_MONTHS`; they sum to annual
+saving and do not bound weather uncertainty. Peak import uses a maximum, not a sum.
+`purchase_increments` stores before/after IDs and source marginal indices where those
+pairs exist. Four panel pairs derive matched existing-scenario differences; their
+source marginal index stays null. No standalone savings addition enters a result.
+
+`candidate_allowances` maps eight exact dated equipment variants to generic scenario
+hypotheses. Bare equipment and available connection-hardware bundles remain separate.
+Prices, availability, source URLs and warranty scopes retain the October 23, 2026
+observations. Larger inverter/battery warranties cover five years; bundle accessories
+have separate terms. Ten-year cashflows assume continued operation and do not establish
+life. A conditional whole-meter result does not establish a product simulation.
+
+`ownership_allowance` discounts first-year saving at year end, with no first-year
+fade. Later savings decline at the stated annual rate. Each annual cost enters at
+year end; service enters only when its year falls inside the horizon. The total
+affordable initial cost equals discounted savings minus discounted ownership costs.
+Remaining allowance subtracts advertised equipment. Negative savings and allowances
+retain their signs. `installed_cost_usd`, `actual_installed_payback_years` and
+`actual_installed_npv_usd` remain null. The cost ladders carry assumptions, not quotes,
+failure probabilities, service-life guarantees, backup revenue or VPP revenue.
+
+`evening_output_example` is frozen-rate arithmetic, not interval household dispatch.
+The 1.2 kW output from 16:00 to 24:00 supplies 9.6 kWh: 6 kWh on-peak and 3.6 kWh
+off-peak. Grid input is delivered energy divided by 85% RTE. Nominal capacity is
+delivered energy divided by `(1 - reserve) * sqrt(RTE)`, from full charge to 20%
+reserve, before standby. Seasonal avoided purchases subtract super-off-peak recharge
+cost. Thirty days repeats that arithmetic; annual forecast stays null. Full eligible
+imports in every interval, full starting charge and no outage are conditions.
+Charging duration/power feasibility, monthly NEM netting and forgone solar export
+value prevent treating this illustration as household savings or product eligibility.
+
+`report_blocks.py` renders the selected rows and numerical explanations mechanically.
+`report_tokens._balcony_decision_support()` checks schema, unique IDs, distinct common
+tracks, source bills/assumptions, finite amounts, monthly/seasonal sums, equipment-only
+labels and financial identities. It refuses invented installed economics and malformed
+evening arithmetic. This helper is outside the token registry, so adding evidence does
+not multiply the large-artifact token poison sweep. Rendered consistency checks read
+cells independently and preserve negative residual allowances. Existing fixed-prose,
+annual-unit, privacy and numeric guards retain their scope. The common comparison
+appears beside §7; existing detailed balcony tables remain byte-identical supporting
+evidence. Five evidence tables show common choices, seasonal operation, equipment
+allowances, ownership assumptions and monthly savings. A sixth compact table separates
+the evening example's seasonal avoided purchases, recharge cost and daily net.
+
 **Present-2026 NBT signed ledgers.** `present_2026_nbt_sensitivity` reprices the same
 physical traces for all 117 scenarios, nine canonical references, and 138 marginal pairs.
 Each of four cases retains `unchanged_behavior` and `post_free_fix` baselines.

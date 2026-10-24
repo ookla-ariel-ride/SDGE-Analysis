@@ -17,9 +17,14 @@ GitHub's file viewer shows the HTML source; the link above opens the report.
 - Want to run this on your own home? Jump to [Reproduce this for your own home](#reproduce-this-for-your-own-home--start-here).
 - Auditing the methods? Start with [TECHNICAL.md](TECHNICAL.md).
 
+**Original analysis**
+
 > **How this report was produced:** generated with **Claude Cowork (Fable 5)**, independently
 > reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
 > then re-worked in Claude Cowork to incorporate the findings of both reviews.
+
+> **This revision:** The SB 868 expansion used **Codex (GPT-6.1 Sol)** for implementation and independent task reviews.
+> **Codex (GPT-6 Astra)** performed the whole-branch review. Corrections followed those reviews.
 
 **Companion documents:**
 [**TECHNICAL.md**](TECHNICAL.md) — the full methods documentation: every script, data schema, algorithm, and validation chain, written so the analysis can be audited or rebuilt ·
