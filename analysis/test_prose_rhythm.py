@@ -9,6 +9,7 @@ fails when the habit comes back.
 Run from the repo root:  ./.venv/bin/python analysis/test_prose_rhythm.py
 """
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -491,16 +492,21 @@ def case_a_modifier_between_the_copula_and_the_label_is_still_predicate_position
 def case_the_committed_page_names_its_packages_without_shouting():
     html = PAGE.read_text(encoding="utf-8")
     blocks = prose_blocks.extract(html, min_words=1)
-    assert prose_rhythm.package_labels(blocks) == prose_rhythm.PACKAGE_LABELS
-    prose_labels = {w for b in blocks if b.tag not in prose_rhythm.HEADING_TAGS
-                    for w in prose_rhythm.CAPS_RE.findall(b.text)
-                    if w in prose_rhythm.PACKAGE_LABELS}
+    section = html[html.index('<h2 id="s7">'):html.index('<h2 id="s15">')]
+    cards = re.findall(r'<div class="pkg(?: best)?">\s*<h3>(.*?)</h3>', section, re.S)
+    names = ("Free schedule change ·", "Home storage ·",
+             "Portable storage or added panels ·", "Home-storage expansion ·")
+    assert len(cards) == len(names), cards
+    for heading, name in zip(cards, names):
+        assert heading.startswith(name), (heading, name)
+    expansion = section.index('<details id="s7-expansion">')
+    assert section.index('<h3>Portable storage or added panels') < expansion
+    assert expansion < section.index('<h3>Home-storage expansion')
+    assert not prose_rhythm.package_labels(blocks), (
+        "the descriptive choice cards must not grant legacy label exemptions")
     assert prose_rhythm.measure(html)["caps"] == [], prose_rhythm.measure(html)["caps"]
-    assert prose_labels == prose_rhythm.PACKAGE_LABELS, (
-        "declared package labels missing from running prose: "
-        f"{sorted(prose_rhythm.PACKAGE_LABELS - prose_labels)}")
-    return ("the committed page defines all three package cards and names each in running "
-            "prose outside headings, with no shouted or predicate uses")
+    return ("the committed page names the free change and both purchase routes, keeps "
+            "expansion in supporting details, and contains no shouted package labels")
 
 
 # --- typographic variants ----------------------------------------------------
