@@ -1,10 +1,10 @@
 # SB 868: qualifying plug-in PV needs no utility approval; equipment evidence remains open
 
-**Decision as of 2026-10-22: WAIT for a grid-parallel purchase.** Exact system certification, household connection, supported performance, and full installed costs remain unresolved. SB 868 bars prior SDG&E approval for qualifying devices once its exemption takes effect on January 1, 2027. NEM/CEA compensation affects the economics; it is a separate question from statutory eligibility.
+**Decision as of 2026-10-23: WAIT for a grid-parallel purchase.** Exact system certification, household connection, supported performance, and full installed costs remain unresolved. SB 868 bars prior SDG&E approval for qualifying devices once its exemption takes effect on January 1, 2027. NEM/CEA compensation affects the economics; it is a separate question from statutory eligibility.
 
 A selected-appliance pilot can answer useful questions with a borrowed or returnable supported battery if the owner later chooses that pilot. The household owns no battery. Selected-load measurements can improve the desk evaluation without a battery purchase or field pilot. Conditional modeled price ceilings do not establish a purchase budget.
 
-This study separates electricity savings from backup. It does not authorize purchases, utility applications, or electrical work. Publication of portable-study recommendations remains deferred. The existing report and glossary include the supported tariff qualifications. Issue #304 remains incomplete where the acceptance map names missing evidence.
+This study separates electricity savings from backup. It does not authorize purchases, utility applications, or electrical work. A product-specific purchase recommendation remains deferred. The report publishes conditional model results. The existing report and glossary include the supported tariff qualifications. Issue #304 remains incomplete where the acceptance map names missing evidence.
 
 ## 1. The household already has solar and owns no battery
 
@@ -44,7 +44,7 @@ Section 8531(a) exempts qualifying devices from all interconnection requirements
 
 Existing rooftop PV does not disqualify a household under these conditions. The hardwired rooftop array is distinct from the receptacle-connected devices that the definition covers. Original rooftop capacity and an individualized utility letter are not additional statutory eligibility conditions. Exact export compensation and battery-only qualification remain **not determined**. These questions do not remove the approval exemption. [Chaptered text, §§8530–8531](https://legiscan.com/CA/text/SB868/2025)
 
-Section 8531 repeals January 1, 2030. Section 8532 then restricts sales of receptacle-connected PV devices that fail its specified code, certification, and isolation conditions. Neither automatic shutdown nor permanent exemption follows. Local code, fire, siting, mounting, and circuit checks remain separate. Recheck the [official chapter](https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB868) before deployment.
+Section 8531 repeals January 1, 2030. Section 8532 then restricts sales of receptacle-connected PV devices that fail its specified code, certification, and isolation conditions. Neither automatic shutdown nor permanent exemption follows. Applicable future equipment and account treatment, and any compliance cost, remain unknown. Local code, fire, siting, mounting, and circuit checks remain separate. Recheck the [official chapter](https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB868) before deployment.
 
 No SB 868 notification form or implementation notice appeared in the checked SDG&E pages and official-domain research. That limited search does not prove absence or add an approval requirement. A vendor article is not authority for broader permit relief.
 
@@ -98,7 +98,7 @@ These classifications concern use after the exemption's effective date. They do 
 
 ## 6. U.S. equipment evidence: ratings are not measured usable energy
 
-All product observations below date to **2026-10-22**. Manual dates identify the checked document, not current firmware. Regional availability and accessories need separate checks.
+Product observations below date to **2026-10-22**. STREAM, DP3, and DPU price/stock variants were rechecked on **2026-10-23**, with unchanged observations. Manual dates identify the checked document, not current firmware. Regional availability and accessories need separate checks.
 
 | Candidate | Exact U.S. identity and checked manufacturer manual | Nominal capacity; continuous output |
 |---|---|---|
@@ -307,6 +307,97 @@ These credited cases keep the same 3.84 kWh battery and output ceiling. They pri
 
 These panels require their own installed quotes and lawful export treatment. The JSON also reports PV-only increments under each export treatment. Direct daytime EV/appliance flexibility remains unavailable: vehicle presence and selected-load timing were not measured. Adoption after NEM ends remains unavailable; the present-2026 sensitivity below does not establish a future tariff or adoption value.
 
+### Joint home-storage, balcony PV, and portable-storage comparison
+
+The report publishes these conditional model results in its basic [balcony section](../index.html#balcony-solar). They do not establish a product-specific purchase recommendation. All cases retain the existing rooftop array and the post-free-EV-change baseline. No battery is installed.
+
+Schema 3 contains 117 scenarios, 138 matched comparisons, and nine canonical references. The joint extension adds 42 scenarios: 12 home-plus-PV, 24 home-plus-PV-plus-portable, and six matched no-PV controls. Its 120 new marginal comparisons cover balcony after home, home after balcony, portable after home-plus-PV, and panels after matched home-plus-portable. The existing scenarios and references retain their original results.
+
+The primary case adds 1 kW DC PV behind a 0.8 kW shared AC cap and 3.84 kWh generic portable storage. The higher-cap sensitivity uses 1.5 kW DC and 1.2 kW shared AC. Each battery assumes 20% reserve, 85% round-trip efficiency, 10 W continuous AC standby, and whole-meter load access. Home storage has 13.5 or 27 kWh and retains its own discharge limit. The balcony cap covers added PV and portable discharge, including PV that charges the home battery. It does not cap home-battery discharge.
+
+Generic home storage alone saves $1,964.18/year at 13.5 kWh or $2,490.47/year at 27 kWh. These schedule/reserve/loss assumptions differ from the canonical price-aware purchase model. Do not add the balcony increment below to the canonical $2,378/year home-battery result. A standing-reserve version of that canonical purchase case remains uncalculated.
+
+Extra saving equals the home-storage-only bill minus the bill after the balcony system is added. Total saving equals the existing-rooftop, post-behavior bill with no added hardware minus the joint bill. Ranges cover home-first and portable-first controller priority. They are directional sensitivities, not uncertainty intervals or proof of real controller coordination.
+
+| Home storage | Extra-export treatment | Balcony + portable extra saving/year | All added hardware total saving/year |
+| --- | --- | --- | --- |
+| None | Hypothetical credit | $1,057 | $1,057 |
+| None | No extra credit | $742 | $742 |
+| 13.5 kWh | Hypothetical credit | $613 to $691 | $2,577 to $2,655 |
+| 13.5 kWh | No extra credit | $307 to $390 | $2,271 to $2,354 |
+| 27 kWh | Hypothetical credit | $428 to $460 | $2,919 to $2,950 |
+| 27 kWh | No extra credit | $121 to $158 | $2,611 to $2,649 |
+
+Higher-cap sensitivity:
+
+| Home storage | Extra-export treatment | Balcony + portable extra saving/year | All added hardware total saving/year |
+| --- | --- | --- | --- |
+| None | Hypothetical credit | $1,357 | $1,357 |
+| None | No extra credit | $886 | $886 |
+| 13.5 kWh | Hypothetical credit | $863 to $924 | $2,827 to $2,889 |
+| 13.5 kWh | No extra credit | $389 to $469 | $2,353 to $2,433 |
+| 27 kWh | Hypothetical credit | $642 to $681 | $3,133 to $3,172 |
+| 27 kWh | No extra credit | $166 to $226 | $2,657 to $2,716 |
+
+Source IDs: `combined_{cap}kw_{treatment}` without home storage; `home_{size}kwh_combined_{cap}kw_{treatment}_{order}` with it. Matched home baselines are `large_13.5kwh_11.5kw` and `large_27kwh_11.5kw`. Orders are `home_first` and `small_first`; treatments here are `credited` and `zero_credit`. New `zero_export` cases have equal bills to zero-credit cases while curtailment and physical exports differ.
+
+#### Add panels and storage in either order
+
+The first column below adds home storage after the balcony-plus-portable system. The second adds portable storage after home-plus-PV. The third adds panels after matched home-plus-portable. Every figure subtracts complete bills from the same behavior baseline and holds the retained hardware's parameters fixed. The corresponding `marginal_comparisons` entries state each before/after ID.
+
+| Home storage | Shared AC cap | Extra-export treatment | Home after balcony + portable: extra/year | Portable after home + PV: extra/year | Panels after home + portable: extra/year |
+| --- | --- | --- | --- | --- | --- |
+| 13.5 kWh | 0.8 kW | Hypothetical credit | $1,520 to $1,598 | $177 to $255 | $419 to $423 |
+| 13.5 kWh | 0.8 kW | No extra credit | $1,530 to $1,612 | $184 to $267 | $113 to $121 |
+| 13.5 kWh | 1.2 kW | Hypothetical credit | $1,470 to $1,532 | $208 to $270 | $631 to $640 |
+| 13.5 kWh | 1.2 kW | No extra credit | $1,467 to $1,547 | $216 to $296 | $157 to $184 |
+| 27 kWh | 0.8 kW | Hypothetical credit | $1,862 to $1,893 | $13 to $44 | $399 to $402 |
+| 27 kWh | 0.8 kW | No extra credit | $1,869 to $1,907 | $20 to $58 | $92 to $100 |
+| 27 kWh | 1.2 kW | Hypothetical credit | $1,776 to $1,815 | $20 to $58 | $600 to $607 |
+| 27 kWh | 1.2 kW | No extra credit | $1,771 to $1,830 | $27 to $87 | $124 to $152 |
+
+The matched 0.8 kW no-PV controls use `home_{size}kwh_small_0.8kw_{order}`. The 27 kWh/1.2 kW controls use the same pattern. The 13.5 kWh/1.2 kW controls are `powerwall_then_small` and `small_then_powerwall`. Those controls keep the portable output limit equal to the combined case. Changing both the portable limit and the panels would not isolate panel value.
+
+After larger home storage, the portable battery's own increment becomes small. Storage and PV use the same remaining load and energy; independent standalone savings cannot be added. The fixed-power capacity table in §8 also shows why each extra storage increment needs its own cost ceiling.
+
+#### Joint incremental components
+
+These are the primary system's incremental bill offsets after home storage, under home-first priority. Negative means added cost. Values use positive physical interval-net NBC and retain the billing-replication limits in §4. Display rounding can leave a cent difference between component cells and the total.
+
+| Home storage | Extra-export treatment | Delivery | CEA generation | PCIA | NBC | Fixed daily charge | Total extra/year |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| None | Hypothetical credit | $550.49 | $477.04 | $22.21 | $7.28 | $0.00 | $1,057.02 |
+| None | No extra credit | $392.89 | $345.61 | -$4.09 | $7.28 | $0.00 | $741.69 |
+| 13.5 kWh | Hypothetical credit | $339.41 | $257.40 | $13.70 | $2.29 | $0.00 | $612.81 |
+| 13.5 kWh | No extra credit | $184.81 | $127.92 | -$7.82 | $2.29 | $0.00 | $307.21 |
+| 27 kWh | Hypothetical credit | $215.81 | $182.68 | $25.68 | $4.05 | $0.00 | $428.22 |
+| 27 kWh | No extra credit | $60.63 | $52.14 | $3.87 | $4.05 | $0.00 | $120.69 |
+
+The fixed daily electric charge remains unchanged. Gas remains unchanged and excluded from this electric model.
+
+#### Complete incremental cost ceilings and assumed paybacks
+
+`financial_sensitivities.incremental_complete_cost_sensitivities` contains 12 packages: PV-only and PV-plus-portable, no home/13.5 kWh/27 kWh home, and credited/zero-credit exports. Each row subtracts the matching home baseline and excludes home-battery cost. Combined home cases use home-first priority. Ceilings use 5% real discount, 1% annual savings decline, and zero real tariff escalation, before unknown ongoing ownership costs.
+
+The four costs below are assumed complete incremental costs, not equipment advertisements or quotes. Long simple-payback ratios do not establish equipment life. Actual complete quotes, supported connections, equipment performance, and ownership costs remain unknown.
+
+| Home; added system | Extra-export treatment | Five-year ceiling | Ten-year ceiling | $1,000 assumed: payback | $2,500 assumed: payback | $5,000 assumed: payback | $7,500 assumed: payback |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| None; PV only | Hypothetical credit | $2,012 | $3,512 | 2.1 yr | 5.3 yr | 10.6 yr | 15.8 yr |
+| None; PV + portable | Hypothetical credit | $4,490 | $7,836 | 0.9 yr | 2.4 yr | 4.7 yr | 7.1 yr |
+| None; PV only | No extra credit | $437 | $763 | 9.7 yr | 24.3 yr | 48.6 yr | 72.9 yr |
+| None; PV + portable | No extra credit | $3,151 | $5,498 | 1.3 yr | 3.4 yr | 6.7 yr | 10.1 yr |
+| 13.5 kWh; PV only | Hypothetical credit | $1,852 | $3,232 | 2.3 yr | 5.7 yr | 11.5 yr | 17.2 yr |
+| 13.5 kWh; PV + portable | Hypothetical credit | $2,603 | $4,543 | 1.6 yr | 4.1 yr | 8.2 yr | 12.2 yr |
+| 13.5 kWh; PV only | No extra credit | $522 | $911 | 8.1 yr | 20.3 yr | 40.7 yr | 61.0 yr |
+| 13.5 kWh; PV + portable | No extra credit | $1,305 | $2,277 | 3.3 yr | 8.1 yr | 16.3 yr | 24.4 yr |
+| 27 kWh; PV only | Hypothetical credit | $1,764 | $3,079 | 2.4 yr | 6.0 yr | 12.0 yr | 18.1 yr |
+| 27 kWh; PV + portable | Hypothetical credit | $1,819 | $3,174 | 2.3 yr | 5.8 yr | 11.7 yr | 17.5 yr |
+| 27 kWh; PV only | No extra credit | $428 | $747 | 9.9 yr | 24.8 yr | 49.7 yr | 74.5 yr |
+| 27 kWh; PV + portable | No extra credit | $513 | $895 | 8.3 yr | 20.7 yr | 41.4 yr | 62.1 yr |
+
+Each package also stores five- and ten-year NPV for every assumed cost. Its actual installed cost, actual simple payback, and actual-cost NPV remain null. Future subscription, maintenance, replacement, downtime, and compliance costs reduce the amount available for initial equipment and installation. Backup value and VPP revenue stay separate.
+
 ### Present-2026 NBT sensitivity: fixed flows, signed costs before settlement limits
 
 **The three storage-only cases below have larger modeled hardware deltas under these NBT assumptions.** Credited added PV has a smaller delta. These are signed cost-ledger differences before settlement limits. They do not establish payable-bill savings or support a tariff-switch recommendation. The NEM tables and conditional price ceilings above retain their separate NEM basis.
@@ -331,7 +422,7 @@ Each case stores `unchanged_behavior` and `post_free_fix` baselines. Each hardwa
 
 Storage assumes 20% reserve, 85% round-trip efficiency, and 10 W continuous standby, with total-meter load access. The combined system shares a 0.8 kW cap across new PV and battery discharge. Its battery settings remain 1.2/1.2 kW. These assumptions do not establish product performance or accessible circuits. `zero_credit` removes credit from all incremental meter exports, including displaced rooftop exports. `zero_export` retains the same billing channel but curtails new residual PV; its physical exports differ.
 
-Source: [`data/portable_solar_storage.json`](../data/portable_solar_storage.json), `scenarios[id=ID].annual_savings_usd` and `present_2026_nbt_sensitivity.cases.CASE.scenarios.ID.annual_hardware_signed_ledger_delta_usd`. Here `CASE` is either `NBT00_delivery_generation_cea_bonus` or `NBT00_delivery_cea_bonus_only`; corresponding `NBT26` rows are equal. The block covers all 75 scenarios, nine canonical references, and 18 marginal pairs. It reprices saved dispatch without NBT optimization.
+Source: [`data/portable_solar_storage.json`](../data/portable_solar_storage.json), `scenarios[id=ID].annual_savings_usd` and `present_2026_nbt_sensitivity.cases.CASE.scenarios.ID.annual_hardware_signed_ledger_delta_usd`. Here `CASE` is either `NBT00_delivery_generation_cea_bonus` or `NBT00_delivery_cea_bonus_only`; corresponding `NBT26` rows are equal. The block covers all 117 scenarios, nine canonical references, and 138 marginal pairs. It reprices saved dispatch without NBT optimization.
 
 **Credit-limit diagnostics do not settle bills.** Every baseline, scenario, and reference reports annual/monthly delivery and generation charge/credit pools, component excesses, negative months, and net-export flags. The CEA bonus joins generation only for diagnostics; PCIA remains outside both pools. These modeled results show no negative month, pool excess, or net-export flag. That result does not prove credit availability across actual billing or relevant periods.
 
@@ -456,7 +547,7 @@ The 14-day periods are protocol minimums, not proof of annual representativeness
 
 ## 14. Dated source register and quality limits
 
-Entries were checked on 2026-10-22 except the NBT/CEA sensitivity sources, checked on 2026-10-23. Statute text, current tariffs, manuals, advertisements, and measured household performance have different authority.
+Entries were checked on 2026-10-22. The law/effective-date, STREAM manual, STREAM/DP3/DPU price/stock, IRS, and NBT/CEA sources were rechecked on 2026-10-23. The precise NEM-ST storage/SGIP statement retains its 2026-10-22 check. Statute text, current tariffs, manuals, advertisements, and measured household performance have different authority.
 
 ### Regulatory and settlement sources
 
@@ -503,7 +594,7 @@ Large DP3/Ultra X PDFs exceeded the web reader's size limit; the manufacturer PD
 | Issue criterion | State | Evidence or exact missing input |
 |---|---|---|
 | Baseline/reference reproduction; window, rates, hashes, limitations | **Achieved for the implemented model** | §7; artifact `baseline`, `provenance`, `canonical_no_reserve_benchmarks`; historical residual and exact billing-replication limits stay disclosed; bill evidence supports positive physical interval-net NBC |
-| Solar-only, storage-only, combined, selected-load, larger options; standalone/incremental savings | **Incomplete** | Generic families and increments exist; real selected-appliance/circuit interval energy, surge, access and wiring are absent |
+| Solar-only, storage-only, combined, selected-load, larger options; standalone/incremental savings | **Incomplete** | Generic families, joint home/balcony cases, and matched increments exist; real selected-appliance/circuit interval energy, surge, access and wiring are absent |
 | Conservation, SOC/reserve, charge/discharge/shared caps, annual balance; losses/standby counted | **Achieved for stated interval assumptions** | Model and synthetic tests; measured losses, subinterval flows and real controller performance remain separate unknowns |
 | Monthly bills/flows/self-use/sources/cycles/peaks/curtailment/runtime/installed cost/payback/NPV | **Incomplete** | JSON carries modeled accounts and conditional runtime; actual circuit runtime, complete quote, ownership costs, installed payback/NPV absent |
 | Missing inputs/DST/zero generation/no load/full-empty/net-credit/simultaneous flows/two-controller tests; byte identity | **Achieved for the model** | Synthetic suite and deterministic generator checks; independent project gates remain needed before publication |
@@ -513,10 +604,10 @@ Large DP3/Ultra X PDFs exceeded the web reader's size limit; the manufacturer PD
 | Issue criterion | State | Evidence or exact missing input |
 |---|---|---|
 | Buy/pilot/wait/do-not-buy decision with reasons/dependencies | **Achieved** | WAIT for grid-parallel; conditional direct-appliance measurement only; §§1–6 and 13 |
-| Maximum worthwhile installed price; each battery/panel increment | **Partly achieved** | Conditional discounted ceilings and increments exist in §§8–11 without a quote. Supported product-specific ceilings need load/loss/connection evidence and ownership-cost assumptions |
+| Maximum worthwhile installed price; each battery/panel increment | **Partly achieved** | Conditional discounted ceilings and increments, including matched joint packages and complete-cost assumptions, exist in §§8–11 without a quote. Supported product-specific ceilings need load/loss/connection evidence and ownership-cost assumptions |
 | If justified, pilot with meters/reserve/control/load/success criteria and matched baseline | **Conditional and unexecuted** | Proposed protocol in §13; selected load, duration/budget, exact unit, completed metering and control tests absent. A pilot is not an unconditional prerequisite to a desk recommendation to wait |
 | Backup priced separately; circuits established; no unsupported rooftop recharge | **Incomplete** | No rooftop recharge assumed; owner backup value, essential circuits/surges, supported transfer/PV design and outage evidence absent |
-| Report/glossary/consistency updates only after study supports claims | **Portable-study publication deferred** | Portable-study prerequisites remain open. The existing report and glossary include supported tariff qualifications; those changes do not establish portable-equipment eligibility |
+| Report/glossary/consistency updates only after study supports claims | **Conditional model results published; purchase recommendation deferred** | The report links the standalone/joint comparisons and states their limits. Exact product eligibility, circuit access, performance, and complete costs remain open; no purchase recommendation follows |
 
 ### Additional requested comparisons: present sensitivity and remaining gaps
 

@@ -1242,7 +1242,9 @@ def case_backup_endurance_table_matches_the_artifact():
     assert be_path.exists(), f"{be_path} is committed public data and must exist"
     be = json.loads(be_path.read_text())
 
-    start = HTML.index("<h3>Outage endurance")
+    heading = re.search(r'<h3(?: id="[^"]+")?>Outage endurance', HTML)
+    assert heading, "missing outage-endurance heading"
+    start = heading.start()
     end = HTML.index("</table>", start) + len("</table>")
     table_html = HTML[start:end]
 
@@ -6892,9 +6894,9 @@ _FIXED_PROSE_DRIFT_ALLOWED = {
     ("s10", "Model vs. actual"): ("67147baaddde",
         "index's note lead is a decomposition claim (six measured terms plus a "
         "residual) that only the filled TODO can truthfully state"),
-    ("s11", "The install invoice shows"): ("1e3efa71c591",
-        "index appends the blended-$/kWh derivation (rate-history scaling, CA State "
-        "Auditor figures) with no tokens"),
+    ("s11", "The install invoice shows"): ("991dd0650f04",
+        "both use the recent load/value profile and approximate index; index appends "
+        "the blended-$/kWh derivation and CA State Auditor figures without tokens"),
     ("s13", "Annual rate escalation</th>"): ("be0c211b8e51",
         "index prefixes the utility name (SDG&E) the template keeps neutral"),
     ("s13", "Level escalation vs spread escalation"): ("8a43381191aa",
@@ -8019,7 +8021,190 @@ def case_a_household_with_no_gas_skips_that_case_and_still_exits_zero():
             "and the suite still exits 0, driven in a copy of the tracked tree")
 
 
+# Original question coverage and the limits accepted in the whole-report audit.
+_ORIGINAL_REPORT_QUESTIONS = (
+    "Am I on the best electric rate plan?",
+    "Does adding a battery change which plan is best?",
+    "What behavior changes are worth real money?",
+    "Does a home battery pay for itself: which one, dispatched how, at what payback?",
+    "Should I add panels, install higher-capacity panels, or upgrade microinverters?",
+    "Should I electrify gas appliances?",
+    "Has the solar system paid for itself, and what is it worth per year now?",
+    "Was paying for panel cleaning worth it, and what cadence and month are optimal?",
+    "When is grid power cheapest and cleanest, and do those windows align?",
+    "What is NEM 2.0 grandfathering actually worth per year?",
+)
+
+
+def case_original_questions_remain_visible_above_the_bottom_line():
+    for filename, doc in (("index.html", HTML), ("report-template.html", TEMPLATE_HTML)):
+        register = re.search(r'<div class="purpose" id="report-questions">(.*?)</div>', doc, re.S)
+        assert register, f"{filename}: missing visible question register"
+        assert register.start() < doc.index('<h2 id="s0">'), filename
+        text = htmlmod.unescape(re.sub(r"<[^>]+>", "", register.group(1)))
+        positions = [text.index(question) for question in _ORIGINAL_REPORT_QUESTIONS]
+        assert positions == sorted(positions), f"{filename}: original questions changed order"
+        assert "<details" not in register.group(1), f"{filename}: questions are collapsed"
+        assert not re.search(r'<details\b[^>]*>(?:(?!</details>).)*$', doc[:register.start()], re.S), filename
+        for target in ("s3", "s4", "s5", "s6", "s8", "s10", "s11", "s12", "s13",
+                       "service-voltage-status"):
+            assert f'href="#{target}"' in register.group(1), f"{filename}: no question link to {target}"
+        assert "#issuecomment-6354504709" in register.group(1), filename
+        assert "Accuracy untested" in text and "not determined" in text.lower(), filename
+    return "ten original questions and study-status links remain visible before the bottom line"
+
+
+def case_purchase_and_existing_studies_keep_their_evidence_limits():
+    for filename, doc in (("index.html", HTML), ("report-template.html", TEMPLATE_HTML)):
+        assert doc.count("The canonical price-aware purchase simulation holds no standing backup reserve.") >= 3, filename
+        voltage = re.search(r'<h3 id="service-voltage-status">.*?(?=<h3)', doc, re.S)
+        assert voltage and "more than sixty days" in voltage.group(0), filename
+        assert "causal lost kWh and dollars remain undetermined" in voltage.group(0), filename
+        assert "accuracy" in voltage.group(0) and "gaps" in voltage.group(0), filename
+    s5 = HTML[HTML.index('<h2 id="s5">'):HTML.index('<h2 id="s6">')]
+    assert "Whole-home evening grid imports" in s5 and "25%" in s5 and "$480/yr" in s5
+    assert not re.search(r"\$23[03]|Evening A/C through peak hours", s5), s5
+    wildcard = HTML[HTML.index('<h3 id="plan-wildcard">'):HTML.index('<h3>Quiet-night load: its cost')]
+    for phrase in ("interval-valued", "assumed event dates", "on-peak-only", "monthly NEM"):
+        assert phrase in wildcard, f"wildcard lacks {phrase!r}"
+    assert "dodge every event" not in HTML
+    lifetime = HTML[HTML.index('<h2 id="s11">'):HTML.index('<details class="sec" id="sec12"')]
+    assert "recent load/value profile" in lifetime
+    assert "does not calculate an uncertainty interval" in lifetime
+    assert not re.search(r"few months|several months|±10%", lifetime)
+    for relative in ("analysis/lifetime_payback.py", "reusable-prompt.md"):
+        text = (ROOT / relative).read_text()
+        assert not re.search(r"crossover dates carry roughly|flag them ±10%", text), relative
+    return "purchase reserve, sampled voltage, cooling, wildcard, and lifetime limits remain explicit"
+
+
+class _BalconyTables:
+    """Read rendered cells and source IDs independently of the row builders."""
+    @staticmethod
+    def read(doc):
+        from html.parser import HTMLParser
+        class Reader(HTMLParser):
+            def __init__(self):
+                super().__init__(); self.tables = {}; self.table = None; self.row = None; self.cell = None
+                self.details = []; self.balcony_details = None
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == "details": self.details.append("open" in attrs)
+                if tag == "h3" and attrs.get("id") == "balcony-solar": self.balcony_details = list(self.details)
+                if tag == "table":
+                    self.table = attrs.get("id")
+                    if self.table and self.table.startswith("balcony-"): self.tables[self.table] = []
+                if tag == "tr" and self.table in self.tables: self.row = [attrs, []]
+                if tag in ("td", "th") and self.row is not None: self.cell = []
+            def handle_data(self, data):
+                if self.cell is not None: self.cell.append(data)
+            def handle_endtag(self, tag):
+                if tag == "details": self.details.pop()
+                if tag in ("td", "th") and self.cell is not None:
+                    self.row[1].append(" ".join("".join(self.cell).split())); self.cell = None
+                if tag == "tr" and self.row is not None:
+                    self.tables[self.table].append(self.row); self.row = None
+                if tag == "table": self.table = None
+        reader = Reader(); reader.feed(doc)
+        return reader
+
+
+def _balcony_expected_money(value, decimals=0):
+    return ("-" if value < 0 else "") + f"${abs(value):,.{decimals}f}"
+
+
+def _balcony_expected_range(values):
+    low, high = min(values), max(values)
+    if round(low) == round(high): return _balcony_expected_money(low)
+    return f"{_balcony_expected_money(low)} to {_balcony_expected_money(high)}"
+
+
+def case_balcony_answer_is_basic_and_every_new_table_matches_complete_bills():
+    artifact = json.loads((ROOT / "data/portable_solar_storage.json").read_text())
+    scenarios = {row["id"]: row for row in artifact["scenarios"]}
+    costs = {row["scenario_id"]: row for row in artifact["financial_sensitivities"]["incremental_complete_cost_sensitivities"]}
+    def bill(sid): return artifact["baseline"]["post_behavior"] if sid in (None, "post_free_fix") else scenarios[sid]["bill"]
+    def delta(before, after): return bill(before)["total_usd"] - bill(after)["total_usd"]
+    def home_id(home): return None if home == "none" else f"large_{home}kwh_11.5kw"
+    def full(home, cap, treatment, order):
+        return f"combined_{cap}kw_{treatment}" if home == "none" else f"home_{home}kwh_combined_{cap}kw_{treatment}_{order}"
+    reader = _BalconyTables.read(HTML)
+    assert reader.balcony_details == [], "balcony answer must be visible outside details"
+    position = HTML.index('<h3 id="balcony-solar">')
+    assert HTML.index('<h2 id="s6">') < position < HTML.index('<h2 id="s7">')
+    for filename, doc in (("index.html", HTML), ("report-template.html", TEMPLATE_HTML)):
+        assert 'href="#balcony-solar"' in doc[doc.index('<nav'):doc.index('</nav>')], filename
+        assert 'h2,h3[id]{scroll-margin-top:' in doc, filename
+        assert _BalconyTables.read(doc).balcony_details == [], filename
+    for table_id, cap in (("balcony-main-results", "0.8"), ("balcony-higher-cap-results", "1.2")):
+        rows = [(attrs, cells) for attrs, cells in reader.tables[table_id] if "data-scenarios" in attrs]
+        assert len(rows) == 6, table_id
+        for (attrs, cells), (home, treatment) in zip(rows, ((h,t) for h in ("none","13.5","27") for t in ("credited","zero_credit"))):
+            ids = [full(home, cap, treatment, order) for order in (("home_first",) if home == "none" else ("home_first","small_first"))]
+            assert attrs["data-scenarios"].split(",") == ids
+            assert cells[2] == _balcony_expected_range([delta(home_id(home), sid) for sid in ids]), (table_id, ids, cells)
+            assert cells[3] == _balcony_expected_range([delta(None, sid) for sid in ids]), (table_id, ids, cells)
+    higher_text = str(reader.tables["balcony-higher-cap-results"])
+    assert "1.2 kW shared AC output; 1.5 kW DC panels" in higher_text
+    component_rows = [(attrs, cells) for attrs,cells in reader.tables["balcony-component-results"] if "data-scenario" in attrs]
+    assert len(component_rows) == 6
+    for attrs, cells in component_rows:
+        sid = attrs["data-scenario"]
+        before = costs[sid]["baseline_id"]
+        keys = ("delivery_usd","generation_usd","pcia_usd","nbc_usd","fixed_usd")
+        expected = [bill(before)["components"][key] - bill(sid)["components"][key] for key in keys]
+        assert cells[2:7] == [_balcony_expected_money(v,2) for v in expected], (sid,cells)
+        assert cells[7] == _balcony_expected_money(delta(before,sid),2)
+        assert abs(expected[-1]) < 0.00001
+    for table_id in ("balcony-cost-results", "balcony-ladder-results"):
+        rows = [(attrs,cells) for attrs,cells in reader.tables[table_id] if "data-scenario" in attrs]
+        assert len(rows) == (6 if table_id == "balcony-cost-results" else 12), table_id
+        for attrs,cells in rows:
+            entry = costs[attrs["data-scenario"]]; saving = delta(entry["baseline_id"],entry["scenario_id"])
+            economics = entry["economics"]
+            for years,key,col in ((5,"five_year",2),(10,"ten_year",3)):
+                a = economics["assumptions"]
+                ceiling = sum(saving * (1-a["annual_savings_decline"])**(y-1)/(1+a["real_discount"])**y for y in range(1,years+1))
+                assert abs(ceiling - economics[key]["break_even_installed_usd"]) < 0.00002
+                assert cells[col] == _balcony_expected_money(ceiling), (table_id,cells)
+            if table_id == "balcony-cost-results":
+                rung=entry["cost_sensitivities"][1]
+                assert cells[4] == f"{_balcony_expected_money(rung['installed_cost_usd'])} / {rung['installed_cost_usd']/saving:.1f} yr"
+            else:
+                assert cells[4:] == [f"{rung['installed_cost_usd']/saving:.1f} yr" for rung in entry["cost_sensitivities"]]
+    options=[cells for attrs,cells in reader.tables["balcony-options-results"] if "data-scenarios" in attrs]
+    pairs=(("pv_0.8kw_credited","pv_0.8kw_zero_credit"),("battery_power_0.8kw","battery_power_0.8kw"),("combined_0.8kw_credited","combined_0.8kw_zero_credit"))
+    assert len(options)==3
+    for cells, ids in zip(options,pairs): assert cells[1:] == [_balcony_expected_money(delta(None,sid)) for sid in ids]
+    orders=[(attrs,cells) for attrs,cells in reader.tables["balcony-order-results"] if "data-scenarios" in attrs]
+    assert len(orders)==8
+    for attrs,cells in orders:
+        ids=attrs["data-scenarios"].split(","); first=scenarios[ids[0]]
+        home=str(first["batteries"][0]["capacity_kwh"]).removesuffix(".0")
+        cap=f"{first['shared_new_pv_battery_ac_kw']:g}"; treatment=first["export_treatment"]
+        pv=f"home_{home}kwh_pv_{cap}kw_{treatment}"
+        standalone=f"combined_{cap}kw_{treatment}"
+        control=([f"home_{home}kwh_small_{cap}kw_{order}" for order in ("home_first","small_first")]
+                 if home=="27" or cap=="0.8" else ["powerwall_then_small","small_then_powerwall"])
+        expected=([delta(standalone,sid) for sid in ids],[delta(pv,sid) for sid in ids],[delta(before,after) for before,after in zip(control,ids)])
+        assert cells[3:]==[_balcony_expected_range(values) for values in expected], (ids,cells)
+    capacities=[(attrs,cells) for attrs,cells in reader.tables["balcony-capacity-results"] if "data-scenario" in attrs]
+    assert len(capacities)==4
+    for attrs,cells in capacities:
+        before,after=attrs["data-baseline"],attrs["data-scenario"]
+        pair=next(m for m in artifact["marginal_comparisons"] if m["before"]==before and m["after"]==after)
+        assert cells[1] == _balcony_expected_money(delta(before,after))
+        assert cells[2:] == [_balcony_expected_money(pair["economics"][key]["break_even_installed_usd"]) for key in ("five_year","ten_year")]
+    section=HTML[position:HTML.index('<h2 id="s7">')]
+    for phrase in ("with no added hardware", "20% reserve", "whole-meter load", "Charge power is 1.2 kW and discharge power is 1.2 kW.", "without home storage or new PV", "fixed daily", "Gas stays unchanged", "they do not bound model uncertainty", "Long simple-payback ratios", "no payable-bill saving", "future equipment and account treatment"):
+        assert phrase.lower() in section.lower(), phrase
+    return "basic balcony answer and all eight tables independently match selected artifact IDs, complete bills, components and cost math"
+
+
 CASES = [
+    case_balcony_answer_is_basic_and_every_new_table_matches_complete_bills,
+    case_original_questions_remain_visible_above_the_bottom_line,
+    case_purchase_and_existing_studies_keep_their_evidence_limits,
     case_rate_source_inventory_keeps_every_source_across_its_split,
     case_prestaging_paragraph_says_what_is_measured_and_what_is_assumed,
     case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers,

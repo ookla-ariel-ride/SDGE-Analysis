@@ -212,7 +212,7 @@ def validate_classification(html=None):
 
 
 # ---------------------------------------------------------------------------
-# THE CLASSIFICATION MAP. 104 entries, one per parsed block id (verified by
+# THE CLASSIFICATION MAP. One entry per parsed block id (verified by
 # validate_classification() / test_report_blocks.py against a fresh parse).
 # ---------------------------------------------------------------------------
 CLASSIFICATION = {
@@ -268,6 +268,20 @@ CLASSIFICATION = {
     "s6#9": "prose",   # controller and sizing supporting explanation
     "s6#10": "prose",  # partial-season program scope and enrollment limits
     "s6#11": "prose",  # program and resilience supporting explanation
+    "s6#12": "data",    # checked portable/joint paragraph or table
+    "s6#13": "data",    # checked portable/joint paragraph or table
+    "s6#14": "data",    # checked portable/joint paragraph or table
+    "s6#15": "data",    # checked portable/joint paragraph or table
+    "s6#16": "data",    # checked portable/joint paragraph or table
+    "s6#17": "data",    # checked portable/joint paragraph or table
+    "s6#18": "data",    # checked portable/joint paragraph or table
+    "s6#19": "data",    # checked portable/joint paragraph or table
+    "s6#20": "data",    # checked portable/joint paragraph or table
+    "s6#21": "data",    # checked portable/joint paragraph or table
+    "s6#22": "data",    # checked portable/joint paragraph or table
+    "s6#23": "data",    # checked portable/joint paragraph or table
+    "s6#24": "data",    # checked standalone capacity-sweep basis
+    "s6#25": "data",    # checked capacity increments
 
     # --- s7 The decision: three packages ---------------------------------
     "s7#1": "prose", "s7#2": "prose", "s7#3": "prose", "s7#4": "prose",
@@ -706,7 +720,211 @@ def _s13_pricemap_rows():
     return "\n".join(out)
 
 
+# Deterministic portable/joint tables. Every figure comes from a checked artifact row.
+_BALCONY_TREATMENTS = (("credited", "Hypothetical credit"), ("zero_credit", "No extra credit"))
+_BALCONY_HOMES = ("none", "13.5", "27")
+
+
+def _balcony_money(value, decimals=0):
+    rt._balcony_number(value, "table amount")
+    sign = "-" if value < 0 else ""
+    return f"{sign}${abs(value):,.{decimals}f}"
+
+
+def _balcony_range(values):
+    for value in values:
+        rt._balcony_number(value, "controller-priority result")
+    low, high = min(values), max(values)
+    return (_balcony_money(low) if round(low) == round(high) else
+            f"{_balcony_money(low)} to {_balcony_money(high)}")
+
+
+def _balcony_home_label(home):
+    if home == "none":
+        return "None"
+    row = rt._balcony_row(rt._balcony_baseline_id(home))
+    capacity = rt._balcony_number(row["batteries"][0]["capacity_kwh"], "home capacity")
+    return f"{capacity:g} kWh"
+
+
+def _balcony_priorities(home):
+    return ("home_first",) if home == "none" else ("home_first", "small_first")
+
+
+def _balcony_summary_rows(cap="0.8"):
+    rows = []
+    if cap != "0.8":
+        example = rt._balcony_row(rt._balcony_full_id("none", cap, "credited"))
+        ac = rt._balcony_number(example["shared_new_pv_battery_ac_kw"], "higher shared cap")
+        dc = rt._balcony_number(example["pv_dc_kw"], "higher PV size")
+        rows.append(f'<tr><td colspan="4">Sensitivity: {ac:g} kW shared AC output; {dc:g} kW DC panels</td></tr>')
+    for home in _BALCONY_HOMES:
+        for treatment, label in _BALCONY_TREATMENTS:
+            ids = [rt._balcony_full_id(home, cap, treatment, order) for order in _balcony_priorities(home)]
+            totals = [rt._balcony_row(sid)["annual_savings_usd"] for sid in ids]
+            increments = [rt._balcony_delta(rt._balcony_baseline_id(home), sid)[0] for sid in ids]
+            rows.append(f'<tr data-scenarios="{_esc(",".join(ids))}" data-baseline="{_esc(rt._balcony_baseline_id(home) or "post_behavior")}"><td>{_balcony_home_label(home)}</td><td>{label}</td><td>{_balcony_range(increments)}</td><td>{_balcony_range(totals)}</td></tr>')
+    return "\n".join(rows)
+
+
+def _balcony_cost_rows():
+    rows = []
+    for home in _BALCONY_HOMES:
+        for treatment, label in _BALCONY_TREATMENTS:
+            sid = rt._balcony_full_id(home, "0.8", treatment)
+            entry = rt._balcony_cost(sid)
+            economics = entry["economics"]
+            example = entry["cost_sensitivities"][1]
+            cost = rt._balcony_number(example["installed_cost_usd"], "example complete cost")
+            payback = example["simple_payback_years"]
+            saving = entry["incremental_savings_usd"]
+            if saving > 0:
+                rt._balcony_number(payback, "example payback")
+                if abs(payback - cost / saving) > 0.000002:
+                    raise SystemExit("report_blocks: balcony example payback disagrees with the matched increment")
+                illustration = f"{_balcony_money(cost)} / {payback:.1f} yr"
+            elif payback is None:
+                illustration = "No positive payback"
+            else:
+                raise SystemExit("report_blocks: balcony nonpositive increment has a positive payback")
+            rows.append(f'<tr data-scenario="{_esc(sid)}"><td>{_balcony_home_label(home)}</td><td>{label}</td><td>{_balcony_money(economics["five_year"]["break_even_installed_usd"])}</td><td>{_balcony_money(economics["ten_year"]["break_even_installed_usd"])}</td><td>{illustration}</td></tr>')
+    return "\n".join(rows)
+
+
+def _balcony_options_rows():
+    selections = (("PV only", "pv_0.8kw_credited", "pv_0.8kw_zero_credit"),
+                  ("Storage only, same output cap", "battery_power_0.8kw", "battery_power_0.8kw"),
+                  ("PV plus portable storage", "combined_0.8kw_credited", "combined_0.8kw_zero_credit"))
+    rows = []
+    for label, credited, uncredited in selections:
+        values = [rt._balcony_row(sid)["annual_savings_usd"] for sid in (credited, uncredited)]
+        rows.append(f'<tr data-scenarios="{_esc(credited + "," + uncredited)}"><td>{label}</td><td>{_balcony_money(values[0])}</td><td>{_balcony_money(values[1])}</td></tr>')
+    return "\n".join(rows)
+
+
+def _balcony_order_rows():
+    rows = []
+    for home in ("13.5", "27"):
+        for cap in ("0.8", "1.2"):
+            for treatment, label in _BALCONY_TREATMENTS:
+                full = [rt._balcony_full_id(home, cap, treatment, order) for order in _balcony_priorities(home)]
+                pv = rt._balcony_pv_id(home, cap, treatment)
+                standalone = rt._balcony_full_id("none", cap, treatment)
+                # Matched no-PV controller controls retain the balcony output cap.
+                controls = ([f"home_{home}kwh_small_{cap}kw_{order}" for order in _balcony_priorities(home)]
+                            if home == "27" or cap == "0.8" else ["powerwall_then_small", "small_then_powerwall"])
+                increments = ([rt._balcony_delta(standalone, sid)[0] for sid in full],
+                              [rt._balcony_delta(pv, sid)[0] for sid in full],
+                              [rt._balcony_delta(before, after)[0] for before, after in zip(controls, full)])
+                cap_value = rt._balcony_number(rt._balcony_row(full[0])["shared_new_pv_battery_ac_kw"], "shared cap")
+                cells = "".join(f"<td>{_balcony_range(values)}</td>" for values in increments)
+                rows.append(f'<tr data-scenarios="{_esc(",".join(full))}"><td>{_balcony_home_label(home)}</td><td>{cap_value:g} kW</td><td>{label}</td>{cells}</tr>')
+    return "\n".join(rows)
+
+
+def _balcony_component_rows():
+    rows = []
+    for home in _BALCONY_HOMES:
+        for treatment, label in _BALCONY_TREATMENTS:
+            sid = rt._balcony_full_id(home, "0.8", treatment)
+            delta, components = rt._balcony_delta(rt._balcony_baseline_id(home), sid)
+            if abs(components["fixed_usd"]) > 0.00001:
+                raise SystemExit("report_blocks: balcony dispatch changed the fixed daily charge")
+            cells = "".join(f"<td>{_balcony_money(components[key], 2)}</td>" for key in rt._BALCONY_COMPONENTS)
+            rows.append(f'<tr data-scenario="{_esc(sid)}"><td>{_balcony_home_label(home)}</td><td>{label}</td>{cells}<td>{_balcony_money(delta, 2)}</td></tr>')
+    return "\n".join(rows)
+
+
+def _balcony_ladder_rows():
+    rows = []
+    heading_costs = [rt._balcony_number(rung["installed_cost_usd"], "assumed cost heading")
+                     for rung in rt._balcony_cost("combined_0.8kw_credited")["cost_sensitivities"]]
+    for home in _BALCONY_HOMES:
+        for treatment, label in _BALCONY_TREATMENTS:
+            for kind in ("pv", "combined"):
+                sid = (rt._balcony_pv_id(home, "0.8", treatment) if kind == "pv" else
+                       rt._balcony_full_id(home, "0.8", treatment))
+                entry = rt._balcony_cost(sid)
+                saving = entry["incremental_savings_usd"]
+                rungs = entry["cost_sensitivities"]
+                if len(rungs) != 4:
+                    raise SystemExit("report_blocks: balcony complete-cost ladder needs four assumed costs")
+                if [rung["installed_cost_usd"] for rung in rungs] != heading_costs:
+                    raise SystemExit("report_blocks: balcony assumed costs disagree with the table headings")
+                cells = []
+                for rung in rungs:
+                    cost = rt._balcony_number(rung["installed_cost_usd"], "assumed complete incremental cost")
+                    payback = rung["simple_payback_years"]
+                    if saving > 0:
+                        rt._balcony_number(payback, "assumed-cost payback")
+                        if abs(payback - cost / saving) > 0.000002:
+                            raise SystemExit("report_blocks: balcony assumed-cost payback disagrees with its increment")
+                        cells.append(f"<td>{payback:.1f} yr</td>")
+                    elif payback is not None:
+                        raise SystemExit("report_blocks: balcony nonpositive increment has a positive payback")
+                    else:
+                        cells.append("<td>No positive payback</td>")
+                equipment = "PV only" if kind == "pv" else "PV + portable"
+                economics = entry["economics"]
+                rows.append(f'<tr data-scenario="{_esc(sid)}"><td>{_balcony_home_label(home)}; {equipment}</td><td>{label}</td><td>{_balcony_money(economics["five_year"]["break_even_installed_usd"])}</td><td>{_balcony_money(economics["ten_year"]["break_even_installed_usd"])}</td>{"".join(cells)}</tr>')
+    return "\n".join(rows)
+
+
+def _balcony_ladder_headings():
+    entry = rt._balcony_cost("combined_0.8kw_credited")
+    return "".join(f'<th>{_balcony_money(rt._balcony_number(row["installed_cost_usd"], "assumed complete cost"))} assumed cost</th>' for row in entry["cost_sensitivities"])
+
+
+def _balcony_capacity_basis():
+    reference = rt._balcony_row("battery_3.84kwh")["batteries"][0]
+    charge = rt._balcony_number(reference["charge_kw"], "capacity-sweep charge power")
+    discharge = rt._balcony_number(reference["discharge_kw"], "capacity-sweep discharge power")
+    for sid in ("battery_1.92kwh", "battery_3.84kwh", "battery_5.76kwh", "battery_7.68kwh", "battery_11.52kwh"):
+        row = rt._balcony_row(sid)
+        if len(row["batteries"]) != 1 or row["pv_dc_kw"] != 0:
+            raise SystemExit("report_blocks: balcony capacity sweep needs standalone storage without added PV")
+        pack = row["batteries"][0]
+        if pack["charge_kw"] != charge or pack["discharge_kw"] != discharge:
+            raise SystemExit("report_blocks: balcony capacity sweep cannot claim fixed power after a power change")
+    return f"Charge power is {charge:g} kW and discharge power is {discharge:g} kW."
+
+
+def _balcony_capacity_rows():
+    rows = []
+    study = rt._json(rt._BALCONY_ARTIFACT)
+    for before, after in (("battery_1.92kwh", "battery_3.84kwh"),
+                          ("battery_3.84kwh", "battery_5.76kwh"),
+                          ("battery_5.76kwh", "battery_7.68kwh"),
+                          ("battery_7.68kwh", "battery_11.52kwh")):
+        pairs = [row for row in study["marginal_comparisons"] if row["before"] == before and row["after"] == after]
+        if len(pairs) != 1:
+            raise SystemExit("report_blocks: balcony capacity increment needs exactly one matched pair")
+        entry = pairs[0]
+        delta, _ = rt._balcony_delta(before, after)
+        if abs(delta - rt._balcony_number(entry["incremental_savings_usd"], "capacity increment")) > 0.00001:
+            raise SystemExit("report_blocks: balcony capacity increment disagrees with complete bills")
+        sizes = [rt._balcony_number(rt._balcony_row(sid)["batteries"][0]["capacity_kwh"], "capacity") for sid in (before, after)]
+        economics = entry["economics"]
+        ceilings = [rt._balcony_number(economics[key]["break_even_installed_usd"], "capacity ceiling") for key in ("five_year", "ten_year")]
+        rows.append(f'<tr data-baseline="{_esc(before)}" data-scenario="{_esc(after)}"><td>{sizes[0]:g} to {sizes[1]:g} kWh</td><td>{_balcony_money(delta)}</td><td>{_balcony_money(ceilings[0])}</td><td>{_balcony_money(ceilings[1])}</td></tr>')
+    return "\n".join(rows)
+
+
 DATA_BUILDERS = {
+    "s6#12": lambda: _esc(rt._balcony_configuration(None)),
+    "s6#13": _balcony_summary_rows,
+    "s6#14": lambda: _esc(rt._balcony_generic_baselines(None)),
+    "s6#15": _balcony_cost_rows,
+    "s6#16": lambda: _esc(rt._balcony_economic_assumptions(None)),
+    "s6#17": lambda: _esc(rt._balcony_stream_cases(None)),
+    "s6#18": _balcony_options_rows,
+    "s6#19": lambda: _balcony_summary_rows("1.2"),
+    "s6#20": _balcony_order_rows,
+    "s6#21": _balcony_component_rows,
+    "s6#22": _balcony_ladder_headings,
+    "s6#23": _balcony_ladder_rows,
+    "s6#24": _balcony_capacity_basis,
+    "s6#25": _balcony_capacity_rows,
     "top#1": _empty,
     "top#2": _empty,
     "top#3": _empty,

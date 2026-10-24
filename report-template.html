@@ -147,7 +147,7 @@
   nav.toc a:hover{color:var(--ink);border-color:var(--sub)}
   nav.toc a.active{color:var(--sop);border-color:var(--sop)}
   nav.toc a:focus-visible,summary:focus-visible,.totop:focus-visible,.themetoggle:focus-visible{outline:2px solid var(--sop);outline-offset:2px}
-  h2{scroll-margin-top:calc(var(--navh,132px) + 10px)}
+  h2,h3[id]{scroll-margin-top:calc(var(--navh,132px) + 10px)}
   details.sec>summary{cursor:pointer;list-style:none}
   details.sec>summary::-webkit-details-marker{display:none}
   details.sec>summary h2::after{content:"▸";float:right;color:var(--sub);font-size:.95rem;font-weight:400}
@@ -250,12 +250,40 @@
 
 <nav class="toc" id="toc">
 <div class="toc-group"><span class="toc-eyebrow">Verdict</span><a class="toc-home" href="#top" aria-label="Back to the top of the report">⌂ Top</a><a href="#s0">Bottom line</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#s7">7 Packages</a><a href="#s15">Do Monday</a></div>
-<div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a class="adv" href="#s8">8 Array upgrades</a></div>
+<div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a href="#balcony-solar">Balcony solar</a><a class="adv" href="#s8">8 Array upgrades</a></div>
 <div class="toc-group"><span class="toc-eyebrow">Audit</span><a class="adv" href="#s9">9 Deep dives</a><a class="adv" href="#s10">10 Bills &amp; gas</a><a class="adv" href="#s11">11 Payback</a><a class="adv" href="#s12">12 Cleaning</a><a class="adv" href="#s13">13 Carbon · NEM · prices</a><a class="adv" href="#s14">14 Methodology</a><button class="toc-collapse" id="toccollapse" aria-label="Collapse or expand the audit sections">▾ collapse audit</button></div>
 <div class="progress" id="progress"></div>
 </nav>
 
 <!-- TODO: adapt the study description to the analyses actually run; the fixed description below already states the two study tracks. -->
+<div class="purpose" id="report-questions">
+<h3 id="questions-plans">Questions this report examines: plans, behavior, and hardware</h3>
+<ol class="hang">
+<li><a href="#s3">Am I on the best electric rate plan?</a> Answered for the tested plans and year. The separate <a href="#s10">CEA-versus-bundled generation comparison</a> remains conditional.</li>
+<li><a href="#s4">Does adding a battery change which plan is best?</a> Answered within the matched plan model.</li>
+<li><a href="#s5">What behavior changes are worth real money?</a> Conditional modeled savings. <a href="#s9">Charging, cooling, and other load studies</a> have separate limits; overlapping savings cannot be added.</li>
+<li><a href="#s6">Does a home battery pay for itself: which one, dispatched how, at what payback?</a> Conditional on cost and controls. <a href="#s6-sizing">Controller value</a>, <a href="#s6-programs">program revenue</a>, and <a href="#s6-backup">backup</a> use separate assumptions.</li>
+<li><a href="#s8">Should I add panels, install higher-capacity panels, or upgrade microinverters?</a> Defer conventional expansion. Remaining headroom, component faults, and annual clipping loss remain not determined.</li>
+</ol>
+<h3 id="questions-value">Questions this report examines: electrification, solar value, and timing</h3>
+<ol class="hang" start="6">
+<li><a href="#s10">Should I electrify gas appliances?</a> Conditional cases; appliance shares, schedules, electrical fit, and gas-account closure remain unresolved.</li>
+<li><a href="#s11">Has the solar system paid for itself, and what is it worth per year now?</a> Conditional lifetime model; historical household use and the ITC claim are not established.</li>
+<li><a href="#s12">Was paying for panel cleaning worth it, and what cadence and month are optimal?</a> Production response estimated. Dollar recovery and optimal cadence remain not determined.</li>
+<li><a href="#s13">When is grid power cheapest and cleanest, and do those windows align?</a> Answered for tariff windows and average grid emissions. Marginal emissions remain uncomputed.</li>
+<li><a href="#s13">What is NEM 2.0 grandfathering actually worth per year?</a> Conditional current-rate comparison. The best <a href="#s13">purchase date around NEM expiry</a> remains not determined.</li>
+</ol>
+<h3 id="questions-balcony">Balcony systems and open studies</h3>
+<ul>
+<li><a href="#balcony-solar">What do balcony panels and portable storage add, with or without a proposed home battery?</a> Conditional model; panel-only, storage-only, and joint comparisons use matched starting cases.</li>
+<li><a href="#balcony-solar">Which equipment and complete cost can those savings support?</a> Conditional cost ceilings. Complete quotes, supported connections, and exact system certification remain unknown.</li>
+<li><a href="#balcony-solar">Does a qualifying receptacle-connected PV system preserve NEM treatment, and what changes at the statutory sunset?</a> Approval relief has conditions; export compensation and future account treatment remain not determined.</li>
+<li><a href="#service-voltage-status">Is the service voltage within specification, and does it reduce solar production or cost money?</a> Sampled evidence exists. Formal compliance and causal energy or dollar loss remain not determined.</li>
+<li><a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/issues/18#issuecomment-6354504709">Can this home's data reliably identify individual appliances?</a> Open study. Accuracy untested; independent controlled-load records and scored household results remain missing.</li>
+</ul>
+<p><a href="#s10">Why do modeled bills differ from actual bills?</a> The report explains part of the gap; the remainder stays unresolved. <a href="#s7">Fixed charges remain after improvements</a>, while non-bypassable charges depend on physical flows.</p>
+</div>
+
 <h2 id="s0">Bottom line</h2>
 <p class="verdict">{{S0_VERDICT}}</p>
 <div class="rec">
@@ -263,11 +291,12 @@
 <p><!-- TODO: lead the purchase comparison with additional battery savings AFTER the free change ({{BATTERY_MARGINAL_SAVINGS}}), the estimated installed cost ({{BATTERY_COST}}), and the matching post-change hardware-alone payback already stated by {{S0_VERDICT}}. Do not use the pre-change range as the purchase headline. State the expansion's marginal saving and payback separately. --></p>
 <p><!-- TODO: state {{RATES_EFFECTIVE_DATE}}, battery ownership, the unresolved absolute-bill gap, and the quote, electrical, backup-circuit and controller checks beside the purchase estimate. Keep savings conditional on those checks. --></p>
 </div>
+<p>The canonical price-aware purchase simulation holds no standing backup reserve. A permanent reserve changes available energy; that purchase case's saving and payback with a reserve are not calculated here.</p>
 <p>The actual electric bill was <b>{{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo)</b> across a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods<!-- NOTE: exact service dates appear below -->). That historical bill is not the baseline for subtracting modeled savings. The <a href="#s7">package comparison</a> uses one rate date throughout; <a href="#s10">the bill analysis</a> explains the remaining gap.</p>
 <p><!-- TODO: state exact bill service dates and their older rate basis. --> The model moves energy between intervals and re-bills the result (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>).</p>
 <div class="purpose">
-<p>This report compares free changes to energy use with a proposed home battery for the existing rooftop solar system. Actual costs come from bills. Savings and future bills come from models at a stated rate date.</p>
-<p>A separate <a href="research/sb868-portable-solar-storage.md">balcony solar and portable storage study</a> covers different equipment and connection rules. SB 868 qualification alone does not switch tariffs or establish export compensation. Do not add its standalone savings to the home-battery case.</p>
+<p>This report compares rate plans, behavior, proposed storage, and solar options for the existing rooftop system. It also examines electrification, cleaning, and grid emissions. Actual costs come from bills. Savings and future bills come from models at a stated rate date.</p>
+<p>The <a href="#balcony-solar">balcony solar and portable storage comparison</a> separates standalone and joint purchases. Its <a href="research/sb868-portable-solar-storage.md">supporting study</a> states the equipment and connection limits. SB 868 qualification alone does not switch tariffs or establish export compensation. Use matched joint results. Do not add standalone savings.</p>
 <p>Evidence labels distinguish <span class="pill g">measured</span> meter and bill records, <span class="pill y">modeled</span> simulations, and <span class="pill r">estimated</span> approximate inputs. The <a href="#s14">methodology</a> states their limits. The <a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/blob/main/GLOSSARY.md">glossary</a> explains billing and energy terms.</p>
 </div>
 
@@ -284,6 +313,7 @@
 </details>
 
 <details id="s0-cards"><summary>At a glance: results across the report</summary>
+<p>The <a href="#plan-wildcard">TOU-DR-P wildcard</a> is a separate interval-valued screen with assumed event dates. The <a href="#s4">battery×plan matrix</a> supplies the matched price-aware NEM comparison.</p>
 <div class="cards">
   <div class="card"><div class="big">{{BEST_PLAN}}</div><div class="lbl">{{S0_BEST_PLAN_CARD}}</div></div>
   <div class="card"><div class="big blue">~{{ACTUAL_MONTHLY_BILL}}/mo</div><div class="lbl">Actual electric bill: {{ACTUAL_ANNUAL_BILL}}/yr from a complete {{ANALYSIS_DAYS}}-day bill audit</div></div>
@@ -368,7 +398,7 @@
 <ul>
 <li><!-- TODO behavior 1: large loads in the on-peak window — kWh/yr and $ at stake. --></li>
 <li><!-- TODO behavior 2: charging spilling past the cheap-window boundary — kWh/yr and rate delta. --></li>
-<li><!-- TODO behavior 3: evening A/C or other peak-hour comfort load — shiftable value. --></li>
+<li><!-- TODO behavior 3: describe measured evening power as whole-home grid imports, not gross load or an identified appliance. Retain only the conditional value of a 25% on-peak house-load shift. The cooling regression establishes neither its achievable A/C share nor a cooling-specific saving. --></li>
 <li><!-- TODO behavior 4: low-value midday exports vs self-consumption. --></li>
 </ul>
 
@@ -376,6 +406,7 @@
 <p class="verdict">{{S6_VERDICT}}</p>
 <p class="sub"><!-- TODO: framing — the two questions (annual savings, outage endurance); system context; whether storage affects NEM grandfathering; current incentive status ({{INCENTIVE_STATUS}}, a KNOWN_GAPS token: the CA program side is committed research, the federal residential storage credit's current status is not, so this block needs a human-supplied, dated answer). --></p>
 <p>The purchase comparison uses the battery added after the free change: <b>{{BATTERY_MARGINAL_SAVINGS}}/yr</b> in modeled savings at an estimated installed cost of <b>{{BATTERY_COST}}</b>. The <a href="#s7">packages</a> give the matching payback. The other battery figures below answer separate questions.</p>
+<p>The canonical price-aware purchase simulation holds no standing backup reserve. A permanent reserve changes available energy; that purchase case's saving and payback with a reserve are not calculated here.</p>
 <details id="s6-hardware"><summary>Supporting comparison: hardware with on-peak-only operation</summary>
 <h3>On-peak-only simulation (current behavior) <span class="pill y">modeled</span></h3>
 <p class="small">This table uses interval-valued savings from <code>analysis/battery_backup_sims.py</code> → <code>data/battery_sim.json</code>. The dispatch comparison below re-bills the full year through the NEM engine; its savings are a different calculation.</p>
@@ -405,7 +436,7 @@
 </details>
 
 
-<h3>Outage endurance (simulated, 6pm start, solar recharge)</h3>
+<h3 id="s6-backup">Outage endurance (simulated, 6pm start, solar recharge)</h3>
 <p class="small">These simulations start with a full battery and allow solar recharge. The table shows median duration across the tested starts. <!-- NOTE: state the simulation horizon and mark capped results. --> The model caps demand at each battery's discharge rating, so it does not establish that every peak load receives power. <code>analysis/battery_backup_sims.py</code> → <code>data/backup_endurance.json</code>.</p>
 <table>
 <thead><tr><th>Config</th><th>Essentials (~{{ESSENTIALS_KWH_DAY}} kWh/d)</th><th>{{HOUSE_LOAD_COLUMN_HEADER}}</th></tr></thead>
@@ -423,6 +454,95 @@
 <p>The battery payback above excludes virtual power plant revenue. A virtual power plant pays participating homes for power during program events. <!-- TODO: state the backtest's partial-season scope, unresolved household enrollment and backup configuration checks. --></p>
 <details id="s6-vpp"><summary>Supporting analysis: program terms, event backtest, and resilience value</summary>
 <p><!-- TODO: preserve every unique program and resilience fact, figure, citation and assumption. Keep the per-aggregation dispatch basis, event-calendar scope, reserve conventions, pre-staging notice assumption, annualization limit, eligibility and tariff conditions. Do not treat measured inputs as an achieved household result. --></p>
+</details>
+
+<h3 id="balcony-solar">Balcony solar and portable storage: conditional savings, with or without home storage</h3>
+<p>Balcony savings fall after a home battery. A purchase still needs exact equipment evidence and a complete quote. <span class="pill y">modeled</span></p>
+<p>The pathways differ: keep the existing NEM rooftop array with proposed home storage, add balcony PV and portable storage, or combine both. No battery is installed.</p>
+<p><!-- TODO: mechanically render the checked primary balcony configuration and storage assumptions. --> Home-battery discharge keeps its separate power limit.</p>
+<p>The model assumes access to whole-meter load. Actual circuits, phase coverage, sensing, and controller coordination remain unknown. A refrigerator-only connection cannot claim these savings. New exports receiving NEM credit remain a hypothetical pricing case.</p>
+<table id="balcony-main-results">
+<thead><tr><th>Proposed home storage</th><th>Extra-export treatment</th><th>Balcony + portable added after home storage: extra saving/yr</th><th>All hardware together: total saving/yr</th></tr></thead>
+<tbody>
+<!-- TODO: mechanically render the primary matched joint-scenario annual ranges from portable_solar_storage.json. -->
+</tbody>
+</table>
+<p class="small">Extra saving is the bill with home storage alone minus the bill after the balcony system is added. Total saving compares all added hardware with the existing rooftop after the free schedule change, with no added hardware. Ranges cover home-first and portable-first controller priority. They describe controller priority; they do not bound model uncertainty.</p>
+<p class="small"><!-- TODO: mechanically render the two generic home-storage-only annual model baselines. --> The canonical price-aware purchase case above instead gives {{BATTERY_MARGINAL_SAVINGS}}/yr after the free change, with no standing reserve. Keep these model bases separate. Do not add this table's increment to that canonical saving.</p>
+<p class="small">All results use {{RATES_EFFECTIVE_DATE}} rates and exclude the free behavior saving. Credited exports and physical exports remain separate. No-extra-credit removes compensation for incremental meter exports, including displaced rooftop exports. Exact settlement and the historical bill residual remain unresolved.</p>
+<h4 id="balcony-complete-cost">What complete incremental cost can the saving support?</h4>
+<p>The ceilings below price only the added balcony system. They exclude the proposed home battery's cost. Actual complete quotes and ownership costs remain unknown.</p>
+<table id="balcony-cost-results">
+<thead><tr><th>Proposed home storage</th><th>Extra-export treatment</th><th>Five-year extra-cost ceiling</th><th>Ten-year extra-cost ceiling</th><th>Assumed complete extra cost / simple payback</th></tr></thead>
+<tbody>
+<!-- TODO: mechanically render complete incremental cost ceilings and an assumed-cost payback example for the primary combined cases. -->
+</tbody>
+</table>
+<p class="small"><!-- TODO: mechanically render the incremental economics assumptions from the artifact. --> The cost table uses home-first priority. These discounted ceilings precede unknown maintenance, subscription, replacement, and transition costs. Those costs reduce the amount available for equipment and installation. Simple payback divides the assumed complete extra cost by its own extra annual saving.</p>
+<p>The manufacturer advertised one EcoFlow Stream Ultra at {{BALCONY_STREAM_PRICE}} on October 23, 2026; that variant was unavailable. This equipment price excludes panels, connection work, tax, and other costs. <!-- TODO: mechanically render separate default and conditional Stream-shaped results with their output and capacity. --> Higher output needs the manual's circuit and app conditions. The main generic storage configuration is not an exact certified Stream package. <a href="https://us.ecoflow.com/products/stream-ultra">Manufacturer page</a>, <a href="https://us.ecoflow.com/products/stream-ultra.js">variant record</a>, <a href="https://ecoflow-service-us-prod.oss-us-west-1.aliyuncs.com/cms/manual/1753783795065/EcoFlow%20STREAM%20Ultra_User%20Manual.pdf#page=13">U.S. manual</a>.</p>
+<details id="balcony-model"><summary>Supporting comparison: panels, storage, controller priority, and bill components</summary>
+<h4>Panels only, storage only, or both without home storage</h4>
+<p>These rows use the main balcony output cap and compare each purchase with the same bill with the existing rooftop after the free schedule change, with no added hardware. The storage-only row holds its output cap equal to the combined case. It can use existing rooftop surplus and cheap grid energy.</p>
+<table id="balcony-options-results">
+<thead><tr><th>Hardware added</th><th>Annual saving with hypothetical extra-export credit</th><th>Annual saving without extra-export credit</th></tr></thead>
+<tbody>
+<!-- TODO: mechanically render matched-cap PV-only, portable-only, and combined annual savings from the portable artifact. -->
+</tbody>
+</table>
+<h4>Higher shared-output sensitivity</h4>
+<p>The higher-cap case changes both panel size and available portable discharge. It is not a panel-only increment. The artifact records its AC cap, DC size, and complete flows.</p>
+<table id="balcony-higher-cap-results">
+<thead><tr><th>Proposed home storage</th><th>Extra-export treatment</th><th>Balcony + portable added after home storage: extra saving/yr</th><th>All hardware together: total saving/yr</th></tr></thead>
+<tbody>
+<!-- TODO: mechanically render the higher-cap matched joint-scenario annual ranges. -->
+</tbody>
+</table>
+<h4>Which purchase comes first?</h4>
+<p>Each column below compares complete bills after the named purchase. The home-first and portable-first controller priorities give the range. Purchase sequence and controller priority answer different questions; neither proves that real controllers coordinate.</p>
+<table id="balcony-order-results">
+<thead><tr><th>Home storage</th><th>Shared AC cap</th><th>Extra-export treatment</th><th>Home added after balcony + portable: extra saving/yr</th><th>Portable added after home + PV: extra saving/yr</th><th>Panels added after matched home + portable: extra saving/yr</th></tr></thead>
+<tbody>
+<!-- TODO: mechanically render both purchase directions and controller priorities using matched home, PV and portable controls. -->
+</tbody>
+</table>
+<p>The additional portable battery earns much less after larger home storage. Panels and storage compete with existing resources for the same load. Each added purchase needs its own cost comparison; standalone savings cannot be added.</p>
+<h4>What parts of the electric bill change?</h4>
+<p>This table splits the main system's extra saving after home storage, using home-first priority. A negative value means added cost. Display rounding can leave a cent difference between the cells and their total.</p>
+<table id="balcony-component-results">
+<thead><tr><th>Home storage</th><th>Extra-export treatment</th><th>Delivery</th><th>CEA generation</th><th>PCIA</th><th>NBC</th><th>Fixed daily charge</th><th>Total extra saving/yr</th></tr></thead>
+<tbody>
+<!-- TODO: mechanically render matched-bill component offsets; fail if the fixed daily charge changes. -->
+</tbody>
+</table>
+<p>The daily electric charge stays unchanged. Gas stays unchanged and outside this electric model. NBC uses positive physical interval net; its utility-mechanics limits remain in <a href="#s14">the methodology</a>.</p>
+<p>The model keeps charging sources, losses, standby, curtailment, and annual state of charge separate. Added PV follows the existing production shape; it is not a measured balcony placement. Selected-appliance performance and an NBT-optimized controller remain untested. See <a href="data/portable_solar_storage.json">the artifact</a> and <a href="research/sb868-portable-solar-storage.md">the study</a>.</p>
+</details>
+<details id="balcony-cost-ladders"><summary>Supporting costs: assumed complete prices and added battery capacity</summary>
+<p>These complete incremental costs are assumptions. Actual quotes remain unknown. Long simple-payback ratios do not establish equipment life. Each payback excludes the home battery's cost and the free behavior saving. Combined home cases use home-first priority. PV-only cases provide a separate panels-before-storage comparison.</p>
+<table id="balcony-ladder-results">
+<thead><tr><th>Home storage; added system</th><th>Extra-export treatment</th><th>Five-year ceiling</th><th>Ten-year ceiling</th><!-- TODO: mechanically render the four assumed complete incremental cost headings. --></tr></thead>
+<tbody>
+<!-- TODO: mechanically render the full PV-only and combined incremental complete-cost ladders. -->
+</tbody>
+</table>
+<h4>Extra storage must earn its own cost</h4>
+<p>The capacity sweep uses standalone generic storage without home storage or new PV. <!-- TODO: mechanically render the fixed charge and discharge power of the standalone capacity sweep. --> The last step adds more capacity than the earlier steps. Compare its own extra saving with its own extra cost ceiling.</p>
+<table id="balcony-capacity-results">
+<thead><tr><th>Generic capacity change</th><th>Extra saving/yr</th><th>Five-year extra-cost ceiling</th><th>Ten-year extra-cost ceiling</th></tr></thead>
+<tbody>
+<!-- TODO: mechanically render fixed-power battery capacity increments and their own discounted ceilings. -->
+</tbody>
+</table>
+<p>No new homeowner federal credit enters these costs. Federal credit guidance excludes property placed in service after December 31, 2025. Backup value and program revenue remain separate. <a href="https://www.irs.gov/credits-deductions/residential-clean-energy-credit">Federal credit guidance</a>.</p>
+</details>
+<p>A qualifying SB 868 system needs no prior utility approval or interconnection agreement once its exemption takes effect. Exact system certification, electrical-code compliance, and the supported connection remain necessary. Qualification alone establishes neither NEM retention nor export compensation.</p>
+<details id="balcony-legal"><summary>Supporting legal and equipment limits: effective date, notification, sunset, and backup</summary>
+<p>SB 868 was signed September 30, 2026 as Chapter 985. Its ordinary January 1, 2027 effective date follows from the Secretary of State's general rule. This is an effective-date inference; the exemption is not effective on this report date. <a href="https://www.gov.ca.gov/2026/09/30/governor-newsom-issues-legislative-update-9-30-2026/">Governor's signed-bill list</a>, <a href="https://www.sos.ca.gov/administration/bill-chapters">effective-date rule</a>.</p>
+<p>Qualifying receptacle-connected PV systems have a 1,200 W aggregate AC limit per dwelling. They need onsite-consumption intent, current electrical-code compliance, nationally recognized laboratory system certification, and certified outage isolation. A component listing alone does not certify the complete system. The chaptered text grants approval relief and permits simple online notice; notice cannot require approval.</p>
+<p>The official text endpoint returned an access error during the source check. The disclosed <a href="https://legiscan.com/CA/text/SB868/2025">chaptered-text mirror, sections 8530–8532</a> supplies these details. Existing hardwired rooftop PV appears separate from the defined qualifying devices; that reading does not establish a battery-only exemption or new-export credit. <a href="https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB868">Official text endpoint</a>.</p>
+<p>The approval-exemption section repeals January 1, 2030. The following section restricts sales that fail its code, certification, and isolation conditions. The text establishes neither automatic shutdown nor permanent exemption. Applicable future equipment and account treatment, and any compliance cost, remain unknown.</p>
+<p>Backup needs a separate supported connection and measured load. Ordinary home outlets lose Stream supply during an outage; directly connected appliances can transfer with up to three seconds of interruption. The system is not an uninterruptible power supply. No checked evidence establishes automatic outage recharge from this home's IQ7X rooftop array. <a href="https://ecoflow-service-us-prod.oss-us-west-1.aliyuncs.com/cms/manual/1753783795065/EcoFlow%20STREAM%20Ultra_User%20Manual.pdf#page=15">Stream manual</a>, <a href="https://enphase.com/sites/default/files/2021-05/IQ7X-DS-EN-US.pdf">IQ7X datasheet</a>.</p>
+<p>The study also prices unchanged physical flows under current NBT assumptions. Those signed ledgers omit settlement-credit limits and relevant-period accounting. They establish no payable-bill saving, mandatory tariff migration, or future economics around NEM expiry. Future tariffs, equipment, and the best adoption date remain unknown. <a href="research/sb868-portable-solar-storage.md#present-2026-nbt-sensitivity-fixed-flows-signed-costs-before-settlement-limits">Present NBT sensitivity and limits</a>.</p>
 </details>
 
 <h2 id="s7">7 · The decision: three packages</h2>
@@ -443,6 +563,7 @@
 </div>
 <div class="pkg best">
 <h3>MID — {{BATTERY_COST}} · + 1 {{BATTERY_MODEL}} · quote candidate</h3>
+<p>The canonical price-aware purchase simulation holds no standing backup reserve. A permanent reserve changes available energy; that purchase case's saving and payback with a reserve are not calculated here.</p>
 <ul>
 <li><!-- TODO: combined savings from the one integrated pipeline (EV shift first, then battery, re-billed end-to-end). --></li>
 <li><!-- TODO: projected bill at constant current rates vs no-changes counterfactual; note rate-vintage caveat vs last year's actual. --></li>
@@ -525,6 +646,11 @@
 <h3>Array health: multi-year degradation trend</h3>
 <p><!-- TODO: the size-normalized yearly efficiency series ({{ARRAY_EFFICIENCY_SERIES}}), the naive trend it implies ({{DEGRADATION_NAIVE_RANGE}}), and the weather/soiling caveat that stops the naive trend being a degradation rate ({{DEGRADATION_WEATHER_CAVEAT}}). Close on the verdict the artifact itself publishes: the true, weather-corrected rate is NOT DETERMINED and is not bounded either, because the inputs used for this study do not separate those effects. Existing collected history needs a separate quality check. Say what would settle it (a multi-year daily production plus rainfall record, or a measured before/after gain at each cleaning). Do not narrow that to a tighter bracket. --></p>
 
+<h3 id="service-voltage-status">Service voltage: sampled results do not establish production loss</h3>
+<p>The archive covers more than sixty days. Retained voltage samples lie within the cited Range A limits. The tested models establish no inverse voltage-production association at their stated uncertainty.</p>
+<p>Coverage gaps and unknown sensing location and accuracy prevent a continuous-compliance conclusion. Frequency provides a measurement-chain sanity check. The study does not establish zero production loss; causal lost kWh and dollars remain undetermined.</p>
+<p>No documented sampled exceedance supports a utility-violation claim. A customer can request an SDG&amp;E investigation of a suspected problem without prior calibrated measurements. Attribution and the complaint-or-compliance disposition remain open. See <a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/issues/19#issuecomment-6354505435">the sampled-study status</a> and <a href="data/service_voltage.json">the aggregate evidence</a>.</p>
+
 <h3>Inverter clipping (high-resolution data)</h3>
 <p><!-- TODO: cross-reference the §8 finding; the largest output each source recorded ({{PV_PEAK_OBSERVED}}), how close the closest of them came to the inverter nameplate ({{PV_PEAK_HEADROOM}}), and the closest approach in the 2024 cleaning-study sample ({{PEAK_POWER_MULTIYEAR}}, which names the window it covers and is NOT a record-wide maximum — do not call it one) against the {{AC_CEILING_KW}} kW AC ceiling. The three maxima are NOT comparable readings of one quantity and the verdict must say so — carry {{PV_PEAK_BASIS}}, which states what each instrument measures and why the largest of them is not a per-interval ceiling. --></p>
 
@@ -534,8 +660,8 @@
 <h3>{{SEC9_EV_HEADING}}</h3>
 <p><!-- TODO: session-level results — say what a session IS before counting them ({{EV_DETECTION_BASIS}}), since the count is that rule's output rather than a reading; then sessions ({{EV_SESSION_COUNT}}) and energy ({{EV_ANNUAL_KWH}}, averaging {{EV_AVG_SESSION_KWH}} a session), where that energy lands by window ({{EV_WINDOW_DECOMPOSITION}}), and the share already charging in the cheap window ({{EV_SOP_COMPLIANCE_PCT}}). Then, in a SEPARATE sentence, the free fix: what full compliance is worth ({{EV_FIX_SAVINGS_100}}) versus a realistic {{EV_FIX_SAVINGS_80}}. Those two savings figures come from re-billing whole shifted sessions, not from the compliance share above — do not present them as one basis. WHERE THE HOUSEHOLD HAS NO EV every token in this paragraph renders behavior_rebuild.py's own "not applicable — household.has_ev is false" instead of a figure, and the heading above this paragraph says so too: write ONE sentence stating that this household has no EV and that the detector therefore ran nothing, cite the reason those tokens carry, and write no session count, no kWh and no saving. --></p>
 
-<h3>Plan wildcard: can {{WILDCARD_PLAN}} + a battery beat {{BEST_PLAN}}?</h3>
-<p><!-- TODO: the adversarial cross-check — best-case modeling for the wildcard plan and the resulting verdict. --></p>
+<h3 id="plan-wildcard">Plan wildcard: can {{WILDCARD_PLAN}} + a battery beat {{BEST_PLAN}}?</h3>
+<p><!-- TODO: report the separate on-peak-only, interval-valued screen from deep_analyses.py and deep_results.json. State assumed event dates, charge outside on-peak, partial-charge top-up, and charge/power limits. It does not establish perfect event avoidance or use monthly NEM billing. Link the matched price-aware NEM comparison in §4; do not mix its bills or policies with this screen. --></p>
 
 <h3>Quiet-night load: its cost and evidence limits</h3>
 <div class="note"><!-- TODO: the honesty note — what the overnight floor is on THIS household and what it costs ({{NIGHT_FLOOR_ANNUAL_KWH}} at {{NIGHT_FLOOR_ANNUAL_COST}}), read off the same window and the same artifact §13 uses, since one load may not carry two sets of figures two sections apart. The annual figures need the sample they rest on ({{NIGHT_FLOOR_SAMPLE}}) and the qualifier they may not appear without ({{NIGHT_FLOOR_PRICING_BASIS}}) here too, not only in §13 — a reader of this note may never open that section. Explain that an annual cost does not establish a recoverable saving, because nothing here meters which appliance behind the floor could be switched off. Give the local rate ({{NIGHT_FLOOR_SENSITIVITY_PER_100W}}) and state that later steps remove less energy where the request exceeds metered imports. It does not scale to arbitrary load removal. If the owner attests a cause for this household's floor, keep that attestation and label it attested rather than metered. --></div>
@@ -562,8 +688,8 @@
 <p><!-- TODO: what the gas bills show about fixed vs volumetric charges and what that means for eventually closing the gas account. --></p>
 
 <h2 id="s11">11 · Lifetime value: {{S11_VERDICT_SHORT}}</h2>
-<p><span class="pill y">modeled</span> <span class="pill r">estimated index</span> <span class="small"><!-- TODO: one line on the method split — value at the stated rate vintage from the netting model; historical years scaled by a published rate index. Describe the crossover as estimated, not an observed recovery of cash, and state the index uncertainty. --></span></p>
-<p>The install invoice shows <b>{{SYSTEM_GROSS_COST}}, paid {{INSTALL_PAYMENT_DATE}}</b>, with PTO on {{PTO_DATE}}. Valuing each year's <i>actual metered production</i> at that year's blended $/kWh:</p>
+<p><span class="pill y">modeled</span> <span class="pill r">estimated index</span> <span class="small"><!-- TODO: one line on the method split — value at the stated rate vintage from the netting model; historical years scaled by a published rate index. Describe the crossover as estimated, not an observed recovery of cash. State that historical production uses the recent load/value profile and approximate index. The model does not calculate an uncertainty interval. --></span></p>
+<p>The install invoice shows <b>{{SYSTEM_GROSS_COST}}, paid {{INSTALL_PAYMENT_DATE}}</b>, with PTO on {{PTO_DATE}}. The model applies the recent load/value profile and an approximate rate index to each year's <i>actual metered production</i>:</p>
 <table>
 <thead><tr><th>Year</th><th>Production (kWh)</th><th>Value that year</th><th>Cumulative</th></tr></thead>
 <tbody>
@@ -572,7 +698,7 @@
 </tbody>
 </table>
 <p class="small"><!-- TODO: rounding note for the cumulative column. --></p>
-<div class="rec"><b>{{PAYBACK_HEADLINE}}</b> <!-- TODO: crossover dates with and without the federal ITC; current $/yr value from the no-solar counterfactual; blended $/kWh now vs under the prior TOU structure; index-precision caveat. Cite {{LIFETIME_SCRIPT}}. --></div>
+<div class="rec"><b>{{PAYBACK_HEADLINE}}</b> <!-- TODO: crossover dates with and without the federal ITC; current $/yr value from the no-solar counterfactual; blended $/kWh now vs under the prior TOU structure; recent-load/value and approximate-index limits. State that the model does not calculate an uncertainty interval for crossover dates. Cite {{LIFETIME_SCRIPT}}. --></div>
 
 <details class="sec" id="sec12" open>
 <summary><h2 id="s12">12 · Panel cleaning &amp; soiling</h2><span class="teaser">{{SEC12_TEASER}}<!-- TODO: one conclusion: historical production effect, evidence scope, and undetermined future cleaning payback. --></span></summary>
@@ -670,9 +796,9 @@
 <li><b>Package math:</b> <!-- TODO: how package savings deltas are computed and anchored; payback conventions (simple, no escalation); incentive assumptions. --></li>
 <li><b>Bill validation:</b> <!-- TODO: statements parsed, coverage, penny-level rate matches, product/zone confirmations, actual annual total. --></li>
 <li><b>Confidence labels:</b> <span class="pill g">measured</span> = read directly from meters, bills, or multi-source-verified records; <span class="pill y">modeled</span> = computed under the stated assumptions; <span class="pill r">estimated</span> = uses approximate inputs or limited observations. A modeled label does not establish complete bill reconciliation; the bill section states the remaining gap. Labels follow the evidence for each finding.</li>
-<li><b>Caveats:</b> <!-- TODO: rate-change cadence, unsimulated surcharges, price-estimate disclaimer. --></li>
+<li><b>Caveats:</b> <!-- TODO: rate-change cadence and estimated prices. The main plan table excludes TOU-DR-P event surcharges; the separate interval-valued screen uses assumed event dates. Link #plan-wildcard and keep those methods distinct. --></li>
 <li><b>Cleaning &amp; soiling (<a href="#s12">§12</a>):</b> <!-- TODO: diff-in-diff window design and soiling-study method; cite data files and {{SOILING_SCRIPT}}. --></li>
-<li><b>Lifetime payback (<a href="#s11">§11</a>):</b> <!-- TODO: counterfactual + rate-index method and precision; invoice/PTO provenance. --></li>
+<li><b>Lifetime payback (<a href="#s11">§11</a>):</b> <!-- TODO: historical production uses the recent load/value profile from the no-solar counterfactual plus an approximate rate index. Do not claim a numerical uncertainty bound: the model calculates no uncertainty interval for crossover dates. Retain invoice/PTO provenance. --></li>
 <li><b>Carbon (<a href="#s13">§13</a>):</b> <!-- TODO: grid-operator data files, intensity computation, grid-average-vs-marginal caveat; cite {{CARBON_SCRIPT}}. --></li>
 <li><b>NBT counterfactual &amp; price map (<a href="#s13">§13</a>):</b> <!-- TODO: successor-tariff export-rate variants; price-map source file. --></li>
 <li><b>Quiet-night floor method (<a href="#s13">§13</a>):</b> <!-- TODO: the quiet-night selection rule (window, per-night gate, and what the gate does and does not identify), the statistics computed from the kept nights, and the two pricing methods applied to the floor; name the script and the artifact it writes. --></li>

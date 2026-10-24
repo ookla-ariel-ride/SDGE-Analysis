@@ -102,7 +102,10 @@ midday kWh** rate. Label archived estimates without reproduced calculations and 
 the cumulative-value curve: each year's ACTUAL production × that year's blended $/kWh under
 the TOU structure in force at the time, scaled by the utility's average-rate history (a rate
 index — never today's rates back-cast over history). Find gross and net-of-ITC crossover
-dates; flag them ±10%. Also state solar's value per year TODAY by re-billing a no-solar
+dates. State that historical production uses the recent load/value profile and an
+approximate rate index. Report a numerical uncertainty interval only if a calculation
+produces it; otherwise state that the model calculates no uncertainty interval. Also
+state solar's value per year TODAY by re-billing a no-solar
 counterfactual on the bill-validated netting model.
 
 **5. Behavior — session-based, energy moved physically, never as lump sums.** Detect EV

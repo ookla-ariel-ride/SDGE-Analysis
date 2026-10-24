@@ -42,7 +42,7 @@ def _require_household():
 
 
 # ---------------------------------------------------------------------------
-# AC: every one of the (currently 104) TODO blocks the template actually
+# AC: every one of the TODO blocks the template actually
 # contains is classified, and the classification covers the template EXACTLY
 # -- re-parsed fresh, not against a hardcoded count.
 # ---------------------------------------------------------------------------
@@ -1099,6 +1099,108 @@ def case_every_reclassified_block_can_see_and_resolve_its_own_figures():
             total += 1
     return (f"all {total} figures across the {len(_RECLASSIFIED_FIGURES)} reclassified "
             "blocks are in their own block's scope and resolve against the real archive")
+
+
+@case
+def case_balcony_builders_cover_all_selected_tables_and_paragraphs():
+    expected = {"s6#13": 6, "s6#15": 6, "s6#18": 3, "s6#19": 7,
+                "s6#20": 8, "s6#21": 6, "s6#23": 12, "s6#25": 4}
+    for bid, count in expected.items():
+        out = rb.DATA_BUILDERS[bid]()
+        assert len(re.findall(r"<tr(?:\s|>)", out)) == count, bid
+    for bid in ("s6#12", "s6#14", "s6#16", "s6#17", "s6#24"):
+        assert rb.DATA_BUILDERS[bid](), bid
+    assert len(re.findall(r"<th>", rb.DATA_BUILDERS["s6#22"]())) == 4
+    return "all portable/joint numerical paragraphs, eight tables, and assumed-cost headings render"
+
+
+@case
+def case_balcony_builders_refuse_missing_nonfinite_and_inconsistent_sources():
+    import copy
+    real_json = rt._json
+    study = real_json("portable_solar_storage.json")
+    sid = "combined_0.8kw_credited"
+    clean = {"baseline": study["baseline"],
+             "scenarios": [row for row in study["scenarios"] if row["id"] == sid],
+             "financial_sensitivities": {"incremental_complete_cost_sensitivities": [
+                 row for row in study["financial_sensitivities"]["incremental_complete_cost_sensitivities"]
+                 if row["scenario_id"] == sid]}}
+    def refuse(label, change, call):
+        fixture = copy.deepcopy(clean)
+        change(fixture)
+        rt._json = lambda name: fixture if name == "portable_solar_storage.json" else real_json(name)
+        try:
+            try:
+                call()
+            except SystemExit as error:
+                assert "balcony" in str(error), (label, error)
+            else:
+                raise AssertionError(label + " did not refuse")
+        finally:
+            rt._json = real_json
+    refuse("missing scenario", lambda s: s["scenarios"].clear(), lambda: rt._balcony_row(sid))
+    refuse("duplicate scenario", lambda s: s["scenarios"].append(s["scenarios"][0]), lambda: rt._balcony_row(sid))
+    for key in ("annual_savings_usd",):
+        refuse("nonfinite " + key, lambda s, key=key: s["scenarios"][0].__setitem__(key, float("nan")), lambda: rt._balcony_row(sid))
+    for key in ("reserve", "rte", "standby_w", "capacity_kwh"):
+        refuse("nonfinite " + key, lambda s, key=key: s["scenarios"][0]["batteries"][0].__setitem__(key, float("inf")), lambda: rt._balcony_configuration(None))
+    refuse("wrong behavior", lambda s: s["scenarios"][0].__setitem__("behavior", "unchanged"), lambda: rt._balcony_row(sid))
+    refuse("broken bill", lambda s: s["scenarios"][0]["bill"].__setitem__("total_usd", 1), lambda: rt._balcony_row(sid))
+    refuse("missing cost package", lambda s: s["financial_sensitivities"]["incremental_complete_cost_sensitivities"].clear(), lambda: rt._balcony_cost(sid))
+    refuse("wrong ceiling", lambda s: s["financial_sensitivities"]["incremental_complete_cost_sensitivities"][0]["economics"]["five_year"].__setitem__("break_even_installed_usd", 1), lambda: rt._balcony_cost(sid))
+    refuse("invented quote", lambda s: s["financial_sensitivities"]["incremental_complete_cost_sensitivities"][0]["economics"].__setitem__("installed_cost_usd", 1), lambda: rt._balcony_cost(sid))
+    return "portable/joint builders refuse absent, duplicate, nonfinite, mismatched-bill, wrong-ceiling and invented-quote inputs"
+
+
+@case
+def case_balcony_cost_ladder_refuses_mislabelled_cost_columns():
+    import copy
+    real_json = rt._json
+    source = real_json("portable_solar_storage.json")
+    selected = {"combined_0.8kw_credited", "pv_0.8kw_credited"}
+    fixture = {"baseline": source["baseline"],
+               "scenarios": [r for r in source["scenarios"] if r["id"] in selected],
+               "financial_sensitivities": {"incremental_complete_cost_sensitivities": copy.deepcopy([
+                   r for r in source["financial_sensitivities"]["incremental_complete_cost_sensitivities"]
+                   if r["scenario_id"] in selected])}}
+    row = next(r for r in fixture["financial_sensitivities"]["incremental_complete_cost_sensitivities"]
+               if r["scenario_id"] == "pv_0.8kw_credited")
+    row["cost_sensitivities"][0]["installed_cost_usd"] += 1
+    rt._json = lambda name: fixture if name == "portable_solar_storage.json" else real_json(name)
+    try:
+        try:
+            rb._balcony_ladder_rows()
+        except SystemExit as error:
+            assert "table headings" in str(error), error
+        else:
+            raise AssertionError("a row's differing assumed costs kept the shared headings")
+    finally:
+        rt._json = real_json
+    return "portable/joint cost ladders refuse a row whose assumed costs disagree with the displayed columns"
+
+
+@case
+def case_balcony_increment_and_format_keep_negative_savings():
+    import copy
+    real_json = rt._json
+    study = real_json("portable_solar_storage.json")
+    sid = "combined_0.8kw_credited"
+    row = copy.deepcopy(next(row for row in study["scenarios"] if row["id"] == sid))
+    baseline = study["baseline"]["post_behavior"]
+    row["bill"]["components"] = copy.deepcopy(baseline["components"])
+    row["bill"]["components"]["delivery_usd"] += 100
+    row["bill"]["total_usd"] = baseline["total_usd"] + 100
+    row["annual_savings_usd"] = -100
+    fixture = {"baseline": study["baseline"], "scenarios": [row]}
+    rt._json = lambda name: fixture if name == "portable_solar_storage.json" else real_json(name)
+    try:
+        increment, components = rt._balcony_delta(None, sid)
+        assert abs(increment + 100) < 0.00001 and abs(components["delivery_usd"] + 100) < 0.00001
+        assert rb._balcony_range([increment]) == "-$100"
+        assert rb._balcony_money(increment, 2) == "-$100.00"
+    finally:
+        rt._json = real_json
+    return "portable/joint incremental savings and displayed signs preserve a modeled loss"
 
 
 def main():

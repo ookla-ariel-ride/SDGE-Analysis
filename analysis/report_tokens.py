@@ -9548,6 +9548,146 @@ _tok("NIGHT_FLOOR_SENSITIVITY_PER_100W", phrase=True, kind="derived", get=_night
               "(reachable and full_ladder)"])
 
 
+# Portable/joint report interface. Dispatch remains owned by portable_solar_storage.py.
+_BALCONY_ARTIFACT = "portable_solar_storage.json"
+_BALCONY_COMPONENTS = ("delivery_usd", "generation_usd", "pcia_usd", "nbc_usd", "fixed_usd")
+
+
+def _balcony_number(value, label):
+    if not _finite(value):
+        raise SystemExit(f"report_tokens: balcony {label} must be a finite number")
+    return value
+
+
+def _balcony_row(scenario_id):
+    rows = [r for r in _json(_BALCONY_ARTIFACT)["scenarios"] if r["id"] == scenario_id]
+    if len(rows) != 1:
+        raise SystemExit(f"report_tokens: balcony scenario {scenario_id!r} needs exactly one artifact row")
+    row = rows[0]
+    if row["behavior"] != "post_free_fix":
+        raise SystemExit(f"report_tokens: balcony scenario {scenario_id!r} has a different behavior baseline")
+    annual = _balcony_number(row["annual_savings_usd"], scenario_id + " annual saving")
+    total = _balcony_number(row["bill"]["total_usd"], scenario_id + " bill")
+    baseline = _balcony_number(_json(_BALCONY_ARTIFACT)["baseline"]["post_behavior"]["total_usd"], "post-behavior bill")
+    components = [_balcony_number(row["bill"]["components"][k], scenario_id + " " + k)
+                  for k in _BALCONY_COMPONENTS]
+    if abs(sum(components) - total) > 0.00001 or abs(baseline - total - annual) > 0.00001:
+        raise SystemExit(f"report_tokens: balcony scenario {scenario_id!r} disagrees with its complete bill")
+    return row
+
+
+def _balcony_baseline_id(home):
+    return {"none": None, "13.5": "large_13.5kwh_11.5kw", "27": "large_27kwh_11.5kw"}[home]
+
+
+def _balcony_full_id(home, cap, treatment, order="home_first"):
+    if home == "none":
+        return f"combined_{cap}kw_{treatment}"
+    return f"home_{home}kwh_combined_{cap}kw_{treatment}_{order}"
+
+
+def _balcony_pv_id(home, cap, treatment):
+    return f"pv_{cap}kw_{treatment}" if home == "none" else f"home_{home}kwh_pv_{cap}kw_{treatment}"
+
+
+def _balcony_delta(before_id, after_id):
+    after = _balcony_row(after_id)
+    before = (_balcony_row(before_id)["bill"] if before_id not in (None, "post_free_fix", "post_behavior") else
+              _json(_BALCONY_ARTIFACT)["baseline"]["post_behavior"])
+    delta = (_balcony_number(before["total_usd"], "before bill") - after["bill"]["total_usd"])
+    components = {key: _balcony_number(before["components"][key], "before " + key)
+                  - after["bill"]["components"][key] for key in _BALCONY_COMPONENTS}
+    if abs(sum(components.values()) - delta) > 0.00001:
+        raise SystemExit("report_tokens: balcony incremental components do not sum to the complete-bill difference")
+    return delta, components
+
+
+def _balcony_cost(scenario_id):
+    rows = [r for r in _json(_BALCONY_ARTIFACT)["financial_sensitivities"]
+            ["incremental_complete_cost_sensitivities"] if r["scenario_id"] == scenario_id]
+    if len(rows) != 1:
+        raise SystemExit(f"report_tokens: balcony complete-cost package {scenario_id!r} needs exactly one row")
+    row = rows[0]
+    expected_baseline = ("large_13.5kwh_11.5kw" if scenario_id.startswith("home_13.5kwh_") else
+                         "large_27kwh_11.5kw" if scenario_id.startswith("home_27kwh_") else "post_free_fix")
+    if row["baseline_id"] != expected_baseline:
+        raise SystemExit("report_tokens: balcony complete-cost package has a mismatched home baseline")
+    increment, _ = _balcony_delta(row["baseline_id"], scenario_id)
+    stored = _balcony_number(row["incremental_savings_usd"], "cost-package increment")
+    if abs(increment - stored) > 0.00001:
+        raise SystemExit(f"report_tokens: balcony complete-cost package {scenario_id!r} has a different increment")
+    economics = row["economics"]
+    if economics["installed_cost_usd"] is not None or economics["simple_payback_years"] is not None:
+        raise SystemExit("report_tokens: balcony actual complete quote and actual payback remain unknown")
+    assumptions = economics["assumptions"]
+    discount = _balcony_number(assumptions["real_discount"], "real discount")
+    decline = _balcony_number(assumptions["annual_savings_decline"], "annual decline")
+    escalation = _balcony_number(assumptions["real_tariff_escalation"], "tariff escalation")
+    if discount <= -1 or not 0 <= decline <= 1 or escalation != 0:
+        raise SystemExit("report_tokens: balcony economics need the stated discount/decline and zero real escalation")
+    for years, key in ((5, "five_year"), (10, "ten_year")):
+        ceiling = _balcony_number(economics[key]["break_even_installed_usd"], key + " ceiling")
+        calculated = sum(increment * (1 - decline) ** (y - 1) / (1 + discount) ** y
+                         for y in range(1, years + 1))
+        if abs(ceiling - calculated) > 0.00002:
+            raise SystemExit(f"report_tokens: balcony {key} ceiling disagrees with its matched increment")
+    return row
+
+
+def _balcony_configuration(ctx):
+    row = _balcony_row("combined_0.8kw_credited")
+    battery = row["batteries"][0]
+    values = {"PV DC size": row["pv_dc_kw"], "shared AC cap": row["shared_new_pv_battery_ac_kw"],
+              "battery capacity": battery["capacity_kwh"], "reserve": battery["reserve"],
+              "efficiency": battery["rte"], "standby": battery["standby_w"]}
+    for label, value in values.items():
+        _balcony_number(value, label)
+    if not (row["pv_dc_kw"] >= 0 and row["shared_new_pv_battery_ac_kw"] > 0
+            and battery["capacity_kwh"] > 0 and 0 <= battery["reserve"] < 1
+            and 0 < battery["rte"] <= 1 and battery["standby_w"] >= 0):
+        raise SystemExit("report_tokens: balcony configuration has invalid physical assumptions")
+    for home in ("13.5", "27"):
+        for treatment in ("credited", "zero_credit"):
+            for order in ("home_first", "small_first"):
+                joint = _balcony_row(_balcony_full_id(home, "0.8", treatment, order))
+                for pack in joint["batteries"]:
+                    for key in ("reserve", "rte", "standby_w"):
+                        value = _balcony_number(pack[key], "joint " + key)
+                        if value != battery[key]:
+                            raise SystemExit("report_tokens: balcony joint batteries need separately stated operating assumptions")
+    return (f"The main case adds {row['pv_dc_kw']:g} kW DC of panels and {battery['capacity_kwh']:g} kWh of portable storage. "
+            f"New PV and portable discharge share a {row['shared_new_pv_battery_ac_kw']:g} kW AC cap. "
+            f"Each modeled battery holds {battery['reserve'] * 100:g}% reserve, uses {battery['rte'] * 100:g}% round-trip efficiency, "
+            f"and draws {battery['standby_w']:g} W continuously.")
+
+
+def _balcony_generic_baselines(ctx):
+    rows = [_balcony_row(_balcony_baseline_id(home)) for home in ("13.5", "27")]
+    capacities = [_balcony_number(row['batteries'][0]['capacity_kwh'], "home capacity") for row in rows]
+    return (f"Generic home storage alone saves {_usd0_signed(rows[0]['annual_savings_usd'])}/yr at {capacities[0]:g} kWh "
+            f"or {_usd0_signed(rows[1]['annual_savings_usd'])}/yr at {capacities[1]:g} kWh on this study's schedule and assumptions.")
+
+
+def _balcony_economic_assumptions(ctx):
+    a = _balcony_cost("combined_0.8kw_credited")["economics"]["assumptions"]
+    return (f"Ceilings discount savings at {a['real_discount'] * 100:g}% per year, assume "
+            f"{a['annual_savings_decline'] * 100:g}% annual savings decline, and use "
+            f"{a['real_tariff_escalation'] * 100:g}% real tariff escalation.")
+
+
+def _balcony_stream_cases(ctx):
+    low, high = [_balcony_row(key) for key in ("stream_single_default_360w", "stream_single_conditional_800w")]
+    powers = [_balcony_number(row['batteries'][0]['discharge_kw'], "STREAM-shaped output") * 1000 for row in (low, high)]
+    capacity = _balcony_number(low['batteries'][0]['capacity_kwh'], "STREAM-shaped capacity")
+    return (f"The separate {capacity:g} kWh Stream-shaped cases save {_usd0_signed(low['annual_savings_usd'])}/yr "
+            f"at the default {powers[0]:g} W feed-in or {_usd0_signed(high['annual_savings_usd'])}/yr "
+            f"at the conditional {powers[1]:g} W feed-in.")
+
+
+_tok("BALCONY_STREAM_PRICE", kind="cited_constant", value=1399, fmt="usd0",
+     sources=["EcoFlow U.S. STREAM Ultra variant 54376072413257; us.ecoflow.com/products/stream-ultra.js; checked 2026-10-23; equipment advertisement only"])
+
+
 # ---------------------------------------------------------------------------
 # 3. The resolver.
 # ---------------------------------------------------------------------------

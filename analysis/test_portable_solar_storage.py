@@ -47,6 +47,69 @@ def rejects(call):
 
 
 @case
+def case_scoped_shared_cap_preserves_home_power_and_controller_order():
+    m = model()
+    import inspect
+    assert 'shared_ac_battery_indices' in inspect.signature(m.dispatch).parameters, 'scoped shared AC membership is missing'
+    d = frame(['2026-06-01 17:00'])
+    home = m.Battery(2, 4, 0, reserve=0, rte=1, standby_w=0)
+    small = m.Battery(1, 1, 0, reserve=0, rte=1, standby_w=0)
+    for batteries, soc, membership, served, imports in [
+            ([home, small], [2, 1], (1,), [1, .05], .15),
+            ([small, home], [1, 2], (0,), [.05, 1], .15),
+            ([home, small], [2, 1], (), [1, .2], 0),
+            ([home, small], [2, 1], None, [.05, 0], 1.15)]:
+        r = m.dispatch(d, [1.25], [0], [.05], batteries, initial_soc=soc,
+                       shared_ac_kw=.4, shared_ac_battery_indices=membership)
+        assert np.allclose([c['served_kwh'][0] for c in r['controllers']], served)
+        assert np.allclose(r['imports'], [imports])
+        assert r['conservation_max_error_kwh'] < 1e-10
+    r = m.dispatch(d, [1.25], [0], [0], [home, small], initial_soc=[2, 1],
+                   shared_ac_kw=.4, shared_ac_battery_indices=(1,))
+    assert np.allclose([c['served_kwh'][0] for c in r['controllers']], [1, .1])
+    pv_only = m.dispatch(d, [0], [0], [.2], [], shared_ac_kw=.4, shared_ac_battery_indices=())
+    assert np.allclose(pv_only['flows']['pv_ac_kwh'], [.1])
+    assert np.allclose(m.dispatch(d, [1.25], [0], [.05], [home], initial_soc=[2],
+                                 shared_ac_kw=.4, shared_ac_battery_indices=())['imports'], [.2])
+
+
+@case
+def case_scoped_shared_cap_rejects_invalid_membership():
+    m = model()
+    import inspect
+    assert 'shared_ac_battery_indices' in inspect.signature(m.dispatch).parameters, 'scoped shared AC membership is missing'
+    d = frame(['2026-06-01 17:00'])
+    b = m.Battery(1, 1, 1)
+    for indices in ((True,), (False,), (-1,), (1,), (0, 0), (.0,), '0', 0):
+        rejects(lambda: m.dispatch(d, [0], [0], [0], [b], shared_ac_kw=.4,
+                                   shared_ac_battery_indices=indices))
+    for cap in (None, 0, -1, float('inf'), float('nan')):
+        for indices in ((), (0,)):
+            rejects(lambda: m.dispatch(d, [0], [0], [0], [b], shared_ac_kw=cap,
+                                       shared_ac_battery_indices=indices))
+
+
+@case
+def case_scoped_cap_keeps_pv_source_accounts_and_export_treatments():
+    m = model()
+    import inspect
+    assert 'shared_ac_battery_indices' in inspect.signature(m.dispatch).parameters, 'scoped shared AC membership is missing'
+    d = frame(['2026-06-01 12:00', '2026-06-01 17:00'])
+    home = m.Battery(2, 4, .4, reserve=0, rte=1, standby_w=0, charging='solar')
+    small = m.Battery(1, 1, .4, reserve=0, rte=1, standby_w=0, charging='solar')
+    for batteries, member in (([home, small], (1,)), ([small, home], (0,))):
+        for treatment, export, credit, curtailed in [('credited', .3, .3, .1), ('zero_credit', .3, .2, .1), ('zero_export', .2, .2, .2)]:
+            r = m.dispatch(d, [0, 1], [.2, 0], [.4, 0], batteries,
+                           shared_ac_kw=1.2, shared_ac_battery_indices=member, export_treatment=treatment)
+            assert np.allclose(r['exports'], [export, 0])
+            assert np.allclose(r['credited_exports'], [credit, 0])
+            assert np.allclose(r['flows']['curtailed_kwh'], [curtailed, 0])
+            assert np.allclose([c['new_solar_charge_kwh'][0] for c in r['controllers']], [.1, .1])
+            assert all(c['existing_solar_charge_kwh'][0] == 0 for c in r['controllers'])
+            assert r['conservation_max_error_kwh'] < 1e-10
+
+
+@case
 def case_pv_conserves_simultaneous_meter_flows_and_export_credit():
     m = model()
     d = frame(['2026-06-01 12:00'])
@@ -290,6 +353,53 @@ def case_matrix_integrates_each_pair_and_keeps_free_behavior_out_of_hardware():
     assert rows['small_then_powerwall']['annual_soc_error_kwh'] < 1e-8
     assert all(r['economics']['installed_cost_usd'] is None for r in rows.values())
     assert len(out['financial_sensitivities']['tariff_spread_rebills']) == 3
+    assert out['schema_version'] == 3
+    assert len(rows) == 108  # Nine canonical scheduled rows need private intake.
+    assert len(out['marginal_comparisons']) == 138
+    for capacity in (13.5, 27):
+        for ac in (.8, 1.2):
+            home_id = f'large_{capacity:g}kwh_11.5kw'
+            for treatment in ('credited', 'zero_credit', 'zero_export'):
+                pv_id = f'home_{capacity:g}kwh_pv_{ac:g}kw_{treatment}'
+                pv = rows[pv_id]
+                assert pv['shared_ac_battery_indices'] == []
+                assert pv['batteries'] == rows[home_id]['batteries']
+                for order, member in (('home_first', [1]), ('small_first', [0])):
+                    identifier = f'home_{capacity:g}kwh_combined_{ac:g}kw_{treatment}_{order}'
+                    combined = rows[identifier]
+                    assert combined['shared_ac_battery_indices'] == member
+                    assert combined['controller_order'] == (['home', 'small'] if order == 'home_first' else ['small', 'home'])
+                    control_id = ('powerwall_then_small' if order == 'home_first' else 'small_then_powerwall') if capacity == 13.5 and ac == 1.2 else f'home_{capacity:g}kwh_small_{ac:g}kw_{order}'
+                    control = rows[control_id]
+                    assert control['batteries'] == combined['batteries']
+                    if ac == .8:
+                        assert control['shared_new_pv_battery_ac_kw'] == .8
+                        assert control['shared_ac_battery_indices'] == member
+                    assert control['pv_dc_kw'] == 0
+                    pairs = {(p['before'], p['after']): p for p in out['marginal_comparisons']}
+                    for before in (home_id, f'combined_{ac:g}kw_{treatment}', pv_id, control_id):
+                        pair = pairs[before, identifier]
+                        difference = rows[before]['bill']['total_usd'] - combined['bill']['total_usd']
+                        assert abs(pair['incremental_savings_usd'] - difference) < 1e-10
+                        expected_ceiling = sum(difference*.99**(year-1)/1.05**year for year in range(1, 6))
+                        assert abs(pair['economics']['five_year']['break_even_installed_usd']-expected_ceiling) < 1e-10
+    costs = out['financial_sensitivities']['incremental_complete_cost_sensitivities']
+    assert len(costs) == 12
+    for entry in costs:
+        before = out['baseline']['post_behavior'] if entry['baseline_id'] == 'post_free_fix' else rows[entry['baseline_id']]['bill']
+        delta = before['total_usd'] - rows[entry['scenario_id']]['bill']['total_usd']
+        assert abs(entry['incremental_savings_usd'] - delta) < 1e-10
+        assert [e['installed_cost_usd'] for e in entry['cost_sensitivities']] == [1000, 2500, 5000, 7500]
+        for econ in entry['cost_sensitivities']:
+            cost = econ['installed_cost_usd']
+            assert econ['simple_payback_years'] == (cost/delta if delta > 0 else None)
+            for years, key in ((5, 'five_year'), (10, 'ten_year')):
+                expected = sum(delta*.99**(y-1)/1.05**y for y in range(1, years+1))
+                assert abs(econ[key]['npv_usd'] - expected + cost) < 1e-9
+    negative = m.economics(-10, installed_cost=1000)
+    assert negative['simple_payback_years'] is None
+    assert negative['five_year']['break_even_installed_usd'] < 0
+
 
 @case
 def case_fractional_solar_charge_never_creates_negative_grid_import():
@@ -553,6 +663,14 @@ def case_nbt_matrix_maps_every_scenario_and_marginal_to_its_behavior_baseline():
         return result
     with patch.object(m, 'steady_dispatch', side_effect=capture):
         out = m.build_study(inputs, include_references=False, nbt_context=context)
+    for row, trace in zip(out['scenarios'], traces):
+        assert trace['annual_soc_error_kwh'] < 1e-8
+        if 'shared_ac_battery_indices' in row:
+            capped = trace['flows']['pv_ac_kwh'].copy()
+            for index in row['shared_ac_battery_indices']:
+                capped += trace['controllers'][index]['served_kwh']
+            assert np.all(capped <= row['shared_new_pv_battery_ac_kw']*.25 + 1e-12)
+        assert abs(row['component_savings_usd']['fixed_usd']) < 1e-12
     saved = copy.deepcopy(traces)
     altered = copy.deepcopy(context)
     for case_ in altered['cases'].values():
@@ -636,7 +754,10 @@ assert b['weighted_export_credit_usd_per_kwh'] is None
 def case_nbt_public_artifact_provenance_semantics_and_all_reference_mappings():
     root = pathlib.Path(__file__).resolve().parent.parent
     out = json.loads((root/'data/portable_solar_storage.json').read_text())
-    assert out['schema_version'] == 2, 'public artifact lacks the completed sensitivity'
+    assert out['schema_version'] == 3, 'public artifact lacks scoped joint cases'
+    assert len(out['scenarios']) == 117
+    assert len(out['marginal_comparisons']) == 138
+    assert len(out['canonical_no_reserve_benchmarks']) == 9
     b = out['present_2026_nbt_sensitivity']
     assert b['tariff_year'] == 2026
     assert b['observation_window']['start'] == out['provenance']['window_start']
@@ -646,6 +767,8 @@ def case_nbt_public_artifact_provenance_semantics_and_all_reference_mappings():
     rate_bytes = (root/b['rate_provenance']['path']).read_bytes()
     assert b['rate_provenance']['sha256'] == hashlib.sha256(rate_bytes).hexdigest()
     assert b['rate_provenance']['sha256'] != hashlib.sha256(rate_bytes + b'\n').hexdigest(), 'changed CSV bytes must expose a stale digest'
+    extension = out['provenance']['joint_extension']
+    assert extension['generator_sha256'] == hashlib.sha256((root/extension['generator']).read_bytes()).hexdigest()
     for path, digest in b['engine_provenance'].items():
         assert digest == hashlib.sha256((root/path).read_bytes()).hexdigest()
     assert out['unavailable_scenarios']['post_nem_adoption']['annual_savings_usd'] is None
