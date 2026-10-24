@@ -8134,7 +8134,7 @@ def case_balcony_answer_is_basic_and_every_new_table_matches_complete_bills():
     assert HTML.index('<h2 id="s6">') < position < HTML.index('<h2 id="s7">')
     for filename, doc in (("index.html", HTML), ("report-template.html", TEMPLATE_HTML)):
         assert 'href="#balcony-solar"' in doc[doc.index('<nav'):doc.index('</nav>')], filename
-        assert 'h2,h3[id]{scroll-margin-top:' in doc, filename
+        assert 'h2,h3[id],[id^="balcony-"]{scroll-margin-top:' in doc, filename
         assert _BalconyTables.read(doc).balcony_details == [], filename
     for table_id, cap in (("balcony-main-results", "0.8"), ("balcony-higher-cap-results", "1.2")):
         rows = [(attrs, cells) for attrs, cells in reader.tables[table_id] if "data-scenarios" in attrs]

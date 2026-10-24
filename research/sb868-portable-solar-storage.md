@@ -596,7 +596,7 @@ Keep the existing rooftop after the free schedule change as the no-purchase base
 
 Home-storage and receptacle-PV are different connection tracks. The canonical price-aware/no-standing-reserve purchase result stays separate. A standing-reserve exploratory delta cannot be added to canonical savings. Five-/ten-year ceilings assume continued operation throughout the horizon.
 
-Price panels against their own saving. After matched 0.8 kW portable output, panels add $456/yr with hypothetical extra credit or $140/yr without it. Their five-/ten-year extra-cost ceilings are $1,936/$3,379 or $597/$1,041, respectively. The supported export treatment and measured placement yield decide which panel budget applies.
+Price panels against their own saving. After matched 0.8 kW portable output, panels add $456/yr with hypothetical extra credit or $140/yr without it. Their five-/ten-year extra-cost ceilings are $1,936/$3,379 or $597/$1,041, respectively. The supported export treatment and measured placement yield decide which panel budget applies. The AC-coupled proxy clips production before storage. These budgets exclude direct-DC clipping recovery. Exact equipment topology remains unproved.
 After 27 kWh home storage plus credited PV, portable storage adds only $13 to $44/yr. Its own ten-year extra-cost ceiling is $96 to $328. Controller priority sets this range; it is not uncertainty bounds. Price each addition separately; standalone savings cannot be added.
 A different increment can support more cost: the DPU-shaped second battery adds $803/yr. Its advertised $2,000 increment leaves $1,413 at five years or $3,956 at ten years before other costs. This holds the same generic connection and power assumptions; it is not an installed expansion quote.
 
@@ -627,7 +627,7 @@ The U.S. warranty policy, checked October 23, 2026, gives STREAM units ten years
 
 The matched portable-only case buys 1,271 kWh of grid charging and diverts 540 kWh of existing solar. It delivers 1,540 kWh, loses 272 kWh in conversion and uses 87.6 kWh in standby. Annual imports are 23,196 kWh and physical/credited exports are 9,423 kWh. Delivered energy is not dollar saving.
 With panels and no extra credit, the battery charges from 1,261 grid, 339 existing-solar and 169 new-solar kWh. It delivers 1,505 kWh, loses 266 kWh and uses 87.6 kWh in standby. Imports are 22,943 kWh; physical exports are 10,807 kWh, but only 9,624 kWh receive modeled credit.
-Cheap-hour charging does not cut the annual peak. The no-hardware peak is 20.16 kW. The table shows each hardware peak and tariff-season contribution. Summer and winter together cover the observation year, not weather uncertainty.
+Cheap-hour charging does not cut the annual peak. The no-hardware peak is 20.16 kW. The table shows tariff-season contributions. The [report's operating comparison](../index.html#balcony-operating-results) shows each hardware peak. Summer and winter together cover the observation year, not weather uncertainty.
 
 | Scenario | Summer saving contribution | Winter saving contribution |
 | --- | --- | --- |
@@ -642,7 +642,7 @@ All thirteen monthly differences appear in `decision_support.operating_cases[].m
 For the separate generic 3.84 kWh/1.2 kW storage case, solar-only/grid-only/mixed charging saves $435/$764/$666/yr. Grid-only beats this simple mixed policy because charging priorities and forgone export credits matter. It does not prove that grid-only is best for every controller or connection.
 For that same standalone case, reserve from 10% to 30% changes saving from $742 to $581/yr. Standby from 0 W to 30 W changes it from $696 to $603/yr. These are separate one-variable stresses; they do not describe combined downside or joint-system results. Measure actual losses and controls before a product quote.
 Present-NBT repricing gives the matched portable-only row $752 to $779 and credited PV-only $122 to $172 in annual signed ledger deltas before settlement. It reprices the whole account's unchanged flows, including existing rooftop exports. It does not optimize NBT dispatch or establish payable-bill savings, an NBT price ceiling, NPV or payback. NEM retained with no extra credit is a different case.
-The portable runtime example gives 9.14 hours at a constant 300 W from full charge to reserve, or 2.28 hours from the reserve if outage control releases it. It includes assumed standby and conversion loss with zero rooftop recharge. These are arithmetic runtimes, not measured appliance or household outage coverage. Supported outlets, transfer design and measured startup demand decide which loads work.
+The 3.84 kWh portable runtime example gives 9.14 hours at a constant 300 W from full charge to reserve, or 2.28 hours from the reserve if outage control releases it. It includes assumed standby and conversion loss with zero rooftop recharge. These are arithmetic runtimes, not measured appliance or household outage coverage. Supported outlets, transfer design and measured startup demand decide which loads work.
 
 The retained tariff-spread, physical downtime, PV-shape and compliance-cost results in §§9–11 remain separate sensitivities. They do not establish a joint adverse-case outcome, measured site yield, or a future tariff forecast.
 

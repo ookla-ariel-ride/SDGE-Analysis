@@ -1021,7 +1021,8 @@ def _depth_purchase_rules():
         f"panels add {_balcony_money(panels[0]['annual_savings_usd'])}/yr with hypothetical extra credit or {_balcony_money(panels[1]['annual_savings_usd'])}/yr without it. "
         f"Their five-/ten-year extra-cost ceilings are {_balcony_money(panels[0]['five_year']['total_affordable_initial_cost_usd'])}/{_balcony_money(panels[0]['ten_year']['total_affordable_initial_cost_usd'])} "
         f"or {_balcony_money(panels[1]['five_year']['total_affordable_initial_cost_usd'])}/{_balcony_money(panels[1]['ten_year']['total_affordable_initial_cost_usd'])}, respectively. "
-        "The supported export treatment and measured placement yield decide which panel budget applies.",
+        "The supported export treatment and measured placement yield decide which panel budget applies. "
+        "The AC-coupled proxy clips production before storage. These budgets exclude direct-DC clipping recovery. Exact equipment topology remains unproved.",
         f"After {rt._balcony_row(portable[0]['before'])['batteries'][0]['capacity_kwh']:g} kWh home storage plus credited PV, portable storage adds only "
         f"{_balcony_range([r['annual_savings_usd'] for r in portable])}/yr. Its own ten-year extra-cost ceiling is "
         f"{_balcony_range([r['ten_year']['total_affordable_initial_cost_usd'] for r in portable])}. "
@@ -1106,7 +1107,9 @@ def _depth_sensitivity():
     def nbt_range(sid):
         values = [rt._balcony_number(c['scenarios'][sid]['annual_hardware_signed_ledger_delta_usd'], 'NBT signed delta') for c in nbt['cases'].values()]
         return _balcony_range(values)
-    runtime = rt._balcony_row('battery_power_0.8kw')['conditional_backup_runtime'][0][1]
+    runtime_case = rt._balcony_row('battery_power_0.8kw')
+    runtime = runtime_case['conditional_backup_runtime'][0][1]
+    capacity = runtime_case['batteries'][0]['capacity_kwh']
     return _depth_paragraphs(
         f"For the separate generic 3.84 kWh/1.2 kW storage case, solar-only/grid-only/mixed charging saves "
         + '/'.join(_balcony_money(v) for v in charging) + "/yr. Grid-only beats this simple mixed policy because charging priorities and forgone export credits matter. "
@@ -1117,7 +1120,7 @@ def _depth_sensitivity():
         f"Present-NBT repricing gives the matched portable-only row {nbt_range('battery_power_0.8kw')} and credited PV-only {nbt_range('pv_0.8kw_credited')} "
         "in annual signed ledger deltas before settlement. It reprices the whole account's unchanged flows, including existing rooftop exports. "
         "It does not optimize NBT dispatch or establish payable-bill savings, an NBT price ceiling, NPV or payback. NEM retained with no extra credit is a different case.",
-        f"The portable runtime example gives {runtime['runtime_from_full_hours']:.2f} hours at a constant {runtime['constant_load_w']:g} W from full charge to reserve, "
+        f"The {capacity:g} kWh portable runtime example gives {runtime['runtime_from_full_hours']:.2f} hours at a constant {runtime['constant_load_w']:g} W from full charge to reserve, "
         f"or {runtime['runtime_from_preserved_reserve_hours']:.2f} hours from the reserve if outage control releases it. "
         "It includes assumed standby and conversion loss with zero rooftop recharge. These are arithmetic runtimes, not measured appliance or household outage coverage. "
         "Supported outlets, transfer design and measured startup demand decide which loads work.")

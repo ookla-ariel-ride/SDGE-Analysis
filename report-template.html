@@ -147,7 +147,7 @@
   nav.toc a:hover{color:var(--ink);border-color:var(--sub)}
   nav.toc a.active{color:var(--sop);border-color:var(--sop)}
   nav.toc a:focus-visible,summary:focus-visible,.totop:focus-visible,.themetoggle:focus-visible{outline:2px solid var(--sop);outline-offset:2px}
-  h2,h3[id]{scroll-margin-top:calc(var(--navh,132px) + 10px)}
+  h2,h3[id],[id^="balcony-"]{scroll-margin-top:calc(var(--navh,132px) + 10px)}
   details.sec>summary{cursor:pointer;list-style:none}
   details.sec>summary::-webkit-details-marker{display:none}
   details.sec>summary h2::after{content:"▸";float:right;color:var(--sub);font-size:.95rem;font-weight:400}
