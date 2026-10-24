@@ -6303,13 +6303,14 @@ def _report_tokens_under_O(source, code):
     shadows the real one; its own imports (household, rates) still resolve out
     of analysis/. Nothing in this repo is touched, and -O is the point: the
     optimiser is what strips an assert statement out of the bytecode."""
+    from coverage_runner import inherited_fds
     with tempfile.TemporaryDirectory() as td:
         pathlib.Path(td, "report_tokens.py").write_text(source)
         return subprocess.run(
             [sys.executable, "-O", "-B", "-c",
              f"import sys; sys.path[:0] = [{td!r}, "
              f"{str(pathlib.Path(rt.__file__).parent)!r}]\n" + code],
-            capture_output=True, text=True)
+            capture_output=True, text=True, pass_fds=inherited_fds())
 
 
 @case

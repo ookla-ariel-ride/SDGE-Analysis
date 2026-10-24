@@ -107,9 +107,14 @@ cd ../..                                            # return to the repository r
 
 # Coverage gate (local, needs the private archive like the §9 gate): every test
 # suite plus every generator on the real inputs must keep the analysis package
-# at >= 90% statement coverage. Install coverage separately from the repo root:
+# at >= 90% statement coverage. The standalone test_scripts_runnable suite also
+# needs coverage. Install this development dependency separately from the repo root:
 ./.venv/bin/pip install coverage
-./analysis/check_coverage.sh                          # fails under 90%
+./analysis/check_coverage.sh                          # two workers; fails under 90%
+./analysis/check_coverage.sh --jobs 1                 # sequential fallback
+# One isolated token worker overlaps the serial suites. The real census supplies
+# measured generator reproduction; billing_model_nem retains its separate run.
+# Timings, measurements, and full task logs stay in private/verify-coverage-*/.
 # One run at a time: a second run refuses while the first holds its lock. `ps` will
 # not show it reliably; ask `cat .check_coverage.holder` (pid, start, data file) or
 # `lsof analysis` (a `9r` row is a live run or a child of one).

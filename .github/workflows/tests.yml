@@ -77,6 +77,7 @@ jobs:
         run: python analysis/test_perfect_foresight_dispatch.py
       - name: TOU structure stress-test guard tests
         run: python analysis/test_tou_structure_stress.py
+      - run: pip install coverage
       - name: analysis scripts runnable or explicitly retired
         run: python analysis/test_scripts_runnable.py
       - name: extra_results.json escalation-block generator guard tests
@@ -220,3 +221,14 @@ jobs:
       # Staged household/SAM loading and byte reproduction remain local-only.
       - name: exploratory portable solar and storage guard tests
         run: python analysis/test_portable_solar_storage.py
+
+  coverage-runner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt coverage
+      - name: measured coordinator guard tests
+        run: python analysis/test_coverage_runner.py

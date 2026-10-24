@@ -149,6 +149,7 @@ MANIFEST = {
     # what it WOULD write. Owns no artifact, so "library" -- and it must import
     # with no side effects, which is exactly what this role asserts.
     "dry_run.py": "library",
+    "coverage_runner.py": "library",
     "behavior_rebuild.py": "generator",
     "battery_dispatch_policies.py": "generator",
     "battery_plan_matrix.py": "generator",
@@ -985,7 +986,7 @@ def _sweep_stale_sandboxes(exclude=None):
             marker_fd.close()
 
 
-def _run_generators(names, synthetic, inspect=None):
+def _run_generators(names, synthetic, inspect=None, measurement=None):
     """Run each generator in a throwaway root; then run `inspect(tmp)` INSIDE the
     tempdir context (it is deleted on exit) and fold its findings into the
     failure list. Exit code alone is not success: a generator can run to
@@ -995,6 +996,9 @@ def _run_generators(names, synthetic, inspect=None):
 
     def _run_in(tmp, marker_fileno=None):
         tmp = _build_throwaway_root(tmp, synthetic)
+        if measurement is not None:
+            assert not synthetic, "only real census executions can supply coverage proof"
+            measurement.begin(tmp, names)
         # Pass our marker fd through to each generator subprocess (issue #187
         # follow-up): a flock is held by the OPEN FILE DESCRIPTION, not the
         # process, so a child that inherits this fd keeps the real-archive
@@ -1003,23 +1007,35 @@ def _run_generators(names, synthetic, inspect=None):
         # exactly the crash shape #187 exists to survive. None on the
         # synthetic path, which never has a marker to protect.
         pass_fds = (marker_fileno,) if marker_fileno is not None else ()
+        if measurement is not None:
+            from coverage_runner import inherited_fds
+            pass_fds = inherited_fds(*pass_fds)
         for name in sorted(names):
             before = {}
             for where, fname in OWNS.get(name, ()):
                 path = _owned_path(tmp, where, fname)
                 before[fname] = path.stat().st_mtime_ns if path.exists() else None
-            try:
-                r = subprocess.run([sys.executable, name], cwd=tmp,
-                                   capture_output=True, text=True, timeout=900,
-                                   pass_fds=pass_fds)
-            except subprocess.TimeoutExpired:
-                failures.append(f"{name}: timed out after 900s")
-                continue
-            if r.returncode != 0:
-                err = (r.stderr or "").strip() or (r.stdout or "").strip()
-                tail = err.splitlines()[-1:] or ["(no output)"]
-                failures.append(f"{name}: {tail[0][:150]}")
-                continue
+            if measurement is not None:
+                from coverage_runner import GateError
+                try:
+                    record = measurement.task(name, tmp, pass_fds).start().finish()
+                except GateError as error:
+                    failures.append(str(error))
+                    continue
+                measurement.artifacts(name, tmp, before, record)
+            else:
+                try:
+                    r = subprocess.run([sys.executable, name], cwd=tmp,
+                                       capture_output=True, text=True, timeout=900,
+                                       pass_fds=pass_fds)
+                except subprocess.TimeoutExpired:
+                    failures.append(f"{name}: timed out after 900s")
+                    continue
+                if r.returncode != 0:
+                    err = (r.stderr or "").strip() or (r.stdout or "").strip()
+                    tail = err.splitlines()[-1:] or ["(no output)"]
+                    failures.append(f"{name}: {tail[0][:150]}")
+                    continue
             # the generator must have WRITTEN every artifact it owns -- exiting 0
             # while never touching the pre-staged copy is a silent no-op. mtime,
             # not content: several generators legitimately reproduce the committed
@@ -1096,6 +1112,8 @@ def _run_generators(names, synthetic, inspect=None):
                     f"hand. Cause: {e}") from e
         finally:
             marker_fd.close()
+    if measurement is not None and not failures:
+        measurement.commit()
     return failures
 
 
@@ -1139,6 +1157,12 @@ def case_generators_run_on_synthetic_inputs():
 def case_generators_run_on_the_real_archive():
     """The local half: the remaining generators, against the real private inputs."""
     usage = SANDBOX / "usage.csv"
+    measurement = None
+    if os.environ.get("SDGE_COVERAGE_REQUEST"):
+        from coverage_runner import CensusMeasurement
+        measurement = CensusMeasurement(json.loads(
+            pathlib.Path(os.environ["SDGE_COVERAGE_REQUEST"]).read_text()))
+        assert usage.exists(), "gate mode cannot skip the real archive census"
     if not usage.exists():
         # Skipping here is legitimate: these generators need raw private inputs
         # that have no synthetic stand-in FOR THIS SUITE'S shared fixture. The CI
@@ -1178,7 +1202,7 @@ def case_generators_run_on_the_real_archive():
         return out
 
     failures = _run_generators(set(NEEDS_PRIVATE_ARCHIVE) | CI_RUNNABLE,
-                               synthetic=False, inspect=inspect)
+                               synthetic=False, inspect=inspect, measurement=measurement)
     assert not failures, "generators that do not run:\n  " + "\n  ".join(failures)
     n = len(NEEDS_PRIVATE_ARCHIVE) + len(CI_RUNNABLE)
     return (f"all {n} generators execute against the real inputs and every owned "
@@ -2091,19 +2115,12 @@ def case_publication_failure_leaves_artifacts_untouched():
 
 
 def _coverage_suite_files(coverage_src):
-    """Test files (with `.py`) named in check_coverage.sh's own SUITE loop
-    (`for t in test_a test_b ... ; do`), parsed from the actual bash `for`
-    statement rather than assumed from prose, so a reordered or reformatted
-    list cannot silently desync this check from what the script really
-    runs. The list spans multiple lines with bash `\` line-continuations,
-    which must be stripped before splitting on whitespace -- otherwise a
-    bare `\` (sitting on its own between two names) survives as a spurious
-    token."""
-    m = re.search(r"for t in(.*?);\s*do", coverage_src, re.S)
-    assert m, f"{COVERAGE_SCRIPT.name}: no 'for t in ... ; do' SUITE loop found"
-    names = m.group(1).replace("\\", " ").split()
-    assert names, f"{COVERAGE_SCRIPT.name}: the SUITE loop parsed to zero names"
-    return {f"{name}.py" for name in names}
+    """Read the coordinator's executable inventory, linked to the shell entrypoint."""
+    assert 'analysis/coverage_runner.py' in coverage_src, "shell no longer invokes the coordinator"
+    from coverage_runner import SUITES
+    assert len(SUITES) == len(set(SUITES)), "duplicate suites in the coordinator"
+    return {name + '.py' for name in SUITES}
+
 
 
 def case_every_check_coverage_suite_is_wired_into_ci():
@@ -2158,6 +2175,7 @@ case "${1:-}" in
     ;;
   combine)
     if [ -n "${STUB_NO_DATA_TO_COMBINE:-}" ]; then echo "No data to combine"; exit 1; fi
+    cp "$STUB_COVERAGE_INPUT" "$COVERAGE_FILE"
     ;;
   report)
     if [ -n "${STUB_NO_DATA_TO_REPORT:-}" ]; then echo "No data to report."; exit 1; fi
@@ -2182,6 +2200,23 @@ def _coverage_stub_root(tmp):
     script = tmp / "analysis" / "check_coverage.sh"
     shutil.copy(COVERAGE_SCRIPT, script)
     (tmp / "analysis" / "stub.py").write_text("x = 1\n")
+    # The real shell still owns locking. Substitute only its expensive work;
+    # use the real report function so its failure/verdict branches stay covered.
+    shutil.copy(ANALYSIS / "coverage_runner.py", tmp / "analysis" / "coverage_core.py")
+    (tmp / "analysis" / "coverage_runner.py").write_text(
+        "import os, pathlib, subprocess, sys\n"
+        "from coverage_core import final_report, inherited_fds, sha256\n"
+        "from coverage import CoverageData\n"
+        "root = pathlib.Path(__file__).resolve().parent.parent\n"
+        "cov = str(root / '.venv/bin/coverage')\n"
+        "subprocess.run([cov, 'run', 'stub.py'], check=True, pass_fds=inherited_fds())\n"
+        "source = str(root / 'analysis/stub.py')\n"
+        "measurement = root / 'stub.coverage'\n"
+        "data = CoverageData(basename=str(measurement)); data.add_lines({source: {1}}); data.write()\n"
+        "os.environ['STUB_COVERAGE_INPUT'] = str(measurement)\n"
+        "record = {'coverage': str(measurement), 'coverage_sha256': sha256(measurement), "
+        "'sources': {source: sha256(source)}, 'exit': 0, 'status': 'passed'}\n"
+        "sys.exit(final_report(root, root / '.coverage', [record], [cov]))\n")
     (tmp / ".coveragerc").write_text("[run]\nparallel = true\n")
     for f in ("pvoutput_daily.csv", "enphase_daily_production.csv"):
         (tmp / "data" / f).write_text("date,kwh\n")
@@ -2369,6 +2404,12 @@ CASES = [
 
 
 def main():
+    if os.environ.get("SDGE_COVERAGE_REQUEST"):
+        import signal
+        def interrupted(signum, frame):
+            # Unwind _run_generators so its measured child stops before cleanup.
+            raise KeyboardInterrupt("coverage census interrupted")
+        signal.signal(signal.SIGTERM, interrupted)
     ran = skipped = failures = 0
     for case in CASES:
         try:
