@@ -795,6 +795,173 @@ def case_nbt_public_artifact_provenance_semantics_and_all_reference_mappings():
     assert 'private/' not in json.dumps(b)
 
 
+
+@case
+def case_ownership_allowance_hand_math_and_discount_timing():
+    m = model()
+    assert hasattr(m, 'ownership_allowance'), 'ownership allowance function is missing'
+    five = m.ownership_allowance(100, 200, years=5, annual_cost=10,
+                                 service_cost=50, service_year=3, discount=0, degradation=0)
+    assert five['discounted_savings_usd'] == 500
+    assert five['discounted_ownership_costs_usd'] == 100
+    assert five['total_affordable_initial_cost_usd'] == 400
+    assert five['remaining_allowance_usd'] == 200
+    two = m.ownership_allowance(100, 200, years=2, annual_cost=10,
+                                service_cost=50, service_year=3, discount=0, degradation=0)
+    assert two['remaining_allowance_usd'] == -20
+    assert two['discounted_service_cost_usd'] == 0
+    timed = m.ownership_allowance(110, 200, years=2, annual_cost=11,
+                                  service_cost=121, service_year=2, discount=.1, degradation=.1)
+    assert abs(timed['discounted_savings_usd'] - (100 + 99 / 1.21)) < 1e-10
+    assert abs(timed['discounted_ownership_costs_usd'] - (10 + 11 / 1.21 + 100)) < 1e-10
+    assert m.ownership_allowance(-100, 0, years=1)['remaining_allowance_usd'] < 0
+    for key in ('installed_cost_usd', 'actual_installed_payback_years', 'actual_installed_npv_usd'):
+        assert five[key] is None
+
+
+@case
+def case_ownership_allowance_rejects_invalid_finance_inputs():
+    m = model()
+    assert hasattr(m, 'ownership_allowance'), 'ownership allowance function is missing'
+    for name in ('years', 'service_year'):
+        for value in (True, False, 0, -1, 1.5, float('inf')):
+            kwargs = dict(years=5); kwargs[name] = value
+            rejects(lambda kwargs=kwargs: m.ownership_allowance(100, 200, **kwargs))
+    for name in ('equipment_price', 'annual_cost', 'service_cost', 'discount', 'degradation', 'annual_saving'):
+        for value in (float('inf'), float('-inf'), float('nan')):
+            kwargs = dict(annual_saving=100, equipment_price=200, years=5); kwargs[name] = value
+            rejects(lambda kwargs=kwargs: m.ownership_allowance(**kwargs))
+    for name in ('equipment_price', 'annual_cost', 'service_cost', 'discount', 'degradation'):
+        kwargs = dict(annual_saving=100, equipment_price=200, years=5); kwargs[name] = -1
+        rejects(lambda kwargs=kwargs: m.ownership_allowance(**kwargs))
+    rejects(lambda: m.ownership_allowance(100, 200, years=5, degradation=1))
+    assert m.ownership_allowance(100, 200, years=5, discount=1e308)['remaining_allowance_usd'] == -200
+
+
+def decision_fixture():
+    return json.loads((pathlib.Path(__file__).resolve().parents[1] / 'data/portable_solar_storage.json').read_text())
+
+
+@case
+def case_decision_support_preserves_sources_and_reconciles_months():
+    m = model()
+    assert hasattr(m, 'build_decision_support'), 'decision support builder is missing'
+    study = decision_fixture()
+    study.pop('decision_support', None)
+    before = copy.deepcopy(study)
+    out = m.build_decision_support(study)
+    assert study == before, 'derived builder changed an inherited object'
+    assert out['schema_version'] == 1
+    assert len(out['common_options']) == 5
+    pv = out['common_options'][0]
+    assert pv['family'] == 'pv_0.8kw' and pv['battery_capacity_kwh'] == 0
+    assert len(out['operating_cases']) == 5
+    for row in out['operating_cases']:
+        assert len(row['monthly_savings_usd']) == 13
+        assert '2025-07' in row['monthly_savings_usd'] and '2026-07' in row['monthly_savings_usd']
+        assert abs(sum(row['monthly_savings_usd'].values()) - row['annual_savings_usd']) < 2e-5
+        assert abs(sum(s['annual_savings_usd'] for s in row['seasons'].values()) - row['annual_savings_usd']) < 2e-5
+    assert len(out['purchase_increments']) == 12
+    assert len(out['ownership_stresses']['cases']) == 72
+    assert len(out['policy_bridge']['cases']) == 3
+    no_refs = copy.deepcopy(study); no_refs['canonical_no_reserve_benchmarks'] = []
+    assert m.build_decision_support(no_refs)['policy_bridge']['status'] == 'references not requested'
+    assert len(study['scenarios']) == 117 and len(study['marginal_comparisons']) == 138
+
+
+@case
+def case_decision_support_candidate_catalog_and_matched_increments():
+    m = model()
+    assert hasattr(m, 'build_decision_support'), 'decision support builder is missing'
+    out = m.build_decision_support(decision_fixture())
+    candidates = {r['id']: r for r in out['candidate_allowances']}
+    expected = {
+        'stream_default': ('EFSTREAMULTRA800W-US', 1399, 'stream_single_default_360w'),
+        'stream_conditional': ('EFSTREAMULTRA800W-US', 1399, 'stream_single_conditional_800w'),
+        'dp3_base': ('EFDELTAPRO3-US', 2799, 'large_4.096kwh_4kw'),
+        'dpu_base': ('DPU-US', 4199, 'large_6.144kwh_7.2kw'),
+        'dpu_shp2_bundle': ('SHP2-DPU', 5499, 'large_6.144kwh_7.2kw'),
+        'dpu_two_battery': ('DPU-EB', 6199, 'large_12.288kwh_7.2kw'),
+        'ultrax_base': ('DPUX-US', 7999, 'large_12.288kwh_12kw'),
+        'ultrax_shp3_bundle': ('DPUX-SHP3', 10999, 'large_12.288kwh_12kw')}
+    assert set(candidates) == set(expected)
+    for key, (sku, price, scenario) in expected.items():
+        row = candidates[key]
+        assert (row['sku'], row['equipment_price_usd'], row['scenario_id']) == (sku, price, scenario)
+        assert row['observation_date'] == '2026-10-23'
+        assert row['warranty_years'] == (10 if key.startswith('stream') else 5)
+        assert row['warranty_scope'] == ('STREAM unit' if key.startswith('stream') else 'inverter and batteries only; bundled panel accessories have separate warranty terms')
+        assert row['five_year']['remaining_allowance_usd'] < row['ten_year']['remaining_allowance_usd']
+    assert candidates['stream_default']['available'] is False
+    assert candidates['ultrax_base']['five_year']['remaining_allowance_usd'] < 0
+    assert out['ownership_stresses']['dpu_battery_increment']['equipment_price_usd'] == 2000
+    panels = [r for r in out['purchase_increments'] if r['kind'] == 'panels_after_portable']
+    assert len(panels) == 4
+    assert panels[0]['before'] == 'battery_power_0.8kw'
+    assert abs(panels[0]['annual_savings_usd'] - 455.811821) < 2e-5
+
+
+@case
+def case_decision_support_fails_closed_on_bad_sources_and_controls():
+    m = model()
+    assert hasattr(m, 'build_decision_support'), 'decision support builder is missing'
+    source = decision_fixture()
+    mutations = [
+        lambda s: s['baseline']['unchanged_behavior'].__setitem__('total_usd', float('nan')),
+        lambda s: s['baseline']['unchanged_behavior']['components'].__setitem__('fixed_usd', float('inf')),
+        lambda s: s['baseline']['unchanged_behavior']['monthly']['2025-07']['components'].__setitem__('fixed_usd', float('-inf')),
+        lambda s: s['baseline']['unchanged_behavior']['monthly']['2025-07'].__setitem__('total_usd', 123),
+        lambda s: s['baseline'].__setitem__('free_behavior_saving_usd', float('nan')),
+        lambda s: s['scenarios'].append(copy.deepcopy(s['scenarios'][0])),
+        lambda s: s['scenarios'].pop(next(i for i,r in enumerate(s['scenarios']) if r['id'] == 'battery_power_0.8kw')),
+        lambda s: s['scenarios'][0]['physical'].__setitem__('imports_kwh', float('nan')),
+        lambda s: s['scenarios'][0]['bill']['components'].__setitem__('fixed_usd', 123),
+        lambda s: next(r for r in s['scenarios'] if r['id']=='combined_0.8kw_credited')['bill']['monthly'].pop('2025-07'),
+        lambda s: next(r for r in s['scenarios'] if r['id']=='combined_0.8kw_credited')['batteries'][0].__setitem__('reserve', .3),
+        lambda s: s['marginal_comparisons'].append(copy.deepcopy(s['marginal_comparisons'][0])),
+        lambda s: next(r for r in s['scenarios'] if r['id']=='large_12.288kwh_7.2kw')['batteries'][0].__setitem__('charge_kw', 2),
+        lambda s: s['financial_sensitivities']['tariff_spread_rebills'][0].__setitem__('spread_factor', float('nan')),
+        lambda s: next(r for r in s['scenarios'] if r['id']=='battery_power_0.8kw')['bill']['monthly']['2025-07']['battery'].__setitem__('served_kwh', 999),
+    ]
+    for mutate in mutations:
+        bad = copy.deepcopy(source); mutate(bad)
+        rejects(lambda bad=bad: m.build_decision_support(bad))
+
+
+
+@case
+def case_evening_output_example_uses_tariff_windows_and_hand_math():
+    m = model()
+    out = m.build_decision_support(decision_fixture())
+    assert 'evening_output_example' in out, 'fixed evening-output example is missing'
+    row = out['evening_output_example']
+    assert (row['output_kw'], row['start_hour'], row['end_hour']) == (1.2, 16, 24)
+    assert abs(row['delivered_kwh'] - 9.6) < 1e-12
+    assert abs(row['period_delivered_kwh']['on'] - 6) < 1e-12
+    assert abs(row['period_delivered_kwh']['off'] - 3.6) < 1e-12
+    assert row['period_delivered_kwh']['sop'] == 0
+    for weekend in (False, True):
+        assert R.period(16, weekend) == 'on'
+        assert R.period(20.75, weekend) == 'on'
+        assert R.period(21, weekend) == 'off'
+        assert R.period(23.75, weekend) == 'off'
+    assert abs(row['grid_charge_kwh'] - 9.6/.85) < 1e-12
+    assert abs(row['nominal_capacity_kwh'] - 13.015827469) < 1e-9
+    for season, gross, charge, net in (('summer', 7.048716, 1.4112, 5.637516),
+                                      ('winter', 5.499744, 1.436724705882353, 4.063019294117647)):
+        result = row['seasons'][season]
+        assert abs(result['gross_avoided_import_usd_per_day'] - gross) < 1e-12
+        assert abs(result['grid_charge_cost_usd_per_day'] - charge) < 1e-12
+        assert abs(result['net_before_standby_and_equipment_usd_per_day'] - net) < 1e-12
+        assert abs(result['thirty_day_repeat']['delivered_kwh'] - 288) < 1e-10
+        assert abs(result['thirty_day_repeat']['net_before_standby_and_equipment_usd'] - 30*net) < 1e-10
+    assert row['annual_forecast_usd'] is None
+    assert row['physical_dispatch_run'] is False
+    for bad_rate in (float('nan'), float('inf'), -1):
+        with patch.dict(R.UDC['S'], {'on': bad_rate}):
+            rejects(lambda: m.build_decision_support(decision_fixture()))
+
+
 def main():
     passed = 0
     for fn in CASES:

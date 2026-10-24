@@ -504,6 +504,375 @@ def economics(annual_saving, *, installed_cost=None, discount=.05, degradation=.
     return out
 
 
+def ownership_allowance(annual_saving, equipment_price, *, years, annual_cost=0,
+                        service_cost=0, service_year=6, discount=.05, degradation=.01):
+    """Discount year-end savings/costs; leave unknown installed economics unknown."""
+    for value, name in ((years, 'years'), (service_year, 'service_year')):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f'{name} must be a positive non-bool integer')
+    for value, name in ((annual_saving, 'annual_saving'), (equipment_price, 'equipment_price'),
+                        (annual_cost, 'annual_cost'), (service_cost, 'service_cost'),
+                        (discount, 'discount'), (degradation, 'degradation')):
+        if isinstance(value, bool) or not isinstance(value, (int, float, np.number)) or not math.isfinite(value):
+            raise ValueError(f'{name} must be finite')
+        if name != 'annual_saving' and value < 0:
+            raise ValueError(f'{name} must be nonnegative')
+    if degradation >= 1:
+        raise ValueError('degradation must be below one')
+    discount_factor = 1 / (1+discount)
+    savings = sum(annual_saving * (1-degradation)**(year-1) * discount_factor**year
+                  for year in range(1, years+1))
+    recurring = sum(annual_cost * discount_factor**year for year in range(1, years+1))
+    service = service_cost * discount_factor**service_year if service_year <= years else 0.
+    ceiling = savings-recurring-service
+    if not all(math.isfinite(v) for v in (savings, recurring, service, ceiling, ceiling-equipment_price)):
+        raise ValueError('nonfinite ownership result')
+    return {'years': years, 'annual_savings_usd': annual_saving, 'equipment_price_usd': equipment_price,
+            'discounted_savings_usd': savings, 'discounted_annual_costs_usd': recurring,
+            'discounted_service_cost_usd': service, 'discounted_ownership_costs_usd': recurring+service,
+            'total_affordable_initial_cost_usd': ceiling, 'remaining_allowance_usd': ceiling-equipment_price,
+            'installed_cost_usd': None, 'actual_installed_payback_years': None, 'actual_installed_npv_usd': None,
+            'assumptions': {'annual_cost_usd': annual_cost, 'service_cost_usd': service_cost,
+                            'service_year': service_year, 'real_discount': discount,
+                            'annual_savings_decline': degradation, 'real_tariff_escalation': 0,
+                            'payment_timing': 'year end; first-year saving has no degradation'}}
+
+
+# Frozen manufacturer observations, local date 2026-10-23. Exact variant titles
+# disambiguate duplicate SKUs in the manufacturer catalogs. No runtime price lookup.
+DECISION_EQUIPMENT = (
+    ('stream_default', 'stream_single_default_360w', 'stream-ultra', 'STREAM Ultra', 'EFSTREAMULTRA800W-US', 1399.0, False, '2026-10-24T02:52:39.527250+00:00'),
+    ('stream_conditional', 'stream_single_conditional_800w', 'stream-ultra', 'STREAM Ultra', 'EFSTREAMULTRA800W-US', 1399.0, False, '2026-10-24T02:52:39.527250+00:00'),
+    ('dp3_base', 'large_4.096kwh_4kw', 'delta-pro-3-portable-power-station', 'DELTA Pro 3', 'EFDELTAPRO3-US', 2799.0, True, '2026-10-24T02:52:39.454677+00:00'),
+    ('dpu_base', 'large_6.144kwh_7.2kw', 'delta-pro-ultra', 'DELTA Pro Ultra (1 × Inverter + 1 × Battery)', 'DPU-US', 4199.0, True, '2026-10-24T02:52:39.447431+00:00'),
+    ('dpu_shp2_bundle', 'large_6.144kwh_7.2kw', 'delta-pro-ultra', 'DELTA Pro Ultra + Smart Home Panel 2', 'SHP2-DPU', 5499.0, True, '2026-10-24T02:52:39.447431+00:00'),
+    ('dpu_two_battery', 'large_12.288kwh_7.2kw', 'delta-pro-ultra', 'DELTA Pro Ultra + DELTA Pro Ultra Extra Battery (1 × Inverter + 2 × Batteries)', 'DPU-EB', 6199.0, True, '2026-10-24T02:52:39.447431+00:00'),
+    ('ultrax_base', 'large_12.288kwh_12kw', 'delta-pro-ultra-x', 'DELTA Pro Ultra X (1 x Inverter + 2 x Batteries)', 'DPUX-US', 7999.0, True, '2026-10-24T02:52:39.433488+00:00'),
+    ('ultrax_shp3_bundle', 'large_12.288kwh_12kw', 'delta-pro-ultra-x', 'DELTA Pro Ultra X (1 x Inverter + 2 x Batteries) + Smart Home Panel 3', 'DPUX-SHP3', 10999.0, True, '2026-10-24T02:52:39.433488+00:00'),
+)
+
+
+def build_decision_support(study):
+    """Derive concise decisions from existing aggregates; never run physical dispatch.
+
+    Reconciliation tolerance is 0.00002 USD/kWh for independently rounded
+    six-decimal annual and monthly inputs (at most thirteen month buckets).
+    Per-component identities use the same absolute tolerance; peak power uses
+    maxima rather than sums. All source objects remain untouched.
+    """
+    tolerance = .00002
+
+    def finite_tree(value):
+        if isinstance(value, dict):
+            for child in value.values():
+                finite_tree(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                finite_tree(child)
+        elif isinstance(value, (float, int, np.number)) and not math.isfinite(value):
+            raise ValueError('nonfinite decision source quantity')
+
+    def close(actual, expected, context):
+        if not math.isfinite(actual) or not math.isfinite(expected) or abs(actual-expected) > tolerance:
+            raise ValueError(f'decision source disagreement: {context}')
+
+    def index(records, key):
+        result = {}
+        for row in records:
+            identifier = key(row)
+            if identifier in result:
+                raise ValueError(f'duplicate decision source: {identifier}')
+            result[identifier] = row
+        return result
+
+    rows = index(study['scenarios'], lambda row: row['id'])
+    pairs = index(study['marginal_comparisons'], lambda row: (row['before'], row['after']))
+    pair_indices = {(row['before'], row['after']): i for i, row in enumerate(study['marginal_comparisons'])}
+    baseline = study['baseline']['post_behavior']
+    finite_tree(study['baseline'])
+    finite_tree(study['scenarios'])
+    finite_tree(study['marginal_comparisons'])
+    finite_tree(study['financial_sensitivities'])
+    references = study['canonical_no_reserve_benchmarks']
+    finite_tree(references)
+
+    def row(identifier):
+        if identifier not in rows:
+            raise ValueError(f'missing decision source: {identifier}')
+        return rows[identifier]
+
+    def check_bill(bill):
+        close(sum(bill['components'].values()), bill['total_usd'], 'annual bill components')
+        close(sum(v['total_usd'] for v in bill['monthly'].values()), bill['total_usd'], 'monthly bill totals')
+        for month, value in bill['monthly'].items():
+            close(sum(value['components'].values()), value['total_usd'], f'{month} bill components')
+        for component, value in bill['components'].items():
+            close(sum(m['components'][component] for m in bill['monthly'].values()), value, component)
+
+    check_bill(baseline)
+    check_bill(study['baseline']['unchanged_behavior'])
+    for source in rows.values():
+        bill = source['bill']
+        check_bill(bill)
+        expected = (study['baseline']['unchanged_behavior'] if source['behavior'] == 'unchanged' else baseline)
+        if set(bill['monthly']) != set(expected['monthly']):
+            raise ValueError('monthly baseline alignment differs')
+        close(expected['total_usd']-bill['total_usd'], source['annual_savings_usd'], source['id'])
+        for component, saving in source['component_savings_usd'].items():
+            close(expected['components'][component]-bill['components'][component], saving, component)
+        for key, value in source['physical'].items():
+            if key in next(iter(bill['monthly'].values()))['physical']:
+                values = [m['physical'][key] for m in bill['monthly'].values()]
+                close(max(values) if key == 'peak_import_kw' else sum(values), value, key)
+        for monthly_key, annual_key in (('imports_kwh', 'imports_kwh'),
+                                        ('physical_exports_kwh', 'exports_kwh'),
+                                        ('credited_exports_kwh', 'credited_exports_kwh')):
+            close(sum(m[monthly_key] for m in bill['monthly'].values()), source['physical'][annual_key], annual_key)
+        for key, value in source['battery'].items():
+            if key in next(iter(bill['monthly'].values()))['battery']:
+                close(sum(m['battery'][key] for m in bill['monthly'].values()), value, key)
+        for accounts in [source['battery']] + [m['battery'] for m in bill['monthly'].values()]:
+            close(accounts['existing_solar_charge_kwh']+accounts['new_solar_charge_kwh'], accounts['solar_charge_kwh'], 'solar source total')
+    for (before, after), source in pairs.items():
+        a, b = row(before), row(after)
+        if a['behavior'] != b['behavior']:
+            raise ValueError('marginal behavior baselines differ')
+        close(b['annual_savings_usd']-a['annual_savings_usd'], source['incremental_savings_usd'], 'marginal saving')
+
+    def ceilings(saving, equipment=0):
+        return {label: ownership_allowance(saving, equipment, years=years)
+                for years, label in ((5, 'five_year'), (10, 'ten_year'))}
+
+    def option(identifier):
+        source = row(identifier)
+        if source['behavior'] != 'post_free_fix':
+            raise ValueError('decision needs post-free-fix baseline')
+        return {'scenario_id': identifier, 'export_treatment': source['export_treatment'],
+                'annual_savings_usd': source['annual_savings_usd'], **ceilings(source['annual_savings_usd'])}
+
+    families = [('pv_0.8kw', ['pv_0.8kw_credited', 'pv_0.8kw_zero_credit']),
+                ('portable_3.84kwh_0.8kw', ['battery_power_0.8kw']),
+                ('combined_0.8kw', ['combined_0.8kw_credited', 'combined_0.8kw_zero_credit']),
+                ('home_13.5kwh', ['large_13.5kwh_11.5kw']), ('home_27kwh', ['large_27kwh_11.5kw'])]
+    common = [{'family': family, 'battery_capacity_kwh': sum(b['capacity_kwh'] for b in row(ids[0])['batteries']),
+               'cases': [option(identifier) for identifier in ids]} for family, ids in families]
+
+    operating = []
+    for identifier in ('battery_power_0.8kw', 'combined_0.8kw_zero_credit', 'combined_0.8kw_credited',
+                       'large_13.5kwh_11.5kw', 'home_13.5kwh_combined_0.8kw_zero_credit_home_first'):
+        source = row(identifier)
+        monthly = {month: baseline['monthly'][month]['total_usd']-bill['total_usd']
+                   for month, bill in source['bill']['monthly'].items()}
+        close(sum(monthly.values()), source['annual_savings_usd'], 'monthly saving')
+        seasons = {}
+        for season, is_summer in (('summer', True), ('winter', False)):
+            months = [month for month in monthly if (int(month[5:]) in R.SUMMER_MONTHS) == is_summer]
+            seasons[season] = {'months': months, 'annual_savings_usd': sum(monthly[m] for m in months)}
+        operating.append({'scenario_id': identifier, 'annual_savings_usd': source['annual_savings_usd'],
+                          'physical': dict(source['physical']), 'battery': dict(source['battery']),
+                          'equivalent_full_cycles_by_controller': [c['equivalent_full_cycles'] for c in source['controllers']],
+                          'monthly_savings_usd': monthly, 'seasons': seasons})
+
+    def matched(before, after, kind, *, derived=False):
+        a, b = row(before), row(after)
+        for key in ('behavior', 'production_shape', 'availability_fraction', 'shared_new_pv_battery_ac_kw'):
+            if a[key] != b[key]:
+                raise ValueError(f'unmatched control: {key}')
+        if a['behavior'] != 'post_free_fix':
+            raise ValueError('unmatched behavior baseline')
+        if kind == 'panels_after_portable':
+            if len(a['batteries']) != 1 or len(b['batteries']) != 1 or a['pv_dc_kw'] != 0 or b['pv_dc_kw'] <= 0:
+                raise ValueError('unmatched panel control')
+            for key in a['batteries'][0]:
+                left, right = a['batteries'][0][key], b['batteries'][0][key]
+                if key == 'discharge_kw':
+                    left, right = min(left, a['shared_new_pv_battery_ac_kw']), min(right, b['shared_new_pv_battery_ac_kw'])
+                if left != right:
+                    raise ValueError(f'unmatched battery control: {key}')
+        elif kind == 'portable_after_home_pv':
+            if (a['batteries'] != b['batteries'][:1] or len(b['batteries']) != 2 or
+                    a['pv_dc_kw'] != b['pv_dc_kw'] or a['export_treatment'] != b['export_treatment'] or
+                    a['controller_order'] != ['home'] or b['controller_order'] != ['home', 'small']):
+                raise ValueError('unmatched joint control')
+        saving = b['annual_savings_usd']-a['annual_savings_usd']
+        if not derived:
+            if (before, after) not in pairs:
+                raise ValueError('missing matched marginal source')
+            saving = pairs[before, after]['incremental_savings_usd']
+        return {'kind': kind, 'before': before, 'after': after, 'annual_savings_usd': saving,
+                'source_status': 'derived matched existing scenario delta' if derived else 'existing marginal_comparisons row',
+                'source_marginal_index': None if derived else pair_indices[before, after], **ceilings(saving)}
+
+    increments = []
+    for ac, before in ((.8, 'battery_power_0.8kw'), (1.2, 'battery_3.84kwh')):
+        for treatment in ('credited', 'zero_credit'):
+            increments.append(matched(before, f'combined_{ac:g}kw_{treatment}', 'panels_after_portable', derived=True))
+    for capacity in (13.5, 27):
+        for treatment in ('credited', 'zero_credit'):
+            for order in ('home_first', 'small_first'):
+                before = f'home_{capacity:g}kwh_pv_0.8kw_{treatment}'
+                after = f'home_{capacity:g}kwh_combined_0.8kw_{treatment}_{order}'
+                if order == 'small_first':
+                    # Preserve the real ordering sensitivity as its own existing pair.
+                    a, b = row(before), row(after)
+                    if (a['batteries'] != b['batteries'][1:] or b['controller_order'] != ['small', 'home'] or
+                            any(a[k] != b[k] for k in ('behavior', 'pv_dc_kw', 'production_shape',
+                                                      'availability_fraction', 'shared_new_pv_battery_ac_kw', 'export_treatment'))):
+                        raise ValueError('unmatched small-first joint control')
+                    source = pairs.get((before, after))
+                    if source is None:
+                        raise ValueError('missing joint marginal source')
+                    saving = source['incremental_savings_usd']
+                    increments.append({'kind': 'portable_after_home_pv', 'before': before, 'after': after,
+                                       'annual_savings_usd': saving, 'source_status': 'existing marginal_comparisons row',
+                                       'source_marginal_index': pair_indices[before, after], **ceilings(saving)})
+                else:
+                    increments.append(matched(before, after, 'portable_after_home_pv'))
+
+    candidates = []
+    for identifier, scenario, slug, title, sku, price, available, checked in DECISION_EQUIPMENT:
+        source = row(scenario)
+        candidates.append({'id': identifier, 'scenario_id': scenario, 'title': title, 'sku': sku,
+                           'equipment_price_usd': price, 'available': available,
+                           'observation_date': '2026-10-23', 'checked_utc': checked,
+                           'source_url': f'https://us.ecoflow.com/products/{slug}.js',
+                           'price_basis': 'advertised equipment floor; not full installation or a quote',
+                           'hypothesis': 'Conditional generic total-meter load access and simple schedule; exact phase, circuit, controls and losses unproved. Larger cases assume 1.8kW charge; no certified product simulation.',
+                           'modeled_batteries': [dict(b) for b in source['batteries']],
+                           'annual_savings_usd': source['annual_savings_usd'],
+                           'equipment_only_simple_payback_years': price/source['annual_savings_usd'] if source['annual_savings_usd'] > 0 else None,
+                           'warranty_years': 10 if identifier.startswith('stream') else 5,
+                           'warranty_scope': 'STREAM unit' if identifier.startswith('stream') else 'inverter and batteries only; bundled panel accessories have separate warranty terms',
+                           'warranty_source_url': 'https://us.ecoflow.com/pages/warranty-policy',
+                           'warranty_observation_date': '2026-10-23',
+                           'warranty_limit': 'Warranty duration is not a life guarantee; ten-year savings assume continued operation, including beyond a five-year warranty.',
+                           **ceilings(source['annual_savings_usd'], price)})
+    candidate_rows = {r['id']: r for r in candidates}
+    stresses = []
+    for identifier in ('stream_default', 'dp3_base', 'dpu_base', 'ultrax_base'):
+        source = candidate_rows[identifier]
+        for annual in (0, 50, 100):
+            for service in (0, 500, 1500):
+                for years in (5, 10):
+                    stresses.append({'candidate_id': identifier, 'scenario_id': source['scenario_id'],
+                                     **ownership_allowance(source['annual_savings_usd'], source['equipment_price_usd'], years=years,
+                                                           annual_cost=annual, service_cost=service, service_year=6)})
+    dpu_pair = ('large_6.144kwh_7.2kw', 'large_12.288kwh_7.2kw')
+    if dpu_pair not in pairs:
+        raise ValueError('missing DPU incremental source')
+    dpu_before, dpu_after = (row(identifier) for identifier in dpu_pair)
+    for key in ('behavior', 'pv_dc_kw', 'production_shape', 'availability_fraction',
+                'shared_new_pv_battery_ac_kw', 'export_treatment'):
+        if dpu_before[key] != dpu_after[key]:
+            raise ValueError(f'unmatched DPU expansion control: {key}')
+    if len(dpu_before['batteries']) != 1 or len(dpu_after['batteries']) != 1:
+        raise ValueError('DPU expansion needs one generic controller')
+    for key in dpu_before['batteries'][0]:
+        if key != 'capacity_kwh' and dpu_before['batteries'][0][key] != dpu_after['batteries'][0][key]:
+            raise ValueError(f'unmatched DPU expansion control: {key}')
+    dpu_saving = pairs[dpu_pair]['incremental_savings_usd']
+    dpu_incremental_price = candidate_rows['dpu_two_battery']['equipment_price_usd']-candidate_rows['dpu_base']['equipment_price_usd']
+    dpu_increment = {'before': dpu_pair[0], 'after': dpu_pair[1], 'source_marginal_index': pair_indices[dpu_pair],
+                     'equipment_price_usd': dpu_incremental_price,
+                     'annual_savings_usd': dpu_saving, 'hypothesis': 'Same generic connection assumption; fixed 7.2kW discharge and 1.8kW charge.',
+                     **ceilings(dpu_saving, dpu_incremental_price)}
+
+    reference_index = index(references, lambda r: r['scheduled_row'])
+    bridge = []
+    for capacity, exploratory in ((1.92, 'stream_single_conditional_800w'), (3.84, 'battery_3.84kwh'), (13.5, 'large_13.5kwh_11.5kw')):
+        scheduled_id = f'scheduled_reference_{capacity:g}kwh'
+        if not references:
+            break
+        if scheduled_id not in reference_index:
+            raise ValueError('missing policy reference source')
+        source = reference_index[scheduled_id]
+        scheduled = row(scheduled_id)
+        bridge.append({'source_reference_index': references.index(source),
+                       'canonical_source_fields': {k: v for k, v in source.items() if k not in ('bill', 'economics')},
+                       'scheduled_scenario_id': scheduled_id, 'scheduled_annual_savings_usd': scheduled['annual_savings_usd'],
+                       'exploratory_scenario_id': exploratory, 'exploratory_annual_savings_usd': row(exploratory)['annual_savings_usd']})
+
+    sensitivity_families = {'reserve': ('reserve_sweep',), 'efficiency': ('efficiency_sweep',),
+                            'standby': ('standby_sweep',), 'charging_source': ('charge_source_sweep', 'combined_charge_source_sweep'),
+                            'pv_shape': ('solar_shape_sensitivity', 'combined_shape_sensitivity'),
+                            'availability': ('physical_availability',), 'retained_capacity': ('physical_capacity_degradation',)}
+    sensitivities = {key: [r['id'] for r in rows.values() if r['family'] in families]
+                     for key, families in sensitivity_families.items()}
+    financial = study['financial_sensitivities']
+    sensitivities.update({'tariff': [{'source': f'financial_sensitivities.tariff_spread_rebills[{i}]',
+                                    'spread_factor': r['spread_factor'], 'scenario_id': financial['target_scenario']}
+                                   for i, r in enumerate(financial['tariff_spread_rebills'])],
+                          '2030_cost': [{'source': f'financial_sensitivities.2030_compliance_cost_sensitivities[{i}]',
+                                        'compliance_cost_usd': r['assumptions']['compliance_cost_usd'],
+                                        'scenario_id': financial['target_scenario']}
+                                       for i, r in enumerate(financial['2030_compliance_cost_sensitivities'])],
+                          'scope': 'Existing one-variable results only; standalone stresses do not apply silently to joint cases.'})
+    # Fixed tariff arithmetic only: do not dispatch or infer annual household savings.
+    example_power_kw, start_hour, end_hour = 1.2, 16, 24
+    example_rte, example_reserve = .85, .2
+    period_energy = {}
+    for period in ('on', 'off', 'sop'):
+        slots = [slot * INTERVAL_HOURS for slot in range(int(start_hour/INTERVAL_HOURS), int(end_hour/INTERVAL_HOURS))]
+        if any(R.period(hour, False) != R.period(hour, True) for hour in slots):
+            raise ValueError('evening example tariff window differs by day type')
+        period_energy[period] = math.fsum(example_power_kw * INTERVAL_HOURS for hour in slots
+                                         if R.period(hour, False) == period)
+    delivered = math.fsum(period_energy.values())
+    close(delivered, example_power_kw * (end_hour-start_hour), 'evening tariff window energy')
+    grid_charge = delivered/example_rte
+    example_seasons = {}
+    for name, season in (('summer', 'S'), ('winter', 'W')):
+        import_rates = {period: R.allin(season, period) for period in period_energy}
+        for value in import_rates.values():
+            _finite(value, 'evening example import rate')
+        gross = math.fsum(period_energy[period] * import_rates[period] for period in period_energy)
+        charge_cost = grid_charge * import_rates['sop']
+        net = gross-charge_cost
+        example_seasons[name] = {'allin_import_rates_usd_per_kwh': import_rates,
+                                'sop_charge_rate_usd_per_kwh': import_rates['sop'],
+                                'gross_avoided_import_usd_per_day': gross,
+                                'grid_charge_cost_usd_per_day': charge_cost,
+                                'net_before_standby_and_equipment_usd_per_day': net,
+                                'thirty_day_repeat': {'delivered_kwh': 30*delivered, 'grid_charge_kwh': 30*grid_charge,
+                                                     'gross_avoided_import_usd': 30*gross, 'grid_charge_cost_usd': 30*charge_cost,
+                                                     'net_before_standby_and_equipment_usd': 30*net}}
+    evening_example = {'status': 'illustrative frozen June 2026 tariff arithmetic; not a household bill or physical simulation',
+                       'output_kw': example_power_kw, 'start_hour': start_hour, 'end_hour': end_hour,
+                       'delivered_kwh': delivered, 'period_delivered_kwh': period_energy,
+                       'round_trip_efficiency': example_rte, 'reserve_fraction': example_reserve,
+                       'grid_charge_kwh': grid_charge,
+                       'nominal_capacity_kwh': delivered/((1-example_reserve)*math.sqrt(example_rte)),
+                       'capacity_basis': 'Full starting battery; discharge to 20% reserve; symmetric square-root efficiency; no standby allowance.',
+                       'seasons': example_seasons, 'physical_dispatch_run': False, 'annual_forecast_usd': None,
+                       'conditions': ['Full 1.2kW of eligible grid import in every 15-minute interval from 16:00 to 24:00.',
+                                      'Full starting battery; no outage; no product certification or supported connection inference.',
+                                      'Grid charge uses super-off-peak import prices at 85% RTE; charge-power and charging-duration feasibility are not established.',
+                                      'Monthly NEM netting, rooftop generation and home storage can reduce realized marginal value.',
+                                      'Solar charging has forgone export value; this grid-charge example does not price solar charging.',
+                                      'Thirty-day values repeat the same arithmetic; no annual forecast, standby, equipment or ownership costs.']}
+    finite_tree(evening_example)
+
+    return {'schema_version': 1,
+            'basis': {'rate_snapshot': study['provenance']['rate_snapshot'],
+                      'comparison': 'hardware-only after the free fix; free behavior savings excluded',
+                      'reserve_fraction': .2, 'round_trip_efficiency': .85, 'standby_w_per_controller': 10,
+                      'access': study['assumptions']['access'], 'policy': study['assumptions']['policy'],
+                      'pv_proxy': study['assumptions']['pv'], 'shape': study['assumptions']['shape'],
+                      'export_credit': study['assumptions']['export_credit'],
+                      'reconciliation_absolute_tolerance': tolerance,
+                      'month_scope': 'Retain all partial calendar months; tariff seasons use rates.SUMMER_MONTHS; no partial-month annualization.',
+                      'summer_months': sorted(R.SUMMER_MONTHS),
+                      'generator_sha256': hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()},
+            'common_options': common, 'operating_cases': operating, 'purchase_increments': increments,
+            'evening_output_example': evening_example,
+            'candidate_allowances': candidates,
+            'ownership_stresses': {'status': 'hypothetical ownership costs; no probabilities or combined physical stresses',
+                                  'cases': stresses, 'dpu_battery_increment': dpu_increment},
+            'policy_bridge': {'status': 'existing canonical and scheduled references' if references else 'references not requested',
+                              'cases': bridge, 'limit': 'Canonical and scheduled rows match reserve, RTE, standby and eligible intervals, but charge policy differs. Exploratory load access also differs, so the remaining gap is not pure reserve/efficiency/standby impact.'},
+            'existing_sensitivity_ids': sensitivities}
+
+
 def load_inputs(directory):
     """Read staged private inputs and reconcile the derived hourly production."""
     directory = pathlib.Path(directory)
@@ -883,7 +1252,7 @@ def build_study(inputs, *, include_references=True, nbt_context=None):
                     'cost_sensitivities': [economics(saving, installed_cost=cost) for cost in (1000, 2500, 5000, 7500)]})
     nbt = _nbt_sensitivity(d, original, post, exp, scenarios, traces, nbt_references, reference_traces,
                            marginals, load_nbt_context() if nbt_context is None else nbt_context)
-    return {'schema_version': 3, 'present_2026_nbt_sensitivity': nbt, 'issue': 304, 'study_date': '2026-10-23',
+    study = {'schema_version': 3, 'present_2026_nbt_sensitivity': nbt, 'issue': 304, 'study_date': '2026-10-23',
             'status': 'exploratory; no purchase recommendation or authorization for household wiring',
             'provenance': dict(inputs['provenance'], rate_snapshot='June 2026 EV-TOU-5 / CEA Clean Impact Plus; canonical analysis/rates.py',
                                baseline_repository_commit='05f4c8c',
@@ -929,6 +1298,9 @@ def build_study(inputs, *, include_references=True, nbt_context=None):
                                   'site placement/shading and permitted mounting', 'full installed quote with panels/mounts/wiring/transfer/permits/tax/labor/subscriptions/replacement',
                                   'measured standby, usable capacity, supported reserve/charge control and warranty throughput',
                                   '2030 transition and future tariff scenarios; no known extra approval or compliance cost established']}
+
+    study['decision_support'] = build_decision_support(study)
+    return study
 
 
 def _rounded(value):
