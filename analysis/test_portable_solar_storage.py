@@ -962,6 +962,87 @@ def case_evening_output_example_uses_tariff_windows_and_hand_math():
             rejects(lambda: m.build_decision_support(decision_fixture()))
 
 
+
+def chart_fixture():
+    # Removing a repeated fall hour or counting nonexistent spring rows breaks this fixture.
+    spring = list(pd.date_range('2026-03-08', periods=96, freq='15min'))
+    spring = [t for t in spring if t.hour != 2]
+    fall = list(pd.date_range('2025-11-02', periods=96, freq='15min'))
+    fall += list(pd.date_range('2025-11-02 01:00', periods=4, freq='15min'))
+    d = frame(spring + fall + list(pd.date_range('2026-06-01', periods=96, freq='15min')))
+    ids = ['pv_0.8kw_zero_credit', 'battery_power_0.8kw', 'combined_0.8kw_zero_credit']
+    for cap in ('13.5', '27'):
+        ids += [f'large_{cap}kwh_11.5kw', f'home_{cap}kwh_pv_0.8kw_zero_credit',
+                f'home_{cap}kwh_small_0.8kw_home_first', f'home_{cap}kwh_combined_0.8kw_zero_credit_home_first']
+    traces, rows = {}, []
+    for i, identifier in enumerate(['post_free_fix'] + ids):
+        factor = i + 1
+        trace = {'imports': np.full(len(d), .25 * factor),
+                 'exports': np.full(len(d), .5 * factor),
+                 'credited_exports': np.full(len(d), .125 * factor)}
+        if i == 0:
+            trace['credited_exports'] = trace['exports'].copy()
+        months = {str(ym): {'imports_kwh': float(trace['imports'][d.ym == ym].sum()),
+                            'physical_exports_kwh': float(trace['exports'][d.ym == ym].sum()),
+                            'credited_exports_kwh': float(trace['credited_exports'][d.ym == ym].sum())}
+                  for ym in d.ym.unique()}
+        if i == 0:
+            baseline = {'monthly': months}
+        else:
+            rows.append({'id': identifier, 'bill': {'monthly': months}})
+            traces[identifier] = trace
+    study = {'baseline': {'post_behavior': baseline}, 'scenarios': rows,
+             'provenance': {'rate_snapshot': 'synthetic'}, 'assumptions': {'policy': 'synthetic'}}
+    return d, np.full(len(d), .25), np.full(len(d), .5), traces, study
+
+
+@case
+def case_chart_profiles_count_dst_intervals_and_reconcile_seasonal_energy():
+    m = model()
+    assert hasattr(m, 'build_chart_data'), 'matched hourly aggregate builder is missing'
+    chart = m.build_chart_data(*chart_fixture())
+    assert chart['schema_version'] == 1
+    assert len(chart['profiles']) == 12
+    winter = chart['basis']['seasons']['W']
+    assert winter['interval_counts_by_hour'][1] == 12
+    assert winter['interval_counts_by_hour'][2] == 4
+    assert winter['elapsed_hours_by_hour'][1] == 3
+    assert winter['elapsed_hours_by_hour'][2] == 1
+    assert sum(winter['interval_counts_by_hour']) == 192
+    for key, factor in [('post_free_fix', 1), ('pv_0.8kw_zero_credit', 2),
+                        ('home_27kwh_combined_0.8kw_zero_credit_home_first', 12)]:
+        profile = chart['profiles'][key]
+        for season, total in [('S', 24), ('W', 48)]:
+            row = profile['seasons'][season]
+            assert row['imports_avg_kw'] == [factor] * 24
+            assert row['physical_exports_avg_kw'] == [2 * factor] * 24
+            assert row['totals_kwh']['imports'] == total * factor
+            hours = chart['basis']['seasons'][season]['elapsed_hours_by_hour']
+            assert abs(sum(a*b for a, b in zip(row['imports_avg_kw'], hours)) - total*factor) < 1e-10
+    assert chart['profiles']['post_free_fix']['source_path'] == 'baseline.post_behavior'
+    assert chart['profiles']['pv_0.8kw_zero_credit']['seasons']['W']['credited_exports_avg_kw'] == [1] * 24
+
+
+@case
+def case_chart_profiles_reject_wrong_accounts_and_do_not_mutate_traces():
+    m = model()
+    assert hasattr(m, 'build_chart_data'), 'matched hourly aggregate builder is missing'
+    args = chart_fixture()
+    saved = copy.deepcopy(args)
+    chart = m.build_chart_data(*args)
+    chart['profiles']['pv_0.8kw_zero_credit']['seasons']['S']['imports_avg_kw'][0] = 999
+    for key in args[3]:
+        for field in args[3][key]:
+            assert np.array_equal(args[3][key][field], saved[3][key][field])
+    assert args[4] == saved[4]
+    bad = chart_fixture()
+    bad[4]['scenarios'][0]['bill']['monthly']['2026-06']['imports_kwh'] += 1
+    rejects(lambda: m.build_chart_data(*bad))
+    bad = chart_fixture()
+    bad[3]['battery_power_0.8kw']['exports'][0] = -1
+    rejects(lambda: m.build_chart_data(*bad))
+
+
 def main():
     passed = 0
     for fn in CASES:
