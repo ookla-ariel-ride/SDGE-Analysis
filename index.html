@@ -84,7 +84,7 @@
   nav.toc a:hover{color:var(--ink);border-color:var(--sub)}
   nav.toc a.active{color:var(--sop);border-color:var(--sop)}
   nav.toc a:focus-visible,summary:focus-visible,.totop:focus-visible,.themetoggle:focus-visible{outline:2px solid var(--sop);outline-offset:2px}
-  h2{scroll-margin-top:calc(var(--navh,132px) + 10px)}
+  h2,h3[id]{scroll-margin-top:calc(var(--navh,132px) + 10px)}
   details.sec>summary{cursor:pointer;list-style:none}
   details.sec>summary::-webkit-details-marker{display:none}
   details.sec>summary h2::after{content:"▸";float:right;color:var(--sub);font-size:.95rem;font-weight:400}
@@ -154,7 +154,7 @@
 <div class="meta">
   <div class="meta-row"><span class="meta-k">Household</span><span class="meta-v">Single-family home · SDG&amp;E Coastal climate zone · 10.05 kW solar + two EVs (all-electric transportation) · NEM 2.0 · Clean Energy Alliance (CEA) generation</span></div>
   <div class="meta-row"><span class="meta-k">Window</span><span class="meta-v"><b>Jul 24, 2025 → Jul 23, 2026</b> · rates effective June 1, 2026</span></div>
-  <div class="meta-row"><span class="meta-k">Version</span><span class="meta-v" id="report-version">2026-10-23 · build 2740dff9d7</span></div>
+  <div class="meta-row"><span class="meta-k">Version</span><span class="meta-v" id="report-version">2026-10-23 · build 7c11973781</span></div>
   <div class="meta-row"><span class="meta-k">Sources</span><div class="meta-v"><details id="source-inventory"><summary>Full source inventory</summary>SDG&amp;E Green Button 15-min electric + daily gas interval data · 24 detailed bill PDFs for the annual baseline (12 electric — 13 billing periods covering a full 365 days — + 12 gas) · SDG&amp;E + CEA official rate schedules (with SDG&amp;E's plan-comparison tool as validation, and the published average-rate history behind §11) · Enphase Enlighten (SAM 8760 hourly consumption + daily production + device inventory) · PVOutput generation records (daily 2020–2026, per-year stats, 5-min intraday power, system registration) · Tesla telemetry (per-car app Charge Stats, Wall Connector daily export, odometers) · Open-Meteo temperatures · NOAA/RCC ACIS precipitation · CAISO Today's Outlook CO₂ + demand history (364-of-365-day hourly measurement) · solar install invoice (2019) — <a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/blob/main/DATA-SOURCES-CHEATSHEET.md">how to gather each source for your own home</a></details></div></div>
 </div>
 <p class="small"><b>No battery is installed.</b> Every battery result below describes a possible purchase. Projections use rates effective June 1, 2026, not a forecast of future rates.</p>
@@ -179,10 +179,38 @@
 
 <nav class="toc" id="toc">
 <div class="toc-group"><span class="toc-eyebrow">Verdict</span><a class="toc-home" href="#top" aria-label="Back to the top of the report">⌂ Top</a><a href="#s0">Bottom line</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#s7">7 Packages</a><a href="#s15">Do Monday</a></div>
-<div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a class="adv" href="#s8">8 Array upgrades</a></div>
+<div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a href="#balcony-solar">Balcony solar</a><a class="adv" href="#s8">8 Array upgrades</a></div>
 <div class="toc-group"><span class="toc-eyebrow">Audit</span><a class="adv" href="#s9">9 Deep dives</a><a class="adv" href="#s10">10 Bills &amp; gas</a><a class="adv" href="#s11">11 Solar payback</a><a class="adv" href="#s12">12 Cleaning</a><a class="adv" href="#s13">13 Carbon · NEM · prices</a><a class="adv" href="#s14">14 Methodology</a><button class="toc-collapse" id="toccollapse" aria-label="Collapse or expand the audit sections">▾ collapse audit</button></div>
 <div class="progress" id="progress"></div>
 </nav>
+
+<div class="purpose" id="report-questions">
+<h3 id="questions-plans">Questions this report examines: plans, behavior, and hardware</h3>
+<ol class="hang">
+<li><a href="#s3">Am I on the best electric rate plan?</a> Answered for the tested plans and year. The separate <a href="#s10">CEA-versus-bundled generation comparison</a> remains conditional.</li>
+<li><a href="#s4">Does adding a battery change which plan is best?</a> Answered within the matched plan model.</li>
+<li><a href="#s5">What behavior changes are worth real money?</a> Conditional modeled savings. <a href="#s9">Charging, cooling, and other load studies</a> have separate limits; overlapping savings cannot be added.</li>
+<li><a href="#s6">Does a home battery pay for itself: which one, dispatched how, at what payback?</a> Conditional on cost and controls. <a href="#s6-sizing">Controller value</a>, <a href="#s6-programs">program revenue</a>, and <a href="#s6-backup">backup</a> use separate assumptions.</li>
+<li><a href="#s8">Should I add panels, install higher-capacity panels, or upgrade microinverters?</a> Defer conventional expansion. Remaining headroom, component faults, and annual clipping loss remain not determined.</li>
+</ol>
+<h3 id="questions-value">Questions this report examines: electrification, solar value, and timing</h3>
+<ol class="hang" start="6">
+<li><a href="#s10">Should I electrify gas appliances?</a> Conditional cases; appliance shares, schedules, electrical fit, and gas-account closure remain unresolved.</li>
+<li><a href="#s11">Has the solar system paid for itself, and what is it worth per year now?</a> Conditional lifetime model; historical household use and the ITC claim are not established.</li>
+<li><a href="#s12">Was paying for panel cleaning worth it, and what cadence and month are optimal?</a> Production response estimated. Dollar recovery and optimal cadence remain not determined.</li>
+<li><a href="#s13">When is grid power cheapest and cleanest, and do those windows align?</a> Answered for tariff windows and average grid emissions. Marginal emissions remain uncomputed.</li>
+<li><a href="#s13">What is NEM 2.0 grandfathering actually worth per year?</a> Conditional current-rate comparison. The best <a href="#s13">purchase date around NEM expiry</a> remains not determined.</li>
+</ol>
+<h3 id="questions-balcony">Balcony systems and open studies</h3>
+<ul>
+<li><a href="#balcony-solar">What do balcony panels and portable storage add, with or without a proposed home battery?</a> Conditional model; panel-only, storage-only, and joint comparisons use matched starting cases.</li>
+<li><a href="#balcony-solar">Which equipment and complete cost can those savings support?</a> Conditional cost ceilings. Complete quotes, supported connections, and exact system certification remain unknown.</li>
+<li><a href="#balcony-solar">Does a qualifying receptacle-connected PV system preserve NEM treatment, and what changes at the statutory sunset?</a> Approval relief has conditions; export compensation and future account treatment remain not determined.</li>
+<li><a href="#service-voltage-status">Is the service voltage within specification, and does it reduce solar production or cost money?</a> Sampled evidence exists. Formal compliance and causal energy or dollar loss remain not determined.</li>
+<li><a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/issues/18#issuecomment-6354504709">Can this home's data reliably identify individual appliances?</a> Open study. Accuracy untested; independent controlled-load records and scored household results remain missing.</li>
+</ul>
+<p><a href="#s10">Why do modeled bills differ from actual bills?</a> The report explains part of the gap; the remainder stays unresolved. <a href="#s7">Fixed charges remain after improvements</a>, while non-bypassable charges depend on physical flows.</p>
+</div>
 
 <h2 id="s0">Bottom line</h2>
 <p class="verdict">The free EV-charging fix saves a modeled $1,222/yr. For this house, the rate plan is right. A Tesla Powerwall 3 has a conditional 6.1-year modeled hardware-alone payback after that free change.</p>
@@ -191,11 +219,12 @@
 <p>After that free change, one proposed Powerwall 3 adds <b>$2,378/yr</b> in modeled bill savings. At an estimated installed cost of $14,500, its simple payback is about <b>6.1 years</b>. The expansion adds only $218/yr beyond one battery, for about 27 years of marginal payback.</p>
 <p>These comparisons use June 1, 2026 rates. No battery is installed. Before purchase, check the installed quote, electrical capacity, backup circuits, and support for the modeled controls. The billing model still differs materially from actual bills, so these savings remain conditional estimates.</p>
 </div>
+<p>The canonical price-aware purchase simulation holds no standing backup reserve. A permanent reserve changes available energy; that purchase case's saving and payback with a reserve are not calculated here.</p>
 <p>The actual electric bill was <b>$3,282/yr (~$274/mo)</b> across a complete 365-day audit of 12 statements (13 billing periods). That historical bill is not the baseline for subtracting modeled savings. The <a href="#s7">package comparison</a> uses one rate date throughout; <a href="#s10">the bill analysis</a> explains the remaining gap.</p>
 <p>The bill audit covers June 27, 2025–June 26, 2026 and uses older rates. The model moves energy between intervals and re-bills the result (<code>analysis/behavior_rebuild.py</code>).</p>
 <div class="purpose">
-<p>This report compares free changes to energy use with a proposed home battery for the existing rooftop solar system. Actual costs come from bills. Savings and future bills come from models at a stated rate date.</p>
-<p>A separate <a href="research/sb868-portable-solar-storage.md">balcony solar and portable storage study</a> covers different equipment and connection rules. SB 868 qualification alone does not switch tariffs or establish export compensation. Do not add its standalone savings to the home-battery case.</p>
+<p>This report compares rate plans, behavior, proposed storage, and solar options for the existing rooftop system. It also examines electrification, cleaning, and grid emissions. Actual costs come from bills. Savings and future bills come from models at a stated rate date.</p>
+<p>The <a href="#balcony-solar">balcony solar and portable storage comparison</a> separates standalone and joint purchases. Its <a href="research/sb868-portable-solar-storage.md">supporting study</a> states the equipment and connection limits. SB 868 qualification alone does not switch tariffs or establish export compensation. Use matched joint results. Do not add standalone savings.</p>
 <p>Evidence labels distinguish <span class="pill g">measured</span> meter and bill records, <span class="pill y">modeled</span> simulations, and <span class="pill r">estimated</span> approximate inputs. The <a href="#s14">methodology</a> states their limits. The <a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/blob/main/GLOSSARY.md">glossary</a> explains billing and energy terms.</p>
 </div>
 
@@ -216,6 +245,7 @@
 </details>
 
 <details id="s0-cards"><summary>At a glance: results across the report</summary>
+<p>The <a href="#plan-wildcard">TOU-DR-P wildcard</a> is a separate interval-valued screen with assumed event dates. The <a href="#s4">battery×plan matrix</a> supplies the matched price-aware NEM comparison.</p>
 <div class="cards">
   <div class="card"><div class="big">EV-TOU-5</div><div class="lbl">Best plan in every scenario tested (no-battery, battery×plan matrix, TOU-DR-P wildcard) — the solid conclusion</div></div>
   <div class="card"><div class="big blue">~$274/mo</div><div class="lbl">Actual electric bill: $3,282/yr from a complete 365-day bill audit</div></div>
@@ -318,7 +348,7 @@
 <ul>
 <li><b>Large loads run during 4–9pm on-peak:</b> 2,568 kWh/yr of &gt;2.5 kW draw (EV top-ups and other high-power loads) lands in the most expensive window (61–87¢). Moving it past midnight turns ~$1,850 of cost into ~$325.</li>
 <li><b>Charging spills past 6am:</b> ~1,900 kWh/yr of high-power draw at 6–9am; past 6am weekdays it pays ~51¢ instead of 12.5¢. Finish charging by 6am.</li>
-<li><b>Evening A/C through peak hours:</b> summer evenings average 3–4 kW at 6–9pm. Pre-cooling in the 10am–2pm super-off-peak window (often on your own solar) and easing the setpoint 4–9pm shifts this; physically re-billing a 25% shift of on-peak house load is worth ≈ <b>$480/yr</b> (see §7 LOW; the weather regression in §9 attributes ~$230 of that to cooling specifically).</li>
+<li><b>Whole-home evening grid imports:</b> summer evenings average 3–4 kW of grid imports at 6–9pm. Physically moving 25% of on-peak house load and re-billing the year models about <b>$480/yr</b> in savings (<a href="#s7">§7 LOW</a>). The study does not establish the achievable A/C share (<a href="#s9">§9</a>).</li>
 <li><b>Midday exports earn little:</b> since the 2026 TOU change, 10am–2pm weekday exports are worth only ~10.4¢, the netted rate; the lower surplus credit does not apply here (<a href="#s8">§8</a>). Self-consuming (laundry, dishwasher, EV top-up, pre-cool) beats exporting-then-reimporting at 51–87¢.</li>
 </ul>
 
@@ -328,6 +358,7 @@
 <p>The 30% federal credit expired December 31, 2025. This analysis assumes no SGIP incentive. The DSGS backtest and current CEA program need separate eligibility checks, including the 2026 enrollment limit below.</p>
 <p class="small" id="storage-nem">Storage-only additions retain the remaining legacy term under NEM-ST SC 9(d). Customers who apply and have an SGIP reservation accepted on or after June 4, 2024 must move to NBT, with two exceptions. The exceptions cover Residential Solar and Storage Equity and low-income-qualified Equity Resiliency residential customers. Check the exact incentive category before enrollment. <a href="https://tariffsprd.sdge.com/view/tariff/?bookId=ELEC&amp;tarfKey=871&amp;utilId=SDGE">NEM-ST, sheet 28, effective September 3, 2024</a> (checked October 22, 2026).</p>
 <p>The purchase comparison uses the battery added after the free change: <b>$2,378/yr</b> in modeled savings at an estimated installed cost of <b>~$14,500</b>. The <a href="#s7">packages</a> give the matching payback. The other battery figures below answer separate questions.</p>
+<p>The canonical price-aware purchase simulation holds no standing backup reserve. A permanent reserve changes available energy; that purchase case's saving and payback with a reserve are not calculated here.</p>
 <p>A controller must support the model's charging and discharge rules for this estimate to apply. The model also leaves a material unexplained difference from actual bills. Backup duration depends on the circuits connected and charge available when an outage starts.</p>
 <details id="s6-hardware"><summary>Supporting comparison: hardware with on-peak-only operation</summary>
 <h3>On-peak-only simulation (current behavior) <span class="pill y">modeled</span></h3>
@@ -374,7 +405,7 @@
 
 
 
-<h3>Outage endurance (simulated, 6pm start, solar recharge)</h3>
+<h3 id="s6-backup">Outage endurance (simulated, 6pm start, solar recharge)</h3>
 <p class="small">These simulations start with a full battery and allow solar recharge. The table shows median duration across the tested starts. A 14 d result reaches the simulation limit. The model caps demand at each battery's discharge rating, so it does not establish that every peak load receives power. <code>analysis/battery_backup_sims.py</code> → <code>data/backup_endurance.json</code>.</p>
 <table>
 <thead><tr><th>Config</th><th>Essentials (~17 kWh/d)</th><th>House minus EV (~46 kWh/d)</th></tr></thead>
@@ -458,6 +489,139 @@
 
 </details>
 
+<h3 id="balcony-solar">Balcony solar and portable storage: conditional savings, with or without home storage</h3>
+<p>Balcony savings fall after a home battery. A purchase still needs exact equipment evidence and a complete quote. <span class="pill y">modeled</span></p>
+<p>The pathways differ: keep the existing NEM rooftop array with proposed home storage, add balcony PV and portable storage, or combine both. No battery is installed.</p>
+<p>The main case adds 1 kW DC of panels and 3.84 kWh of portable storage. New PV and portable discharge share a 0.8 kW AC cap. Each modeled battery holds 20% reserve, uses 85% round-trip efficiency, and draws 10 W continuously. Home-battery discharge keeps its separate power limit.</p>
+<p>The model assumes access to whole-meter load. Actual circuits, phase coverage, sensing, and controller coordination remain unknown. A refrigerator-only connection cannot claim these savings. New exports receiving NEM credit remain a hypothetical pricing case.</p>
+<table id="balcony-main-results">
+<thead><tr><th>Proposed home storage</th><th>Extra-export treatment</th><th>Balcony + portable added after home storage: extra saving/yr</th><th>All hardware together: total saving/yr</th></tr></thead>
+<tbody>
+<tr data-scenarios="combined_0.8kw_credited" data-baseline="post_behavior"><td>None</td><td>Hypothetical credit</td><td>$1,057</td><td>$1,057</td></tr>
+<tr data-scenarios="combined_0.8kw_zero_credit" data-baseline="post_behavior"><td>None</td><td>No extra credit</td><td>$742</td><td>$742</td></tr>
+<tr data-scenarios="home_13.5kwh_combined_0.8kw_credited_home_first,home_13.5kwh_combined_0.8kw_credited_small_first" data-baseline="large_13.5kwh_11.5kw"><td>13.5 kWh</td><td>Hypothetical credit</td><td>$613 to $691</td><td>$2,577 to $2,655</td></tr>
+<tr data-scenarios="home_13.5kwh_combined_0.8kw_zero_credit_home_first,home_13.5kwh_combined_0.8kw_zero_credit_small_first" data-baseline="large_13.5kwh_11.5kw"><td>13.5 kWh</td><td>No extra credit</td><td>$307 to $390</td><td>$2,271 to $2,354</td></tr>
+<tr data-scenarios="home_27kwh_combined_0.8kw_credited_home_first,home_27kwh_combined_0.8kw_credited_small_first" data-baseline="large_27kwh_11.5kw"><td>27 kWh</td><td>Hypothetical credit</td><td>$428 to $460</td><td>$2,919 to $2,950</td></tr>
+<tr data-scenarios="home_27kwh_combined_0.8kw_zero_credit_home_first,home_27kwh_combined_0.8kw_zero_credit_small_first" data-baseline="large_27kwh_11.5kw"><td>27 kWh</td><td>No extra credit</td><td>$121 to $158</td><td>$2,611 to $2,649</td></tr>
+</tbody>
+</table>
+<p class="small">Extra saving is the bill with home storage alone minus the bill after the balcony system is added. Total saving compares all added hardware with the existing rooftop after the free schedule change, with no added hardware. Ranges cover home-first and portable-first controller priority. They describe controller priority; they do not bound model uncertainty.</p>
+<p class="small">Generic home storage alone saves $1,964/yr at 13.5 kWh or $2,490/yr at 27 kWh on this study&#x27;s schedule and assumptions. The canonical price-aware purchase case above instead gives $2,378/yr after the free change, with no standing reserve. Keep these model bases separate. Do not add this table's increment to that canonical saving.</p>
+<p class="small">All results use 2026-06-01 rates and exclude the free behavior saving. Credited exports and physical exports remain separate. No-extra-credit removes compensation for incremental meter exports, including displaced rooftop exports. Exact settlement and the historical bill residual remain unresolved.</p>
+<h4 id="balcony-complete-cost">What complete incremental cost can the saving support?</h4>
+<p>The ceilings below price only the added balcony system. They exclude the proposed home battery's cost. Actual complete quotes and ownership costs remain unknown.</p>
+<table id="balcony-cost-results">
+<thead><tr><th>Proposed home storage</th><th>Extra-export treatment</th><th>Five-year extra-cost ceiling</th><th>Ten-year extra-cost ceiling</th><th>Assumed complete extra cost / simple payback</th></tr></thead>
+<tbody>
+<tr data-scenario="combined_0.8kw_credited"><td>None</td><td>Hypothetical credit</td><td>$4,490</td><td>$7,836</td><td>$2,500 / 2.4 yr</td></tr>
+<tr data-scenario="combined_0.8kw_zero_credit"><td>None</td><td>No extra credit</td><td>$3,151</td><td>$5,498</td><td>$2,500 / 3.4 yr</td></tr>
+<tr data-scenario="home_13.5kwh_combined_0.8kw_credited_home_first"><td>13.5 kWh</td><td>Hypothetical credit</td><td>$2,603</td><td>$4,543</td><td>$2,500 / 4.1 yr</td></tr>
+<tr data-scenario="home_13.5kwh_combined_0.8kw_zero_credit_home_first"><td>13.5 kWh</td><td>No extra credit</td><td>$1,305</td><td>$2,277</td><td>$2,500 / 8.1 yr</td></tr>
+<tr data-scenario="home_27kwh_combined_0.8kw_credited_home_first"><td>27 kWh</td><td>Hypothetical credit</td><td>$1,819</td><td>$3,174</td><td>$2,500 / 5.8 yr</td></tr>
+<tr data-scenario="home_27kwh_combined_0.8kw_zero_credit_home_first"><td>27 kWh</td><td>No extra credit</td><td>$513</td><td>$895</td><td>$2,500 / 20.7 yr</td></tr>
+</tbody>
+</table>
+<p class="small">Ceilings discount savings at 5% per year, assume 1% annual savings decline, and use 0% real tariff escalation. The cost table uses home-first priority. These discounted ceilings precede unknown maintenance, subscription, replacement, and transition costs. Those costs reduce the amount available for equipment and installation. Simple payback divides the assumed complete extra cost by its own extra annual saving.</p>
+<p>The manufacturer advertised one EcoFlow Stream Ultra at $1,399 on October 23, 2026; that variant was unavailable. This equipment price excludes panels, connection work, tax, and other costs. The separate 1.92 kWh Stream-shaped cases save $255/yr at the default 360 W feed-in or $295/yr at the conditional 800 W feed-in. Higher output needs the manual's circuit and app conditions. The main generic storage configuration is not an exact certified Stream package. <a href="https://us.ecoflow.com/products/stream-ultra">Manufacturer page</a>, <a href="https://us.ecoflow.com/products/stream-ultra.js">variant record</a>, <a href="https://ecoflow-service-us-prod.oss-us-west-1.aliyuncs.com/cms/manual/1753783795065/EcoFlow%20STREAM%20Ultra_User%20Manual.pdf#page=13">U.S. manual</a>.</p>
+<details id="balcony-model"><summary>Supporting comparison: panels, storage, controller priority, and bill components</summary>
+<h4>Panels only, storage only, or both without home storage</h4>
+<p>These rows use the main balcony output cap and compare each purchase with the same bill with the existing rooftop after the free schedule change, with no added hardware. The storage-only row holds its output cap equal to the combined case. It can use existing rooftop surplus and cheap grid energy.</p>
+<table id="balcony-options-results">
+<thead><tr><th>Hardware added</th><th>Annual saving with hypothetical extra-export credit</th><th>Annual saving without extra-export credit</th></tr></thead>
+<tbody>
+<tr data-scenarios="pv_0.8kw_credited,pv_0.8kw_zero_credit"><td>PV only</td><td>$474</td><td>$103</td></tr>
+<tr data-scenarios="battery_power_0.8kw,battery_power_0.8kw"><td>Storage only, same output cap</td><td>$601</td><td>$601</td></tr>
+<tr data-scenarios="combined_0.8kw_credited,combined_0.8kw_zero_credit"><td>PV plus portable storage</td><td>$1,057</td><td>$742</td></tr>
+</tbody>
+</table>
+<h4>Higher shared-output sensitivity</h4>
+<p>The higher-cap case changes both panel size and available portable discharge. It is not a panel-only increment. The artifact records its AC cap, DC size, and complete flows.</p>
+<table id="balcony-higher-cap-results">
+<thead><tr><th>Proposed home storage</th><th>Extra-export treatment</th><th>Balcony + portable added after home storage: extra saving/yr</th><th>All hardware together: total saving/yr</th></tr></thead>
+<tbody>
+<tr><td colspan="4">Sensitivity: 1.2 kW shared AC output; 1.5 kW DC panels</td></tr>
+<tr data-scenarios="combined_1.2kw_credited" data-baseline="post_behavior"><td>None</td><td>Hypothetical credit</td><td>$1,357</td><td>$1,357</td></tr>
+<tr data-scenarios="combined_1.2kw_zero_credit" data-baseline="post_behavior"><td>None</td><td>No extra credit</td><td>$886</td><td>$886</td></tr>
+<tr data-scenarios="home_13.5kwh_combined_1.2kw_credited_home_first,home_13.5kwh_combined_1.2kw_credited_small_first" data-baseline="large_13.5kwh_11.5kw"><td>13.5 kWh</td><td>Hypothetical credit</td><td>$863 to $924</td><td>$2,827 to $2,889</td></tr>
+<tr data-scenarios="home_13.5kwh_combined_1.2kw_zero_credit_home_first,home_13.5kwh_combined_1.2kw_zero_credit_small_first" data-baseline="large_13.5kwh_11.5kw"><td>13.5 kWh</td><td>No extra credit</td><td>$389 to $469</td><td>$2,353 to $2,433</td></tr>
+<tr data-scenarios="home_27kwh_combined_1.2kw_credited_home_first,home_27kwh_combined_1.2kw_credited_small_first" data-baseline="large_27kwh_11.5kw"><td>27 kWh</td><td>Hypothetical credit</td><td>$642 to $681</td><td>$3,133 to $3,172</td></tr>
+<tr data-scenarios="home_27kwh_combined_1.2kw_zero_credit_home_first,home_27kwh_combined_1.2kw_zero_credit_small_first" data-baseline="large_27kwh_11.5kw"><td>27 kWh</td><td>No extra credit</td><td>$166 to $226</td><td>$2,657 to $2,716</td></tr>
+</tbody>
+</table>
+<h4>Which purchase comes first?</h4>
+<p>Each column below compares complete bills after the named purchase. The home-first and portable-first controller priorities give the range. Purchase sequence and controller priority answer different questions; neither proves that real controllers coordinate.</p>
+<table id="balcony-order-results">
+<thead><tr><th>Home storage</th><th>Shared AC cap</th><th>Extra-export treatment</th><th>Home added after balcony + portable: extra saving/yr</th><th>Portable added after home + PV: extra saving/yr</th><th>Panels added after matched home + portable: extra saving/yr</th></tr></thead>
+<tbody>
+<tr data-scenarios="home_13.5kwh_combined_0.8kw_credited_home_first,home_13.5kwh_combined_0.8kw_credited_small_first"><td>13.5 kWh</td><td>0.8 kW</td><td>Hypothetical credit</td><td>$1,520 to $1,598</td><td>$177 to $255</td><td>$419 to $423</td></tr>
+<tr data-scenarios="home_13.5kwh_combined_0.8kw_zero_credit_home_first,home_13.5kwh_combined_0.8kw_zero_credit_small_first"><td>13.5 kWh</td><td>0.8 kW</td><td>No extra credit</td><td>$1,530 to $1,612</td><td>$184 to $267</td><td>$113 to $121</td></tr>
+<tr data-scenarios="home_13.5kwh_combined_1.2kw_credited_home_first,home_13.5kwh_combined_1.2kw_credited_small_first"><td>13.5 kWh</td><td>1.2 kW</td><td>Hypothetical credit</td><td>$1,470 to $1,532</td><td>$208 to $270</td><td>$631 to $640</td></tr>
+<tr data-scenarios="home_13.5kwh_combined_1.2kw_zero_credit_home_first,home_13.5kwh_combined_1.2kw_zero_credit_small_first"><td>13.5 kWh</td><td>1.2 kW</td><td>No extra credit</td><td>$1,467 to $1,547</td><td>$216 to $296</td><td>$157 to $184</td></tr>
+<tr data-scenarios="home_27kwh_combined_0.8kw_credited_home_first,home_27kwh_combined_0.8kw_credited_small_first"><td>27 kWh</td><td>0.8 kW</td><td>Hypothetical credit</td><td>$1,862 to $1,893</td><td>$13 to $44</td><td>$399 to $402</td></tr>
+<tr data-scenarios="home_27kwh_combined_0.8kw_zero_credit_home_first,home_27kwh_combined_0.8kw_zero_credit_small_first"><td>27 kWh</td><td>0.8 kW</td><td>No extra credit</td><td>$1,869 to $1,907</td><td>$20 to $58</td><td>$92 to $100</td></tr>
+<tr data-scenarios="home_27kwh_combined_1.2kw_credited_home_first,home_27kwh_combined_1.2kw_credited_small_first"><td>27 kWh</td><td>1.2 kW</td><td>Hypothetical credit</td><td>$1,776 to $1,815</td><td>$20 to $58</td><td>$600 to $607</td></tr>
+<tr data-scenarios="home_27kwh_combined_1.2kw_zero_credit_home_first,home_27kwh_combined_1.2kw_zero_credit_small_first"><td>27 kWh</td><td>1.2 kW</td><td>No extra credit</td><td>$1,771 to $1,830</td><td>$27 to $87</td><td>$124 to $152</td></tr>
+</tbody>
+</table>
+<p>The additional portable battery earns much less after larger home storage. Panels and storage compete with existing resources for the same load. Each added purchase needs its own cost comparison; standalone savings cannot be added.</p>
+<h4>What parts of the electric bill change?</h4>
+<p>This table splits the main system's extra saving after home storage, using home-first priority. A negative value means added cost. Display rounding can leave a cent difference between the cells and their total.</p>
+<table id="balcony-component-results">
+<thead><tr><th>Home storage</th><th>Extra-export treatment</th><th>Delivery</th><th>CEA generation</th><th>PCIA</th><th>NBC</th><th>Fixed daily charge</th><th>Total extra saving/yr</th></tr></thead>
+<tbody>
+<tr data-scenario="combined_0.8kw_credited"><td>None</td><td>Hypothetical credit</td><td>$550.49</td><td>$477.04</td><td>$22.21</td><td>$7.28</td><td>$0.00</td><td>$1,057.02</td></tr>
+<tr data-scenario="combined_0.8kw_zero_credit"><td>None</td><td>No extra credit</td><td>$392.89</td><td>$345.61</td><td>-$4.09</td><td>$7.28</td><td>$0.00</td><td>$741.69</td></tr>
+<tr data-scenario="home_13.5kwh_combined_0.8kw_credited_home_first"><td>13.5 kWh</td><td>Hypothetical credit</td><td>$339.41</td><td>$257.40</td><td>$13.70</td><td>$2.29</td><td>$0.00</td><td>$612.81</td></tr>
+<tr data-scenario="home_13.5kwh_combined_0.8kw_zero_credit_home_first"><td>13.5 kWh</td><td>No extra credit</td><td>$184.81</td><td>$127.92</td><td>-$7.82</td><td>$2.29</td><td>$0.00</td><td>$307.21</td></tr>
+<tr data-scenario="home_27kwh_combined_0.8kw_credited_home_first"><td>27 kWh</td><td>Hypothetical credit</td><td>$215.81</td><td>$182.68</td><td>$25.68</td><td>$4.05</td><td>$0.00</td><td>$428.22</td></tr>
+<tr data-scenario="home_27kwh_combined_0.8kw_zero_credit_home_first"><td>27 kWh</td><td>No extra credit</td><td>$60.63</td><td>$52.14</td><td>$3.87</td><td>$4.05</td><td>$0.00</td><td>$120.69</td></tr>
+</tbody>
+</table>
+<p>The daily electric charge stays unchanged. Gas stays unchanged and outside this electric model. NBC uses positive physical interval net; its utility-mechanics limits remain in <a href="#s14">the methodology</a>.</p>
+<p>The model keeps charging sources, losses, standby, curtailment, and annual state of charge separate. Added PV follows the existing production shape; it is not a measured balcony placement. Selected-appliance performance and an NBT-optimized controller remain untested. See <a href="data/portable_solar_storage.json">the artifact</a> and <a href="research/sb868-portable-solar-storage.md">the study</a>.</p>
+</details>
+<details id="balcony-cost-ladders"><summary>Supporting costs: assumed complete prices and added battery capacity</summary>
+<p>These complete incremental costs are assumptions. Actual quotes remain unknown. Long simple-payback ratios do not establish equipment life. Each payback excludes the home battery's cost and the free behavior saving. Combined home cases use home-first priority. PV-only cases provide a separate panels-before-storage comparison.</p>
+<table id="balcony-ladder-results">
+<thead><tr><th>Home storage; added system</th><th>Extra-export treatment</th><th>Five-year ceiling</th><th>Ten-year ceiling</th><th>$1,000 assumed cost</th><th>$2,500 assumed cost</th><th>$5,000 assumed cost</th><th>$7,500 assumed cost</th></tr></thead>
+<tbody>
+<tr data-scenario="pv_0.8kw_credited"><td>None; PV only</td><td>Hypothetical credit</td><td>$2,012</td><td>$3,512</td><td>2.1 yr</td><td>5.3 yr</td><td>10.6 yr</td><td>15.8 yr</td></tr>
+<tr data-scenario="combined_0.8kw_credited"><td>None; PV + portable</td><td>Hypothetical credit</td><td>$4,490</td><td>$7,836</td><td>0.9 yr</td><td>2.4 yr</td><td>4.7 yr</td><td>7.1 yr</td></tr>
+<tr data-scenario="pv_0.8kw_zero_credit"><td>None; PV only</td><td>No extra credit</td><td>$437</td><td>$763</td><td>9.7 yr</td><td>24.3 yr</td><td>48.6 yr</td><td>72.9 yr</td></tr>
+<tr data-scenario="combined_0.8kw_zero_credit"><td>None; PV + portable</td><td>No extra credit</td><td>$3,151</td><td>$5,498</td><td>1.3 yr</td><td>3.4 yr</td><td>6.7 yr</td><td>10.1 yr</td></tr>
+<tr data-scenario="home_13.5kwh_pv_0.8kw_credited"><td>13.5 kWh; PV only</td><td>Hypothetical credit</td><td>$1,852</td><td>$3,232</td><td>2.3 yr</td><td>5.7 yr</td><td>11.5 yr</td><td>17.2 yr</td></tr>
+<tr data-scenario="home_13.5kwh_combined_0.8kw_credited_home_first"><td>13.5 kWh; PV + portable</td><td>Hypothetical credit</td><td>$2,603</td><td>$4,543</td><td>1.6 yr</td><td>4.1 yr</td><td>8.2 yr</td><td>12.2 yr</td></tr>
+<tr data-scenario="home_13.5kwh_pv_0.8kw_zero_credit"><td>13.5 kWh; PV only</td><td>No extra credit</td><td>$522</td><td>$911</td><td>8.1 yr</td><td>20.3 yr</td><td>40.7 yr</td><td>61.0 yr</td></tr>
+<tr data-scenario="home_13.5kwh_combined_0.8kw_zero_credit_home_first"><td>13.5 kWh; PV + portable</td><td>No extra credit</td><td>$1,305</td><td>$2,277</td><td>3.3 yr</td><td>8.1 yr</td><td>16.3 yr</td><td>24.4 yr</td></tr>
+<tr data-scenario="home_27kwh_pv_0.8kw_credited"><td>27 kWh; PV only</td><td>Hypothetical credit</td><td>$1,764</td><td>$3,079</td><td>2.4 yr</td><td>6.0 yr</td><td>12.0 yr</td><td>18.1 yr</td></tr>
+<tr data-scenario="home_27kwh_combined_0.8kw_credited_home_first"><td>27 kWh; PV + portable</td><td>Hypothetical credit</td><td>$1,819</td><td>$3,174</td><td>2.3 yr</td><td>5.8 yr</td><td>11.7 yr</td><td>17.5 yr</td></tr>
+<tr data-scenario="home_27kwh_pv_0.8kw_zero_credit"><td>27 kWh; PV only</td><td>No extra credit</td><td>$428</td><td>$747</td><td>9.9 yr</td><td>24.8 yr</td><td>49.7 yr</td><td>74.5 yr</td></tr>
+<tr data-scenario="home_27kwh_combined_0.8kw_zero_credit_home_first"><td>27 kWh; PV + portable</td><td>No extra credit</td><td>$513</td><td>$895</td><td>8.3 yr</td><td>20.7 yr</td><td>41.4 yr</td><td>62.1 yr</td></tr>
+</tbody>
+</table>
+<h4>Extra storage must earn its own cost</h4>
+<p>The capacity sweep uses standalone generic storage without home storage or new PV. Charge power is 1.2 kW and discharge power is 1.2 kW. The last step adds more capacity than the earlier steps. Compare its own extra saving with its own extra cost ceiling.</p>
+<table id="balcony-capacity-results">
+<thead><tr><th>Generic capacity change</th><th>Extra saving/yr</th><th>Five-year extra-cost ceiling</th><th>Ten-year extra-cost ceiling</th></tr></thead>
+<tbody>
+<tr data-baseline="battery_1.92kwh" data-scenario="battery_3.84kwh"><td>1.92 to 3.84 kWh</td><td>$378</td><td>$1,605</td><td>$2,801</td></tr>
+<tr data-baseline="battery_3.84kwh" data-scenario="battery_5.76kwh"><td>3.84 to 5.76 kWh</td><td>$273</td><td>$1,159</td><td>$2,023</td></tr>
+<tr data-baseline="battery_5.76kwh" data-scenario="battery_7.68kwh"><td>5.76 to 7.68 kWh</td><td>$207</td><td>$880</td><td>$1,536</td></tr>
+<tr data-baseline="battery_7.68kwh" data-scenario="battery_11.52kwh"><td>7.68 to 11.52 kWh</td><td>$231</td><td>$983</td><td>$1,716</td></tr>
+</tbody>
+</table>
+<p>No new homeowner federal credit enters these costs. Federal credit guidance excludes property placed in service after December 31, 2025. Backup value and program revenue remain separate. <a href="https://www.irs.gov/credits-deductions/residential-clean-energy-credit">Federal credit guidance</a>.</p>
+</details>
+<p>A qualifying SB 868 system needs no prior utility approval or interconnection agreement once its exemption takes effect. Exact system certification, electrical-code compliance, and the supported connection remain necessary. Qualification alone establishes neither NEM retention nor export compensation.</p>
+<details id="balcony-legal"><summary>Supporting legal and equipment limits: effective date, notification, sunset, and backup</summary>
+<p>SB 868 was signed September 30, 2026 as Chapter 985. Its ordinary January 1, 2027 effective date follows from the Secretary of State's general rule. This is an effective-date inference; the exemption is not effective on this report date. <a href="https://www.gov.ca.gov/2026/09/30/governor-newsom-issues-legislative-update-9-30-2026/">Governor's signed-bill list</a>, <a href="https://www.sos.ca.gov/administration/bill-chapters">effective-date rule</a>.</p>
+<p>Qualifying receptacle-connected PV systems have a 1,200 W aggregate AC limit per dwelling. They need onsite-consumption intent, current electrical-code compliance, nationally recognized laboratory system certification, and certified outage isolation. A component listing alone does not certify the complete system. The chaptered text grants approval relief and permits simple online notice; notice cannot require approval.</p>
+<p>The official text endpoint returned an access error during the source check. The disclosed <a href="https://legiscan.com/CA/text/SB868/2025">chaptered-text mirror, sections 8530–8532</a> supplies these details. Existing hardwired rooftop PV appears separate from the defined qualifying devices; that reading does not establish a battery-only exemption or new-export credit. <a href="https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB868">Official text endpoint</a>.</p>
+<p>The approval-exemption section repeals January 1, 2030. The following section restricts sales that fail its code, certification, and isolation conditions. The text establishes neither automatic shutdown nor permanent exemption. Applicable future equipment and account treatment, and any compliance cost, remain unknown.</p>
+<p>Backup needs a separate supported connection and measured load. Ordinary home outlets lose Stream supply during an outage; directly connected appliances can transfer with up to three seconds of interruption. The system is not an uninterruptible power supply. No checked evidence establishes automatic outage recharge from this home's IQ7X rooftop array. <a href="https://ecoflow-service-us-prod.oss-us-west-1.aliyuncs.com/cms/manual/1753783795065/EcoFlow%20STREAM%20Ultra_User%20Manual.pdf#page=15">Stream manual</a>, <a href="https://enphase.com/sites/default/files/2021-05/IQ7X-DS-EN-US.pdf">IQ7X datasheet</a>.</p>
+<p>The study also prices unchanged physical flows under current NBT assumptions. Those signed ledgers omit settlement-credit limits and relevant-period accounting. They establish no payable-bill saving, mandatory tariff migration, or future economics around NEM expiry. Future tariffs, equipment, and the best adoption date remain unknown. <a href="research/sb868-portable-solar-storage.md#present-2026-nbt-sensitivity-fixed-flows-signed-costs-before-settlement-limits">Present NBT sensitivity and limits</a>.</p>
+</details>
+
 <h2 id="s7">7 · The decision: three packages</h2>
 <p class="verdict">The free EV-charging fix is worth a modeled $1,222/yr. After that change, a hypothetical Tesla Powerwall 3 models its own $2,378/yr (~6.1-yr payback), and the expansion pack saves too little to match that.</p>
 <p>All packages keep <b>EV-TOU-5</b>. <b>Actual electric cost: $3,282/yr (~$274/mo), complete 365-day audit.</b> The package projections compare modeled cases at the same June 1, 2026 rates.</p>
@@ -476,6 +640,7 @@
 </div>
 <div class="pkg best">
 <h3>MID — ~$14,500 · + 1 Tesla Powerwall 3 · quote candidate</h3>
+<p>The canonical price-aware purchase simulation holds no standing backup reserve. A permanent reserve changes available energy; that purchase case's saving and payback with a reserve are not calculated here.</p>
 <ul>
 <li><b>Saves ~$3,600/yr in one integrated simulation</b>: the EV shift is applied first, then the price-aware battery runs on the shifted load, and the whole modified year is re-billed end-to-end (behavior $1,222 + battery marginal $2,378; no cross-model splicing)</li>
 <li><b>Projected bill at constant 6/1/2026 rates: ~$1,302/yr (~$109/mo)</b>, vs ~$4,901/yr with no changes. Last year's actual $3,282 is not directly comparable (<a href="#s10">§10</a>).</li>
@@ -597,6 +762,11 @@
 <p>The available inputs do not separate weather, soiling, and aging across those years. The August 12, 2024 cleaning study estimates an 11.8% production gain after about 134 dry days, or 4.4 months without rain. That short-term result cannot correct the naïve four-year decline of 5.2% or bound annual weather and soiling effects.</p>
 <p>Collected production and weather history needs a separate quality check before that comparison. Clear-sky solar geometry alone, calculated with the cloud-free Haurwitz model, varies only about 0.15% per year across the span. It cannot explain the production swing, but it does not isolate the remaining causes. No narrower range or bound on true degradation follows from these checks. Full derivation: TECHNICAL.md §3.26.</p>
 
+<h3 id="service-voltage-status">Service voltage: sampled results do not establish production loss</h3>
+<p>The archive covers more than sixty days. Retained voltage samples lie within the cited Range A limits. The tested models establish no inverse voltage-production association at their stated uncertainty.</p>
+<p>Coverage gaps and unknown sensing location and accuracy prevent a continuous-compliance conclusion. Frequency provides a measurement-chain sanity check. The study does not establish zero production loss; causal lost kWh and dollars remain undetermined.</p>
+<p>No documented sampled exceedance supports a utility-violation claim. A customer can request an SDG&amp;E investigation of a suspected problem without prior calibrated measurements. Attribution and the complaint-or-compliance disposition remain open. See <a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/issues/19#issuecomment-6354505435">the sampled-study status</a> and <a href="data/service_voltage.json">the aggregate evidence</a>.</p>
+
 <h3>Two modeled load shapes attribute most of the printed NBC-usage increase to consumption</h3>
 <p>Two modeled load shapes assign most of the printed NBC-usage increase to consumption. The bills show 1,438 kWh for May 25 to June 25, 2024 (32 days), and 1,934 kWh for May 29 to June 26, 2026 (29 days). Signed-net usage rises from 346 to 987 kWh. The 496 kWh difference is the change in printed NBC usage. It does not measure growth in physical gross imports.</p>
 <p>The model uses saved SAM load and derived production. To compare periods of different lengths, it uses a real 32-day 2026 reference window, May 25 to June 25. It does not stretch 29 days into 32. The first case gives both years that reference window's hourly shape and scales each to its bill. Exact net usage plus estimated production pins consumption; the model solves for each year's production level. This assigns +491 kWh to consumption and +5 kWh to production.</p>
@@ -633,8 +803,9 @@
 <li><b>Representative-year caveat <span class="pill g">measured</span>:</b> Jan–Jun whole-home load ran <b>+10.8%</b> in 2026 vs 2025 (13,885 vs 12,534 kWh). The savings above use the stated historical year. Future savings depend on the timing of any added load. <span class="small">(All four: <code>data/extended_results.json</code>.)</span></li>
 </ul>
 
-<h3>Plan wildcard: can TOU-DR-P + a battery beat EV-TOU-5?</h3>
-<p>No. TOU-DR-P offers lower base rates but adds a ~$1.16/kWh surcharge on ~15 called event days. Even letting the battery dodge every event, modeled annual cost is <b>~$6,757</b> vs <b>~$3,202</b> for EV-TOU-5 + the same battery. EV-TOU-5 remains the lowest-cost option in every tested combination for this household.</p>
+<h3 id="plan-wildcard">Plan wildcard: can TOU-DR-P + a battery beat EV-TOU-5?</h3>
+<p>EV-TOU-5 wins this separate on-peak-only, interval-valued screen. TOU-DR-P adds a ~$1.16/kWh surcharge on ~15 assumed event dates. The screen gives modeled annual costs of <b>~$6,757</b> for TOU-DR-P and <b>~$3,202</b> for EV-TOU-5 with the same battery hardware.</p>
+<p>This screen charges outside on-peak, tops up to a partial charge, and discharges only on-peak. Available charge and power limit event avoidance. It values interval flows directly; it does not use monthly NEM billing. The <a href="#s4">matched price-aware NEM comparison</a> uses a different policy and billing method. Source: <code>analysis/deep_analyses.py → data/deep_results.json</code>.</p>
 
 <h3>Quiet-night load: its cost and evidence limits</h3>
 <div class="note" data-label="Finding"><p>The meter's 1am to 5am import floor has a median of 1.03 kW on 43 of 365 nights. The selection excludes every night with a high-power interval. Carrying that four-hour floor across all 8,760 hours gives a modeled 9,023 kWh/yr and about $3,155/yr. <a href="#s13">§13</a> prices the same assumption a second way and explains the difference.</p>
@@ -787,8 +958,8 @@
 
 <h2 id="s11">11 · Lifetime value: the model estimates recovery of the solar installation cost around fall 2025</h2>
 <p><span class="pill y">modeled</span> <span class="pill r">estimated index · 2020–2023</span> <span class="pill g">measured · 2024–2026 tariff move</span></p>
-<p>The model uses June 1, 2026 solar value and an approximate published index for historical rates. Estimated break-even dates carry uncertainty of a few months.</p>
-<p>The invoice records $37,845 paid in full in December 2019, with permission to operate on December 27, 2019. The model values each year's actual metered production using a no-solar bill comparison, then scales historical values with SDG&amp;E's published average-rate history. The California State Auditor reports roughly 10% annual growth in that index over 2016 to 2023.</p>
+<p>The lifetime model applies the recent load/value profile and an approximate rate index to historical production. The model does not calculate an uncertainty interval for these dates.</p>
+<p>The invoice records $37,845 paid in full in December 2019, with permission to operate on December 27, 2019. The model applies a no-solar bill comparison from the recent load profile to each year's actual metered production. It scales historical values with SDG&amp;E's published average-rate history. The California State Auditor reports roughly 10% annual growth in that index over 2016 to 2023.</p>
 <table>
 <thead><tr><th>Year</th><th>Production (kWh)</th><th>Value that year</th><th>Cumulative</th></tr></thead>
 <tbody>
@@ -803,10 +974,10 @@
 </table>
 <p class="small">Cumulative column computed from unrounded values (yearly figures rounded to $100, so adjacent rows may differ by ±$100 from adding the rounded numbers).</p>
 <div class="rec"><p>The model estimates recovery of the $37,845 gross installation cost around fall 2025, 73% through that year's production. This is simple break-even in nominal dollars, without discounting or capital opportunity cost. If the 30% federal ITC was claimed, the approximately $26,500 net cost reaches modeled break-even in early 2024. Qualification of 2019 systems does not establish that the household claimed it. <span class="pill g">measured · 5/2024–6/2026</span></p>
-<p>At June 1, 2026 rates, the same usage year costs a modeled $9,853 without solar and $4,901 with solar. The model therefore values solar at about $4,950/yr, or $0.30 per kWh. Under the pre-2026 TOU structure, blended value is about $0.49 per kWh, so past production carries greater value per kWh. The approximate rate index supports crossover dates only to a few months. It cannot establish a particular week. Source: <code>analysis/lifetime_payback.py → data/lifetime_payback.json</code>.</p>
+<p>At June 1, 2026 rates, the same usage year costs a modeled $9,853 without solar and $4,901 with solar. The model therefore values solar at about $4,950/yr, or $0.30 per kWh. Under the pre-2026 TOU structure, blended value is about $0.49 per kWh, so past production carries greater value per kWh. The historical values use the recent load/value profile and approximate index. They do not reconstruct historical household use or establish a precise crossover date. Source: <code>analysis/lifetime_payback.py → data/lifetime_payback.json</code>.</p>
 <p>The $4,901 modeled bill already includes $289.60 of fixed daily charges, 5.9% of the total. That is the only cost floor unchanged by a purchase. Another $488.15, 10.0%, is NBC on positive physical interval net for the no-purchase case. Those variable costs change with a battery package, though imports keep them above zero under this convention. Together they total $777.75, or about 15.9%. See <a href="#s7">§7</a> and <code>data/irreducible_bill.json → baseline_floor</code>.</p>
 <p>The available bills show the limitation of a single historical rate index. The compared service periods are May 25 to June 25, 2024 and May 29 to June 26, 2026. On cells billed as imports in both periods, the fixed-weight price level falls 4.0% over 2.01 years. Yet on-peak delivery rises 14.2%, super-off-peak delivery falls 35.1%, and bundled generation rises 20.6 to 21.1%.</p>
-<p>This array's production chiefly offsets super-off-peak and on-peak, which moved in opposite directions. One average escalator cannot track both. The 2024 to 2026 values retain that approximation, and their crossover uncertainty stays at a few months. Before May 2024, the statement corpus supplies no bill evidence. Source: <code>analysis/bill_decomposition.py → data/bill_decomposition.json</code>.</p></div>
+<p>This array's production chiefly offsets super-off-peak and on-peak, which moved in opposite directions. One average escalator cannot track both. The 2024 to 2026 values retain that approximation. No calculated uncertainty interval bounds the crossover dates. Before May 2024, the statement corpus supplies no bill evidence. Source: <code>analysis/bill_decomposition.py → data/bill_decomposition.json</code>.</p></div>
 
 <details class="sec" id="sec12" open>
 <summary><h2 id="s12">12 · Panel cleaning &amp; soiling</h2><span class="teaser">The 2024-08-12 study estimates an 11.8% production gain relative to control years. Future cleaning payback and the best interval remain undetermined; the archived cadence calculation is not reproduced.</span></summary>
@@ -921,9 +1092,9 @@
 <li><b>Plan-matrix scope:</b> the <a href="#s3">§3</a> and <a href="#s4">§4</a> cross-plan comparisons use published rate-table values, the sanctioned basis for ranking plans (bill-derived canonical rates exist only for the billed plan). The <a href="#s4">§4</a> battery×plan matrix is a simulation result: <code>analysis/battery_plan_matrix.py</code> bills the <a href="#s6">§6</a> price-aware PW3 dispatch under each top-3 plan's rates (<code>data/battery_plan_matrix.json</code>); its no-battery column ties out to <code>data/plan_results.csv</code> (asserted in-script) and its EV-TOU-5 battery value is cross-checked against the bill-derived billing model ($2,458 table-rate vs $2,464 bill-derived; the rate basis accounts for the gap, and both use the canonical TOU calendar).</li>
 <li><b>Bill validation:</b> 12 detailed electric statements (13 billing periods; one statement splits at a rate change) parsed by <code>analysis/parse_bills.py</code> → <code>data/electric_bill_summary.csv</code>, covering the full 365 days; generation rates matched to the penny; CCA product confirmed "Clean Impact Plus" with no relief credit; climate zone confirmed Coastal; actual annual current charges $3,282 (<a href="#s10">§10</a>). The parser reads periods from the statement text, never from filenames, and its per-bill TOU rates are committed in <code>data/bill_tou_detail.csv</code>.</li>
 <li><b>Confidence labels:</b> measured = read from meters, bills, or checked source records; modeled = computed under the stated assumptions; estimated = uses approximate inputs or limited observations. A modeled label does not establish complete bill reconciliation; <a href="#s10">§10</a> states the unresolved gap. Labels follow the evidence for each finding.</li>
-<li><b>Caveats:</b> rates change Jan/Jun (SDG&amp;E) and Feb/Jun (CEA); TOU-DR-P event surcharges not simulated; installed prices are estimates; get quotes. The annual gas baseline uses 12 gas bill PDFs; the longer comparison uses the larger corpus.</li>
+<li><b>Caveats:</b> rates change Jan/Jun (SDG&amp;E) and Feb/Jun (CEA); the main plan table excludes TOU-DR-P event surcharges; the <a href="#plan-wildcard">separate interval-valued screen</a> uses assumed event dates; installed prices are estimates; get quotes. The annual gas baseline uses 12 gas bill PDFs; the longer comparison uses the larger corpus.</li>
 <li><b>Cleaning diff-in-diff (<a href="#s12">§12</a>):</b> 30-day pre/post windows around 8/12/2024 vs identical calendar windows in 2021/2022/2023/2025 (PVOutput daily records, <code>data/cleaning_study_daily.csv</code>); effect = cleaned-year post/pre ratio ÷ control-mean ratio. Soiling study: <code>analysis/soiling_analysis.py</code> (NOAA/RCC ACIS airport-gauge precipitation, Haurwitz clear-sky normalization, clear-day filter, seasonal harmonics).</li>
-<li><b>Lifetime payback (<a href="#s11">§11</a>):</b> yearly actual production × blended $/kWh from the no-solar counterfactual (SAM hourly load re-billed on the netting model, old-TOU structure for pre-2026 years), scaled by SDG&amp;E's published average-rate history; ±10% on crossover timing. Invoice and PTO date from source documents.</li>
+<li><b>Lifetime payback (<a href="#s11">§11</a>):</b> yearly actual production × blended $/kWh from the recent load/value profile's no-solar counterfactual (SAM hourly load re-billed on the netting model, old-TOU structure for pre-2026 years), scaled by SDG&amp;E's approximate published average-rate history. The model does not calculate an uncertainty interval for crossover dates. Invoice and PTO date from source documents.</li>
 <li><b>Carbon (<a href="#s13">§13</a>):</b> CAISO Today's Outlook history CSVs (co2.csv + demand.csv, 5-min): <b>364 of the analysis year's 365 days</b> fetched and cached individually; hourly kg/MWh = total CO₂ ÷ demand; the one remaining day (2026-03-08, a blank 02:00 hour in CAISO's raw files) uses the month-hour mean of covered days in the same month; applied to the 15-min household data by date and hour. Labeled <i>measured</i>. <code>analysis/carbon_fullyear.py</code> → <code>data/carbon_fullyear_results.json</code> + intensity table <code>data/caiso_hourly_intensity.csv</code> (original 4-day study: <code>analysis/carbon_timing.py</code>). Grid-average, not marginal. The dispatch-carbon tradeoff (does the recommended battery policy fight its own carbon story) is <code>analysis/carbon_dispatch_tradeoff.py</code> → <code>data/carbon_dispatch_tradeoff.json</code>.</li>
 <li><b>DSGS VPP backtest (<a href="#s6">§6</a>):</b> <code>analysis/dsgs_vpp_backtest.py</code> → <code>data/dsgs_vpp_backtest.json</code>, replaying the real 2025 DSGS event calendar (CEC docket 22-RENEW-01, TN 269155; second-year event list from TN 266629) against this household's measured load and a hypothetical Powerwall 3; read read-only by <code>extended_findings.py</code>'s DSGS tornado lever below, never recomputed there.</li>
 <li><b>Extended findings (<a href="#s6">§6</a> resilience + DSGS tornado-lever reconciliation, <a href="#s9">§9</a> dividend workups, <a href="#s10">§10</a> AB 205 + gas decomposition, <a href="#s13">§13</a> 2039 strategy):</b> <code>analysis/extended_findings.py</code> → <code>data/extended_results.json</code>, computed from the committed artifacts plus cited external constants (EIA gasoline series, FHWA VM-1 fleet economy, CPUC decisions, the DSGS backtest above, SDG&amp;E reliability report; sources in <code>research/extended-research-notes.md</code>); each figure carries its evidence pill in-line. The "What to do Monday" appendix is content-only; it introduces no new artifacts.</li>

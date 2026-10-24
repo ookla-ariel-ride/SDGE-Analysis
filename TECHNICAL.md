@@ -850,13 +850,15 @@ artifact.
 **Lifetime payback.** Install invoice: **$37,845 paid Dec 2019** (PTO 2019-12-27). Initially
 an in-session computation; now reproduced by the committed `analysis/lifetime_payback.py`
 (§3.12, the "script per headline number" gate, `CLAUDE.md` §9). Cumulative value = each
-year's actual production × a blended $/kWh value under the TOU structure in force that year,
+year's actual production × a blended $/kWh value from the recent load/value profile,
+using the TOU structure in force that year,
 scaled by the utility's rate history (a rate index, not today's rates back-cast over
 history). The curve crosses $37,845 in **~fall 2025** (gross), or **~early 2024** if the 30%
 federal ITC was claimed (net cost $26,492). Current-year model value of solar: **$4,952/yr**: a
 no-solar counterfactual re-billed on the validated netting model (NBC on positive physical interval net) costs
 $9,853/yr vs the modeled $4,901/yr baseline. Caveat: the rate-index scaling of historical
-value is approximate; treat the crossover dates as **±10%** (several months either way).
+value is approximate and does not reconstruct historical household use. The model does
+not calculate an uncertainty interval for crossover dates.
 
 **`data/extra_results.json` keys** (all from in-session computations on the same
 15-minute dataset and bill-validated rates, except `escalation`, which issue #34 found
@@ -942,7 +944,8 @@ denominator are derived from the data and written to `data/lifetime_payback.json
 **Results.** Gross crossover **~fall 2025** (~Sep–Oct, 73% through the year); net-of-ITC
 crossover **~early 2024** (~Mar). Headline values live in
 `data/lifetime_payback.json` (script-owned, §9-gated). Caveat printed with the results: the rate
-index is approximate; crossover dates carry roughly ±10% (a few months).
+index is approximate and historical production uses the recent load/value profile. The
+model does not calculate an uncertainty interval for crossover dates.
 
 **Run:** `python3 analysis/lifetime_payback.py` (no data files needed; it reads
 `private/household.yaml` for the three per-house facts and carries the rest as constants).
@@ -4942,7 +4945,7 @@ This study models prospective hardware. The household owns no battery. Every Pow
 case is hypothetical. The study uses the measured 2025-07-24 through 2026-07-23 meter
 window and frozen June 2026 rates. Original NEM hardware savings are model bill differences
 from the post-free-fix baseline at those same rates. They exclude the separate free-behavior saving.
-The schema-version-2 NBT sensitivity below uses signed cost ledgers and matched behavior baselines.
+The schema-version-3 artifact includes joint home/balcony cases. Its NBT sensitivity below uses signed cost ledgers and matched behavior baselines.
 Equipment, circuit, export-settlement, and legal evidence appears in
 [`research/sb868-portable-solar-storage.md`](research/sb868-portable-solar-storage.md).
 These exploratory results do not establish lawful grid-parallel operation or a purchase recommendation.
@@ -4973,8 +4976,46 @@ fifteen-minute channel/billing-interval reconciliation remains open. Every origi
 figure and price ceiling retains the model convention; exact reproduction does not establish
 tariff accuracy. See the [NBC clarification](#nbc-meter-interval-clarification).
 
+**Joint home/balcony matrix.** Schema 3 adds 42 scenarios: 12 home-plus-PV,
+24 home-plus-PV-plus-portable, and six matched no-PV controls. These retain the
+post-free-fix baseline, 20% reserve, 85% round-trip efficiency, 10 W standby per
+controller, and the simple schedule. Home storage uses 13.5/27 kWh. The primary
+balcony system uses 1 kW DC, a 0.8 kW shared AC cap, and 3.84 kWh portable storage;
+the higher-cap sensitivity uses 1.5 kW DC and 1.2 kW shared AC.
+
+`shared_ac_battery_indices` explicitly selects the portable controller for that
+cap. New PV always uses the balcony cap, including PV sent into home storage.
+Home discharge retains its individual limit. Empty membership caps only new PV;
+omitted membership preserves the original all-controller cap behavior. Invalid,
+duplicate, boolean, negative, and out-of-range indices fail closed. Each controller
+keeps its own source accounts, power limits, standby, losses, reserve, and SOC.
+
+Both `home_first` and `small_first` priorities operate on remaining physical flows.
+They represent directional sensitivities, not proven hardware coordination. The 120
+new marginal comparisons price balcony after home, home after balcony, portable after
+home-plus-PV, and panels after matched home-plus-portable. All 138 marginal rows use
+complete before/after bills on matched behavior baselines. No independent savings
+addition enters a joint result. The primary results, component offsets, before/after
+IDs, and cost ladders appear in the [research comparison](research/sb868-portable-solar-storage.md#joint-home-storage-balcony-pv-and-portable-storage-comparison).
+
+Generic home-alone savings are $1,964.18/year at 13.5 kWh and $2,490.47/year at 27 kWh.
+These differ from the canonical price-aware/no-standing-reserve purchase case. A
+balcony increment cannot be added to its $2,378/year post-behavior battery saving.
+The fixed daily charge remains unchanged; gas stays unchanged and excluded.
+
+`financial_sensitivities.incremental_complete_cost_sensitivities` stores 12 selected
+0.8 kW packages: panels-only and panels-plus-portable, each home baseline, and both
+credit treatments. Combined home cases use home-first priority. Each package states
+its matched `baseline_id`, incremental saving, null actual-cost economics, and four
+assumed complete incremental costs. Home-battery cost is excluded. Five-/ten-year
+ceilings use 5% real discount, 1% annual savings decline, and zero real escalation;
+unknown ownership costs reduce the available initial price. Assumed-cost payback and
+NPV do not establish an actual quote or equipment life. Negative savings retain their
+sign and no positive-payback value. `provenance.joint_extension` dates and hashes this
+extension separately from the inherited baseline provenance.
+
 **Present-2026 NBT signed ledgers.** `present_2026_nbt_sensitivity` reprices the same
-physical traces for all 75 scenarios, nine canonical references, and 18 marginal pairs.
+physical traces for all 117 scenarios, nine canonical references, and 138 marginal pairs.
 Each of four cases retains `unchanged_behavior` and `post_free_fix` baselines.
 Rows with unchanged behavior use the first; all other rows use the second.
 Hardware deltas subtract each after-hardware ledger from its matched baseline ledger.

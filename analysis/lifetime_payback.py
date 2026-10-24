@@ -30,8 +30,10 @@ section cites. The block used to be hand-recorded in extra_results.json and drif
 as the archive moved; owning an artifact puts it under the section-9 regeneration
 gate like every other headline figure.
 
-Caveat: the rate index is approximate; crossover dates carry roughly +/-10% (a few
-months). Inputs: yearly production (monitoring records), install invoice total + date.
+Caveat: historical production uses the recent load/value profile and an approximate
+rate index, not reconstructed historical household use. The model does not calculate
+an uncertainty interval for crossover dates. Inputs: yearly production (monitoring
+records), install invoice total + date.
 
 Per-house inputs (invoice, install/PTO dates) come from private/household.yaml via
 analysis/household.py (fails closed without it — run the intake interview in
