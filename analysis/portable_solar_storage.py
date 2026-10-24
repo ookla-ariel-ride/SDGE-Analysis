@@ -1036,6 +1036,69 @@ def scenario_summary(d, baseline_imports, baseline_exports, result, batteries):
             'conditional_backup_runtime': [backup_runtime(b) for b in batteries]}
 
 
+
+def build_chart_data(d, post_imports, exports, traces, study):
+    """Aggregate twelve saved traces by local hour; never run dispatch again.
+
+    Each meter row represents 0.25 elapsed hours. Repeated local DST labels
+    contribute twice; nonexistent labels contribute no rows. Accounts reconcile
+    against the complete monthly source bills before publication.
+    """
+    _frame(d)
+    source_ids = ['post_free_fix', 'pv_0.8kw_zero_credit', 'battery_power_0.8kw',
+                  'combined_0.8kw_zero_credit']
+    for capacity in ('13.5', '27'):
+        source_ids.extend([f'large_{capacity}kwh_11.5kw',
+                           f'home_{capacity}kwh_pv_0.8kw_zero_credit',
+                           f'home_{capacity}kwh_small_0.8kw_home_first',
+                           f'home_{capacity}kwh_combined_0.8kw_zero_credit_home_first'])
+    rows = {row['id']: row for row in study['scenarios']}
+    hours = d.dt.dt.hour.to_numpy()
+    seasons = d.seas.to_numpy()
+    denominators = {}
+    for season in ('S', 'W'):
+        counts = [int(np.sum((seasons == season) & (hours == hour))) for hour in range(24)]
+        denominators[season] = {'interval_counts_by_hour': counts,
+                                'elapsed_hours_by_hour': [count * INTERVAL_HOURS for count in counts]}
+    provenance = study['provenance']
+    basis = {'window_start': provenance.get('window_start', str(d.dt.min().date())),
+             'window_end': provenance.get('window_end', str(d.dt.max().date())),
+             'interval_hours': INTERVAL_HOURS, 'rate_snapshot': provenance['rate_snapshot'],
+             'behavior_baseline': 'post_free_fix', 'policy': study['assumptions']['policy'],
+             'average_basis': 'sum interval kWh / sum elapsed hours by tariff season and local hour',
+             'summer_months': sorted(R.SUMMER_MONTHS), 'seasons': denominators}
+    profiles = {}
+    channels = [('imports', 'imports_avg_kw', 'imports_kwh'),
+                ('exports', 'physical_exports_avg_kw', 'physical_exports_kwh'),
+                ('credited_exports', 'credited_exports_avg_kw', 'credited_exports_kwh')]
+    for identifier in source_ids:
+        baseline = identifier == 'post_free_fix'
+        trace = {'imports': post_imports, 'exports': exports, 'credited_exports': exports} if baseline else traces[identifier]
+        bill = study['baseline']['post_behavior'] if baseline else rows[identifier]['bill']
+        arrays = {name: _array(trace[name], len(d), f'{identifier}.{name}') for name, _, _ in channels}
+        profile = {'source_path': 'baseline.post_behavior' if baseline else f'scenarios[id={identifier}]', 'seasons': {}}
+        for season in ('S', 'W'):
+            values = {'totals_kwh': {}}
+            mask = seasons == season
+            for name, field, _ in channels:
+                energy = [float(arrays[name][mask & (hours == hour)].sum()) for hour in range(24)]
+                elapsed = denominators[season]['elapsed_hours_by_hour']
+                averages = [total / duration if duration else 0. for total, duration in zip(energy, elapsed)]
+                total = float(arrays[name][mask].sum())
+                if not math.isclose(sum(a*h for a, h in zip(averages, elapsed)), total, abs_tol=1e-7):
+                    raise ValueError(f'{identifier} {season} {name} hourly energy does not reconcile')
+                values[field] = averages
+                values['totals_kwh']['physical_exports' if name == 'exports' else name] = total
+            profile['seasons'][season] = values
+        for name, _, account in channels:
+            total = float(arrays[name].sum())
+            expected = sum(month[account] for month in bill['monthly'].values())
+            if not math.isclose(total, expected, rel_tol=1e-9, abs_tol=1e-7):
+                raise ValueError(f'{identifier} {name} chart energy disagrees with source bill')
+        profiles[identifier] = profile
+    return {'schema_version': 1, 'basis': basis, 'profiles': profiles}
+
+
 def build_study(inputs, *, include_references=True, nbt_context=None):
     """Generate targeted one-variable sweeps; only aggregate financial/energy outputs."""
     from dataclasses import replace
@@ -1300,6 +1363,7 @@ def build_study(inputs, *, include_references=True, nbt_context=None):
                                   '2030 transition and future tariff scenarios; no known extra approval or compliance cost established']}
 
     study['decision_support'] = build_decision_support(study)
+    study['chart_data'] = build_chart_data(d, post, exp, traces, study)
     return study
 
 

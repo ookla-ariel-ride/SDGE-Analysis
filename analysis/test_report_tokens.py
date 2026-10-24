@@ -1547,20 +1547,20 @@ def case_s10_verdict_sizes_the_unpriced_effect_rather_than_refusing_to_render():
         "branch is no longer the live one")
     with _stub_household(_s10_household_inputs()):
         published = rt.resolve_token("S10_VERDICT")
-        assert "a materially larger, unpriced net-export effect" in published, published
+        assert "A materially larger, unpriced net-export effect" in published, published
         lengths = {"published": len(published.split())}
         for label, value, expected in (
                 ("equal", priced, "an equally large, unpriced net-export effect"),
                 ("smaller", priced / 2, "a smaller, unpriced net-export effect")):
             with _swapped(a, "excluded_net_export_cca_credit_usd", -value):
                 rendered = rt.resolve_token("S10_VERDICT")
-            assert expected in rendered, (
+            assert expected.lower() in rendered.lower(), (
                 f"S10_VERDICT does not size the unpriced effect correctly when it is "
                 f"{label} to the ${priced:,.2f} priced delta: {rendered}")
             assert "materially larger" not in rendered, (
                 f"S10_VERDICT still calls the unpriced effect materially larger at "
                 f"${value:,.2f}: {rendered}")
-            assert "not fully settled" in rendered, (
+            assert "whole-household answer unsettled" in rendered, (
                 f"S10_VERDICT dropped the caveat its artifact's own "
                 f"excluded_net_export_note supports at every size: {rendered}")
             lengths[label] = len(rendered.split())
@@ -3387,7 +3387,7 @@ def case_the_heading_never_denies_a_winner_the_row_beneath_it_names():
     """
     template = rt.TEMPLATE.read_text()
     heading = [ln for ln in template.splitlines()
-               if "{{S4_VERDICT_SHORT}}" in ln and 'id="s4"' in ln]
+               if "{{S4_VERDICT_SHORT}}" in ln and 'class="verdict"' in ln]
     assert len(heading) == 1 and "{{S4_ROW_CLASS}}" in _s4_row_line(), (
         f"report-template.html no longer pairs one section 4 heading carrying "
         f"S4_VERDICT_SHORT ({len(heading)} found) with a household row whose class is a "
@@ -4046,7 +4046,7 @@ def case_free_fix_verdicts_invert_rather_than_refusing_when_there_is_no_free_sav
     with _stub_plan(cheapest, provider):
         published = {t: rt.resolve_token(t) for t in tokens}
         for t in tokens:
-            marker = "check EV charging first" if t == "S15_VERDICT" else "free"
+            marker = "Check EV charging first" if t == "S15_VERDICT" else "free"
             assert marker in published[t], (
                 f"{t} no longer names the positive free-move branch this case guards: {published[t]}")
 
@@ -4167,7 +4167,7 @@ def case_free_fix_verdicts_state_a_modeled_loss_as_a_loss_not_as_a_non_event():
                     seen[token] = value
         # Section 15 is the instruction list: it must actively tell the reader
         # not to make the move, not merely stop recommending it.
-        assert "leave the charger schedules alone" in seen["S15_VERDICT"], (
+        assert "leave the charger schedules alone" in seen["S15_VERDICT"].lower(), (
             f"S15_VERDICT's Monday list does not tell the reader to leave the schedules "
             f"alone while the model prices moving them as a loss: {seen['S15_VERDICT']}")
         for token in tokens:
@@ -7099,7 +7099,7 @@ def case_section_7s_package_footing_states_the_plan_it_prices_on():
         assert "$" not in footing, (
             f"section 7's footing quotes a figure for {outside[0]}, a plan "
             f"mid_package_on_plans does not price: {footing!r}")
-        assert (f"does not price the MID package on {outside[0]}" in footing
+        assert (f"does not price the home-storage package on {outside[0]}" in footing
                 and "not modeled here" in footing), (
             f"section 7's footing does not state why the switch to {outside[0]} "
             f"is unpriced: {footing!r}")
@@ -7117,7 +7117,7 @@ def case_section_7s_package_footing_states_the_plan_it_prices_on():
         assert "$" not in footing and "not modeled here" in footing, (
             f"an artifact without mid_package_on_plans must leave the footing "
             f"stating the switch is not modeled, not quoting or refusing: {footing!r}")
-        assert f"does not price the MID package on {rival}" in footing, footing
+        assert f"does not price the home-storage package on {rival}" in footing, footing
         seen["trails, older artifact"] = footing.strip()
 
         assert rt.resolve_token("S7_PLAN_FOOTING") == ".", (
@@ -7831,16 +7831,16 @@ def case_s10_verdict_claims_no_unpriced_effect_when_the_artifact_excludes_nothin
     assert live != 0, f"the committed artifact already excludes nothing ({live})"
     with _stub_household(_s10_household_inputs()):
         published = rt.resolve_token("S10_VERDICT")
-        assert "unpriced net-export effect" in published and "not fully settled" in published
+        assert "unpriced net-export effect" in published and "whole-household answer unsettled" in published
         for label, zero in (("+0.0", 0.0), ("-0.0", -0.0), ("integer 0", 0)):
             with _swapped(a, "excluded_net_export_cca_credit_usd", zero):
                 value = rt.resolve_token("S10_VERDICT")
-            for wrong in ("unpriced net-export effect", "not fully settled",
+            for wrong in ("unpriced net-export effect", "whole-household answer unsettled",
                           "a smaller", "materially larger", "an equally large"):
                 assert wrong not in value, (
                     f"S10_VERDICT asserts {wrong!r} at an excluded credit of {label}, "
                     f"while its own artifact says nothing was excluded: {value}")
-            assert "no net-export credit excluded" in value, (
+            assert "No net-export credit is excluded" in value, (
                 f"S10_VERDICT does not say plainly that nothing was excluded at {label}: "
                 f"{value}")
             assert len(value.split()) <= len(published.split()), (
@@ -10737,6 +10737,8 @@ _EV_VOCABULARY = re.compile(r"\bEVs?\b(?!-TOU)|\bcharger\b|\bcharging\b|"
 # The first Monday instruction now asks for a charging check; the report
 # review removed the unsupported assumption that a schedule change is feasible.
 # The success-metrics heading separates that check from hypothetical batteries.
+# The cohesive report adds the portable purchase action before this check, so
+# its displayed step number changes from 3 to 4; its no-EV contract stays intact.
 _EV_HOUSEHOLD_LITERALS = (
     ("section 0's free-win card",
      '<div class="card"><div class="big">$1,222/yr</div><div class="lbl">Free win: '
@@ -10744,7 +10746,7 @@ _EV_HOUSEHOLD_LITERALS = (
     ("the Monday appendix's first instruction",
      "<h3>1 · Check EV charging ($0)</h3>"),
     ("the Monday appendix's success-metrics heading",
-     '<h3>3 · Check the EV change; keep battery scenarios separate '
+     '<h3>4 · Check the EV change; keep battery scenarios separate '
      '<span class="pill y">modeled targets</span></h3>'),
     ("section 9's charging subsection",
      "<h3>EV charging report card</h3>"),
@@ -12778,7 +12780,7 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     A short repeated number is not flagged, and neither is a figure repeated
 #     in a DIFFERENT CONTAINER. The live example of the latter is the lifetime
 #     table, which prints the first year's value in both the annual and the
-#     cumulative cell (report-template.html:772) -- and be precise about WHICH
+#     cumulative cell (report-template.html:861) -- and be precise about WHICH
 #     rule spares it, because there are two and only one of them is load-
 #     bearing. Today's FIRST_YEAR_VALUE happens to be 7 characters, one under
 #     _SEAM_MIN_ECHO, so the length floor would exclude it anyway; that is an
@@ -13127,7 +13129,7 @@ _SEAM_INLINE_TAGS = frozenset((
 # or list items are not one run of text however few characters of markup the
 # author put between them, so the echo rule does not compare ACROSS one at all
 # -- not "at a distance", not at all. That is what spares the lifetime table's
-# cumulative column (report-template.html:772, which prints FIRST_YEAR_VALUE in
+# cumulative column (report-template.html:861, which prints FIRST_YEAR_VALUE in
 # both the annual and the cumulative cell) no matter how long that value grows,
 # and it does so without a second threshold to tune.
 #
@@ -13297,7 +13299,7 @@ _SEAM_CLASSES = ("doubled-sigil", "missing-unit", "echoed-phrase")
 #
 # ONE STATED LIMIT: a marker cannot separate two occurrences of the SAME token
 # on the SAME line. Several template lines print a token twice -- the lifetime
-# table's row (report-template.html:772, FIRST_YEAR_VALUE in both the annual
+# table's row (report-template.html:861, FIRST_YEAR_VALUE in both the annual
 # and the cumulative cell) is the one this file has reason to name elsewhere --
 # and none of them is allowlisted, so an entry for one would excuse both.
 # Line numbers are the next granularity down and they do not help here either.
@@ -16081,14 +16083,14 @@ def case_the_lifetime_tables_cumulative_cell_is_not_an_echo():
     clear the floor, and a case that passed only because of the floor fails.
 
     The line number is pinned too. Three contextual comments in this file name
-    report-template.html:772 as this row. Keep those citations synchronized
+    report-template.html:861 as this row. Keep those citations synchronized
     when template edits move it."""
     text = rt.TEMPLATE.read_text()
     row = _seam_template_line("FIRST_YEAR_VALUE", text)
     lineno = text.splitlines().index(row) + 1
-    assert lineno == 772, (
+    assert lineno == 861, (
         f"the lifetime table's repeated-value row is report-template.html:{lineno}, "
-        "not 772. Update the three contextual comments that name that line -- "
+        "not 861. Update the three contextual comments that name that line -- "
         "the class 3 explanation, container-boundary policy, and allowlist "
         "limitation -- in the same edit, which is what this assertion exists to force")
     assert row.count("{{FIRST_YEAR_VALUE}}") == 2, (
@@ -17875,6 +17877,36 @@ def case_panel_model_watts_refuses_on_zero_module_count():
         except SystemExit as e:
             assert "PANEL_MODEL_WATTS" in str(e) and "no module count" in str(e), e
     return "PANEL_MODEL_WATTS refuses, by name, on a zero solar.module_count"
+
+
+@case
+def case_balcony_purchase_example_uses_own_savings_and_keeps_null_payback():
+    published = rt.resolve_token('BALCONY_PURCHASE_EXAMPLE')
+    assert '$2,500' in published and '3.4 years' in published and '2.4 years' in published
+    assert 'actual complete cost' in published and 'confidence bounds' in published
+    original = rt._balcony_cost
+    try:
+        for saving in (0, -10):
+            def synthetic(sid):
+                return {'incremental_savings_usd':saving, 'cost_sensitivities':[
+                    {'installed_cost_usd':1000,'simple_payback_years':None},
+                    {'installed_cost_usd':2500,'simple_payback_years':None}]}
+            rt._balcony_cost = synthetic
+            assert rt._balcony_purchase_example(None).count('no simple payback') == 2
+        def wrong(sid):
+            return {'incremental_savings_usd':100, 'cost_sensitivities':[
+                {'installed_cost_usd':1000,'simple_payback_years':10},
+                {'installed_cost_usd':2500,'simple_payback_years':2}]}
+        rt._balcony_cost = wrong
+        try:
+            rt._balcony_purchase_example(None)
+        except SystemExit as exc:
+            assert 'own saving' in str(exc)
+        else:
+            raise AssertionError('unmatched purchase payback rendered')
+    finally:
+        rt._balcony_cost = original
+    return 'purchase example keeps unknown/nonpositive results and refuses an unrelated saving denominator'
 
 
 def main():

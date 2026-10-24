@@ -141,14 +141,14 @@ def case_every_data_block_has_a_builder():
 # ---------------------------------------------------------------------------
 @case
 def case_incentive_status_block_is_human():
-    assert rb.CLASSIFICATION["s6#1"] == "human"
-    assert "INCENTIVE_STATUS" in rb.HUMAN_REASONS["s6#1"]
+    assert rb.CLASSIFICATION["s6#2"] == "human"
+    assert "INCENTIVE_STATUS" in rb.HUMAN_REASONS["s6#2"]
     return "the incentive-status framing block (s6#1) is classified human"
 
 
 @case
 def case_hardware_pricing_block_is_human():
-    assert rb.CLASSIFICATION["s6#8"] == "human"
+    assert rb.CLASSIFICATION["s6#9"] == "human"
     return "the 'get quotes' hardware-pricing block (s6#8) is classified human"
 
 
@@ -170,8 +170,8 @@ def case_the_electrification_gap_blocks_a_heading_not_the_block_under_it():
     assert rt.TOKENS["ELECTRIFICATION_VERDICT_SHORT"]["kind"] == "gap", (
         "fixture assumption broken: the heading token is no longer a declared gap")
     assert "ELECTRIFICATION_VERDICT_SHORT" in rb.LIVE_GAP_TOKENS, (
-        "the heading token must still be a LIVE gap needing a human override")
-    return ("the electrification HEADING token is still a live gap; the block under it "
+        "the decision token must still be a LIVE gap needing a human override")
+    return ("the electrification decision token is still a live gap; the block under it "
             "(s10#4) is prose, backed by all_electric_endgame.json / heat_pump_conversion.json")
 
 
@@ -194,8 +194,8 @@ def case_live_gap_tokens_are_a_subset_of_known_gaps():
 # returns HTML (row builders return at least one <tr>; vestigial/label
 # builders may legitimately return "" or a short fixed string).
 # ---------------------------------------------------------------------------
-_ROW_BUILDER_IDS = {"s3#2", "s4#2", "s6#2", "s6#5", "s6#7", "s11#2", "s12#2",
-                    "s13#4", "s13#12"}
+_ROW_BUILDER_IDS = {"s3#2", "s4#2", "s6#3", "s6#6", "s6#8", "s11#2", "s12#2",
+                    "s13#4", "s13#11"}
 
 
 @case
@@ -232,7 +232,7 @@ def case_row_builders_escape_artifact_derived_free_text():
 
     rt._json = fake_json
     try:
-        out = rb.DATA_BUILDERS["s6#2"]()
+        out = rb.DATA_BUILDERS["s6#3"]()
     finally:
         rt._json = original_json
     assert "<script>alert(1)</script>" not in out, out
@@ -247,7 +247,7 @@ def case_hardcoded_endurance_labels_are_not_double_escaped():
     artifact data) that intentionally contains a literal '&times;' entity --
     _esc() must never be applied to it, or blanket-escaping would corrupt it
     into '&amp;times;'."""
-    out = rb.DATA_BUILDERS["s6#7"]()
+    out = rb.DATA_BUILDERS["s6#8"]()
     assert "&times;" in out, out
     assert "&amp;times;" not in out, out
     return "the hardcoded '&times;' entity in _ENDURANCE_LABELS survives un-double-escaped"
@@ -270,7 +270,7 @@ def case_s15_metric_label_is_a_fixed_non_empty_string():
 
 @case
 def case_price_map_rows_cover_the_five_remaining_season_period_combos():
-    out = rb.DATA_BUILDERS["s13#12"]()
+    out = rb.DATA_BUILDERS["s13#11"]()
     assert out.count("<tr>") == 5, out
     assert "{{PEAK_WINDOW}}" in out, "the winter on-peak row should reference {{PEAK_WINDOW}}"
     return "the price-map table's five remaining rows are present, including the token reference"
@@ -472,7 +472,7 @@ _RECLASSIFIED_FIGURES = {
     "s13#8": ("SPREAD_TREND_SUMMER", "SPREAD_TREND_WINTER"),
     "s13#9": ("BATTERY_ON_MEASURED_SPREAD", "SPREAD_BATTERY_SEED_SAVING",
               "PAYBACK_AT_HISTORICAL_ESCALATION", "NPV_AT_HISTORICAL_ESCALATION"),
-    "s13#11": ("NIGHT_FLOOR_MEDIAN", "NIGHT_FLOOR_SPREAD", "NIGHT_FLOOR_SAMPLE",
+    "s5#7": ("NIGHT_FLOOR_MEDIAN", "NIGHT_FLOOR_SPREAD", "NIGHT_FLOOR_SAMPLE",
                "NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST",
                "NIGHT_FLOOR_CYCLING", "NIGHT_FLOOR_SEASONALITY",
                "NIGHT_FLOOR_PRICING_BASIS", "PHANTOM_METHOD_DISCREPANCY"),
@@ -527,7 +527,7 @@ _FIGURE_NEEDS_QUALIFIER = {
              ("EV_ANNUAL_KWH", "EV_DETECTION_BASIS")],
     # Both annual figures extend a four-hour measurement across 8,760 hours,
     # which quiet_night_floor.py's own confidence_labels call modeled.
-    "s13#11": [("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_PRICING_BASIS"),
+    "s5#7": [("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_PRICING_BASIS"),
                ("NIGHT_FLOOR_ANNUAL_COST", "NIGHT_FLOOR_PRICING_BASIS"),
                # Section 9 publishes a different figure for this same load, and
                # CLAUDE.md section 0 forbids carrying both silently.
@@ -800,13 +800,13 @@ _QUALIFIER_ACCOUNTED = {
          "quote it", None),
     ("s13#8", "tou_spread.json", "delivery_spread.winter", "ci_basis"):
         ("same, for SPREAD_TREND_WINTER", None),
-    ("s13#11", "quiet_night_floor.json", "night_floor", "selection_caveat"):
+    ("s5#7", "quiet_night_floor.json", "night_floor", "selection_caveat"):
         ("NIGHT_FLOOR_SAMPLE computes this caveat's exclusion rate from quiet_nights and "
          "nights_total, and the TODO requires it be kept in view", "exclusion rate"),
-    ("s13#11", "quiet_night_floor.json", "pricing", "floor_kw_basis"):
+    ("s5#7", "quiet_night_floor.json", "pricing", "floor_kw_basis"):
         ("NIGHT_FLOOR_PRICING_BASIS states the constant-across-the-year method this "
          "field describes, from confidence_labels.pricing", None),
-    ("s13#11", "quiet_night_floor.json", "pricing.floor_assumption_violations", "note"):
+    ("s5#7", "quiet_night_floor.json", "pricing.floor_assumption_violations", "note"):
         ("NIGHT_FLOOR_PRICING_BASIS computes this note's direction and magnitude from "
          "usd_dropped_at_export_rate", None),
     # --- raised by the ancestor walk (issue #132, /review finding 9) --------
@@ -881,18 +881,18 @@ _QUALIFIER_ACCOUNTED = {
     # --- issue #140: the sensitivity ladder NIGHT_FLOOR_SENSITIVITY_PER_100W
     # publishes, on the corrected reduction_w axis (issue #173). All four are
     # this change's own debt, so all four are here.
-    ("s13#11", "quiet_night_floor.json", "sensitivity_per_100w", "basis"):
+    ("s5#7", "quiet_night_floor.json", "sensitivity_per_100w", "basis"):
         ("names the engine and step size the ladder was re-billed with (method b, 100 W "
          "steps) -- provenance for the arithmetic, not a condition on reading the rate; "
          "NIGHT_FLOOR_ANNUAL_COST and PHANTOM_METHOD_DISCREPANCY already publish what "
          "method b is and what it agrees with", None),
-    ("s13#11", "quiet_night_floor.json", "sensitivity_per_100w",
+    ("s5#7", "quiet_night_floor.json", "sensitivity_per_100w",
      "linearity_note"):
         ("NIGHT_FLOOR_SENSITIVITY_PER_100W recomputes this note's argument from the "
          "ladder's own marginal_usd_per_100w column and prints the spread across the "
          "rungs this floor can reach, so the curvature is stated as a range rather than "
          "quoted as a note", None),
-    ("s13#11", "quiet_night_floor.json", "sensitivity_per_100w",
+    ("s5#7", "quiet_night_floor.json", "sensitivity_per_100w",
      "linearity_note_full_ladder"):
         ("issue #264: this note qualifies usd_per_100w_full_ladder_average, the "
          "linear-fit slope and its deviation across ALL twelve rungs. "
@@ -902,13 +902,13 @@ _QUALIFIER_ACCOUNTED = {
          "full_ladder's raw min/max only when none is, but never the linear-fit average "
          "or the deviation this note states. No figure in this block's scope carries "
          "the condition linearity_note_full_ladder qualifies", None),
-    ("s13#11", "quiet_night_floor.json",
+    ("s5#7", "quiet_night_floor.json",
      "sensitivity_per_100w.usd_per_100w_at_current_floor", "note"):
         ("NIGHT_FLOOR_SENSITIVITY_PER_100W states this note's own conclusion -- the "
          "published rate is the FIRST 100 W removed from the floor as measured, a rate "
          "at that floor rather than a multiplier for any amount removed -- and names the "
          "removal it prices, in watts taken off the floor", None),
-    ("s13#11", "quiet_night_floor.json", "sensitivity_per_100w.marginal_range", "note"):
+    ("s5#7", "quiet_night_floor.json", "sensitivity_per_100w.marginal_range", "note"):
         ("the same token recomputes BOTH halves of this range from the ladder's own "
          "marginal_usd_per_100w column and refuses the artifact when either disagrees, "
          "then prints the reachable half with the floor that bounds it, so the clamping "
@@ -937,16 +937,11 @@ _QUALIFIER_PRE_EXISTING = {
         ("PAYBACK_AT_HISTORICAL_ESCALATION", "NPV_AT_HISTORICAL_ESCALATION"),
     ("s13#9", "battery_dispatch_policies.json", "(root)"):
         ("PAYBACK_AT_HISTORICAL_ESCALATION", "NPV_AT_HISTORICAL_ESCALATION"),
-    ("s13#11", "battery_dispatch_policies.json", "(root)"):
-        ("PAYBACK_AT_HISTORICAL_ESCALATION", "NPV_AT_HISTORICAL_ESCALATION"),
     ("s13#8", "carbon_fullyear_results.json", "(root)"): ("SEC13_TEASER",),
     ("s13#9", "carbon_fullyear_results.json", "(root)"): ("SEC13_TEASER",),
-    ("s13#11", "carbon_fullyear_results.json", "(root)"): ("SEC13_TEASER",),
     ("s13#8", "nem3_grandfathering.json", "grandfathering_value_range_usd_per_yr"):
         ("NEM_GRANDFATHER_VALUE_RANGE",),
     ("s13#9", "nem3_grandfathering.json", "grandfathering_value_range_usd_per_yr"):
-        ("NEM_GRANDFATHER_VALUE_RANGE",),
-    ("s13#11", "nem3_grandfathering.json", "grandfathering_value_range_usd_per_yr"):
         ("NEM_GRANDFATHER_VALUE_RANGE",),
     ("s10#4", "cca_bundled_counterfactual.json",
      "direction_a_cca_repriced_at_bundled"): ("S10_VERDICT",),
@@ -1103,14 +1098,14 @@ def case_every_reclassified_block_can_see_and_resolve_its_own_figures():
 
 @case
 def case_balcony_builders_cover_all_selected_tables_and_paragraphs():
-    expected = {"s6#13": 6, "s6#15": 6, "s6#18": 3, "s6#19": 7,
-                "s6#20": 8, "s6#21": 6, "s6#23": 12, "s6#25": 4}
+    expected = {"balcony-solar#4": 6, "balcony-solar#6": 6, "balcony-solar#2": 3, "balcony-solar#9": 7,
+                "balcony-solar#10": 8, "balcony-solar#11": 6, "balcony-solar#13": 12, "balcony-solar#15": 4}
     for bid, count in expected.items():
         out = rb.DATA_BUILDERS[bid]()
         assert len(re.findall(r"<tr(?:\s|>)", out)) == count, bid
-    for bid in ("s6#12", "s6#14", "s6#16", "s6#17", "s6#24"):
+    for bid in ("balcony-solar#1", "balcony-solar#5", "balcony-solar#7", "balcony-solar#8", "balcony-solar#14"):
         assert rb.DATA_BUILDERS[bid](), bid
-    assert len(re.findall(r"<th>", rb.DATA_BUILDERS["s6#22"]())) == 4
+    assert len(re.findall(r"<th>", rb.DATA_BUILDERS["balcony-solar#12"]())) == 4
     return "all portable/joint numerical paragraphs, eight tables, and assumed-cost headings render"
 
 
@@ -1253,6 +1248,22 @@ def case_decision_depth_refuses_corrupt_finance_months_and_track_basis():
     finally:
         rt._json = real_json
     return "decision builders refuse malformed schema, finance, months, tracks, duplicates, quote claims and evening arithmetic"
+
+
+@case
+def case_balcony_chart_fallback_has_one_data_owner_and_matches_rendered_tables():
+    import re
+    blocks = rb.validate_classification()
+    owners = [b for b in blocks if 'matched balcony chart source tables' in b.text]
+    assert len(owners) == 1, [b.id for b in owners]
+    owner = owners[0]
+    assert rb.CLASSIFICATION[owner.id] == 'data'
+    rendered = rb.DATA_BUILDERS[owner.id]()
+    page = (rt.ROOT / 'index.html').read_text()
+    for table_id in ('balcony-hourly-source','balcony-monthly-source','balcony-payback-source'):
+        pattern = r'<table id="'+table_id+r'">.*?</table>'
+        assert re.search(pattern,rendered,re.S).group(0) == re.search(pattern,page,re.S).group(0)
+    return 'all three no-JS source tables have one data owner and reproduce exactly'
 
 
 def main():

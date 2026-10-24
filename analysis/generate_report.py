@@ -108,6 +108,15 @@ CHART DATA
   that changes the placeholder wording fails closed instead of silently
   leaving an empty array.
 
+  data/portable_solar_storage.json supplies the additional matched balcony
+  charts through balcony_chart_projection(). Its chart_data schema 1 holds
+  twelve seasonal hourly profiles with interval counts and elapsed hours.
+  The projection also copies the existing complete incremental cost rows and
+  subtracts matched monthly before/after bills for both credit treatments.
+  It preserves the source IDs, cost scope, negative savings, and null economics.
+  The exact object placeholder is `balcony:/* matched balcony chart data */null`.
+  This path performs no dispatch and estimates no equipment-only payback.
+
 NUMERAL GUARD
   A prose fragment is rejected if it contains a digit that is not inside
   EITHER a {{TOKEN}} reference naming a real report_tokens.TOKENS entry, OR
@@ -290,6 +299,55 @@ def _js_array(values):
     return json.dumps(values, allow_nan=False)
 
 
+
+def balcony_chart_projection(study=None):
+    """Project matched chart sources without dispatch or new financial estimates."""
+    import calendar
+    import copy
+    if study is None:
+        study = rt._json('portable_solar_storage.json')
+    chart = study['chart_data']
+    rows = {row['id']: row for row in study['scenarios']}
+    financial = {row['scenario_id']: row for row in
+                 study['financial_sensitivities']['incremental_complete_cost_sensitivities']}
+    start = dt.date.fromisoformat(study['provenance']['window_start'].split(' ')[0])
+    end = dt.date.fromisoformat(study['provenance']['window_end'].split(' ')[0])
+    months = []
+    for ym in sorted(study['baseline']['post_behavior']['monthly']):
+        year, month = map(int, ym.split('-'))
+        partial = dt.date(year, month, 1) < start or dt.date(year, month, calendar.monthrange(year, month)[1]) > end
+        months.append({'id': ym, 'partial': partial,
+                       'label': f'{rt._MONTH_ABBR[month]} {year}' + ('*' if partial else '')})
+    homes = {}
+    for capacity in ('0', '13.5', '27'):
+        prefix = '' if capacity == '0' else f'home_{capacity}kwh_'
+        baseline_id = 'post_free_fix' if capacity == '0' else f'large_{capacity}kwh_11.5kw'
+        before = study['baseline']['post_behavior'] if capacity == '0' else rows[baseline_id]['bill']
+        combined_suffix = '' if capacity == '0' else '_home_first'
+        group = {'baseline_id': baseline_id,
+                 'hourly': {'baseline': baseline_id, 'panels': f'{prefix}pv_0.8kw_zero_credit',
+                            'portable': 'battery_power_0.8kw' if capacity == '0' else f'{prefix}small_0.8kw_home_first',
+                            'combined': f'{prefix}combined_0.8kw_zero_credit{combined_suffix}'},
+                 'purchases': {}}
+        for package, source_package in (('panels', 'pv'), ('combined', 'combined')):
+            treatments = {}
+            for treatment in ('credited', 'zero_credit'):
+                suffix = combined_suffix if package == 'combined' else ''
+                identifier = f'{prefix}{source_package}_0.8kw_{treatment}{suffix}'
+                row = copy.deepcopy(financial[identifier])
+                if row['baseline_id'] != baseline_id:
+                    raise ValueError(f'{identifier}: chart financial baseline does not match')
+                after = rows[identifier]['bill']
+                row['monthly_before_total_usd'] = [before['monthly'][m['id']]['total_usd'] for m in months]
+                row['monthly_after_total_usd'] = [after['monthly'][m['id']]['total_usd'] for m in months]
+                row['monthly_savings_usd'] = [a - b for a, b in zip(row['monthly_before_total_usd'], row['monthly_after_total_usd'])]
+                treatments[treatment] = row
+            group['purchases'][package] = treatments
+        homes[capacity] = group
+    return {'schema_version': 1, 'basis': copy.deepcopy(chart['basis']),
+            'profiles': copy.deepcopy(chart['profiles']), 'months': months, 'home_storage': homes}
+
+
 def chart_data_replacements():
     """{exact_placeholder_substring: replacement_substring} for every const D
     field and the two inline periods-chart arrays."""
@@ -304,6 +362,8 @@ def chart_data_replacements():
     bat_now_S = [round(v, 2) for v in rd["hourly_S"]["imp"]]
 
     repl = {
+        "balcony:/* matched balcony chart data */null":
+            f"balcony:{json.dumps(balcony_chart_projection(), allow_nan=False)}",
         "hourlyS_imp:[/* 24 hourly values — summer avg-kW grid import */]":
             f"hourlyS_imp:{_js_array(rd['hourly_S']['imp'])}",
         "hourlyS_exp:[/* 24 hourly values — summer avg-kW solar export */]":

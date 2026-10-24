@@ -159,6 +159,57 @@ def _report():
     return (ROOT / "index.html").read_text()
 
 
+
+def _statement_pair_text(document):
+    """Read the bill comparison, excluding scripts, styles, comments and attributes."""
+    from html.parser import HTMLParser
+
+    class ComparisonText(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.matches = self.depth = self.ignored = 0
+            self.parts = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "div" and dict(attrs).get("id") == "statement-pair":
+                self.matches += 1
+                self.depth = 1
+            elif self.depth and tag == "div":
+                self.depth += 1
+            if self.depth:
+                if tag in ("script", "style", "template"):
+                    self.ignored += 1
+                if tag in ("div", "p", "tr", "td", "th", "li", "br"):
+                    self.parts.append(" ")
+
+        def handle_endtag(self, tag):
+            if self.depth:
+                if tag in ("script", "style", "template"):
+                    self.ignored -= 1
+                if tag == "div":
+                    self.depth -= 1
+
+        def handle_data(self, data):
+            if self.depth and not self.ignored:
+                self.parts.append(data)
+
+    reader = ComparisonText()
+    reader.feed(document)
+    assert reader.matches == 1 and reader.depth == 0, (
+        "index.html needs exactly one complete statement-pair comparison")
+    return " ".join("".join(reader.parts).split())
+
+
+def _current_provider_comparison_text(document, mixed):
+    report = _statement_pair_text(document)
+    assert f"{mixed:,.2f}" not in report, \
+        "index.html still quotes the mixed-scope CEA-side total"
+    for retired in ("19.76", "$19.76 (10.9%)", "10.9%) provider",
+                    "unallocated netting/settlement"):
+        assert retired not in report, f"index.html still carries the retired {retired!r}"
+    return report
+
+
 def _raises(fn, *needles):
     try:
         fn()
@@ -873,7 +924,7 @@ def case_the_energy_change_is_priced_cells_plus_settlement():
     assert abs(ns["change_usd"]) > 10.0, ns
     assert abs(ns["change_usd"]) > abs(pc["reading"]["price_usd_high"]), ns
     # and the report states it as its own component
-    report = _report()
+    report = _statement_pair_text(_report())
     assert f"{abs(ns['change_usd']):,.2f}" in report, \
         "index.html does not state the netting/settlement component"
     return (f"the {len(settled)} settlement cells' complete change "
@@ -1054,14 +1105,14 @@ def case_the_published_reading_allocates_none_of_the_interaction():
     assert "interval" in rd["basis"], rd["basis"]
     assert "accounts" in rd["basis"] and "no figure" in rd["basis"], rd["basis"]
     assert "never" in rd["interaction_note"], rd["interaction_note"]
-    report = _report()
+    report = _statement_pair_text(_report())
     assert "price accounts for" not in report, \
         "index.html still states a point price attribution"
     for end in (rd["price_usd_low"], rd["price_usd_high"],
                 rd["quantity_usd_low"], rd["quantity_usd_high"]):
         assert f"{abs(end):,.2f}" in report, \
             f"index.html omits the published bound {end}"
-    # the retired all-cell bounds must not survive anywhere in the report
+    # the retired all-cell bounds must not survive in the visible comparison
     for retired in ("257.22", "436.15", "367.15", "237.86", "168.86"):
         assert retired not in report, f"index.html still carries the retired {retired}"
     return (f"price and quantity are published as intervals over the priced cells "
@@ -1161,14 +1212,7 @@ def case_the_provider_comparison_publishes_two_scopes():
     assert eo["difference_usd"] != wp["difference_usd"], (eo, wp)
     mixed = round(eo["cea_charged_supply_usd"] + side["cea_product_adders_usd"]
                   + side["cca_unbundling_riders_usd"], 2)
-    report = _report()
-    assert f"{mixed:,.2f}" not in report, \
-        "index.html still quotes the mixed-scope CEA-side total"
-    # the retired mixed-scope provider effect and its percentage, in every form the
-    # report could still be carrying them
-    for retired in ("19.76", "$19.76 (10.9%)", "10.9%) provider",
-                    "unallocated netting/settlement"):
-        assert retired not in report, f"index.html still carries the retired {retired!r}"
+    report = _current_provider_comparison_text(_report(), mixed)
     # (4) the report quotes both, with their scopes
     for figure in (eo["cea_charged_supply_usd"], eo["sdge_bundled_same_date_usd"],
                    abs(eo["difference_usd"]), side["total_usd"],
@@ -1181,6 +1225,31 @@ def case_the_provider_comparison_publishes_two_scopes():
             f"${side['total_usd']} against ${wp['bundled_side']['total_usd']} = "
             f"${wp['difference_usd']} ({wp['difference_pct']}%), with the ${gap} of CEA "
             "credit on the unpriced export cell named as the scope gap")
+
+
+
+def case_retired_provider_claim_guard_ignores_chart_data_but_rejects_visible_claims():
+    frame = '<div class="finding" id="statement-pair">{}</div>'
+    clean = frame.format('<p>The comparisons use separate scopes.</p>')
+    chart = '<script>const D = {balcony:{imports_avg_kw:[19.767669]}};</script>'
+    expected = _current_provider_comparison_text(clean, 1234.56)
+    assert _current_provider_comparison_text(clean + chart, 1234.56) == expected
+    assert _current_provider_comparison_text(frame.format(chart + '<p>The comparisons use separate scopes.</p>'), 1234.56) == expected
+    # Invisible source text cannot become a visible provider claim either.
+    hidden_source = '<!-- $19.76 (10.9%) provider --><p title="$19.76">The comparisons use separate scopes.</p>'
+    assert _current_provider_comparison_text(frame.format(hidden_source), 1234.56) == expected
+    for claim in ('The provider effect is $19.76 (10.9%) provider.',
+                  'The provider effect is $19.<b>76</b> (10.9%) provider.',
+                  'The provider effect is &#36;19.76.',
+                  'The mixed CEA-side total is $1,234.56.',
+                  'The remaining effect is unallocated netting/settlement.'):
+        try:
+            _current_provider_comparison_text(frame.format('<p>' + claim + '</p>') + chart, 1234.56)
+        except AssertionError as exc:
+            assert 'retired' in str(exc) or 'mixed-scope' in str(exc), str(exc)
+        else:
+            raise AssertionError(f'visible obsolete claim passed: {claim}')
+    return 'legitimate chart values and source-only text pass; visible retired provider and mixed-total claims still fail'
 
 
 def case_the_printed_bundled_comparison_is_never_priced_as_supply():
@@ -1280,7 +1349,7 @@ def case_no_per_year_price_figure_is_published():
     assert "uses only the two early-summer periods" in idx["no_annual_rate_path"], idx
     assert idx["years_apart"] > 1.0, idx
     # the report may quote the total change over the window, never a per-year rate
-    report = _report()
+    report = _statement_pair_text(_report())
     fisher = f"{abs(idx['fisher_pct']):.1f}%"
     assert fisher in report, f"index.html omits the published Fisher reading {fisher}"
     for bad in (f"{fisher}/yr", f"{fisher} per year", f"{fisher} a year",
@@ -1597,6 +1666,7 @@ CASES = [
     case_the_published_reading_allocates_none_of_the_interaction,
     case_provider_and_vintage_are_reported_as_separate_terms,
     case_the_provider_comparison_publishes_two_scopes,
+    case_retired_provider_claim_guard_ignores_chart_data_but_rejects_visible_claims,
     case_the_printed_bundled_comparison_is_never_priced_as_supply,
     case_a_current_export_cell_cannot_enter_the_provider_comparison,
     case_a_provider_effect_is_refused_without_a_same_date_comparison,

@@ -1113,7 +1113,7 @@ def case_no_human_answer_for_a_human_block_refuses_to_write():
     _require_gitleaks()
     _require_household()
     answers = _all_human_answers()
-    del answers["s6#8"]   # hardware pricing footnote
+    del answers["s6#9"]   # hardware pricing footnote
     with tempfile.TemporaryDirectory() as td:
         cache_dir = pathlib.Path(td) / "cache"
         dest_dir = pathlib.Path(td) / "dest"
@@ -1122,7 +1122,7 @@ def case_no_human_answer_for_a_human_block_refuses_to_write():
         r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call(),
                      human_answers=answers)
         assert not r["wrote"]
-        assert any(f[0] == "s6#8" for f in r["failures"]), r["failures"]
+        assert any(f[0] == "s6#9" for f in r["failures"]), r["failures"]
         assert not (dest_dir / "index.generated.html").exists()
     return "a missing human answer for a human-classified block refuses to write anything"
 
@@ -1142,7 +1142,7 @@ def case_human_answer_containing_a_script_tag_is_rejected_by_name():
     _require_gitleaks()
     _require_household()
     answers = _all_human_answers()
-    answers["s6#8"] = "<script>alert(document.domain)</script>"
+    answers["s6#9"] = "<script>alert(document.domain)</script>"
     with tempfile.TemporaryDirectory() as td:
         cache_dir = pathlib.Path(td) / "cache"
         dest_dir = pathlib.Path(td) / "dest"
@@ -1151,7 +1151,7 @@ def case_human_answer_containing_a_script_tag_is_rejected_by_name():
         r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call(),
                      human_answers=answers)
         assert not r["wrote"], "a <script>-carrying human answer was accepted"
-        matching = [f for f in r["failures"] if f[0] == "s6#8"]
+        matching = [f for f in r["failures"] if f[0] == "s6#9"]
         assert matching, r["failures"]
         assert matching[0][1] == "human-answer-invalid-html", matching
         assert "script" in matching[0][2].lower(), matching
@@ -1164,7 +1164,7 @@ def case_human_answer_with_an_event_handler_attribute_is_rejected():
     _require_gitleaks()
     _require_household()
     answers = _all_human_answers()
-    answers["s6#8"] = '<b onerror="alert(1)">Tesla Powerwall 3 quoted at $12,500 installed</b>'
+    answers["s6#9"] = '<b onerror="alert(1)">Tesla Powerwall 3 quoted at $12,500 installed</b>'
     with tempfile.TemporaryDirectory() as td:
         cache_dir = pathlib.Path(td) / "cache"
         dest_dir = pathlib.Path(td) / "dest"
@@ -1173,7 +1173,7 @@ def case_human_answer_with_an_event_handler_attribute_is_rejected():
         r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call(),
                      human_answers=answers)
         assert not r["wrote"]
-        assert any(f[0] == "s6#8" and f[1] == "human-answer-invalid-html" for f in r["failures"]), (
+        assert any(f[0] == "s6#9" and f[1] == "human-answer-invalid-html" for f in r["failures"]), (
             r["failures"])
     return "a human answer with an onerror= attribute is rejected, even carrying a real quote"
 
@@ -1188,7 +1188,7 @@ def case_human_answer_with_real_numbers_and_allowlisted_tags_is_accepted():
     _require_gitleaks()
     _require_household()
     answers = _all_human_answers()
-    answers["s6#8"] = ("<b>Tesla Powerwall 3</b> quoted at $12,500 installed by two local "
+    answers["s6#9"] = ("<b>Tesla Powerwall 3</b> quoted at $12,500 installed by two local "
                        "installers as of this quote; <i>see</i> <a href=\"#s6\">§6</a> for "
                        "the arbitrage math.")
     with tempfile.TemporaryDirectory() as td:
@@ -1537,7 +1537,7 @@ def case_a_second_ranked_household_renders_packages_and_plans_on_one_stated_foot
 
     # (1) Section 7's opening paragraph carries the trails footing, priced
     # clause included -- located as the one paragraph the fixed markup pins.
-    start = html.index(f"All packages keep <b>{cheapest}</b>")
+    start = html.index(f"<b>{cheapest}</b>", html.index('<h2 id="s7">'))
     para = html[start:html.index("</p>", start)]
     assert "the plan this house is on, not the cheapest one" in para, para
     assert f"{rival} prices lower in the rate plan comparison above" in para, para
@@ -1879,6 +1879,58 @@ def case_an_attribute_only_token_reaches_neither_the_prompt_nor_the_egress_gate(
     return (f"no prose block offers {attribute_only} in its user prompt or hands it to "
             "preflight as a household_token, though _is_household_sourced still calls it "
             "household-sourced")
+
+
+
+@case
+def case_balcony_projection_keeps_matched_bills_and_complete_cost_sources():
+    assert hasattr(gr, 'balcony_chart_projection'), 'matched balcony chart projection is missing'
+    study = json.loads((rt.ROOT / 'data' / 'portable_solar_storage.json').read_text())
+    projection = gr.balcony_chart_projection(study)
+    assert set(projection['home_storage']) == {'0', '13.5', '27'}
+    assert len(projection['months']) == 13
+    assert [m['id'] for m in projection['months'] if m['partial']] == ['2025-07', '2026-07']
+    rows = {r['id']: r for r in study['scenarios']}
+    financial = {r['scenario_id']: r for r in study['financial_sensitivities']['incremental_complete_cost_sensitivities']}
+    for home, group in projection['home_storage'].items():
+        baseline_id = 'post_free_fix' if home == '0' else f'large_{home}kwh_11.5kw'
+        assert group['baseline_id'] == baseline_id
+        before = study['baseline']['post_behavior'] if home == '0' else rows[baseline_id]['bill']
+        for package in ('panels', 'combined'):
+            for treatment in ('credited', 'zero_credit'):
+                row = group['purchases'][package][treatment]
+                source = financial[row['scenario_id']]
+                assert row['baseline_id'] == baseline_id
+                assert abs(sum(row['monthly_savings_usd']) - row['incremental_savings_usd']) < 2e-5
+                for key in ('incremental_savings_usd', 'cost_basis', 'economics', 'cost_sensitivities'):
+                    assert row[key] == source[key]
+                assert [point['installed_cost_usd'] for point in row['cost_sensitivities']] == [1000, 2500, 5000, 7500]
+                after = rows[row['scenario_id']]['bill']
+                for i, month in enumerate(projection['months']):
+                    ym = month['id']
+                    assert row['monthly_before_total_usd'][i] == before['monthly'][ym]['total_usd']
+                    assert row['monthly_after_total_usd'][i] == after['monthly'][ym]['total_usd']
+                    assert abs(row['monthly_savings_usd'][i] - (before['monthly'][ym]['total_usd'] - after['monthly'][ym]['total_usd'])) < 1e-10
+    assert projection['home_storage']['0']['purchases']['panels']['credited']['incremental_savings_usd'] == 473.761011
+    assert projection['home_storage']['13.5']['hourly']['portable'] == 'home_13.5kwh_small_0.8kw_home_first'
+    return 'matched balcony projections preserve source bills, credit cases, and complete-cost economics'
+
+
+@case
+def case_balcony_projection_preserves_negative_and_null_economics():
+    assert hasattr(gr, 'balcony_chart_projection'), 'matched balcony chart projection is missing'
+    study = json.loads((rt.ROOT / 'data' / 'portable_solar_storage.json').read_text())
+    row = study['financial_sensitivities']['incremental_complete_cost_sensitivities'][0]
+    row['incremental_savings_usd'] = -12
+    row['cost_sensitivities'][0]['simple_payback_years'] = None
+    before = study['baseline']['post_behavior']['monthly']['2025-07']['total_usd']
+    next(r for r in study['scenarios'] if r['id'] == row['scenario_id'])['bill']['monthly']['2025-07']['total_usd'] = before + 12
+    projected = gr.balcony_chart_projection(study)['home_storage']['0']['purchases']['panels']['credited']
+    assert projected['incremental_savings_usd'] == -12
+    assert projected['monthly_savings_usd'][0] == -12
+    assert projected['cost_sensitivities'][0]['simple_payback_years'] is None
+    assert projected['economics']['installed_cost_usd'] is None
+    return 'negative savings and unknown payback remain negative and null'
 
 
 def main():

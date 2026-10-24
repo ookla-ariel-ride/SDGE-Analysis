@@ -216,6 +216,8 @@ def validate_classification(html=None):
 # validate_classification() / test_report_blocks.py against a fresh parse).
 # ---------------------------------------------------------------------------
 CLASSIFICATION = {
+    "balcony-solar#3": "data",  # matched chart source tables
+
     # --- header / meta / day-band / purpose (before s0) -------------------
     "top#1": "data",    # sources summary -- already fully rendered by {{DATA_SOURCES_SUMMARY}}
     "top#2": "data",    # day-band season caption -- already rendered by {{DAYBAND_SEASON_LABEL}}
@@ -257,50 +259,50 @@ CLASSIFICATION = {
     "s5#5": "prose", "s5#6": "prose",
 
     # --- s6 Battery hardware -------------------------------------------
-    "s6#1": "human",   # framing incl. current incentive status -- INCENTIVE_STATUS is a KNOWN_GAP
-    "s6#2": "data",    # one <tr> per alternative config -- battery_sim.json
-    "s6#3": "prose",   # STORED_KWH_COST_SOLAR/GRID tokens exist
-    "s6#4": "prose",   # deliberate exclusions, qualitative
-    "s6#5": "data",    # one <tr> per additional dispatch policy -- battery_dispatch_policies.json
-    "s6#6": "prose",   # simulation assumptions, cites DISPATCH_SCRIPT
-    "s6#7": "data",    # one <tr> per config -- backup_endurance.json
-    "s6#8": "human",   # "get quotes" pricing footnote -- hardware price quotes
-    "s6#9": "prose",   # controller and sizing supporting explanation
-    "s6#10": "prose",  # partial-season program scope and enrollment limits
-    "s6#11": "prose",  # program and resilience supporting explanation
-    "s6#12": "data",    # checked portable/joint paragraph or table
-    "s6#13": "data",    # checked portable/joint paragraph or table
-    "s6#14": "data",    # checked portable/joint paragraph or table
-    "s6#15": "data",    # checked portable/joint paragraph or table
-    "s6#16": "data",    # checked portable/joint paragraph or table
-    "s6#17": "data",    # checked portable/joint paragraph or table
-    "s6#18": "data",    # checked portable/joint paragraph or table
-    "s6#19": "data",    # checked portable/joint paragraph or table
-    "s6#20": "data",    # checked portable/joint paragraph or table
-    "s6#21": "data",    # checked portable/joint paragraph or table
-    "s6#22": "data",    # checked portable/joint paragraph or table
-    "s6#23": "data",    # checked portable/joint paragraph or table
-    "s6#24": "data",    # checked standalone capacity-sweep basis
-    "s6#25": "data",    # checked capacity increments
+    "s6#2": "human",   # framing incl. current incentive status -- INCENTIVE_STATUS is a KNOWN_GAP
+    "s6#3": "data",    # one <tr> per alternative config -- battery_sim.json
+    "s6#4": "prose",   # STORED_KWH_COST_SOLAR/GRID tokens exist
+    "s6#5": "prose",   # deliberate exclusions, qualitative
+    "s6#6": "data",    # one <tr> per additional dispatch policy -- battery_dispatch_policies.json
+    "s6#7": "prose",   # simulation assumptions, cites DISPATCH_SCRIPT
+    "s6#8": "data",    # one <tr> per config -- backup_endurance.json
+    "s6#9": "human",   # "get quotes" pricing footnote -- hardware price quotes
+    "s6#10": "prose",   # controller and sizing supporting explanation
+    "s6#11": "prose",  # partial-season program scope and enrollment limits
+    "s6#12": "prose",  # program and resilience supporting explanation
+    "balcony-solar#1": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#4": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#5": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#6": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#7": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#8": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#2": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#9": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#10": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#11": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#12": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#13": "data",    # checked portable/joint paragraph or table
+    "balcony-solar#14": "data",    # checked standalone capacity-sweep basis
+    "balcony-solar#15": "data",    # checked capacity increments
 
-    "s6#26": "data",  # checked decision-support view
-    "s6#27": "data",  # checked decision-support view
-    "s6#28": "data",  # checked decision-support view
-    "s6#29": "data",  # checked decision-support view
-    "s6#30": "data",  # checked decision-support view
-    "s6#31": "data",  # checked decision-support view
-    "s6#32": "data",  # checked decision-support view
-    "s6#33": "data",  # checked decision-support view
-    "s6#34": "data",  # checked decision-support view
-    "s6#35": "data",  # checked decision-support view
-    "s6#36": "data",  # checked decision-support view
+    "balcony-solar#16": "data",  # checked decision-support view
+    "balcony-solar#17": "data",  # checked decision-support view
+    "balcony-solar#18": "data",  # checked decision-support view
+    "balcony-solar#19": "data",  # checked decision-support view
+    "balcony-solar#20": "data",  # checked decision-support view
+    "balcony-solar#21": "data",  # checked decision-support view
+    "balcony-solar#22": "data",  # checked decision-support view
+    "balcony-solar#23": "data",  # checked decision-support view
+    "balcony-solar#24": "data",  # checked decision-support view
+    "balcony-solar#25": "data",  # checked decision-support view
+    "balcony-solar#26": "data",  # checked decision-support view
 
     # --- s7 The decision: three packages ---------------------------------
     "s7#1": "prose", "s7#2": "prose", "s7#3": "prose", "s7#4": "prose",
     "s7#5": "prose", "s7#6": "prose", "s7#7": "prose", "s7#8": "prose",
     "s7#9": "prose", "s7#10": "prose", "s7#11": "prose",
 
-    "s7#12": "data",  # common-assumption decision comparison
+    "s6#1": "data",  # common-assumption decision comparison
 
     # --- s15 What to do Monday --------------------------------------------
     "s15#1": "data",   # content-only appendix intro -- authoring note, nothing to render
@@ -329,7 +331,7 @@ CLASSIFICATION = {
     "s9#5": "prose",   # EV report card -- EV_SESSION_COUNT/ANNUAL_KWH/AVG_SESSION_KWH/
                         # WINDOW_DECOMPOSITION/SOP_COMPLIANCE_PCT, behavior_rebuild.json
     "s9#6": "prose",   # wildcard plan -- WILDCARD_PLAN + BEST_PLAN tokens, qualitative verdict
-    "s9#7": "prose",   # phantom honesty note, qualitative
+    "s5#8": "prose",   # phantom honesty note, qualitative
 
     # --- s10 Bills, gas & electrification ----------------------------
     "s10#1": "prose",  # bill facts -- narrative rows, not a uniform artifact loop
@@ -369,9 +371,9 @@ CLASSIFICATION = {
     "s13#9": "prose",  # battery on the measured spread -- BATTERY_ON_MEASURED_SPREAD /
                         # SPREAD_BATTERY_SEED_SAVING, tou_spread.json:battery
     "s13#10": "prose", # scope caveat, qualitative
-    "s13#11": "prose", # night floor -- the seven NIGHT_FLOOR_* tokens, quiet_night_floor.json
-    "s13#12": "data",  # one <tr> per season x TOU-period -- analysis/rates.py
-    "s13#13": "prose", # rate-table provenance, qualitative
+    "s5#7": "prose", # night floor -- the seven NIGHT_FLOOR_* tokens, quiet_night_floor.json
+    "s13#11": "data",  # one <tr> per season x TOU-period -- analysis/rates.py
+    "s13#12": "prose", # rate-table provenance, qualitative
 
     # --- s14 Methodology -------------------------------------------------
     "s14#1": "prose", "s14#2": "prose", "s14#3": "prose", "s14#4": "prose",
@@ -410,7 +412,7 @@ CLASSIFICATION = {
 # block. "No token exists" is not a reason and must not reappear.
 # ---------------------------------------------------------------------------
 HUMAN_REASONS = {
-    "s6#1": "blocked on {{INCENTIVE_STATUS}}, a report_tokens.KNOWN_GAPS token. The "
+    "s6#2": "blocked on {{INCENTIVE_STATUS}}, a report_tokens.KNOWN_GAPS token. The "
             "CALIFORNIA side of this question is now committed research -- "
             "data/heat_pump_conversion.json:incentives dates SGIP's ratepayer-budget "
             "close, and data/dsgs_vpp_backtest.json:finding_2026_enrollment_eligibility "
@@ -418,7 +420,7 @@ HUMAN_REASONS = {
             "was: no committed artifact records the CURRENT FEDERAL residential storage "
             "credit's status, and an incentive figure without an as-of date is not "
             "something this report may publish",
-    "s6#8": "blocked on an INSTALLED PRICE QUOTE and the cross-ecosystem cost/warranty "
+    "s6#9": "blocked on an INSTALLED PRICE QUOTE and the cross-ecosystem cost/warranty "
             "deltas that go with it. No data/*.json or *.csv in this repo carries a "
             "quoted installed price for any battery -- data/battery_sim.json prices "
             "capacity and savings, never a bid -- and a quote is a fact about a local "
@@ -450,8 +452,8 @@ HUMAN_REASONS = {
 #              here with what would end it rather than inferred from silence.
 # ---------------------------------------------------------------------------
 HUMAN_BLOCKERS = {
-    "s6#1": {"gap_tokens": ("INCENTIVE_STATUS",)},
-    "s6#8": {"outside_fact": "an installed price quote for a specific battery from a "
+    "s6#2": {"gap_tokens": ("INCENTIVE_STATUS",)},
+    "s6#9": {"outside_fact": "an installed price quote for a specific battery from a "
                              "specific installer on a specific date; ends when a "
                              "committed artifact records one"},
     "s8#1": {"gap_tokens": ("EXPANSION_PAYBACK_YEARS",)},
@@ -755,10 +757,10 @@ def _balcony_range(values):
 
 def _balcony_home_label(home):
     if home == "none":
-        return "None"
+        return "No home storage"
     row = rt._balcony_row(rt._balcony_baseline_id(home))
     capacity = rt._balcony_number(row["batteries"][0]["capacity_kwh"], "home capacity")
-    return f"{capacity:g} kWh"
+    return f"{capacity:g} kWh home storage"
 
 
 def _balcony_priorities(home):
@@ -806,9 +808,9 @@ def _balcony_cost_rows():
 
 
 def _balcony_options_rows():
-    selections = (("PV only", "pv_0.8kw_credited", "pv_0.8kw_zero_credit"),
-                  ("Storage only, same output cap", "battery_power_0.8kw", "battery_power_0.8kw"),
-                  ("PV plus portable storage", "combined_0.8kw_credited", "combined_0.8kw_zero_credit"))
+    selections = (("Panels only", "pv_0.8kw_credited", "pv_0.8kw_zero_credit"),
+                  ("Portable battery only; matched output cap", "battery_power_0.8kw", "battery_power_0.8kw"),
+                  ("Panels + portable battery", "combined_0.8kw_credited", "combined_0.8kw_zero_credit"))
     rows = []
     for label, credited, uncredited in selections:
         values = [rt._balcony_row(sid)["annual_savings_usd"] for sid in (credited, uncredited)]
@@ -878,7 +880,7 @@ def _balcony_ladder_rows():
                         raise SystemExit("report_blocks: balcony nonpositive increment has a positive payback")
                     else:
                         cells.append("<td>No positive payback</td>")
-                equipment = "PV only" if kind == "pv" else "PV + portable"
+                equipment = "Panels only" if kind == "pv" else "Panels + portable battery"
                 economics = entry["economics"]
                 rows.append(f'<tr data-scenario="{_esc(sid)}"><td>{_balcony_home_label(home)}; {equipment}</td><td>{label}</td><td>{_balcony_money(economics["five_year"]["break_even_installed_usd"])}</td><td>{_balcony_money(economics["ten_year"]["break_even_installed_usd"])}</td>{"".join(cells)}</tr>')
     return "\n".join(rows)
@@ -928,32 +930,32 @@ def _depth_quote_priority():
     candidates = {c['id']: c for c in rt._balcony_decision_support()['candidate_allowances']}
     dpu, ultra = candidates['dpu_two_battery'], candidates['ultrax_base']
     return _depth_paragraphs(
-        f"For bill savings, compare a supported storage quote before buying added panels. The generic two-battery Delta Pro Ultra case saves {_balcony_money(dpu['annual_savings_usd'])}/yr at an advertised {_balcony_money(dpu['equipment_price_usd'])}. "
-        f"The higher-output Ultra X-shaped case saves {_balcony_money(ultra['annual_savings_usd'])}/yr at {_balcony_money(ultra['equipment_price_usd'])}. "
+        f"Complete installed costs remain unknown. For bill savings, compare a supported storage quote before buying added panels. The generic two-battery Delta Pro Ultra case saves {_balcony_money(dpu['annual_savings_usd'])}/yr. Its advertised equipment-only cost is {_balcony_money(dpu['equipment_price_usd'])}. "
+        f"The higher-output Ultra X-shaped case saves {_balcony_money(ultra['annual_savings_usd'])}/yr. Its advertised equipment-only cost is {_balcony_money(ultra['equipment_price_usd'])}. "
         "Their nearly equal savings give little bill-savings reason to pay for the extra output under this schedule.",
         "The Delta Pro Ultra connection and measured eligible load decide whether that comparison applies. Request a complete supported-storage quote if whole-meter access and these controls are feasible. "
         "If only a selected appliance is accessible, measure that appliance first. Stream's small budget and unavailable stock make it a separate feed-in case; it is not the generic combined system.")
 
 
 _DEPTH_LABELS = {
-    "pv_0.8kw_credited": "PV only; hypothetical extra credit",
-    "pv_0.8kw_zero_credit": "PV only; no extra credit",
-    "battery_power_0.8kw": "Portable storage only; 0.8 kW output",
-    "combined_0.8kw_credited": "PV + portable; hypothetical extra credit",
-    "combined_0.8kw_zero_credit": "PV + portable; no extra credit",
+    "pv_0.8kw_credited": "Panels only; hypothetical extra credit",
+    "pv_0.8kw_zero_credit": "Panels only; no extra credit",
+    "battery_power_0.8kw": "Portable battery only; 0.8 kW output",
+    "combined_0.8kw_credited": "Panels + portable battery; hypothetical extra credit",
+    "combined_0.8kw_zero_credit": "Panels + portable battery; no extra credit",
     "large_13.5kwh_11.5kw": "Home storage; 13.5 kWh",
     "large_27kwh_11.5kw": "Home storage; 27 kWh",
-    "home_13.5kwh_combined_0.8kw_zero_credit_home_first": "Home 13.5 kWh + PV + portable; no extra credit",
+    "home_13.5kwh_combined_0.8kw_zero_credit_home_first": "Home 13.5 kWh + Panels + portable battery; no extra credit",
 }
 _DEPTH_CANDIDATES = {
-    "stream_default": "STREAM; default feed-in",
-    "stream_conditional": "STREAM; conditional feed-in",
-    "dp3_base": "DP3; bare equipment",
-    "dpu_base": "DPU; bare equipment",
-    "dpu_shp2_bundle": "DPU + Smart Home Panel 2",
-    "dpu_two_battery": "DPU; two batteries, no panel",
-    "ultrax_base": "Ultra X; bare equipment",
-    "ultrax_shp3_bundle": "Ultra X + Smart Home Panel 3",
+    "stream_default": "Stream Ultra; default feed-in",
+    "stream_conditional": "Stream Ultra; conditional feed-in",
+    "dp3_base": "Delta Pro 3; equipment only",
+    "dpu_base": "Delta Pro Ultra; equipment only",
+    "dpu_shp2_bundle": "Delta Pro Ultra + Smart Home Panel 2",
+    "dpu_two_battery": "Delta Pro Ultra; two batteries, without Smart Home Panel",
+    "ultrax_base": "Delta Pro Ultra X; equipment only",
+    "ultrax_shp3_bundle": "Delta Pro Ultra X + Smart Home Panel 3",
 }
 
 
@@ -967,7 +969,9 @@ def _depth_common_rows():
     for family in d['common_options']:
         for c in family['cases']:
             sid = c['scenario_id']
-            track = 'Home-storage track' if family['family'].startswith('home_') else 'Receptacle-PV / portable track'
+            track = ('Home storage' if family['family'].startswith('home_') else
+                     'Portable storage; connection unproved' if sid == 'battery_power_0.8kw' else
+                     'Added PV; qualification unproved')
             cells = (track, _DEPTH_LABELS[sid], _balcony_money(c['annual_savings_usd']),
                      _balcony_money(c['five_year']['total_affordable_initial_cost_usd']),
                      _balcony_money(c['ten_year']['total_affordable_initial_cost_usd']))
@@ -1120,40 +1124,76 @@ def _depth_sensitivity():
         f"Present-NBT repricing gives the matched portable-only row {nbt_range('battery_power_0.8kw')} and credited PV-only {nbt_range('pv_0.8kw_credited')} "
         "in annual signed ledger deltas before settlement. It reprices the whole account's unchanged flows, including existing rooftop exports. "
         "It does not optimize NBT dispatch or establish payable-bill savings, an NBT price ceiling, NPV or payback. NEM retained with no extra credit is a different case.",
-        f"The {capacity:g} kWh portable runtime example gives {runtime['runtime_from_full_hours']:.2f} hours at a constant {runtime['constant_load_w']:g} W from full charge to reserve, "
-        f"or {runtime['runtime_from_preserved_reserve_hours']:.2f} hours from the reserve if outage control releases it. "
+        f"The {capacity:g} kWh portable runtime example gives {runtime['runtime_from_full_hours']:.2f} hours at a constant {runtime['constant_load_w']:g} W from full charge to reserve. "
+        f"The preserved reserve supplies {runtime['runtime_from_preserved_reserve_hours']:.2f} hours if outage control releases it. "
         "It includes assumed standby and conversion loss with zero rooftop recharge. These are arithmetic runtimes, not measured appliance or household outage coverage. "
         "Supported outlets, transfer design and measured startup demand decide which loads work.")
 
 
-DATA_BUILDERS = {
-    "s6#26": _depth_quote_priority,
-    "s6#27": _depth_purchase_rules,
-    "s6#28": _depth_evening_intro,
-    "s6#29": _depth_evening_rows,
-    "s6#30": _depth_evening_limits,
-    "s6#31": _depth_operating_prose,
-    "s6#32": _depth_operating_rows,
-    "s6#33": _depth_equipment_rows,
-    "s6#34": _depth_ownership_rows,
-    "s6#35": _depth_monthly_rows,
-    "s6#36": _depth_sensitivity,
+def _balcony_chart_tables():
+    """Static default source values keep the chart meaning available without JS."""
+    from generate_report import balcony_chart_projection
+    projection = balcony_chart_projection()
+    selection = projection["home_storage"]["0"]
+    keys = ("baseline", "panels", "portable", "combined")
+    names = ("Starting equipment", "Add panels", "Add portable battery", "Add both")
+    profiles = [projection["profiles"][selection["hourly"][k]]["seasons"]["S"] for k in keys]
+    def table(id_, caption, headings, rows):
+        return (f'<table id="{id_}"><caption>{_esc(caption)}</caption>\n<thead><tr>'
+                + ''.join('<th scope="col">' + _esc(h) + '</th>' for h in headings)
+                + '</tr></thead><tbody>\n'
+                + '\n'.join('<tr>' + ''.join('<td>' + _esc(v) + '</td>' for v in row) + '</tr>' for row in rows)
+                + '\n</tbody></table>')
+    hourly = [[f"{hour}:00"] + [f"{p[key][hour]:.3f}" for p in profiles
+              for key in ("imports_avg_kw", "physical_exports_avg_kw")] for hour in range(24)]
+    purchases = selection["purchases"]["combined"]
+    treatments = ("zero_credit", "credited")
+    monthly = [[month["label"]] + [_balcony_money(purchases[t]["monthly_savings_usd"][i], 2)
+               for t in treatments] for i, month in enumerate(projection["months"])]
+    costs = []
+    for i, point in enumerate(purchases["zero_credit"]["cost_sensitivities"]):
+        values = [_balcony_money(point["installed_cost_usd"], 2)]
+        for treatment in treatments:
+            years = purchases[treatment]["cost_sensitivities"][i]["simple_payback_years"]
+            values.append("No simple payback" if years is None else f"{years:.2f} yr")
+        costs.append(values)
+    return '\n'.join((
+        table("balcony-hourly-source", "Hourly physical flows, average kW", ["Local hour"] +
+              [name + " " + flow for name in names for flow in ("imports", "exports")], hourly),
+        table("balcony-monthly-source", "Additional monthly bill savings, dollars", ["Month", "No extra-export credit", "Hypothetical extra-export credit"], monthly),
+        table("balcony-payback-source", "Conditional simple payback, years", ["Assumed complete incremental cost", "No extra-export credit", "Hypothetical extra-export credit"], costs)))
 
-    "s7#12": _depth_common_rows,
-    "s6#12": lambda: _esc(rt._balcony_configuration(None)),
-    "s6#13": _balcony_summary_rows,
-    "s6#14": lambda: _esc(rt._balcony_generic_baselines(None)),
-    "s6#15": _balcony_cost_rows,
-    "s6#16": lambda: _esc(rt._balcony_economic_assumptions(None)),
-    "s6#17": lambda: _esc(rt._balcony_stream_cases(None)),
-    "s6#18": _balcony_options_rows,
-    "s6#19": lambda: _balcony_summary_rows("1.2"),
-    "s6#20": _balcony_order_rows,
-    "s6#21": _balcony_component_rows,
-    "s6#22": _balcony_ladder_headings,
-    "s6#23": _balcony_ladder_rows,
-    "s6#24": _balcony_capacity_basis,
-    "s6#25": _balcony_capacity_rows,
+
+DATA_BUILDERS = {
+    "balcony-solar#3": _balcony_chart_tables,
+
+    "balcony-solar#16": _depth_quote_priority,
+    "balcony-solar#17": _depth_purchase_rules,
+    "balcony-solar#18": _depth_evening_intro,
+    "balcony-solar#19": _depth_evening_rows,
+    "balcony-solar#20": _depth_evening_limits,
+    "balcony-solar#21": _depth_operating_prose,
+    "balcony-solar#22": _depth_operating_rows,
+    "balcony-solar#23": _depth_equipment_rows,
+    "balcony-solar#24": _depth_ownership_rows,
+    "balcony-solar#25": _depth_monthly_rows,
+    "balcony-solar#26": _depth_sensitivity,
+
+    "s6#1": _depth_common_rows,
+    "balcony-solar#1": lambda: _esc(rt._balcony_configuration(None)),
+    "balcony-solar#4": _balcony_summary_rows,
+    "balcony-solar#5": lambda: _esc(rt._balcony_generic_baselines(None)),
+    "balcony-solar#6": _balcony_cost_rows,
+    "balcony-solar#7": lambda: _esc(rt._balcony_economic_assumptions(None)),
+    "balcony-solar#8": lambda: _esc(rt._balcony_stream_cases(None)),
+    "balcony-solar#2": _balcony_options_rows,
+    "balcony-solar#9": lambda: _balcony_summary_rows("1.2"),
+    "balcony-solar#10": _balcony_order_rows,
+    "balcony-solar#11": _balcony_component_rows,
+    "balcony-solar#12": _balcony_ladder_headings,
+    "balcony-solar#13": _balcony_ladder_rows,
+    "balcony-solar#14": _balcony_capacity_basis,
+    "balcony-solar#15": _balcony_capacity_rows,
     "top#1": _empty,
     "top#2": _empty,
     "top#3": _empty,
@@ -1165,13 +1205,13 @@ DATA_BUILDERS = {
     "s14#15": _empty,
     "s3#2": _s3_plan_rows,
     "s4#2": _s4_battery_plan_rows,
-    "s6#2": _s6_arbitrage_rows,
-    "s6#5": _s6_dispatch_rows,
-    "s6#7": _s6_endurance_rows,
+    "s6#3": _s6_arbitrage_rows,
+    "s6#6": _s6_dispatch_rows,
+    "s6#8": _s6_endurance_rows,
     "s11#2": _s11_year_rows,
     "s12#2": _s12_control_year_rows,
     "s13#4": _s13_escalation_rows,
-    "s13#12": _s13_pricemap_rows,
+    "s13#11": _s13_pricemap_rows,
 }
 
 
