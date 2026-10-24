@@ -8201,7 +8201,59 @@ def case_balcony_answer_is_basic_and_every_new_table_matches_complete_bills():
     return "basic balcony answer and all eight tables independently match selected artifact IDs, complete bills, components and cost math"
 
 
+def case_decision_depth_views_keep_cost_basis_months_and_tracks():
+    study = json.loads((ROOT / 'data/portable_solar_storage.json').read_text())
+    d = study['decision_support']
+    reader = _BalconyTables.read(HTML)
+    rows = [(a,c) for a,c in reader.tables.get('balcony-decision-results',[]) if 'data-scenario' in a]
+    assert len(rows) == 7, 'common-assumption decision comparison is missing'
+    expected = [c for family in d['common_options'] for c in family['cases']]
+    for (attrs,cells), case in zip(rows,expected):
+        assert attrs['data-scenario'] == case['scenario_id'] and attrs['data-baseline'] == 'post_behavior'
+        assert ('Home-storage track' in cells[0]) == case['scenario_id'].startswith('large_')
+        assert cells[2:] == [_balcony_expected_money(case['annual_savings_usd'])] + [_balcony_expected_money(case[k]['total_affordable_initial_cost_usd']) for k in ('five_year','ten_year')]
+    rows = [(a,c) for a,c in reader.tables['balcony-equipment-results'] if 'data-candidate' in a]
+    assert len(rows) == 8
+    for (attrs,cells), case in zip(rows,d['candidate_allowances']):
+        assert attrs['data-candidate'] == case['id'] and attrs['data-scenario'] == case['scenario_id']
+        assert cells[2:6] == [_balcony_expected_money(case['equipment_price_usd']),_balcony_expected_money(case['annual_savings_usd'])] + [_balcony_expected_money(case[k]['remaining_allowance_usd']) for k in ('five_year','ten_year')]
+    assert any(c[4].startswith('-$') for _,c in rows)
+    ownership = [c for _,c in reader.tables['balcony-ownership-results'] if c[0] != 'Bare equipment case']
+    assert any(c[4].startswith('-$') for c in ownership)
+    monthly = [c for _,c in reader.tables['balcony-monthly-results']][1:]
+    assert len(monthly) == 14 and monthly[0][0] == '2025-07' and monthly[-2][0] == '2026-07'
+    for cells,month in zip(monthly[:-1],d['operating_cases'][0]['monthly_savings_usd']):
+        assert cells == [month] + [_balcony_expected_money(c['monthly_savings_usd'][month],2) for c in d['operating_cases']]
+    assert monthly[-1][1:] == [_balcony_expected_money(c['annual_savings_usd'],2) for c in d['operating_cases']]
+    evening = [c for _,c in reader.tables['balcony-evening-results']][1:]
+    assert len(evening) == 2
+    for cells,(season,case) in zip(evening,d['evening_output_example']['seasons'].items()):
+        assert cells == [season.capitalize()] + [_balcony_expected_money(case[k],2) for k in (
+            'gross_avoided_import_usd_per_day','grid_charge_cost_usd_per_day','net_before_standby_and_equipment_usd_per_day')]
+    start = HTML.index('<h3 id="balcony-solar">'); end = HTML.index('<h2 id="s7">')
+    section = HTML[start:end]
+    for phrase in ('equipment-only', 'remaining allowance', 'five-year', 'inverter/batteries', 'continued operation',
+                   'no prior utility approval', 'whole-meter load', 'before settlement', 'not an annual forecast',
+                   'eligible grid imports', 'Monthly NEM netting', 'zero rooftop recharge', 'Charging power and duration feasibility'):
+        assert phrase.lower() in section.lower(), phrase
+    for phrase in ('separate storage alternatives', 'supported appliance, transfer or home-storage connection',
+                   'neither SB 868 receptacle-PV qualification', 'Battery-only SB 868 qualification remains undetermined',
+                   '1.2 kW aggregate AC limit applies per dwelling', 'More battery capacity extends duration',
+                   '5% real discount, 1% annual savings decline'):
+        assert phrase in section, phrase
+    for text in ('index.html','report-template.html'):
+        doc = (ROOT/text).read_text()
+        assert doc.index('id="balcony-decision-results"') > doc.index('<h2 id="s7">')
+        assert doc.index('id="balcony-decision-results"') < doc.index('<h2 id="s15">')
+        assert 'data-key=' not in doc and 'data-id=' not in doc
+        new_tables = {'balcony-decision-results','balcony-operating-results','balcony-equipment-results',
+                      'balcony-ownership-results','balcony-monthly-results','balcony-evening-results'}
+        assert new_tables <= set(_BalconyTables.read(doc).tables)
+    return 'common tracks, equipment-only residuals, negative budgets, all months and decisive visible conditions stay explicit'
+
+
 CASES = [
+    case_decision_depth_views_keep_cost_basis_months_and_tracks,
     case_balcony_answer_is_basic_and_every_new_table_matches_complete_bills,
     case_original_questions_remain_visible_above_the_bottom_line,
     case_purchase_and_existing_studies_keep_their_evidence_limits,

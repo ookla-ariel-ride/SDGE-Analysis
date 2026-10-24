@@ -1203,6 +1203,58 @@ def case_balcony_increment_and_format_keep_negative_savings():
     return "portable/joint incremental savings and displayed signs preserve a modeled loss"
 
 
+@case
+def case_decision_depth_builders_render_common_basis_and_negative_allowances():
+    assert hasattr(rb, "_depth_common_rows"), "decision-depth builders are missing"
+    common = rb._depth_common_rows()
+    assert common.count('<tr ') == 7
+    for sid in ("large_13.5kwh_11.5kw", "large_27kwh_11.5kw", "battery_power_0.8kw"):
+        assert sid in common
+    equipment = rb._depth_equipment_rows()
+    assert equipment.count('<tr ') == 8 and "-$314" in equipment and "-$3,038" in equipment
+    monthly = rb._depth_monthly_rows()
+    assert monthly.count('<tr>') == 14 and "2025-07" in monthly and "2026-07" in monthly
+    evening = rb._depth_evening()
+    for phrase in ("9.6 kWh", "13.02 kWh", "$7.05", "$5.64", "$4.06", "illustrative", "not an annual forecast"):
+        assert phrase in evening, phrase
+    assert 'data-key' not in common + equipment and 'data-id' not in common + equipment
+    return "common home capacities, negative equipment allowances, matched months and limited evening example render"
+
+
+@case
+def case_decision_depth_refuses_corrupt_finance_months_and_track_basis():
+    import copy
+    assert hasattr(rt, "_balcony_decision_support"), "decision-depth source guard is missing"
+    real_json = rt._json
+    original = real_json("portable_solar_storage.json")
+    changes = (
+        ("schema", lambda d: d.__setitem__("schema_version", 2)),
+        ("nonfinite", lambda d: d['candidate_allowances'][0]['five_year'].__setitem__('remaining_allowance_usd', float('nan'))),
+        ("budget", lambda d: d['candidate_allowances'][0]['five_year'].__setitem__('remaining_allowance_usd', 314.397012)),
+        ("monthly", lambda d: d['operating_cases'][0]['monthly_savings_usd'].__setitem__('2025-07', 1)),
+        ("track", lambda d: d['common_options'][-1]['cases'][0].__setitem__('scenario_id', 'battery_power_0.8kw')),
+        ("missing home", lambda d: d['common_options'].pop()),
+        ("duplicate", lambda d: d['candidate_allowances'].append(d['candidate_allowances'][0])),
+        ("invented quote", lambda d: d['candidate_allowances'][0]['five_year'].__setitem__('installed_cost_usd', 1)),
+        ("evening", lambda d: d['evening_output_example'].__setitem__('delivered_kwh', 12)),
+    )
+    try:
+        for label, change in changes:
+            altered = dict(original)
+            altered['decision_support'] = copy.deepcopy(original['decision_support'])
+            change(altered['decision_support'])
+            rt._json = lambda name: altered if name == 'portable_solar_storage.json' else real_json(name)
+            try:
+                rt._balcony_decision_support()
+            except SystemExit as error:
+                assert 'balcony' in str(error), (label, error)
+            else:
+                raise AssertionError(label + ' did not fail closed')
+    finally:
+        rt._json = real_json
+    return "decision builders refuse malformed schema, finance, months, tracks, duplicates, quote claims and evening arithmetic"
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

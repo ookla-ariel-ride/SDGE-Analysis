@@ -457,10 +457,11 @@
 </details>
 
 <h3 id="balcony-solar">Balcony solar and portable storage: conditional savings, with or without home storage</h3>
-<p>Balcony savings fall after a home battery. A purchase still needs exact equipment evidence and a complete quote. <span class="pill y">modeled</span></p>
+<p>Storage earns more than panels without extra-export credit. A supported connection and complete cost decide the purchase. <span class="pill y">modeled</span></p>
 <p>The pathways differ: keep the existing NEM rooftop array with proposed home storage, add balcony PV and portable storage, or combine both. No battery is installed.</p>
 <p><!-- TODO: mechanically render the checked primary balcony configuration and storage assumptions. --> Home-battery discharge keeps its separate power limit.</p>
 <p>The model assumes access to whole-meter load. Actual circuits, phase coverage, sensing, and controller coordination remain unknown. A refrigerator-only connection cannot claim these savings. New exports receiving NEM credit remain a hypothetical pricing case.</p>
+<details id="balcony-joint-records"><summary>Supporting comparisons: joint savings, complete costs and component limits</summary>
 <table id="balcony-main-results">
 <thead><tr><th>Proposed home storage</th><th>Extra-export treatment</th><th>Balcony + portable added after home storage: extra saving/yr</th><th>All hardware together: total saving/yr</th></tr></thead>
 <tbody>
@@ -535,6 +536,68 @@
 </table>
 <p>No new homeowner federal credit enters these costs. Federal credit guidance excludes property placed in service after December 31, 2025. Backup value and program revenue remain separate. <a href="https://www.irs.gov/credits-deductions/residential-clean-energy-credit">Federal credit guidance</a>.</p>
 </details>
+</details>
+
+<p>A cost ceiling is the maximum upfront cost that modeled discounted savings support over the stated horizon. It uses 5% real discount, 1% annual savings decline and zero real tariff increase. It is not a simple-payback ceiling. Unknown ownership costs reduce the amount available upfront.</p>
+<div id="balcony-purchase-choice">
+<!-- TODO: decision depth quote priorities from dated candidate allowances. -->
+<!-- TODO: decision depth matched component purchase limits. -->
+</div>
+<h4 id="balcony-evening-example">What steady evening output can offset</h4>
+<p>For qualifying receptacle PV, the statutory 1.2 kW aggregate AC limit applies per dwelling. More battery capacity extends duration; it does not raise that limit. The <a href="#balcony-legal">qualification conditions</a> remain separate from this arithmetic.</p>
+<!-- TODO: decision depth illustrative evening power and delivered energy. -->
+<table id="balcony-evening-results">
+<thead><tr><th>Season</th><th>Avoided purchases/day</th><th>Grid recharge/day</th><th>Net/day before standby and equipment</th></tr></thead>
+<tbody>
+<!-- TODO: decision depth seasonal illustrative avoided purchases recharge and daily net. -->
+</tbody>
+</table>
+<!-- TODO: decision depth illustrative capacity and charging conditions. -->
+<h4 id="balcony-operation">What earns the saving</h4>
+<!-- TODO: decision depth physical operating explanation. -->
+<table id="balcony-operating-results">
+<thead><tr><th>Generic case</th><th>Total saving/yr</th><th>Summer contribution</th><th>Winter contribution</th><th>Annual peak import</th></tr></thead>
+<tbody>
+<!-- TODO: decision depth operating seasonal comparison. -->
+</tbody>
+</table>
+<p class="small">The shared-cap comparison uses the same post-free-fix baseline and frozen June 2026 rates. A quoted product must support its assumed load access and schedule. A monthly saving is a complete modeled bill difference, not the retail value of battery output.</p>
+<h4 id="balcony-equipment-budget">What remains after advertised equipment</h4>
+<p>The Delta rows are separate storage alternatives. They assume a supported appliance, transfer or home-storage connection. They establish neither SB 868 receptacle-PV qualification nor an exception to the aggregate output cap. Applicable rules depend on the actual topology. Battery-only SB 868 qualification remains undetermined.</p>
+<p>These equipment-only observations date to October 23, 2026. The remaining allowance covers every omitted cost: connection, tax, freight, labor and ownership. A negative allowance means equipment alone exceeds that horizon's budget. These are generic model hypotheses, not certified product simulations or installed quotes.</p>
+<table id="balcony-equipment-results">
+<thead><tr><th>Candidate and equipment scope</th><th>Generic capacity; discharge/charge</th><th>Advertised equipment</th><th>Saving/yr</th><th>Five-year remaining allowance</th><th>Ten-year remaining allowance</th><th>Warranty scope</th><th>Dated stock</th></tr></thead>
+<tbody>
+<!-- TODO: decision depth dated equipment variants and residual allowances. -->
+</tbody>
+</table>
+<p>Stream needs its supported phase, circuit and control conditions. The larger rows assume total-meter load access and 1.8 kW charging. Appliance-only access needs measured intervals and startup demand; it cannot claim these whole-meter savings. The first evidence to request is a supported connection/control design, followed by its complete quote.</p>
+<p>Five-/ten-year ceilings assume continued operation. The larger products' five-year warranty covers inverter/batteries; panel accessories have separate terms. Stream's unit term is ten years. Warranty duration does not prove equipment life. Service, shipping, removal and reinstallation costs remain open. <a href="https://us.ecoflow.com/pages/warranty-policy">Manufacturer warranty policy, checked October 23, 2026</a>.</p>
+<p>Present-NBT repricing stays separate from NEM retained with no extra credit. Its signed ledgers precede settlement; they establish no payable-bill saving or payback. Backup also needs a supported appliance or transfer connection. Ordinary Stream-fed home outlets lose supply during an outage; constant-load runtime arithmetic does not establish circuit coverage.</p>
+<p class="small">Sources for the comparison, operating accounts and budgets: <code>data/portable_solar_storage.json → decision_support</code>, matched scenario bills and dated manufacturer variants. The <a href="research/sb868-portable-solar-storage.md">study</a> states the connection and source limits.</p>
+<details id="balcony-ownership"><summary>Supporting costs: annual fees and year-six service exposure</summary>
+<p>These annual fees and year-six service costs are assumptions, not quotations or failure forecasts. The table subtracts their discounted cost and advertised equipment from the five-/ten-year ceiling. The year-six cost falls outside the five-year horizon. Actual installed cost, payback and NPV remain unknown.</p>
+<table id="balcony-ownership-results">
+<thead><tr><th>Bare equipment case</th><th>Assumed annual fee</th><th>Assumed year-six service</th><th>Five-year remaining allowance</th><th>Ten-year remaining allowance</th></tr></thead>
+<tbody>
+<!-- TODO: decision depth ownership cost allowance ladder. -->
+</tbody>
+</table>
+<p>These budgets use five percent real discount, one percent annual savings decline, and zero real tariff escalation. Annual fees apply at each year end; service applies only inside the horizon. Costs consume the allowance for installation. Backup value and program revenue stay separate.</p>
+</details>
+<details id="balcony-monthly"><summary>Supporting operation: monthly savings and both partial Julys</summary>
+<p>The endpoints are partial calendar months. Neither July bucket is annualized. Each column sums to its annual model result before display rounding. Summer means the tariff's June through October months; the remaining months form winter.</p>
+<table id="balcony-monthly-results">
+<thead><tr><th>Calendar month</th><th>Portable only</th><th>Combined; no extra credit</th><th>Combined; hypothetical credit</th><th>Home 13.5 kWh</th><th>Home + combined; no extra credit</th></tr></thead>
+<tbody>
+<!-- TODO: decision depth all matched monthly savings and annual sums. -->
+</tbody>
+</table>
+</details>
+<details id="balcony-robustness"><summary>Supporting decisions: charging policy, stresses, NBT and outage limits</summary>
+<!-- TODO: decision depth existing charging stresses NBT repricing and constant-load runtime. -->
+<p>The charging-source and stress cases use a separate generic output cap; they are not the primary matched comparison. The retained <a href="research/sb868-portable-solar-storage.md#present-2026-nbt-sensitivity-fixed-flows-signed-costs-before-settlement-limits">NBT workpaper</a> explains credit banks, relevant periods, floors and net-surplus limits. No future tariff or adoption date follows from present repricing.</p>
+</details>
 <p>A qualifying SB 868 system needs no prior utility approval or interconnection agreement once its exemption takes effect. Exact system certification, electrical-code compliance, and the supported connection remain necessary. Qualification alone establishes neither NEM retention nor export compensation.</p>
 <details id="balcony-legal"><summary>Supporting legal and equipment limits: effective date, notification, sunset, and backup</summary>
 <p>SB 868 was signed September 30, 2026 as Chapter 985. Its ordinary January 1, 2027 effective date follows from the Secretary of State's general rule. This is an effective-date inference; the exemption is not effective on this report date. <a href="https://www.gov.ca.gov/2026/09/30/governor-newsom-issues-legislative-update-9-30-2026/">Governor's signed-bill list</a>, <a href="https://www.sos.ca.gov/administration/bill-chapters">effective-date rule</a>.</p>
@@ -582,6 +645,19 @@
 </div>
 
 <div class="rec"><b>Recommendation: {{RECOMMENDED_PACKAGE_SUMMARY}}.</b> <!-- TODO: 3–4 sentences in the reference voice — e.g. "The EV-charging fix is free, immediate, and worth {{EV_FIX_SAVINGS_100}}/yr — do it this week regardless. One {{BATTERY_MODEL}} adds {{BATTERY_MARGINAL_SAVINGS}}/yr of its own savings (…payback) subject to controller support and the installed quote." Close with the action sequence (check schedules, request quotes with electrical/controller assessment, and check optional program enrollment only if its revenue matters). THE REFERENCE VOICE ASSUMES AN EV AND THE HOUSEHOLD MAY NOT HAVE ONE: name the fix the way section 0's free-win card label and the Monday appendix's verdict line already name it, and where those name a house-load shift, open the action sequence with rescheduling that load rather than with a charger. --></div>
+
+
+<h3 id="balcony-common-choice">Compare the hardware on one operating basis</h3>
+<p>The free schedule change is the starting point. Keeping the existing rooftop with no added hardware costs nothing and adds no battery backup. The table compares hypothetical purchases with that same baseline; it excludes the free saving.</p>
+<p>All storage rows below use the portable study's simple schedule, whole-meter load access, twenty percent reserve, eighty-five percent round-trip efficiency, and ten watts standby per controller. PV uses a rooftop-shaped production proxy. Home storage and receptacle-PV remain distinct connection tracks. Actual costs and product eligibility remain unknown.</p>
+<table id="balcony-decision-results">
+<thead><tr><th>Connection track</th><th>Hardware choice</th><th>Hardware saving/yr</th><th>Five-year total initial-cost ceiling</th><th>Ten-year total initial-cost ceiling</th></tr></thead>
+<tbody>
+<!-- TODO: decision depth common assumption hardware choices with both home capacities. -->
+</tbody>
+</table>
+<p>These are total hardware ceilings before ownership costs, at frozen June 2026 rates. The NEM case retains rooftop treatment; extra-export credit for new PV is hypothetical. The no-extra-credit case removes compensation for incremental meter exports. Neither case establishes a qualifying system's actual settlement.</p>
+<p>The canonical price-aware purchase result in MID uses no standing reserve and a different control policy. It stays separate from this comparison. Do not combine its saving with a portable-study increment. Joint purchases need the matched <a href="#balcony-solar">component limits and controller-order results</a>.</p>
 
 <h2 id="s15">What to do Monday — the implementation appendix</h2>
 <p class="verdict">{{S15_VERDICT}}</p>

@@ -9576,6 +9576,140 @@ def _balcony_row(scenario_id):
     return row
 
 
+def _balcony_decision_support():
+    """Check the small derived interface against its source rows before rendering.
+
+    This is a report boundary check, not a dispatch or financial generator.
+    Keep it outside TOKENS: artifact-wide poison sweeps must not multiply.
+    """
+    def fail(message):
+        raise SystemExit("report_tokens: balcony decision support " + message)
+
+    def close(actual, expected, label):
+        _balcony_number(actual, label)
+        _balcony_number(expected, label)
+        if abs(actual - expected) > 0.00002:
+            fail(label + " disagrees with source arithmetic")
+
+    def finite_tree(value):
+        if isinstance(value, dict):
+            for child in value.values(): finite_tree(child)
+        elif isinstance(value, list):
+            for child in value: finite_tree(child)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            _balcony_number(value, "decision source")
+
+    def unique(rows, field):
+        keys = [r[field] for r in rows]
+        if len(keys) != len(set(keys)): fail("duplicate " + field)
+
+    def finance(row, annual, price, years):
+        a = row["assumptions"]
+        if isinstance(years, bool) or not isinstance(years, int) or years not in (5, 10) or price < 0:
+            fail("invalid horizon or equipment price")
+        for key in ("annual_cost_usd", "service_cost_usd", "real_discount", "annual_savings_decline"):
+            value = _balcony_number(a[key], key)
+            if value < 0: fail("negative financial assumption")
+        if (a["real_discount"], a["annual_savings_decline"], a["real_tariff_escalation"], a["service_year"]) != (.05, .01, 0, 6):
+            fail("unsupported financial assumption")
+        if row["years"] != years or not isinstance(a["service_year"], int) or isinstance(a["service_year"], bool) or a["service_year"] <= 0:
+            fail("invalid financial horizon")
+        for key in ("installed_cost_usd", "actual_installed_payback_years", "actual_installed_npv_usd"):
+            if row[key] is not None: fail("actual installed economics must remain unknown")
+        close(row["annual_savings_usd"], annual, "financial saving")
+        close(row["equipment_price_usd"], price, "equipment price")
+        savings = sum(annual * (1-a["annual_savings_decline"])**(y-1) / (1+a["real_discount"])**y for y in range(1, years+1))
+        costs = sum(a["annual_cost_usd"] / (1+a["real_discount"])**y for y in range(1, years+1))
+        service = a["service_cost_usd"] / (1+a["real_discount"])**a["service_year"] if a["service_year"] <= years else 0
+        for key, expected in (("discounted_savings_usd", savings), ("discounted_annual_costs_usd", costs),
+                              ("discounted_service_cost_usd", service), ("discounted_ownership_costs_usd", costs+service),
+                              ("total_affordable_initial_cost_usd", savings-costs-service),
+                              ("remaining_allowance_usd", savings-costs-service-price)):
+            close(row[key], expected, key)
+
+    try:
+        study = _json(_BALCONY_ARTIFACT)
+        d = study["decision_support"]
+        if d["schema_version"] != 1: fail("needs schema 1")
+        finite_tree(d)
+        basis = d["basis"]
+        if (basis["reserve_fraction"], basis["round_trip_efficiency"], basis["standby_w_per_controller"]) != (.2, .85, 10):
+            fail("operating basis needs separately stated assumptions")
+        if basis["summer_months"] != sorted(R.SUMMER_MONTHS): fail("tariff seasons disagree")
+        expected = (("pv_0.8kw", ("pv_0.8kw_credited", "pv_0.8kw_zero_credit")),
+                    ("portable_3.84kwh_0.8kw", ("battery_power_0.8kw",)),
+                    ("combined_0.8kw", ("combined_0.8kw_credited", "combined_0.8kw_zero_credit")),
+                    ("home_13.5kwh", ("large_13.5kwh_11.5kw",)), ("home_27kwh", ("large_27kwh_11.5kw",)))
+        if [(r["family"], tuple(c["scenario_id"] for c in r["cases"])) for r in d["common_options"]] != list(expected):
+            fail("common comparison must retain both home capacities and distinct tracks")
+        for family in d["common_options"]:
+            for case in family["cases"]:
+                source = _balcony_row(case["scenario_id"])
+                close(case["annual_savings_usd"], source["annual_savings_usd"], "common saving")
+                if case["export_treatment"] != source["export_treatment"]: fail("export treatment disagrees")
+                close(family["battery_capacity_kwh"], sum(b["capacity_kwh"] for b in source["batteries"]), "common capacity")
+                if not family['family'].startswith('home_') and source['shared_new_pv_battery_ac_kw'] != .8:
+                    fail("common comparison changes the shared output cap")
+                for battery in source["batteries"]:
+                    if (battery["reserve"], battery["rte"], battery["standby_w"]) != (.2, .85, 10): fail("common operating assumptions disagree")
+                for years, key in ((5, "five_year"), (10, "ten_year")):
+                    finance(case[key], source["annual_savings_usd"], 0, years)
+        unique(d["operating_cases"], "scenario_id")
+        if len(d["operating_cases"]) != 5: fail("operating comparison needs five cases")
+        baseline = study["baseline"]["post_behavior"]["monthly"]
+        for case in d["operating_cases"]:
+            source = _balcony_row(case["scenario_id"])
+            months = case["monthly_savings_usd"]
+            if set(months) != set(baseline) or set(months) != set(source["bill"]["monthly"]): fail("monthly coverage disagrees")
+            for month, amount in months.items():
+                close(amount, baseline[month]["total_usd"]-source["bill"]["monthly"][month]["total_usd"], "monthly saving")
+            close(sum(months.values()), source["annual_savings_usd"], "monthly sum")
+            close(case["annual_savings_usd"], source["annual_savings_usd"], "operating saving")
+            for season, record in case["seasons"].items():
+                selected = [m for m in months if (int(m[5:]) in R.SUMMER_MONTHS) == (season == "summer")]
+                if record["months"] != selected: fail("season month coverage disagrees")
+                close(record["annual_savings_usd"], sum(months[m] for m in selected), "season sum")
+            for group in ("physical", "battery"):
+                for key, value in case[group].items(): close(value, source[group][key], group + " " + key)
+        unique(d["candidate_allowances"], "id")
+        if len(d["candidate_allowances"]) != 8: fail("equipment catalog needs eight variants")
+        candidates = {c["id"]: c for c in d["candidate_allowances"]}
+        if set(candidates) != {'stream_default', 'stream_conditional', 'dp3_base', 'dpu_base', 'dpu_shp2_bundle', 'dpu_two_battery', 'ultrax_base', 'ultrax_shp3_bundle'}:
+            fail("equipment catalog changes the selected variants")
+        for c in candidates.values():
+            source = _balcony_row(c["scenario_id"])
+            if c["price_basis"] != "advertised equipment floor; not full installation or a quote": fail("equipment allowance needs equipment-only labeling")
+            if c["modeled_batteries"] != source["batteries"]: fail("equipment model hypothesis disagrees")
+            close(c["annual_savings_usd"], source["annual_savings_usd"], "candidate saving")
+            if not isinstance(c["available"], bool) or c["equipment_price_usd"] < 0: fail("invalid equipment observation")
+            if c['warranty_years'] != (10 if c['id'].startswith('stream_') else 5): fail("warranty needs separately stated scope")
+            for years, key in ((5,"five_year"),(10,"ten_year")): finance(c[key], source["annual_savings_usd"], c["equipment_price_usd"], years)
+        for row in d["ownership_stresses"]["cases"]:
+            c = candidates[row["candidate_id"]]
+            if row["scenario_id"] != c["scenario_id"]: fail("ownership case changes equipment hypothesis")
+            finance(row, c["annual_savings_usd"], c["equipment_price_usd"], row["years"])
+        for row in d["purchase_increments"] + [d["ownership_stresses"]["dpu_battery_increment"]]:
+            annual, _ = _balcony_delta(row["before"], row["after"])
+            close(row["annual_savings_usd"], annual, "purchase increment")
+            for years, key in ((5,"five_year"),(10,"ten_year")): finance(row[key], annual, row.get("equipment_price_usd", 0), years)
+        e = d["evening_output_example"]
+        if e["physical_dispatch_run"] is not False or e["annual_forecast_usd"] is not None: fail("evening example must remain illustrative")
+        close(e["delivered_kwh"], e["output_kw"] * (e["end_hour"]-e["start_hour"]), "evening delivered energy")
+        close(sum(e["period_delivered_kwh"].values()), e["delivered_kwh"], "evening period sum")
+        close(e["grid_charge_kwh"], e["delivered_kwh"]/e["round_trip_efficiency"], "evening grid input")
+        close(e["nominal_capacity_kwh"], e["delivered_kwh"] / ((1-e["reserve_fraction"])*e["round_trip_efficiency"]**.5), "evening capacity")
+        for season in e["seasons"].values():
+            gross = sum(e["period_delivered_kwh"][p]*season["allin_import_rates_usd_per_kwh"][p] for p in ("on","off","sop"))
+            charge = e["grid_charge_kwh"]*season["sop_charge_rate_usd_per_kwh"]
+            close(season["gross_avoided_import_usd_per_day"], gross, "evening gross")
+            close(season["grid_charge_cost_usd_per_day"], charge, "evening recharge")
+            close(season["net_before_standby_and_equipment_usd_per_day"], gross-charge, "evening net")
+            close(season["thirty_day_repeat"]["net_before_standby_and_equipment_usd"], (gross-charge)*30, "evening thirty days")
+        return d
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        fail("has a missing or malformed source: " + str(error))
+
+
 def _balcony_baseline_id(home):
     return {"none": None, "13.5": "large_13.5kwh_11.5kw", "27": "large_27kwh_11.5kw"}[home]
 
