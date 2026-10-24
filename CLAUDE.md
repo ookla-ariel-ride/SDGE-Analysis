@@ -115,6 +115,9 @@ cd ../..                                            # return to the repository r
 # One isolated token worker overlaps the serial suites. The real census supplies
 # measured generator reproduction; billing_model_nem retains its separate run.
 # Timings, measurements, and full task logs stay in private/verify-coverage-*/.
+# Keep the checkout and its Git common directory outside iCloud-managed folders.
+# A linked worktree still shares its source checkout's Git metadata. Use an
+# independent clone outside iCloud if sync changes that metadata during checks.
 # One run at a time: a second run refuses while the first holds its lock. `ps` will
 # not show it reliably; ask `cat .check_coverage.holder` (pid, start, data file) or
 # `lsof analysis` (a `9r` row is a live run or a child of one).
