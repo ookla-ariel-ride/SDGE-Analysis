@@ -9,8 +9,8 @@ without staged meter/SAM inputs and the existing production reconciliation artif
 AC-coupled interval convention: each meter row is 0.25 elapsed hours, including
 repeated DST labels. Existing import/export channels are preserved, never netted.
 New AC PV offsets remaining imports, then exports; a battery can capture exports.
-All new AC PV (including PV sent to a battery) and battery output share an optional
-aggregate output cap. This conservative AC-coupled topology does NOT model DC
+All new AC PV (including PV sent to a battery) and selected battery output share
+an optional aggregate output cap. Default membership includes every controller. This conservative AC-coupled topology does NOT model DC
 capture above the AC clipping limit. Standby is continuous AC demand, including
 empty SOC. No controller charges and discharges in the same interval. Controllers
 act in the supplied order on remaining flows; batteries never export intentionally.
@@ -81,7 +81,7 @@ def _frame(d):
 
 
 def dispatch(d, imports, exports, pv, batteries, *, export_treatment='credited',
-             shared_ac_kw=None, initial_soc=None, availability=None, discharge_allowed=None):
+             shared_ac_kw=None, shared_ac_battery_indices=None, initial_soc=None, availability=None, discharge_allowed=None):
     """Return physical interval arrays, source accounts and SOC for one pass.
 
     Inputs are nonnegative kWh per 15-minute meter interval. pv is available AC
@@ -105,6 +105,19 @@ def dispatch(d, imports, exports, pv, batteries, *, export_treatment='credited',
     cap = math.inf if shared_ac_kw is None else _finite(shared_ac_kw, 'shared_ac_kw') * INTERVAL_HOURS
     if not all(isinstance(b, Battery) for b in batteries):
         raise ValueError('batteries must contain Battery configurations')
+    if shared_ac_battery_indices is None:
+        shared_indices = set(range(len(batteries)))
+    else:
+        if shared_ac_kw is None or cap <= 0:
+            raise ValueError('explicit shared AC membership needs a finite positive cap')
+        try:
+            indices = tuple(shared_ac_battery_indices)
+        except TypeError as exc:
+            raise ValueError('shared AC membership must be an iterable of integer indices') from exc
+        if any(isinstance(k, (bool, np.bool_)) or not isinstance(k, (int, np.integer))
+               or k < 0 or k >= len(batteries) for k in indices) or len(set(indices)) != len(indices):
+            raise ValueError('shared AC membership needs valid unique non-bool integer indices')
+        shared_indices = set(indices)
     if initial_soc is None:
         initial_soc = [b.capacity_kwh * b.reserve for b in batteries]
     soc = _array(initial_soc, len(batteries), 'initial_soc')
@@ -154,12 +167,13 @@ def dispatch(d, imports, exports, pv, batteries, *, export_treatment='credited',
                 soc[k] += charged * eta
             elif periods[j] != 'sop' and allowed[j]:
                 served = min(imp[j], b.discharge_kw * INTERVAL_HOURS,
-                             remaining_output[j], max(0., soc[k] - floor) * eta)
+                             remaining_output[j] if k in shared_indices else math.inf, max(0., soc[k] - floor) * eta)
                 soc[k] -= served / eta
             old_export[j] -= old
             new_export[j] -= new
             imp[j] += grid - served
-            remaining_output[j] -= served
+            if k in shared_indices:
+                remaining_output[j] -= served
             log['new_solar_charge_kwh'][j] = new
             log['existing_solar_charge_kwh'][j] = old
             log['solar_charge_kwh'][j] = new + old
@@ -665,16 +679,21 @@ def build_study(inputs, *, include_references=True, nbt_context=None):
     scenarios, traces = [], {}
 
     def add(identifier, family, batteries=(), dc_kw=0., ac_kw=None, shape='production_proxy',
-            treatment='credited', behavior='post_free_fix', availability=None, note=None, discharge_allowed=None):
+            treatment='credited', behavior='post_free_fix', availability=None, note=None, discharge_allowed=None,
+            shared_ac_battery_indices=None, controller_order=None):
         imports = original if behavior == 'unchanged' else post
         pv = pv_profile(d, inputs['pv_per_kw'], dc_kw, shape)
         r = steady_dispatch(d, imports, exp, pv, batteries, shared_ac_kw=ac_kw,
-                            export_treatment=treatment, availability=availability, discharge_allowed=discharge_allowed)
+                            export_treatment=treatment, availability=availability, discharge_allowed=discharge_allowed,
+                            shared_ac_battery_indices=shared_ac_battery_indices)
         row = {'id': identifier, 'family': family, 'evidence': 'modeled hypothetical configuration',
                'behavior': behavior, 'batteries': [asdict(b) for b in batteries],
                'pv_dc_kw': dc_kw, 'shared_new_pv_battery_ac_kw': ac_kw,
                'production_shape': shape, 'export_treatment': treatment,
                'note': note, 'availability_fraction': float(np.mean(availability)) if availability is not None else 1.}
+        if controller_order is not None:
+            row.update(shared_ac_battery_indices=list(shared_ac_battery_indices),
+                       controller_order=list(controller_order), study_date='2026-10-23')
         row.update(scenario_summary(d, imports, exp, r, batteries))
         scenarios.append(row)
         traces[identifier] = r
@@ -727,6 +746,28 @@ def build_study(inputs, *, include_references=True, nbt_context=None):
     add('combined_commoncap_0.5kwdc', 'panel_increment', [small], dc_kw=.5, ac_kw=1.2)
     add('combined_commoncap_1kwdc', 'panel_increment', [small], dc_kw=1., ac_kw=1.2)
     add('combined_commoncap_1.5kwdc', 'panel_increment', [small], dc_kw=1.5, ac_kw=1.2)
+
+    # The separately connected home controller never uses the balcony output cap.
+    # All new PV uses it, including new PV that charges home storage.
+    for capacity, charge in ((13.5, 5), (27, 8)):
+        home = Battery(capacity, 11.5, charge)
+        for ac in (.8, 1.2):
+            for order, batteries, membership in (
+                    ('home_first', [home, small], (1,)), ('small_first', [small, home], (0,))):
+                sequence = ['home', 'small'] if order == 'home_first' else ['small', 'home']
+                if not (capacity == 13.5 and ac == 1.2):
+                    add(f'home_{capacity:g}kwh_small_{ac:g}kw_{order}', 'home_plus_portable_control', batteries,
+                        ac_kw=ac, shared_ac_battery_indices=membership, controller_order=sequence,
+                        note='Matched no-new-PV control; only portable discharge shares the balcony AC cap; portable charge remains 1.2 kW')
+                for treatment in ('credited', 'zero_credit', 'zero_export'):
+                    add(f'home_{capacity:g}kwh_combined_{ac:g}kw_{treatment}_{order}', 'home_plus_balcony_pv_storage', batteries,
+                        dc_kw=ac*1.25, ac_kw=ac, treatment=treatment, shared_ac_battery_indices=membership,
+                        controller_order=sequence,
+                        note='Generic integrated controllers; balcony PV and portable output share cap; home output retains individual limit')
+            for treatment in ('credited', 'zero_credit', 'zero_export'):
+                add(f'home_{capacity:g}kwh_pv_{ac:g}kw_{treatment}', 'home_plus_balcony_pv', [home],
+                    dc_kw=ac*1.25, ac_kw=ac, treatment=treatment, shared_ac_battery_indices=(), controller_order=['home'],
+                    note='Balcony AC cap applies only to new PV; home output retains individual limit')
 
     rows = {row['id']: row for row in scenarios}
     marginals = []
@@ -791,6 +832,23 @@ def build_study(inputs, *, include_references=True, nbt_context=None):
     marginal('large_6.144kwh_7.2kw', 'large_12.288kwh_7.2kw', 'additional 6.144kWh at fixed 7.2kW discharge / 1.8kW charge')
     marginal('large_13.5kwh_11.5kw', 'large_27kwh_11.5kw', 'additional 13.5kWh; charge power changes 5kW to assumed 8kW')
     marginal('stream_single_default_360w', 'stream_single_conditional_800w', 'conditional output change at fixed single-unit capacity and charge power')
+    # Differences use complete matched bills at one frozen rate basis.
+    for capacity in (13.5, 27):
+        home_id = f'large_{capacity:g}kwh_11.5kw'
+        for ac in (.8, 1.2):
+            for treatment in ('credited', 'zero_credit', 'zero_export'):
+                pv_id = f'home_{capacity:g}kwh_pv_{ac:g}kw_{treatment}'
+                marginal(home_id, pv_id, 'added balcony PV after home battery; home parameters fixed')
+                marginal(f'pv_{ac:g}kw_{treatment}', pv_id, 'added home battery after balcony PV; PV and balcony cap fixed')
+                for order in ('home_first', 'small_first'):
+                    combined_id = f'home_{capacity:g}kwh_combined_{ac:g}kw_{treatment}_{order}'
+                    control_id = (('powerwall_then_small' if order == 'home_first' else 'small_then_powerwall')
+                                  if capacity == 13.5 and ac == 1.2 else f'home_{capacity:g}kwh_small_{ac:g}kw_{order}')
+                    marginal(home_id, combined_id, f'added balcony PV and portable storage after home battery; {order}')
+                    marginal(f'combined_{ac:g}kw_{treatment}', combined_id, f'added home battery after balcony PV and portable storage; {order}')
+                    marginal(pv_id, combined_id, f'added portable storage at fixed home battery and balcony PV; {order}')
+                    marginal(control_id, combined_id, f'added balcony panels at fixed home and portable batteries, output limits and order; {order}')
+
     target = rows['battery_3.84kwh']
     target_trace = traces['battery_3.84kwh']
     financial = {'target_scenario': target['id'],
@@ -809,12 +867,29 @@ def build_study(inputs, *, include_references=True, nbt_context=None):
                                                   'hypothetical_rate_table': comp['hypothetical_rate_table'],
                                                   'economics': economics(comp['savings_usd']),
                                                   'dispatch': 'fixed simple schedule; same physical flows, both baseline and hardware re-billed'})
+    financial['incremental_complete_cost_sensitivities'] = []
+    for capacity in (None, 13.5, 27):
+        baseline_id = 'post_free_fix' if capacity is None else f'large_{capacity:g}kwh_11.5kw'
+        before_bill = baseline if capacity is None else rows[baseline_id]['bill']
+        for treatment in ('credited', 'zero_credit'):
+            for package in ('pv', 'combined'):
+                identifier = (f'{package}_0.8kw_{treatment}' if capacity is None else
+                              f'home_{capacity:g}kwh_{package}_0.8kw_{treatment}' + ('_home_first' if package == 'combined' else ''))
+                saving = before_bill['total_usd'] - rows[identifier]['bill']['total_usd']
+                financial['incremental_complete_cost_sensitivities'].append({
+                    'scenario_id': identifier, 'baseline_id': baseline_id, 'incremental_savings_usd': saving,
+                    'cost_basis': 'Assumed complete incremental balcony-system costs; not equipment advertisements or installed quotes; home battery cost excluded.',
+                    'economics': economics(saving),
+                    'cost_sensitivities': [economics(saving, installed_cost=cost) for cost in (1000, 2500, 5000, 7500)]})
     nbt = _nbt_sensitivity(d, original, post, exp, scenarios, traces, nbt_references, reference_traces,
                            marginals, load_nbt_context() if nbt_context is None else nbt_context)
-    return {'schema_version': 2, 'present_2026_nbt_sensitivity': nbt, 'issue': 304, 'study_date': '2026-10-22',
+    return {'schema_version': 3, 'present_2026_nbt_sensitivity': nbt, 'issue': 304, 'study_date': '2026-10-23',
             'status': 'exploratory; no purchase recommendation or authorization for household wiring',
             'provenance': dict(inputs['provenance'], rate_snapshot='June 2026 EV-TOU-5 / CEA Clean Impact Plus; canonical analysis/rates.py',
-                               baseline_repository_commit='05f4c8c', confidence='modeled deltas; estimated portable PV shape'),
+                               baseline_repository_commit='05f4c8c',
+                               joint_extension={'study_date': '2026-10-23', 'generator': 'analysis/portable_solar_storage.py',
+                                                'generator_sha256': hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
+                                                'scope': '42 joint/control scenarios and 120 matched comparisons; baseline_repository_commit describes inherited baseline only'}, confidence='modeled deltas; estimated portable PV shape'),
             'installed_baseline': {'battery_count': 0, 'battery_ownership_evidence': 'owner confirmation 2026-10-22',
                                    'existing_rooftop': '30 Panasonic 335W modules, 30 Enphase IQ7X (IQ7X-96-2-US), 10.05 kW DC / 9.45 kW AC',
                                    'ev_charger': 'Tesla Wall Connector; project intake charger.kw = 11.5',
@@ -832,7 +907,7 @@ def build_study(inputs, *, include_references=True, nbt_context=None):
                 'export_credit': 'credited grants canonical NEM to incremental meter exports. zero_credit removes credit for ALL incremental meter exports, including displaced existing rooftop exports. Existing baseline rooftop exports retain canonical credits unless a battery consumes them. Electron-origin and legal eligibility unknown.',
                 'zero_export': 'perfect control curtails only new residual PV; existing rooftop exports remain. This is incremental zero-export, not whole-site zero-export; device/control feasibility unknown.',
                 'controllers': 'supplied sequence shares remaining imports and both solar source accounts; no intentional battery export; new surplus charges first; both dispatch orders reported',
-                'shared_ac': 'one stated aggregate AC cap includes all new PV AC plus battery discharge; larger separately connected home-storage scenarios use their individual power limits',
+                'shared_ac': 'all new PV AC always uses the stated balcony cap, including PV sent to home storage. Default membership includes all controllers; explicit empty membership caps PV only; explicit indices select portable discharge only. Separately connected home storage retains individual limits in new joint rows. Existing rows retain their original cap scope.',
                 'base_battery': '20% reserve, 85% RTE split symmetrically, 10W continuous AC standby; assumptions, not measured product behavior',
                 'annual_soc': {'tolerance_kwh': SOC_TOLERANCE_KWH, 'maximum_passes': 100, 'nonconvergence': 'fail closed'},
                 'economics': '5% real discount, 1% annual savings decline, zero real tariff escalation; no replacement/subscription/maintenance cost assumed because quote unknown; ceilings before those costs',
