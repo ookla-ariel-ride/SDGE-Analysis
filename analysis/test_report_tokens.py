@@ -8999,6 +8999,7 @@ class _Sweep:
         self.declined = {}        # field -> why the sweep did not poison it
         self.unresolvable = {}    # token -> (refusal text, reads observed)
         self.baseline = {}        # token -> its clean render
+        self.outcomes = {}        # token -> its current clean outcome
 
 
 def _sweep_json(sw, name, spec, who, clean):
@@ -9101,8 +9102,94 @@ def _unresolvable_gaps(sw):
             or not any(kind == "household" for kind, _who in seen)}
 
 
-def _run_poison_sweep(tokens=None):
-    """Drive every token through the sweep and return what it observed."""
+@case
+def case_clean_discovery_resolves_each_non_gap_token_once_without_poisoning():
+    calls = []
+
+    def reads_csv(ctx):
+        calls.append("render")
+        rt._csv_rows("enphase_daily_production.csv")
+        return "a clean render"
+
+    def refuses(ctx):
+        calls.append("refused")
+        raise SystemExit("ZZZ_CLEAN_REFUSED: a clean refusal")
+
+    tokens = {
+        "ZZZ_CLEAN_RENDER": {"kind": "derived", "get": reads_csv, "fmt": None},
+        "ZZZ_CLEAN_REFUSED": {"kind": "derived", "get": refuses, "fmt": None},
+        "ZZZ_CLEAN_GAP": {"kind": "gap", "reason": "not determined"},
+    }
+    loaders = (rt._json, rt._csv_rows, rt._hh_value)
+    found = _discover_clean_tokens(tokens)
+    assert calls == ["render", "refused"], calls
+    assert found.outcomes == {
+        "ZZZ_CLEAN_RENDER": ("ok", "a clean render"),
+        "ZZZ_CLEAN_REFUSED": ("exit", "ZZZ_CLEAN_REFUSED: a clean refusal"),
+    }, found.outcomes
+    assert found.reads == {
+        "ZZZ_CLEAN_RENDER": {("csv", "enphase_daily_production.csv")},
+        "ZZZ_CLEAN_REFUSED": set(),
+    }, found.reads
+    assert found.baseline == {"ZZZ_CLEAN_RENDER": "a clean render"}, found.baseline
+    assert set(found.unresolvable) == {"ZZZ_CLEAN_REFUSED"}, found.unresolvable
+    assert not any(found.probes.values()), found.probes
+    assert loaders == (rt._json, rt._csv_rows, rt._hh_value)
+    return "one clean resolution per non-gap token, current outcomes/reads, and no poison probes"
+
+
+@case
+def case_clean_discovery_accepts_only_a_genuine_household_read_refusal():
+    def sulks(ctx):
+        raise SystemExit("ZZZ_CLEAN_SULKER refuses for another reason")
+
+    def lies(ctx):
+        raise SystemExit("ZZZ_CLEAN_LIAR claims private/household.yaml is absent")
+
+    def reads_household(ctx):
+        return rt._hh_value("household.utility")[0]
+
+    tokens = {
+        "ZZZ_CLEAN_SULKER": {"kind": "derived", "get": sulks, "fmt": None},
+        "ZZZ_CLEAN_LIAR": {"kind": "derived", "get": lies, "fmt": None},
+        "ZZZ_CLEAN_HOUSEHOLD": {"kind": "derived", "get": reads_household, "fmt": None},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        with _patched(rt.hh, "PATH", pathlib.Path(tmp) / "household.yaml"), \
+                _patched(rt.hh, "_cache", None):
+            found = _discover_clean_tokens(tokens)
+    assert set(found.unresolvable) == set(tokens), found.unresolvable
+    assert found.reads["ZZZ_CLEAN_HOUSEHOLD"] == {("household", "household.utility")}
+    assert "household.yaml" in found.outcomes["ZZZ_CLEAN_HOUSEHOLD"][1]
+    assert set(_unresolvable_gaps(found)) == {"ZZZ_CLEAN_SULKER", "ZZZ_CLEAN_LIAR"}
+    return "a real missing-household read is accepted; unrelated and fabricated refusals are gaps"
+
+
+@case
+def case_clean_discovery_reads_changed_state_again_without_a_cached_result():
+    current = {"artifact": "enphase_daily_production.csv", "render": "first"}
+
+    def reads_current(ctx):
+        rt._csv_rows(current["artifact"])
+        return current["render"]
+
+    tokens = {"ZZZ_CLEAN_CURRENT": {"kind": "derived", "get": reads_current, "fmt": None}}
+    first = _discover_clean_tokens(tokens)
+    current.update(artifact="plan_results.csv", render="second")
+    second = _discover_clean_tokens(tokens)
+    assert first.outcomes == {"ZZZ_CLEAN_CURRENT": ("ok", "first")}, first.outcomes
+    assert second.outcomes == {"ZZZ_CLEAN_CURRENT": ("ok", "second")}, second.outcomes
+    assert first.reads == {"ZZZ_CLEAN_CURRENT": {("csv", "enphase_daily_production.csv")}}
+    assert second.reads == {"ZZZ_CLEAN_CURRENT": {("csv", "plan_results.csv")}}
+    return "changed state produces a fresh render and fresh reads without changing earlier evidence"
+
+
+def _discover_clean_tokens(tokens=None):
+    """Resolve each non-gap token once, recording fresh outcomes and reads.
+
+    Completeness checks need the current refusal evidence, not mutation
+    probes. Keep this uncached so changed token/input state is always read.
+    """
     tokens = rt.TOKENS if tokens is None else tokens
     sw = _Sweep()
     for name, spec in tokens.items():
@@ -9111,6 +9198,7 @@ def _run_poison_sweep(tokens=None):
         seen = set()
         with _recording_loaders(seen):
             clean = _outcome(name, spec)
+        sw.outcomes[name] = clean
         sw.reads[name] = seen
         if clean[0] != "ok":
             # A token this checkout cannot resolve at all has no clean answer
@@ -9120,7 +9208,17 @@ def _run_poison_sweep(tokens=None):
             continue
         sw.baseline[name] = clean[1]
         sw.probes[name] = 0
-        for kind, who in sorted(seen):
+    return sw
+
+
+def _run_poison_sweep(tokens=None):
+    """Drive every token through the sweep and return what it observed."""
+    tokens = rt.TOKENS if tokens is None else tokens
+    sw = _discover_clean_tokens(tokens)
+    for name in sw.baseline:
+        spec = tokens[name]
+        clean = sw.outcomes[name]
+        for kind, who in sorted(sw.reads[name]):
             if kind == "json":
                 _sweep_json(sw, name, spec, who, clean)
             elif kind == "csv":
@@ -12510,7 +12608,7 @@ def case_the_sweep_asserts_the_tokens_it_could_not_drive():
                                                    "fmt": None},
                   "ZZZ_FABRICATED_LIAR_TOKEN": {"kind": "derived",
                                                 "get": refuses_by_name_only, "fmt": None}}
-    sw = _run_poison_sweep(fabricated)
+    sw = _discover_clean_tokens(fabricated)
     assert set(sw.unresolvable) == set(fabricated), sorted(sw.unresolvable)
     gaps = _unresolvable_gaps(sw)
     assert set(gaps) == set(fabricated), (
@@ -12519,7 +12617,7 @@ def case_the_sweep_asserts_the_tokens_it_could_not_drive():
 
     # And a genuinely household-blocked token IS allowed through the door --
     # otherwise this check would just reject everything on the CI runner.
-    real = _run_poison_sweep()
+    real = _discover_clean_tokens()
     assert not _unresolvable_gaps(real), _unresolvable_gaps(real)
     if rt.hh.PATH.is_file():
         assert not real.unresolvable, sorted(real.unresolvable)
