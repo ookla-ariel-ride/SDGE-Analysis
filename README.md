@@ -23,8 +23,8 @@ GitHub's file viewer shows the HTML source; the link above opens the report.
 > reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
 > then re-worked in Claude Cowork to incorporate the findings of both reviews.
 
-> **This revision:** The SB 868 expansion used **Codex (GPT-6.1 Sol)** for implementation and independent task reviews.
-> **Codex (GPT-6 Astra)** performed the whole-branch review. Corrections followed those reviews.
+> **This revision:** **Codex (GPT-6.1 Sol and GPT-6 Astra)** revised the report, charts, and supporting documents.
+> Separate Codex agents reviewed the data, implementation, and prose.
 
 **Companion documents:**
 [**TECHNICAL.md**](TECHNICAL.md) — the full methods documentation: every script, data schema, algorithm, and validation chain, written so the analysis can be audited or rebuilt ·
@@ -32,7 +32,8 @@ GitHub's file viewer shows the HTML source; the link above opens the report.
 [**DATA-SOURCES-CHEATSHEET.md**](DATA-SOURCES-CHEATSHEET.md) — the intake interview: every data source you need, field by field, to run this on your own home ·
 [**reusable-prompt.md**](reusable-prompt.md) — the AI prompt that rebuilds the entire analysis.
 
-This report compares utility costs, solar, EV charging, hypothetical batteries, and electrification for one SDG&E Coastal home with two EVs.
+This report answers eleven energy questions for one SDG&E Coastal home with two EVs.
+It compares utility costs, solar, EV charging, hypothetical home and portable batteries, balcony solar, and electrification.
 **No battery is installed.** Battery savings, backup duration, and purchase cases are modeled.
 
 The annual model covers **July 24, 2025–July 23, 2026**, at frozen June 2026 tariffs.
@@ -52,13 +53,22 @@ The repository includes the scripts, aggregate results, intake guide, report tem
 
 ## What the report covers
 
-The report covers five decision areas:
+The report starts with the existing rooftop system and measured load. It compares plans and free schedule changes before purchases.
+Its eleven questions cover these decisions:
 
 - Rate plans, CCA versus bundled generation, and reconciliation with actual bills.
 - EV charging schedules and hypothetical battery savings, dispatch, sizing, and backup duration.
 - Solar production, limits on degradation and clipping conclusions, cleaning, and added-panel scenarios.
 - Gas appliances, heat-pump scenarios, and electrical service constraints.
 - Grid-carbon estimates, NEM economics, and uncertain future tariff changes.
+
+[Question 11](index.html#balcony-solar) asks whether balcony solar adds savings, whether the complete purchase is worthwhile, and how long payback takes.
+It separates panels, a portable battery, and their combined purchase. It also tests each addition after proposed home storage.
+Each purchase uses its own additional bill saving after the free schedule change.
+
+Free behavior savings do not repay hardware. Complete incremental cost includes the added equipment and its connection or installation costs.
+Assumed costs show conditional paybacks and spending limits. Actual payback needs a complete quote, supported connection, and eligible configuration.
+Hourly grid flows, monthly additional savings, and assumed-cost paybacks show those matched comparisons.
 
 Evidence labels separate measured records, modeled scenarios, and estimates. Some archived weather
 and cleaning estimates lack a reproducible calculation. Their limits appear beside them and in
@@ -457,4 +467,4 @@ each with a privacy checklist so nothing personal lands in a public thread.
 
 ---
 
-*README source review: October 22, 2026.*
+*README source review: October 24, 2026.*

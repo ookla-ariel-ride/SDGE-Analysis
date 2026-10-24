@@ -467,14 +467,18 @@ Mono data — with system fallbacks).
   purpose. No figure, evidence pill, or artifact citation may be deleted to hit the cap —
   move it after the break, never drop it.
 - Every h2 section opens with a one-line conclusion, and carries it exactly one of three
-  ways: (a) the verdict written INTO the heading itself ({{S4_VERDICT_SHORT}},
-  {{S8_VERDICT_SHORT}}, {{S11_VERDICT_SHORT}}); (b) for the three collapsible sections
+  ways: (a) the verdict written into the heading itself ({{S11_VERDICT_SHORT}});
+  (b) for the three collapsible sections
   (§9, §12, §13), the `<span class="teaser">` inside their `<summary>`; (c) everywhere
-  else, a `<p class="verdict">` directly after the h2. Start with one clear conclusion.
+  else, a `<p class="verdict">` directly after the h2. Keep the §4 and §8 headings short;
+  their adjacent verdict paragraphs use {{S4_VERDICT_SHORT}} and {{S8_VERDICT_SHORT}}.
+  The `#balcony-solar` verdict paragraph uses {{BALCONY_VERDICT}}.
+  Start with one clear conclusion.
   Follow it with connected explanatory sentences when needed; the label "In one sentence:"
   is optional and must not describe a multi-sentence verdict.
-  Every (c) paragraph is token-owned ({{S0_VERDICT}} … {{S15_VERDICT}}) — the token supplies
-  the whole paragraph including every sigil and unit, and index.html must carry it verbatim
+  Every (c) paragraph is token-owned, using the tokens named above or the applicable
+  {{S0_VERDICT}} … {{S15_VERDICT}} token. The token supplies the whole paragraph including
+  every sigil and unit, and index.html must carry it verbatim
   (as rendered — token values are HTML-escaped on the way in). Never give one section two of
   these; a section with none is a bug.
 - Every "§N" reference in prose is a real <a href="#sN"> link.

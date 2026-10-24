@@ -215,17 +215,18 @@ def case_periods_chart_matches_its_artifact():
     assert pc["order"] == ["sop", "off", "on"], (
         "periods_chart order changed; the positional indexing below and the "
         "chart labels both assume sop/off/on")
-    # TEMPLATE-ORDER DEPENDENCY: `data` matches the FIRST `data:` array in
-    # index.html, which is the periods chart's kWh series only because that
-    # chart is the first Chart.js config in report-template.html. Adding a
-    # chart above it would silently retarget this match; keep the periods
-    # chart first, or anchor this lookup to its config, if the template changes.
-    kwh = _array("data")
-    _close(kwh, pc["import_kwh"], 1, "periods chart kWh")
-    m = re.search(r"Annual import cost \$',data:(\[[\d,.\s]*\])", HTML)
-    assert m, "periods chart cost series not found"
-    cost = [float(x) for x in m.group(1).strip("[]").split(",")]
-    _close(cost, pc["import_cost"], 1, "periods chart cost")
+    chart = re.search(r"new Chart\(document.getElementById\('periods'\).*?(?=new Chart|// ---)", HTML, re.S)
+    assert chart, "periods chart config not found"
+    config = chart.group(0)
+    series = re.findall(r"label:'([^']+)',xAxisID:'([^']+)',data:(\[[\d,.\s]*\])", config)
+    assert len(series) == 2, "periods chart needs two independently labeled unit axes"
+    assert [(label, axis) for label, axis, _ in series] == [
+        ('Annual import kWh', 'xKwh'), ('Annual import cost $', 'xDollars')]
+    for (_, _, values), key in zip(series, ('import_kwh', 'import_cost')):
+        _close(json.loads(values), pc[key], 1, 'periods chart ' + key)
+    assert "xKwh:" in config and "xDollars:" in config
+    assert "text:'Annual grid imports (kWh)'" in config
+    assert "text:'Gross import energy cost ($)'" in config
     return "the periods chart's kWh and dollar series both match report_data.json"
 
 
@@ -535,7 +536,7 @@ def case_sizing_curve_table_matches_the_artifact_row_by_row():
     post_rows = {r["kwh"]: r for r in bsc["post_behavior"]["energy_sweep_at_11.5kw"]}
     assert cur_rows.keys() == post_rows.keys(), "current/post-behavior grids diverge"
 
-    start = HTML.index("Sizing as a curve")
+    start = HTML.index("How storage capacity changes savings")
     end = HTML.index("</table>", start) + len("</table>")
     table_html = HTML[start:end]
     tr_re = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
@@ -804,7 +805,7 @@ def case_mid_card_dsgs_bullet_keeps_its_non_annual_qualifiers():
 # inside its own month and TOU period") is NOT this shape -- it states which end
 # of the bracket is which, and never says what the rate IS -- so it stays.
 _NETTING_DEFINITION_RE = re.compile(
-    r"an export (?:earns|saves) by cancelling an import in "
+    r"(?:an export (?:earns|saves) by cancelling an import in |an export cancels an import in )"
     r"(?:its own|the same) (?:month and (?:TOU )?period|period and month)")
 
 # The figure those sites publish, as index.html prints it.
@@ -876,7 +877,7 @@ def case_export_netting_definition_is_stated_once():
     collapsed = {
         "section 0's midday bullet": "Use the 10am–2pm weekday super-off-peak window",
         "section 5's export bullet": "Midday exports earn little",
-        "the Monday appendix's midday habit": "Build the home-day midday habit",
+        "the Monday appendix's midday habit": "Use midday charging when a car is home",
     }
     for where, lead in collapsed.items():
         i = HTML.find(lead)
@@ -1703,11 +1704,11 @@ def case_ev_fleet_fuel_cost_matches_extended_results():
 
     m = re.search(r"<p>The gasoline comparison uses.*?</p>(?:\s*<p>.*?</p>){2}", HTML, re.S)
     assert m, "§9 electrification-dividend paragraph not found in index.html"
-    para = m.group(0)
+    para = m.group(0).replace("<code>", "").replace("</code>", "")
     checks = [
         f"costs an estimated {_fmt_usd(ed['total_ev_fuel_cost'])}/yr",
-        f"{_fmt_usd(ed['home_ev_cost_current_rates'])} for {ed['home_ev_kwh']:,} kWh of home charging at current rates",
-        f"{_fmt_usd(ed['supercharge_cost_est'])} for {ed['supercharge_kwh']:,} kWh of supercharging at about ${sc['sc_price_est']:.2f} per kWh",
+        f"Home charging contributes {_fmt_usd(ed['home_ev_cost_current_rates'])} for {ed['home_ev_kwh']:,} kWh at current rates",
+        f"Supercharging contributes {_fmt_usd(ed['supercharge_cost_est'])} for {ed['supercharge_kwh']:,} kWh at about ${sc['sc_price_est']:.2f} per kWh",
         f"costs an estimated {_fmt_usd(ed['gas_counterfactual_cost'])}/yr",
         (f"about {_fmt_usd(ed['dividend_yr'])}/yr in fuel savings. With home charging fully in super-off-peak, "
          f"modeled home charging cost falls to {_fmt_usd(ed['home_ev_cost_if_all_sop'])} and estimated fuel savings rise to about "
@@ -1987,7 +1988,7 @@ def case_night_floor_section_matches_the_artifact():
     doc = _night_floor_artifact()
     nf, pr = doc["night_floor"], doc["pricing"]
     section = _report_span("the §13 always-on-floor subsection",
-                           r"<h3>Quiet-night load: measurements and annual extrapolation", r"<h3")
+                           r'<h3 id="quiet-night-floor">Quiet-night load: measurements and annual extrapolation', r"<h3")
     monthly = {int(m): v for m, v in nf["monthly_median_kw"].items()}
     lo_m = min(monthly, key=lambda m: (monthly[m], m))
     hi_m = max(monthly, key=lambda m: (monthly[m], -m))
@@ -2031,7 +2032,7 @@ def case_all_three_sections_price_the_always_on_load_the_same_way():
         "§9": _report_span("the §9 always-on-load note",
                            r"<h3>Quiet-night load: its cost and evidence limits", r"</div>"),
         "§13": _report_span("the §13 always-on-floor subsection",
-                            r"<h3>Quiet-night load: measurements and annual extrapolation", r"<h3"),
+                            r'<h3 id="quiet-night-floor">Quiet-night load: measurements and annual extrapolation', r"<h3"),
     }
     # The floor, its energy, its price-map cost and the rate for the next
     # 100 W off it are the four figures all three sections state. The full
@@ -2208,6 +2209,7 @@ def case_irreducible_bill_figures_match_the_artifact():
     assert m, "§7 irreducible-bill-floor paragraphs not found in index.html"
     section = m.group(0)
 
+    section = section.replace("<code>", "").replace("</code>", "")
     checks = [
         _fmt_usd2(base["strictly_irreducible_usd"]),
         f"{round(pf['LOW']['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}% of LOW's projected bill",
@@ -2292,7 +2294,7 @@ def case_nem3_grandfathering_section_matches_the_artifact():
     nbt = n3["nbt_counterfactual"]["NBT26"]
     alt = n3["generation_component_sensitivity"]["alternative_bills"]["NBT26"]
 
-    m = re.search(r"<h3>What NEM 2\.0 grandfathering is worth.*?</p>(?:\s*<p>.*?</p>){3}", HTML, re.S)
+    m = re.search(r'<h3 id="nem-value-answer">.*?</p>(?:\s*<p>.*?</p>){3}', HTML, re.S)
     assert m, "§13 NEM-2.0-grandfathering subsection not found in index.html"
     section = m.group(0)
 
@@ -2363,8 +2365,8 @@ def case_reprice_by_vintage_note_matches_the_artifact():
         ("next adjustment changes modeled cost by", f"−{_fmt_usd2(abs(rv['generation_tou_window_effect']))}"),
         ("changes generation dollars by", f"−{_fmt_usd2(abs(rv['generation_clean_tou_effect']))}"),
         ("A", f"+{_fmt_usd2(rv['delivery_pcia_restart_artifact_usd'])}"),
-        ("current model:", f"+{_fmt_usd2(rv['cip_adder_usd'])} for Clean Impact Plus"),
-        ("and", f"+{_fmt_usd2(rv['state_surcharge_tax_usd'])} for the state surcharge tax"),
+        ("Clean Impact Plus adds", _fmt_usd2(rv['cip_adder_usd'])),
+        ("The state surcharge tax adds", _fmt_usd2(rv['state_surcharge_tax_usd'])),
         ("Historical fixed charges change modeled cost by", f"−{_fmt_usd2(abs(rv['fixed_charge_vintage_effect']))}"),
         ("read from the bills, change it by", f"−{_fmt_usd2(abs(rv['delivery_vintage_effect']))}"),
         ("changes explain", f"−{_fmt_usd2(abs(rv['total_vintage_effect']))}"),
@@ -2827,8 +2829,8 @@ def case_ev_fix_savings_100_and_80_render_bare_in_every_prose_site():
 # same reason as the EV-fix sites above (report-template.html's item-4 and
 # rec-box examples are TODO-comment prose, never live markup).
 _S0_BATTERY_CLAUSE_TEMPLATE = (
-    "a hypothetical Powerwall 3 saves a modeled <b>{price_aware}/yr at June 1, 2026 rates ({marginal} after "
-    "the EV fix, from a single integrated run of shift-then-battery)</b>:")
+    "a hypothetical Powerwall 3 saves a modeled <b>{price_aware}/yr at June 1, 2026 rates</b>. "
+    "A single integrated shift-then-battery run gives <b>{marginal}/yr after the EV fix</b>.")
 
 
 def case_s0_battery_clause_renders_both_battery_savings_bare():
@@ -3077,7 +3079,7 @@ def case_chart_title_periods_matches_its_token():
     """
     m = _CHART_PERIODS_CAPTION_RE.search(TEMPLATE_HTML)
     assert m, "periods caption must retain its derived finding and import shares"
-    short_title = "options:{indexAxis:'y',plugins:{title:{display:true,text:'Imports by TOU period',color:PAL.ink}}}});"
+    short_title = "text:'Imports by TOU period',color:PAL.ink"
     assert short_title in TEMPLATE_HTML and short_title in HTML, (
         "periods chart must retain the terse title in report and template")
     if str(ROOT / "analysis") not in sys.path:
@@ -3545,7 +3547,7 @@ def _midday_export_share_from_report_data():
 # exports", which is a deleted CLAIM, not a rearranged one. The window words
 # come from _MIDDAY_WINDOW_WORDS for the same reason the hours do.
 _S2_VERDICT_MIDDAY_RE = re.compile(
-    r'<p class="verdict">In one sentence: (?:(?!</p>)[^\n])*?(\d+)% of its exports '
+    r'<p class="verdict">(?:In one sentence: |At age )(?:(?!</p>)[^\n])*?(\d+)% of its exports '
     r"leave in the " + re.escape(_MIDDAY_WINDOW_WORDS[0]) + r" window")
 
 
@@ -4959,7 +4961,7 @@ def case_s8_specific_yield_matches_the_token_rendered_one():
     assert m, "§8's repowering paragraph not found in index.html"
     typed = re.search(r"([\d,]+) kWh/kW/yr", m.group(0))
     assert typed, "§8's repowering paragraph no longer states the array's specific yield"
-    verdict = re.search(r'<p class="verdict">In one sentence: '
+    verdict = re.search(r'<p class="verdict">(?:In one sentence: |At age )'
                         r'(?:(?!</p>)[^\n])*?([\d,]+) kWh/kW', HTML)
     assert verdict, "§2's verdict line no longer states a specific yield to compare against"
     assert typed.group(1) == verdict.group(1), (
@@ -6023,9 +6025,8 @@ def case_basic_tier_verdict_lines_stay_inside_the_density_cap():
     scaffold = _in_heading_verdict_scaffold()
     headings = [(sid, _rendered_heading_verdict(inner, *scaffold[sid][:2]))
                 for sid, inner in _SECTION_H2_RE.findall(basic) if sid in scaffold]
-    assert headings, (
-        "no basic-tier in-heading verdict found -- section 4 carries one, so either "
-        "the heading scaffolding moved or the advanced-tier boundary did")
+    # Headings may contain no verdicts; the completeness count below still
+    # requires one conclusion for every basic section.
     for sid, text in headings:
         assert text, (
             f"basic-tier §{sid} uses the in-heading verdict mechanism but its rendered "
@@ -6650,7 +6651,7 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
          "battery_sizing_curve.json:current_behavior.knee.kwh"),
         ("Optimality gap", f"${gap['optimality_gap_usd']:,.2f}/yr gap",
          "perfect_foresight_dispatch.json:published_comparison.optimality_gap_usd"),
-        ("Optimality gap", f"({gap['optimality_gap_pct_of_published']:,.1f}% of the shipping",
+        ("Optimality gap", f"({gap['optimality_gap_pct_of_published']:,.1f}% of the simulated",
          "perfect_foresight_dispatch.json:published_comparison.optimality_gap_pct_of_published"),
         ("Electrification dividend", f"about ${div['dividend_yr']:,}/yr here today",
          "extended_results.json:electrification_dividend.dividend_yr"),
@@ -6712,6 +6713,8 @@ def case_glossary_figures_match_the_artifacts_that_derive_them():
          "battery_dispatch_policies.json:stored_kwh_cost.config"),
         ("Round-trip efficiency", f"modeled here at {pw3['round_trip'] * 100:.0f}%",
          "battery_dispatch_policies.json:stored_kwh_cost.config.round_trip"),
+        ("Round-trip efficiency", f"assumes {next(row for row in json.loads((ROOT / 'data/portable_solar_storage.json').read_text())['scenarios'] if row['id'] == 'battery_power_0.8kw')['batteries'][0]['rte'] * 100:.0f}%",
+         "portable_solar_storage.json:scenarios.battery_power_0.8kw.batteries[0].rte"),
         ("Grid carbon intensity",
          f"across {carbon['coverage']['days_covered']} of the analysis year's "
          f"{year_days.group(1)} days",
@@ -7233,9 +7236,8 @@ def case_ranking_scale_selectors_match_claude_md():
 # edit to the pipeline claim itself still breaks it loudly, which is correct,
 # because the mutation below exists to prove that exact claim is guarded.
 _S7_PIPELINE_SENTENCE_RE = re.compile(
-    r"behavior and battery are simulated in one integrated pipeline "
-    r"\(\{\{[A-Z0-9_]+\}\} shift first, then battery, re-billed end-to-end\), "
-    r"so nothing is double-counted\.")
+    r"It applies the \{\{[A-Z0-9_]+\}\} shift before the battery and prices the whole year once\. "
+    r"This sequence accounts for overlap between their savings\.")
 
 
 def _s7_pipeline_sentence():
@@ -7291,7 +7293,7 @@ _EV_ASSERTING_LITERALS = (
 # The one-pipeline claim with the FIX NAME left open, so the check reads what
 # the template actually put there instead of assuming a token is there.
 _S7_PIPELINE_FIX_RE = re.compile(
-    r"integrated pipeline \(([^()]*?) shift first, then battery")
+    r"It applies the ([^.]*?) shift before the battery")
 
 _TOKEN_REF_ONLY_RE = re.compile(r"^\{\{([A-Z0-9_]+)\}\}$")
 
@@ -7418,8 +7420,8 @@ def case_the_free_fix_naming_guard_rejects_the_claims_it_exists_to_catch():
 
     # (1) the literal EV assertion, in the exact site issue #147 found.
     ev_literal = clean.replace(
-        "integrated pipeline ( shift first",
-        "integrated pipeline (EV shift first")
+        "It applies the  shift before the battery",
+        "It applies the EV shift before the battery")
     assert ev_literal != clean, "mutation 1 was a no-op -- re-anchor it"
     caught = _live_markup_ev_assertions(ev_literal)
     assert caught and any('the abbreviation "EV"' == label for _n, label, _l in caught), (
@@ -7438,8 +7440,8 @@ def case_the_free_fix_naming_guard_rejects_the_claims_it_exists_to_catch():
     # (2) the fix named by fixed markup instead of a token -- worded so the
     # vocabulary sweep CANNOT see it, which is why half (2) exists.
     literal_fix = clean.replace(
-        "integrated pipeline ( shift first",
-        "integrated pipeline (house-load shift first")
+        "It applies the  shift before the battery",
+        "It applies the house-load shift before the battery")
     assert literal_fix != clean, "mutation 2 was a no-op -- re-anchor it"
     assert not _live_markup_ev_assertions(literal_fix), (
         "mutation 2 must be invisible to the vocabulary sweep, or it does not "
@@ -7470,8 +7472,8 @@ def case_the_fixed_prose_guard_rejects_the_drift_it_exists_to_catch():
          "The model moves energy between intervals and estimates savings",
          "s0", "estimates savings"),
         ("s7 script token replaced by a wrong literal",
-         "the NEM model and its stated limits (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>)",
-         "the NEM model and its stated limits (<code>analysis/wrong.py</code>)",
+         "The NEM model retains its stated limits (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>)",
+         "The NEM model retains its stated limits (<code>analysis/wrong.py</code>)",
          "s7", "analysis/wrong.py"),
     ]
     for name, old, new, want_sid, want_frag in mutations:
@@ -7787,11 +7789,11 @@ def case_stored_kwh_costs_match_the_dispatch_artifact():
 def _high_card_regions():
     """{document: the passage that makes the HIGH package's claim}."""
     out = {}
-    card = re.search(r'<div class="pkg">\s*<h3>HIGH\b.*?</div>', HTML, re.S)
+    card = re.search(r'<div class="pkg">\s*<h3>Home-storage expansion\b.*?</div>', HTML, re.S)
     assert card, ("the HIGH package card is not in index.html in the form this case "
                   "pins (<div class=\"pkg\"> then <h3>HIGH); re-anchor it rather "
                   "than deleting it")
-    out["index.html"] = card.group(0)
+    out["index.html"] = card.group(0).replace("<code>", "").replace("</code>", "")
 
     tech = (ROOT / "TECHNICAL.md").read_text()
     bullet = re.search(r"- `packages\.HIGH`.*?(?=\n- `)", tech, re.S)
@@ -8050,7 +8052,7 @@ def case_original_questions_remain_visible_above_the_bottom_line():
                        "service-voltage-status"):
             assert f'href="#{target}"' in register.group(1), f"{filename}: no question link to {target}"
         assert "#issuecomment-6354504709" in register.group(1), filename
-        assert "Accuracy untested" in text and "not determined" in text.lower(), filename
+        assert "Accuracy remains untested" in text and "not determined" in text.lower(), filename
     return "ten original questions and study-status links remain visible before the bottom line"
 
 
@@ -8064,7 +8066,7 @@ def case_purchase_and_existing_studies_keep_their_evidence_limits():
     s5 = HTML[HTML.index('<h2 id="s5">'):HTML.index('<h2 id="s6">')]
     assert "Whole-home evening grid imports" in s5 and "25%" in s5 and "$480/yr" in s5
     assert not re.search(r"\$23[03]|Evening A/C through peak hours", s5), s5
-    wildcard = HTML[HTML.index('<h3 id="plan-wildcard">'):HTML.index('<h3>Quiet-night load: its cost')]
+    wildcard = HTML[HTML.index('<h3 id="plan-wildcard">'):HTML.index('<h2 id="s10">')]
     for phrase in ("interval-valued", "assumed event dates", "on-peak-only", "monthly NEM"):
         assert phrase in wildcard, f"wildcard lacks {phrase!r}"
     assert "dodge every event" not in HTML
@@ -8090,7 +8092,7 @@ class _BalconyTables:
             def handle_starttag(self, tag, attrs):
                 attrs = dict(attrs)
                 if tag == "details": self.details.append("open" in attrs)
-                if tag == "h3" and attrs.get("id") == "balcony-solar": self.balcony_details = list(self.details)
+                if tag == "h2" and attrs.get("id") == "balcony-solar": self.balcony_details = list(self.details)
                 if tag == "table":
                     self.table = attrs.get("id")
                     if self.table and self.table.startswith("balcony-"): self.tables[self.table] = []
@@ -8130,7 +8132,7 @@ def case_balcony_answer_is_basic_and_every_new_table_matches_complete_bills():
         return f"combined_{cap}kw_{treatment}" if home == "none" else f"home_{home}kwh_combined_{cap}kw_{treatment}_{order}"
     reader = _BalconyTables.read(HTML)
     assert reader.balcony_details == [], "balcony answer must be visible outside details"
-    position = HTML.index('<h3 id="balcony-solar">')
+    position = HTML.index('<h2 id="balcony-solar">')
     assert HTML.index('<h2 id="s6">') < position < HTML.index('<h2 id="s7">')
     for filename, doc in (("index.html", HTML), ("report-template.html", TEMPLATE_HTML)):
         assert 'href="#balcony-solar"' in doc[doc.index('<nav'):doc.index('</nav>')], filename
@@ -8196,7 +8198,7 @@ def case_balcony_answer_is_basic_and_every_new_table_matches_complete_bills():
         assert cells[1] == _balcony_expected_money(delta(before,after))
         assert cells[2:] == [_balcony_expected_money(pair["economics"][key]["break_even_installed_usd"]) for key in ("five_year","ten_year")]
     section=HTML[position:HTML.index('<h2 id="s7">')]
-    for phrase in ("with no added hardware", "20% reserve", "whole-meter load", "Charge power is 1.2 kW and discharge power is 1.2 kW.", "without home storage or new PV", "fixed daily", "Gas stays unchanged", "they do not bound model uncertainty", "Long simple-payback ratios", "no payable-bill saving", "future equipment and account treatment"):
+    for phrase in ("no added hardware", "20% reserve", "whole-meter load", "Charge power is 1.2 kW and discharge power is 1.2 kW.", "without home storage or new PV", "fixed daily", "Gas stays unchanged", "they do not bound model uncertainty", "Long simple-payback ratios", "no payable-bill saving", "future equipment and account treatment"):
         assert phrase.lower() in section.lower(), phrase
     return "basic balcony answer and all eight tables independently match selected artifact IDs, complete bills, components and cost math"
 
@@ -8210,7 +8212,7 @@ def case_decision_depth_views_keep_cost_basis_months_and_tracks():
     expected = [c for family in d['common_options'] for c in family['cases']]
     for (attrs,cells), case in zip(rows,expected):
         assert attrs['data-scenario'] == case['scenario_id'] and attrs['data-baseline'] == 'post_behavior'
-        assert ('Home-storage track' in cells[0]) == case['scenario_id'].startswith('large_')
+        assert ('Home storage' in cells[0]) == case['scenario_id'].startswith('large_')
         assert cells[2:] == [_balcony_expected_money(case['annual_savings_usd'])] + [_balcony_expected_money(case[k]['total_affordable_initial_cost_usd']) for k in ('five_year','ten_year')]
     rows = [(a,c) for a,c in reader.tables['balcony-equipment-results'] if 'data-candidate' in a]
     assert len(rows) == 8
@@ -8230,7 +8232,7 @@ def case_decision_depth_views_keep_cost_basis_months_and_tracks():
     for cells,(season,case) in zip(evening,d['evening_output_example']['seasons'].items()):
         assert cells == [season.capitalize()] + [_balcony_expected_money(case[k],2) for k in (
             'gross_avoided_import_usd_per_day','grid_charge_cost_usd_per_day','net_before_standby_and_equipment_usd_per_day')]
-    start = HTML.index('<h3 id="balcony-solar">'); end = HTML.index('<h2 id="s7">')
+    start = HTML.index('<h2 id="balcony-solar">'); end = HTML.index('<h2 id="s7">')
     section = HTML[start:end]
     for phrase in ('equipment-only', 'remaining allowance', 'five-year', 'inverter/batteries', 'continued operation',
                    'no prior utility approval', 'whole-meter load', 'before settlement', 'not an annual forecast',
@@ -8243,8 +8245,8 @@ def case_decision_depth_views_keep_cost_basis_months_and_tracks():
         assert phrase in section, phrase
     for text in ('index.html','report-template.html'):
         doc = (ROOT/text).read_text()
-        assert doc.index('id="balcony-decision-results"') > doc.index('<h2 id="s7">')
-        assert doc.index('id="balcony-decision-results"') < doc.index('<h2 id="s15">')
+        assert doc.index('id="balcony-decision-results"') > doc.index('<h2 id="s6">')
+        assert doc.index('id="balcony-decision-results"') < doc.index('<h2 id="s7">')
         assert 'data-key=' not in doc and 'data-id=' not in doc
         new_tables = {'balcony-decision-results','balcony-operating-results','balcony-equipment-results',
                       'balcony-ownership-results','balcony-monthly-results','balcony-evening-results'}
@@ -8252,7 +8254,80 @@ def case_decision_depth_views_keep_cost_basis_months_and_tracks():
     return 'common tracks, equipment-only residuals, negative budgets, all months and decisive visible conditions stay explicit'
 
 
+def case_balcony_charts_keep_source_profiles_matched_savings_and_access():
+    """Check the shipped chart payload independently of its projection helper."""
+    study = json.loads((ROOT / "data/portable_solar_storage.json").read_text())
+    marker = HTML.index('balcony:', HTML.index('const D =')) + len('balcony:')
+    drawn, _ = json.JSONDecoder().raw_decode(HTML[marker:])
+    assert drawn['schema_version'] == 1
+    assert drawn['profiles'] == study['chart_data']['profiles']
+    assert len(drawn['profiles']) == 12
+    assert drawn['basis'] == study['chart_data']['basis']
+    costs = {r['scenario_id']: r for r in study['financial_sensitivities']['incremental_complete_cost_sensitivities']}
+    bills = {r['id']: r['bill'] for r in study['scenarios']}
+    bills['post_free_fix'] = study['baseline']['post_behavior']
+    months = drawn['months']
+    assert [m['id'] for m in months] == sorted(bills['post_free_fix']['monthly'])
+    assert [m['partial'] for m in months] == [True] + [False] * 11 + [True]
+    assert all(m['label'].endswith('*') == m['partial'] for m in months)
+    expected_baselines = {'0':'post_free_fix', '13.5':'large_13.5kwh_11.5kw', '27':'large_27kwh_11.5kw'}
+    for home, selected in drawn['home_storage'].items():
+        baseline = expected_baselines[home]
+        assert selected['baseline_id'] == selected['hourly']['baseline'] == baseline
+        expected_hourly = ({'baseline':'post_free_fix', 'panels':'pv_0.8kw_zero_credit',
+                            'portable':'battery_power_0.8kw', 'combined':'combined_0.8kw_zero_credit'}
+                           if home == '0' else {'baseline':baseline,
+                            'panels':f'home_{home}kwh_pv_0.8kw_zero_credit',
+                            'portable':f'home_{home}kwh_small_0.8kw_home_first',
+                            'combined':f'home_{home}kwh_combined_0.8kw_zero_credit_home_first'})
+        assert selected['hourly'] == expected_hourly
+        for purchase, treatments in selected['purchases'].items():
+            for treatment, row in treatments.items():
+                source = costs[row['scenario_id']]
+                assert row['baseline_id'] == baseline
+                for key in ('scenario_id','baseline_id','incremental_savings_usd','cost_basis','economics','cost_sensitivities'):
+                    assert row[key] == source[key], (home,purchase,treatment,key)
+                for i, month in enumerate(months):
+                    before = bills[baseline]['monthly'][month['id']]['total_usd']
+                    after = bills[row['scenario_id']]['monthly'][month['id']]['total_usd']
+                    assert row['monthly_before_total_usd'][i] == before
+                    assert row['monthly_after_total_usd'][i] == after
+                    assert abs(row['monthly_savings_usd'][i] - (before - after)) < .000002
+                if treatment == 'zero_credit':
+                    assert selected['hourly'][purchase] == row['scenario_id']
+    reader = _BalconyTables.read(HTML)
+    default = drawn['home_storage']['0']
+    rows = reader.tables['balcony-hourly-source'][1:]
+    assert len(rows) == 24
+    for hour, (_, cells) in enumerate(rows):
+        expected = [f'{hour}:00'] + [f"{drawn['profiles'][default['hourly'][key]]['seasons']['S'][metric][hour]:.3f}"
+                  for key in ('baseline','panels','portable','combined') for metric in ('imports_avg_kw','physical_exports_avg_kw')]
+        assert cells == expected
+    for i, (_, cells) in enumerate(reader.tables['balcony-monthly-source'][1:]):
+        assert cells == [months[i]['label']] + [_balcony_expected_money(default['purchases']['combined'][t]['monthly_savings_usd'][i],2) for t in ('zero_credit','credited')]
+    for i, (_, cells) in enumerate(reader.tables['balcony-payback-source'][1:]):
+        points = [default['purchases']['combined'][t]['cost_sensitivities'][i] for t in ('zero_credit','credited')]
+        assert cells == [_balcony_expected_money(points[0]['installed_cost_usd'],2)] + [f"{p['simple_payback_years']:.2f} yr" for p in points]
+    for doc in (HTML,TEMPLATE_HTML):
+        for chart in ('balcony-imports','balcony-exports','balcony-monthly-chart','balcony-payback'):
+            assert len(re.findall(r'<canvas id="'+chart+r'"[^>]+role="img"[^>]+aria-describedby=',doc)) == 1
+        for control in ('balcony-home','balcony-season','balcony-purchase'):
+            assert f'<label for="{control}">' in doc and f'<select id="{control}">' in doc
+        assert '<noscript>' in doc and 'balcony-chart-records' in doc
+        assert '1.2 kW legal maximum' in doc and '0.8 kW shared output cap' in doc
+        assert "document.getElementById(monthly),{type:'bar'" in doc
+        assert "beginAtZero:true,grid:{color:c=>c.tick.value===0" in doc
+        assert "y:p.simple_payback_years" in doc and "spanGaps:false" in doc
+        question = 'Will balcony solar save additional money, is the complete purchase worthwhile, and how long is its payback?'
+        assert '<ol class="hang" start="11">' in doc and question in doc
+        assert doc.index('<h2 id="s3">') < doc.index('<h2 id="s4">') < doc.index('<h2 id="s5">')
+        assert doc.index('id="balcony-decision-results"') < doc.index('<h2 id="s7">')
+    assert 'balcony:/* matched balcony chart data */null' in TEMPLATE_HTML
+    return 'all twelve hourly sources, twelve financial cases, default fallback tables, eleven questions and chart access agree'
+
+
 CASES = [
+    case_balcony_charts_keep_source_profiles_matched_savings_and_access,
     case_decision_depth_views_keep_cost_basis_months_and_tracks,
     case_balcony_answer_is_basic_and_every_new_table_matches_complete_bills,
     case_original_questions_remain_visible_above_the_bottom_line,

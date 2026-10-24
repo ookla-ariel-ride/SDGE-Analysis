@@ -83,18 +83,20 @@ private/1-raw-data/  (gitignored, never committed)
 │                            │ gas_monthly_therms.csv, weather_daily_*.csv  │
 └────────────────────────────┴──────────────────────────────────────────────┘
         │
-        │  numbers hand-transcribed into the inlined `const D = {...}` block
+        │  artifact values projected into the inlined `const D = {...}` block
         ▼
-index.html  →  five Chart.js canvases: #hourly, #battery, #monthly, #periods, #carbon
+index.html  →  Chart.js canvases: grid flows, storage, monthly energy, TOU, carbon,
+               delivery-price gaps, and matched balcony purchase comparisons (§5)
                (plus HTML tables/cards populated from the same data/ artifacts)
 ```
 
 Two things to understand about the flow:
 
 1. **The report does not fetch `data/` at runtime.** `index.html` is fully self-contained: the
-   chart arrays are copied into the `D` object, and every table/card number is static HTML. The
-   `data/` folder is the audit trail. When you rerun the scripts you must manually refresh both
-   the `D` block and the prose figures (see `CLAUDE.md` §3 on keeping figures consistent).
+   chart arrays enter the `D` object, and every table/card number is static HTML. The
+   `data/` folder is the audit trail. `generate_report.py` fills chart placeholders from
+   committed artifacts, including the matched balcony projection (§3.32). After a rerun,
+   check both the chart data and prose figures against their sources (`CLAUDE.md` §3).
 2. **Two generations of billing model coexist.** `analyze*.py` price every 15-minute interval
    independently (interval netting). `billing_model_nem.py` implements true NEM 2.0 monthly
    per-TOU-period netting with NBC on positive physical interval net, and was compared
@@ -5014,6 +5016,62 @@ NPV do not establish an actual quote or equipment life. Negative savings retain 
 sign and no positive-payback value. `provenance.joint_extension` dates and hashes this
 extension separately from the inherited baseline provenance.
 
+**Hourly chart aggregates.** The outer artifact remains schema 3. Its additive
+`chart_data` block uses schema 1. The generator aggregates existing dispatch traces;
+it does not dispatch again or infer hourly shapes from annual totals. Twelve sources
+cover the post-free-fix starting case and three additions: panels, portable storage,
+and both. Each group uses no home storage, 13.5 kWh home storage, or 27 kWh home storage.
+Joint cases use home-first priority. The primary panels have 1 kW DC capacity.
+Added PV and portable discharge share a 0.8 kW AC cap. The charts remain generic
+hardware cases, rather than product-specific controller results.
+
+`chart_data.basis` records the window, interval duration, rate snapshot, behavior,
+policy, summer months, and averaging rule. Summer covers June through October.
+`basis.seasons.S` and `.W` each retain 24 interval counts and elapsed-hour denominators.
+Each `profiles` entry names its source path and supplies both seasons. The arrays
+`imports_avg_kw`, `physical_exports_avg_kw`, and `credited_exports_avg_kw` each contain
+24 values. Separate `totals_kwh` fields retain the seasonal energy accounts.
+
+For each tariff season and local clock hour, average power equals summed interval
+kWh divided by summed elapsed hours. Each meter interval contributes 0.25 hours.
+The repeated fall hour contributes both copies; the missing spring hour contributes
+no interval. All matched sources use the same denominators. Multiplying each hourly
+average by its elapsed-hour denominator recovers seasonal energy. Summer plus winter
+recovers annual energy. Added PV remains zero on the two DST transition dates,
+as the physical model states. Interval records remain private.
+
+This rule differs from `report_data.py`'s average-day denominator: that owner divides
+each hour's energy by the season's day count. Winter profiles therefore need not
+overlay exactly. The new charts name the elapsed-hour basis. Physical exports mean
+outward meter flow; credited exports mean the portion compensated under the selected
+account. The hourly panels show physical exports. The credit assumption changes
+the financial comparison rather than those physical lines. Battery discharge alone
+does not measure net import reduction or bill saving.
+
+**Matched report projection.** `generate_report.balcony_chart_projection()` copies the
+hourly basis and profiles into `D.balcony`. It maps the `0`, `13.5`, and `27`
+home-storage choices to their matched starting source and added-purchase sources.
+It projects monthly and financial values from existing source rows. It adds no
+rates, dispatch, forecast, quote, or product qualification.
+
+The `months` list retains thirteen calendar buckets and marks both Julys as partial.
+For each panels-only or combined purchase and each export-credit assumption, monthly
+additional saving equals the matched complete before bill minus the complete after
+bill. `post_free_fix` resolves to `baseline.post_behavior`. Other starting cases use
+the matched home-storage scenario's bill. The projection retains aligned before/after
+totals and source IDs. The unrounded monthly differences sum to the annual increment;
+partial months do not become annualized months.
+
+Payback points copy `financial_sensitivities.incremental_complete_cost_sensitivities`.
+Its assumed complete incremental costs are $1,000, $2,500, $5,000, and $7,500.
+Those costs cover only the named addition, including its connection and installation;
+they exclude home storage already present in the starting case. Simple payback divides
+that cost by the purchase's own first-year bill saving. Free behavior savings never
+enter that denominator. The projection preserves negative savings and null paybacks.
+No-extra-credit and hypothetical-credit curves are separate assumptions, rather than
+confidence bounds. Actual complete cost and actual payback remain undetermined.
+The existing five-/ten-year discounted cost ceilings retain their separate assumptions.
+
 **Decision-support interface.** The outer artifact remains schema 3. Its appended
 `decision_support` block uses schema 1. `build_decision_support(study)` consumes the
 existing scenarios, monthly bills, canonical references, marginal rows and frozen
@@ -5069,8 +5127,8 @@ evening arithmetic. This helper is outside the token registry, so adding evidenc
 not multiply the large-artifact token poison sweep. Rendered consistency checks read
 cells independently and preserve negative residual allowances. Existing fixed-prose,
 annual-unit, privacy and numeric guards retain their scope. The common comparison
-appears beside §7; existing detailed balcony tables remain byte-identical supporting
-evidence. Five evidence tables show common choices, seasonal operation, equipment
+appears before purchase recommendations; detailed balcony tables retain their source
+values as supporting evidence. Five evidence tables show common choices, seasonal operation, equipment
 allowances, ownership assumptions and monthly savings. A sixth compact table separates
 the evening example's seasonal avoided purchases, recharge cost and daily net.
 
@@ -5176,6 +5234,11 @@ The census runs those cases in a fresh archive-free root. CI runs the full suite
 real household loading, production reconciliation, and artifact byte reproduction
 remain local-only. The suite fails on missing sources rather than reporting success
 through an unconditional skip.
+
+The hourly cases also check DST denominators, identical counts across matched sources,
+finite 24-value arrays, and seasonal/annual energy reconciliation. Source checks keep
+physical flows separate from credited exports. Report-projection checks compare
+monthly deltas and complete-cost points directly with their existing artifact rows.
 
 ---
 
@@ -5313,16 +5376,30 @@ out typical outages" and no more.
 
 ## 5. Chart generation (`index.html`)
 
-Chart.js 4.4.3 is loaded from CDN; the five canvases read the inlined `const D = {...}` object.
+Chart.js 4.4.3 loads from CDN. Ten canvases read the inlined `const D = {...}` object.
 Mapping of every canvas id → `D` arrays → producing computation:
 
 | Canvas id | Type | `D` arrays (length) | Units | Produced by |
 |---|---|---|---|---|
-| `hourly` | line, 4 series | `hourlyS_imp`, `hourlyS_exp`, `hourlyW_imp`, `hourlyW_exp` (24 each) | average kW by hour of day, split summer/winter | `report_data.json → hourly_S / hourly_W` (from `analysis/report_data.py`; mean kWh per hour-of-day, split by season) |
-| `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average grid-import kW by hour: today, with 1× PW3, with PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series are the **§3.13 price-aware dispatch** applied to summer intervals and re-averaged by hour — committed as `data/battery_dispatch_policies.json → pw3/pw3x.published_profile_S` (on-peak imports fall 4,022 → 870 kWh/yr with PW3, → 329 with the expansion) |
-| `monthly` | bar ×2 + line | `mLabels` (13), `mImp`, `mExp` (kWh), `mCost` ($) | calendar months Jul 2025*–Jul 2026* (* = partial) | `mImp`/`mExp` = `monthly.csv` (from `analyze.py`), rounded; `mCost` = `report_data.json → monthly.cost`, the canonical per-month netted energy cost (bill-derived rates; excludes the non-bypassable charges and the daily BSC) |
-| `periods` | horizontal bar ×2 | inline literals: kWh `[14856, 4498, 4022]`, $ `[1875, 2316, 2998]` | annual import kWh and gross import cost (imports × all-in rate, before export credits) for super-off-peak / off-peak / on-peak | `report_data.json → periods_chart`, produced by `analysis/report_data.py`; the on-peak $2,998 matches `report_data.json → onpeak.import_cost`, and `analysis/test_report_consistency.py` asserts both arrays against the artifact |
+| `hourly` | line, 4 series | `hourlyS_imp`, `hourlyS_exp`, `hourlyW_imp`, `hourlyW_exp` (24 each) | average-day grid import/export kW by local hour, split summer/winter | `report_data.json → hourly_S / hourly_W` from `analysis/report_data.py`; each hourly energy total divides by season day count. Exports are meter surplus, rather than gross PV production. Winter includes DST count effects. |
+| `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average-day grid-import kW: unchanged behavior, hypothetical PW3, hypothetical PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series use **§3.13 price-aware dispatch** and the same day-count denominator, committed as `data/battery_dispatch_policies.json → pw3/pw3x.published_profile_S`. This baseline precedes the free EV change. Annual on-peak imports fall 4,022 → 870 kWh with PW3, → 329 with expansion; those annual totals do not describe summer alone. |
+| `monthly` | bar ×2 + line | `mLabels` (13), `mImp`, `mExp` (kWh), `mCost` ($) | calendar months Jul 2025*–Jul 2026* (* = partial); energy and dollars use separate axes | `report_data.json → monthly`, from `analysis/report_data.py`; import/export totals round for the chart. Cost uses canonical monthly netted energy at frozen bill-derived rates. It excludes NBC and the daily BSC, so it is not an actual bill. |
+| `periods` | horizontal bar ×2, separate unit axes | inline literals: kWh `[14856, 4498, 4022]`, $ `[1875, 2316, 2998]` | annual import kWh and gross import cost on distinct scales for super-off-peak / off-peak / on-peak | `report_data.json → periods_chart`, produced by `analysis/report_data.py`; gross import cost precedes export credits. The on-peak $2,998 matches `report_data.json → onpeak.import_cost`. The consistency check anchors both raw arrays to this canvas. |
 | `carbon` | line, 1 series | `carb` (24) | CAISO grid CO₂ intensity, kg/MWh, annual average by hour of day | `data/carbon_fullyear_results.json → intensity_kg_per_mwh.annual_avg_by_hour` (from `carbon_fullyear.py` §3.15 — 364/365 real CAISO days + one month-hour-mean interpolated day; the original 4-day `carbon_results.json` series from `carbon_timing.py` remains as the §3.10 workpaper) |
+| `spread` | line, summer/winter | `spLabels`, `spSummer`, `spWinter`, `spBreak` | delivery-only on-peak minus super-off-peak price gap, $/kWh | `data/tou_spread.json → delivery_spread`, from `analysis/tou_spread.py`; points name rate-segment midpoints. Dashed lines show pre-break segments. Null values separate season gaps. The caption states the chart's date-spacing convention. |
+| `balcony-imports` | line, up to 4 series | `balcony.profiles[source].seasons[S/W].imports_avg_kw` (24 each) | grid-import average kW by local hour | `portable_solar_storage.json → chart_data` via `generate_report.balcony_chart_projection()` (§3.32); elapsed-hour denominator, post-free-fix matched sources. Curves show starting equipment, panels, portable battery, and both. |
+| `balcony-exports` | line, up to 4 series | `balcony.profiles[source].seasons[S/W].physical_exports_avg_kw` (24 each) | physical grid-export average kW by local hour | The same twelve matched sources and elapsed-hour denominators as `balcony-imports`. These lines show physical exports; financial credit assumptions do not change them. |
+| `balcony-monthly-chart` | grouped bars | `balcony.home_storage[choice].purchases[panels/combined][credited/zero_credit].monthly_savings_usd` (13 each) | additional bill saving, dollars per calendar bucket | Matched complete before/after monthly bills from `portable_solar_storage.json`; both partial Julys stay explicit. Frozen June 2026 rates apply to both bills. Negative savings remain negative. |
+| `balcony-payback` | lines/points | the same purchase rows' `cost_sensitivities` | assumed complete incremental cost, dollars; simple payback, years | Existing financial source rows at $1,000/$2,500/$5,000/$7,500. The named addition excludes home storage already in the starting case. Null payback stays null. Actual payback remains undetermined. |
+
+The balcony section is a main decision section at `#balcony-solar`, linked from
+Question 11 and the TOC. Home-storage controls select none, 13.5 kWh, or 27 kWh.
+Season controls select summer or winter for the hourly panels. Purchase controls
+select panels or panels plus portable storage for the financial comparisons.
+Both credit assumptions remain visible together. Static source tables supply readable
+values without JavaScript; controls update those tables with the charts. The hourly
+panels use the same local-hour axis and mark the on-peak window. Theme and print
+styles preserve units, labels, and access to the source values.
 
 Everything else in the report (plan table §3, battery tables §4/§6, package cards §7,
 deep-dive figures §9, bill audit §10) is static HTML transcribed from `plan_results.csv`,
@@ -5332,7 +5409,7 @@ summaries. The extended findings woven into §6 (VPP/resilience, tornado), §9 (
 away-days, `supercharge_delta`/weekend workups), §10 (AB 205, gas HDD decomposition), §13 (2039
 NBT strategy, full-year carbon) and the "What to do Monday" appendix are transcribed the
 same way from `extended_results.json` and `carbon_fullyear_results.json`. After any rerun,
-update both the `D` block and the prose numbers, then grep the HTML for the old figures
+check the generated `D` block and prose numbers, then search the HTML for the old figures
 (`CLAUDE.md` §3).
 
 **Report structure conventions (preserve on regeneration; specs in `CLAUDE.md` §§9–11).**
@@ -5342,7 +5419,7 @@ update both the `D` block and the prose numbers, then grep the HTML for the old 
   ~$4,901/yr no-change model baseline, never against the $3,282 actual (billed largely on
   2025 tariffs), which is noted as non-comparable.
 - **Confidence labels:** inline pills tag claims as `measured`
-  (meters/bills/multi-source), `modeled` (validated model at current rates), or
+  (meters/bills/checked source records), `modeled` (stated model assumptions at current rates), or
   `estimated` (rate index, single cleaning event, cited external program terms). §§1–10
   are measured/modeled throughout; pills appear in §§11–13 where evidence is thinner, plus
   on the extended findings inside §6 (VPP revenue / resilience value, estimated), §9
@@ -5352,6 +5429,10 @@ update both the `D` block and the prose numbers, then grep the HTML for the old 
   §13 carbon/NEM) are native `<details>` blocks, open by default (collapsible) with
   one-line conclusion teasers; charts inside them lazy-init on first open; back-to-top
   button; JS-off degradation.
+- **Decision sequence:** the main narrative explains the existing system and usage,
+  settles plan/free-change choices, compares home storage and balcony purchases, then
+  gives purchase actions. Stable `sN` anchors remain. The matched hardware screen
+  precedes recommendations; each purchase keeps its own saving, complete cost, and limits.
 - **Provenance note:** the closing small-print of §14 (and the equivalent README
   blockquote) carries the required "How this report was produced" statement: generation,
   independent review, adversarial review, rework. It must survive every regeneration.

@@ -1009,8 +1009,15 @@ def case_chart_profiles_count_dst_intervals_and_reconcile_seasonal_energy():
     assert winter['elapsed_hours_by_hour'][1] == 3
     assert winter['elapsed_hours_by_hour'][2] == 1
     assert sum(winter['interval_counts_by_hour']) == 192
-    for key, factor in [('post_free_fix', 1), ('pv_0.8kw_zero_credit', 2),
-                        ('home_27kwh_combined_0.8kw_zero_credit_home_first', 12)]:
+    expected_sources = [('post_free_fix', 1), ('pv_0.8kw_zero_credit', 2),
+                        ('battery_power_0.8kw', 3), ('combined_0.8kw_zero_credit', 4),
+                        ('large_13.5kwh_11.5kw', 5), ('home_13.5kwh_pv_0.8kw_zero_credit', 6),
+                        ('home_13.5kwh_small_0.8kw_home_first', 7),
+                        ('home_13.5kwh_combined_0.8kw_zero_credit_home_first', 8),
+                        ('large_27kwh_11.5kw', 9), ('home_27kwh_pv_0.8kw_zero_credit', 10),
+                        ('home_27kwh_small_0.8kw_home_first', 11),
+                        ('home_27kwh_combined_0.8kw_zero_credit_home_first', 12)]
+    for key, factor in expected_sources:
         profile = chart['profiles'][key]
         for season, total in [('S', 24), ('W', 48)]:
             row = profile['seasons'][season]
@@ -1031,6 +1038,7 @@ def case_chart_profiles_reject_wrong_accounts_and_do_not_mutate_traces():
     saved = copy.deepcopy(args)
     chart = m.build_chart_data(*args)
     chart['profiles']['pv_0.8kw_zero_credit']['seasons']['S']['imports_avg_kw'][0] = 999
+    assert chart['profiles']['post_free_fix']['seasons']['S']['imports_avg_kw'][0] == 1
     for key in args[3]:
         for field in args[3][key]:
             assert np.array_equal(args[3][key][field], saved[3][key][field])

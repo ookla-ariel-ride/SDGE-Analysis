@@ -2916,7 +2916,7 @@ def _s7_switch_pricing(winners):
     {{FREE_FIX_SHORT_NAME}} publishes into the Monday appendix's heading, so
     the two cannot disagree about which move the package includes."""
     if len(winners) > 1:
-        return (" The battery×plan matrix above prices the MID package one plan "
+        return (" The battery×plan matrix above prices the home-storage package one plan "
                 "at a time, so no switch to a set of tied plans is modeled here.")
     best = winners[0]
     mid = _json("battery_plan_matrix.json").get("mid_package_on_plans")
@@ -2929,13 +2929,13 @@ def _s7_switch_pricing(winners):
         # this one sentence gaining a variable.
         _saved, _low, _saves, (_fix_name, _move_noun, _ev, short_name) = \
             _free_fix_saving("S7_PLAN_FOOTING")
-        return (f" Re-billed end-to-end on {best}, the MID package (the "
+        return (f" Re-billed end-to-end on {best}, the home-storage package (the "
                 f"{short_name} fix "
-                f"plus one battery) saves ${save:,.0f}/yr against the no-package "
-                f"year modeled for that same plan at the same published-table "
-                f"rates in the battery×plan matrix above, one rate vintage "
-                f"throughout.")
-    return (f" The battery×plan matrix above does not price the MID package on "
+                f"plus one battery) saves ${save:,.0f}/yr. "
+                "The baseline is the no-package year modeled for that same plan. "
+                "Both cases use published-table rates in the battery×plan matrix above, "
+                "with one rate vintage throughout.")
+    return (f" The battery×plan matrix above does not price the home-storage package on "
             f"{best}, so that switch is not modeled here.")
 
 
@@ -4574,8 +4574,8 @@ def _paid_off(ctx):
 
 
 _tok("PAYBACK_STATUS_SHORT", kind="derived",
-     get=lambda ctx: "Paid off" if _paid_off(ctx) else
-     f"Payback expected {_crossover_season_year('gross')[0]} "
+     get=lambda ctx: "Modeled recovery" if _paid_off(ctx) else
+     f"Modeled recovery near {_crossover_season_year('gross')[0]} "
      f"{_crossover_season_year('gross')[1]}",
      sources=["data/lifetime_payback.json:crossover.gross", "system clock"])
 _tok("S11_VERDICT_SHORT", phrase=True, kind="derived",
@@ -4587,9 +4587,9 @@ _tok("S11_VERDICT_SHORT", phrase=True, kind="derived",
      sources=["data/lifetime_payback.json:crossover.gross", "system clock"])
 _tok("PAYBACK_HEADLINE", phrase=True, kind="derived",
      get=lambda ctx: (lambda s, y, m, cost: (
-         f"Paid off — cumulative value crossed the ${cost:,.0f} gross cost in {s} {y}."
+         f"The model estimates recovery of the ${cost:,.0f} gross cost around {s} {y}."
          if _paid_off(ctx) else
-         f"On pace to cross the ${cost:,.0f} gross cost by {s} {y}."))(
+         f"The model projects recovery of the ${cost:,.0f} gross cost around {s} {y}."))(
          *_crossover_season_year("gross"),
          *_amounts("PAYBACK_HEADLINE", "what the array cost to install",
                    **{"solar.install_invoice_usd": hh1("solar.install_invoice_usd")})),
@@ -5122,7 +5122,7 @@ _tok("METRIC_TARGET", kind="derived", dim="%", get=_metric_target,
 #     break, at most one parenthetical or em-dash aside before it;
 #   * a qualitative COMPARISON in the sentence is computed, not asserted, so
 #     it inverts rather than lies if the artifacts move.
-VERDICT_STEM = "In one sentence: "
+VERDICT_STEM = ""
 
 
 def _battery_model_short():
@@ -5690,7 +5690,8 @@ def _s0_verdict(ctx):
     # supports; the honest fix is to stop claiming it.
     return (f"{fix_clause[0].upper() + fix_clause[1:]}. "
             f"For this house, {plan_clause}. "
-            f"{battery_clause[0].upper() + battery_clause[1:]}.")
+            f"{battery_clause[0].upper() + battery_clause[1:]}. "
+            "Compare balcony panels and portable storage against their own additional savings and complete cost.")
 
 
 _tok("S0_VERDICT", phrase=True, kind="derived", get=_s0_verdict,
@@ -5860,7 +5861,7 @@ def _s1_verdict(ctx):
     # No apostrophe, no ampersand, no tag anywhere in these sentences: token
     # values are HTML-escaped at render (an apostrophe would ship as &#x27;),
     # so the plain text is also the rendered text.
-    return (f"{VERDICT_STEM}all {ab['buckets']} billed TOU energy buckets match within "
+    return (f"{VERDICT_STEM}All {ab['buckets']} billed TOU energy buckets match within "
             "statement rounding, and the compared production series agree at "
             f"{r:.4f} daily correlation.")
 
@@ -6301,8 +6302,8 @@ def _s2_verdict(ctx):
             f"in the tariff's {int(lo)}-{int(hi)}h overnight super-off-peak window")
         ev_clause = (" while the EV charges overnight" if charges_overnight
                      else " while the EV does not usually charge overnight")
-    return (f"{VERDICT_STEM}at age {age} the {kw_dc:,.2f} kW array produced "
-            f"{production:,.0f} kWh at {production / kw_dc:,.0f} kWh/kW, but "
+    return (f"At age {age}, the {kw_dc:,.2f} kW array produced "
+            f"{production:,.0f} kWh at {production / kw_dc:,.0f} kWh/kW. "
             f"{round(midday_share * 100)}% of its exports leave in the "
             f"{_cheap_window()} window{ev_clause}.")
 
@@ -6492,7 +6493,7 @@ def _s5_verdict(ctx):
     else:
         claim = (f"{kwh_pct}% of imported kWh and only {cost_pct}% of import energy "
                  "cost, so its cost share is lower than its energy share.")
-    return f"{VERDICT_STEM}the {_peak_window()} on-peak window takes {claim}"
+    return f"{VERDICT_STEM}The {_peak_window()} on-peak window takes {claim}"
 
 
 _tok("S5_VERDICT", phrase=True, kind="derived", get=_s5_verdict,
@@ -6540,7 +6541,8 @@ def _s6_verdict(ctx):
     # come back negative on another household's dispatch run, which _usd0
     # would print as "$-120/yr" (issue #131 review round 2, finding 5's
     # sweep). Identical output at every non-negative value.
-    return (f"Before the free change, one hypothetical {_battery_model_short()} models "
+    return ("Compare hardware after the free schedule change. "
+            f"Before that change, one hypothetical {_battery_model_short()} models "
             f"{_usd0_signed(published)}/yr with the published policy versus "
             f"{_usd0_signed(evening)} with evening-only dispatch. "
             f"{tail[0].upper() + tail[1:]}. Check controller support.")
@@ -6653,8 +6655,9 @@ def _s7_verdict(ctx):
         tail = "and the expansion pack pays back at the same rate"
     else:
         tail = "and the expansion pack pays back faster than that"
-    return (f"{fix_clause[0].upper() + fix_clause[1:]}. After that change, {battery_clause}, "
-            f"{tail}.")
+    return (f"{fix_clause[0].upper() + fix_clause[1:]}. After that change, {battery_clause}. "
+            f"{tail.removeprefix('and ').removeprefix('while ').capitalize()}. "
+            "The portable-storage route needs its own connection check and complete quote.")
 
 
 _tok("S7_VERDICT", phrase=True, kind="derived", get=_s7_verdict,
@@ -6732,13 +6735,11 @@ def _s10_verdict(ctx):
             size = "an equally large, unpriced net-export effect"
         else:
             size = "a smaller, unpriced net-export effect"
-        tail = f", but {size} means the whole-household answer is not fully settled."
+        tail = f" {size[0].upper() + size[1:]} leaves the whole-household answer unsettled."
     else:
-        tail = ", with no net-export credit excluded from it."
-    return (f"{VERDICT_STEM}on the net-import energy this analysis can price, "
-            f"the CCA ({cca_name}) costs "
-            f"{comparison} "
-            f"({a['confidence']} · same-date bill rates, {a['days']} days){tail}")
+        tail = " No net-export credit is excluded from this comparison."
+    return (f"On priced net-import energy, the CCA ({cca_name}) costs {comparison}. "
+            f"This {a['confidence']} comparison uses same-date bill rates across {a['days']} days.{tail}")
 
 
 _tok("S10_VERDICT", phrase=True, kind="derived", get=_s10_verdict,
@@ -6759,7 +6760,7 @@ def _s14_verdict(ctx):
     # deltas, which is what section 14's own package-math paragraph says
     # ("absolute bills anchored to the ... actual"); the verdict summarises
     # that methodology rather than widening it to every dollar on the page.
-    return (f"{VERDICT_STEM}actual statements set bill spending; savings compare model runs "
+    return (f"{VERDICT_STEM}Actual statements set bill spending; savings compare model runs "
             f"at {d.month}/{d.day}/{d.year} rates, with evidence limits stated beside the findings.")
 
 
@@ -6820,8 +6821,8 @@ def _s15_verdict(ctx):
                 if chargers else
                 (f"leave the load where it runs; moving it into the {window} "
                  f"super-off-peak window costs a modeled {_usd0(-low)}/yr here"))
-    return (f"{VERDICT_STEM}{lead}; check battery cost, electrical capacity, "
-            "and controller support before purchase.")
+    return (f"{lead[0].upper() + lead[1:]}. Check electrical capacity and controller support for either storage route. "
+            "Compare each purchase with its own additional saving and complete cost.")
 
 
 _tok("S15_VERDICT", phrase=True, kind="derived", get=_s15_verdict,
@@ -9816,6 +9817,61 @@ def _balcony_stream_cases(ctx):
     return (f"The separate {capacity:g} kWh Stream-shaped cases save {_usd0_signed(low['annual_savings_usd'])}/yr "
             f"at the default {powers[0]:g} W feed-in or {_usd0_signed(high['annual_savings_usd'])}/yr "
             f"at the conditional {powers[1]:g} W feed-in.")
+
+
+def _balcony_chart_equipment(ctx):
+    row = _balcony_row('combined_0.8kw_zero_credit')
+    panels = _balcony_number(row['pv_dc_kw'], 'chart added panels')
+    capacity = _balcony_number(row['batteries'][0]['capacity_kwh'], 'chart portable capacity')
+    cap = _balcony_number(row['shared_new_pv_battery_ac_kw'], 'chart shared output')
+    if min(panels, capacity, cap) <= 0:
+        raise SystemExit('report_tokens: balcony chart equipment needs positive sizes')
+    return (f"Panels add {panels:g} kW DC beside the existing rooftop. "
+            f"Portable storage adds a {capacity:g} kWh battery. "
+            f"Each addition uses a {cap:g} kW AC output cap; the combined case shares that cap.")
+
+
+def _balcony_verdict(ctx):
+    """The panel and combined purchase answer, with signed source values."""
+    panels = _balcony_row("pv_0.8kw_zero_credit")["annual_savings_usd"]
+    combined = _balcony_cost("combined_0.8kw_zero_credit")
+    return (f"Without extra-export credit, panels alone change the modeled bill by "
+            f"{_usd0_signed(panels)}/yr in savings. "
+            f"Panels plus portable storage give {_usd0_signed(combined['incremental_savings_usd'])}/yr against the same no-storage starting case. "
+            "Actual payback needs a complete quote and a supported connection.")
+
+
+def _balcony_purchase_example(ctx):
+    rows = [_balcony_cost("combined_0.8kw_" + treatment) for treatment in ("zero_credit", "credited")]
+    points = [row["cost_sensitivities"][1] for row in rows]
+    costs = [_balcony_number(point["installed_cost_usd"], "illustrated complete cost") for point in points]
+    if costs[0] != costs[1]:
+        raise SystemExit("report_tokens: balcony illustrated credit cases need the same complete cost")
+    values = []
+    for row, point in zip(rows, points):
+        saving = row["incremental_savings_usd"]
+        payback = point["simple_payback_years"]
+        if saving > 0:
+            _balcony_number(payback, "illustrated payback")
+            if abs(payback - costs[0] / saving) > 0.000002:
+                raise SystemExit("report_tokens: balcony illustrated payback differs from its own saving")
+            values.append(f"{payback:.1f} years")
+        elif payback is None:
+            values.append("no simple payback")
+        else:
+            raise SystemExit("report_tokens: balcony nonpositive saving cannot have a payback")
+    return (f"At an assumed {_usd0(costs[0])} complete cost, the combined purchase has {values[0]} simple payback without extra-export credit. "
+            f"Hypothetical extra-export credit gives {values[1]}. "
+            "These are separate settlement assumptions, not confidence bounds. "
+            "Neither establishes the actual complete cost, product eligibility or actual payback.")
+
+
+_tok("BALCONY_CHART_EQUIPMENT", phrase=True, kind="derived", get=_balcony_chart_equipment,
+     sources=["data/portable_solar_storage.json:scenarios.combined_0.8kw_zero_credit"])
+_tok("BALCONY_VERDICT", phrase=True, kind="derived", get=_balcony_verdict,
+     sources=["data/portable_solar_storage.json:scenarios and financial_sensitivities.incremental_complete_cost_sensitivities"])
+_tok("BALCONY_PURCHASE_EXAMPLE", phrase=True, kind="derived", get=_balcony_purchase_example,
+     sources=["data/portable_solar_storage.json:financial_sensitivities.incremental_complete_cost_sensitivities"])
 
 
 _tok("BALCONY_STREAM_PRICE", kind="cited_constant", value=1399, fmt="usd0",

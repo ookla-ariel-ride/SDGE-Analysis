@@ -1,6 +1,6 @@
 <!--
   ============================================================================
-  REPORT TEMPLATE — Home Energy Optimization (rate plan + battery analysis)
+  REPORT TEMPLATE — Home energy decisions: plans, storage and added solar
   ============================================================================
   What this is:
     A de-personalized skeleton of the finished report (index.html). It preserves
@@ -9,10 +9,10 @@
     Bottom line + §1–§7 + "What to do Monday" — the decision narrative and the
     majority of the charts; advanced tier: §8–§14, the audit trail, inside the
     single closed-by-default <details> tier with its loud divider
-    summary #advanced), the collapsed-audit <details> pattern, the five Chart.js charts
-    (four init on load in §5; #carbon lazy-inits on the tier/§13 first open),
+    summary #advanced), the collapsed-audit <details> pattern, ten Chart.js canvases
+    (four in §5, four matched balcony views, and two lazy audit charts),
     the scroll-spy / anchor-offset / deep-link / nav-dimming / beforeprint /
-    back-to-top script machinery, and the 16-section structure — while
+    back-to-top script machinery, and the stable section anchors — while
     replacing every household-specific number, date, and finding with
     {{DOUBLE_BRACE_TOKENS}} or TODO comments.
 
@@ -24,6 +24,15 @@
       - §11 Production-provenance note (the closing line in §14 — keep its
             generate -> independent review -> adversarial review -> rework shape)
 
+  Editorial contract:
+    Answer all eleven questions in one connected decision narrative. Explain the
+    starting equipment and purchase increment before each comparison. Name each
+    curve's behavior, rate and reserve basis. Keep feasibility limits beside the
+    result they qualify. Use complete active sentences, generally at most 25 words
+    for explanations and 20 for instructions. Keep one topic per paragraph. A
+    shorter sentence must not remove a fact, condition or source. Avoid fragments,
+    promotional claims and a separate addendum. Preserve unknowns explicitly.
+
   THE ONE RULE:
     Every {{TOKEN}} must be replaced with a value produced by the analysis
     scripts (analysis/*.py) or read from source documents (bills, invoices,
@@ -33,14 +42,15 @@
 
   Section map (h2 ids s0–s15):
     — BASIC TIER (always visible) —
-    s0  Bottom line (7-item verdict list + summary cards)
+    s0  Bottom line (both conditional purchase routes and supporting findings)
     s1  The data (verification summary)
     s2  Your solar system today (hardware + performance)
+    s5  Usage profile (charts: #hourly #battery #monthly #periods)
     s3  Rate plan comparison (no battery)
     s4  Battery x plan interaction
-    s5  Usage profile (charts: #hourly #battery #monthly #periods)
-    s6  Battery hardware (arbitrage, dispatch policy, outage endurance)
-    s7  The decision: three packages (LOW / MID / HIGH)
+    s6  Matched hardware screen, then conditional home-storage purchase
+    balcony-solar  Question 11: additional savings, complete cost and payback
+    s7  Free change, home storage or portable route; optional expansion in details
     s15 What to do Monday — implementation appendix (content-only)
     — ADVANCED TIER (the audit trail; s8–s14 inside the #advanced details, closed by default) —
     s8  Array upgrade verdicts
@@ -207,13 +217,18 @@
   .adv-head{font-family:var(--disp);font-weight:700;font-size:1.55rem;letter-spacing:-.015em;line-height:1.2}
   .adv-inv{font-family:var(--disp);color:var(--sub);font-size:.88rem;margin-top:2px}
   nav.toc.tier-closed a.adv{opacity:.55}
+  .chart-controls{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0}
+  .chart-controls label{display:grid;gap:4px;font-size:.85rem}
+  .chart-controls select{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);padding:8px;max-width:100%}
+  .chart-controls select:focus-visible{outline:2px solid var(--sop);outline-offset:2px}
+  @media print{.chart-controls{display:none}}
 </style>
 </head>
 <body>
 <a class="skiplink" href="#s0">Skip to the bottom line</a>
 <div class="wrap">
 
-<h1 id="top">Home Energy Optimization — Rate Plan + Battery Analysis</h1>
+<h1 id="top">Home energy decisions: plans, storage and added solar</h1>
 <div class="meta">
   <div class="meta-row"><span class="meta-k">Household</span><span class="meta-v">{{HOME_DESCRIPTION}} · {{UTILITY_NAME}} {{CLIMATE_ZONE}} climate zone · {{SYSTEM_SIZE_KW_DC}} kW solar + {{OTHER_MAJOR_LOADS}} · {{NEM_STATUS}} · {{GENERATION_PROVIDER}} generation</span></div>
   <div class="meta-row"><span class="meta-k">Window</span><span class="meta-v"><b>{{ANALYSIS_START_DATE}} → {{ANALYSIS_END_DATE}}</b> · rates effective {{RATES_EFFECTIVE_DATE}}</span></div>
@@ -249,8 +264,8 @@
 </div>
 
 <nav class="toc" id="toc">
-<div class="toc-group"><span class="toc-eyebrow">Verdict</span><a class="toc-home" href="#top" aria-label="Back to the top of the report">⌂ Top</a><a href="#s0">Bottom line</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#s7">7 Packages</a><a href="#s15">Do Monday</a></div>
-<div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a href="#balcony-solar">Balcony solar</a><a class="adv" href="#s8">8 Array upgrades</a></div>
+<div class="toc-group"><span class="toc-eyebrow">Verdict</span><a class="toc-home" href="#top" aria-label="Back to the top of the report">⌂ Top</a><a href="#s0">Bottom line</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#balcony-solar">Balcony solar</a><a href="#s7">7 Choices</a><a href="#s15">Do Monday</a></div>
+<div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Home storage</a><a class="adv" href="#s8">8 Array upgrades</a></div>
 <div class="toc-group"><span class="toc-eyebrow">Audit</span><a class="adv" href="#s9">9 Deep dives</a><a class="adv" href="#s10">10 Bills &amp; gas</a><a class="adv" href="#s11">11 Payback</a><a class="adv" href="#s12">12 Cleaning</a><a class="adv" href="#s13">13 Carbon · NEM · prices</a><a class="adv" href="#s14">14 Methodology</a><button class="toc-collapse" id="toccollapse" aria-label="Collapse or expand the audit sections">▾ collapse audit</button></div>
 <div class="progress" id="progress"></div>
 </nav>
@@ -260,26 +275,28 @@
 <h3 id="questions-plans">Questions this report examines: plans, behavior, and hardware</h3>
 <ol class="hang">
 <li><a href="#s3">Am I on the best electric rate plan?</a> Answered for the tested plans and year. The separate <a href="#s10">CEA-versus-bundled generation comparison</a> remains conditional.</li>
-<li><a href="#s4">Does adding a battery change which plan is best?</a> Answered within the matched plan model.</li>
-<li><a href="#s5">What behavior changes are worth real money?</a> Conditional modeled savings. <a href="#s9">Charging, cooling, and other load studies</a> have separate limits; overlapping savings cannot be added.</li>
-<li><a href="#s6">Does a home battery pay for itself: which one, dispatched how, at what payback?</a> Conditional on cost and controls. <a href="#s6-sizing">Controller value</a>, <a href="#s6-programs">program revenue</a>, and <a href="#s6-backup">backup</a> use separate assumptions.</li>
+<li><a href="#s4">Does adding a battery change which plan is best?</a> The matched model answers this separately from the purchase payback.</li>
+<li><a href="#s5">What behavior changes are worth real money?</a> The saving depends on which loads can move. <a href="#s9">Charging, cooling, and other load studies</a> have separate limits; overlapping savings cannot be added.</li>
+<li><a href="#s6">Does a home battery pay for itself: which one, dispatched how, at what payback?</a> The answer depends on cost and controls. <a href="#s6-sizing">Controller value</a>, <a href="#s6-programs">program revenue</a>, and <a href="#s6-backup">backup</a> use separate assumptions.</li>
 <li><a href="#s8">Should I add panels, install higher-capacity panels, or upgrade microinverters?</a> Defer conventional expansion. Remaining headroom, component faults, and annual clipping loss remain not determined.</li>
 </ol>
 <h3 id="questions-value">Questions this report examines: electrification, solar value, and timing</h3>
 <ol class="hang" start="6">
-<li><a href="#s10">Should I electrify gas appliances?</a> Conditional cases; appliance shares, schedules, electrical fit, and gas-account closure remain unresolved.</li>
-<li><a href="#s11">Has the solar system paid for itself, and what is it worth per year now?</a> Conditional lifetime model; historical household use and the ITC claim are not established.</li>
-<li><a href="#s12">Was paying for panel cleaning worth it, and what cadence and month are optimal?</a> Production response estimated. Dollar recovery and optimal cadence remain not determined.</li>
-<li><a href="#s13">When is grid power cheapest and cleanest, and do those windows align?</a> Answered for tariff windows and average grid emissions. Marginal emissions remain uncomputed.</li>
-<li><a href="#s13">What is NEM 2.0 grandfathering actually worth per year?</a> Conditional current-rate comparison. The best <a href="#s13">purchase date around NEM expiry</a> remains not determined.</li>
+<li><a href="#s10">Should I electrify gas appliances?</a> Appliance shares and schedules determine savings. Electrical fit and gas-account closure remain unresolved.</li>
+<li><a href="#s11">Has the solar system paid for itself, and what is it worth per year now?</a> The lifetime model gives a conditional estimate. Historical household use and the ITC claim remain unestablished.</li>
+<li><a href="#s12">Was paying for panel cleaning worth it, and what cadence and month are optimal?</a> The study estimates a production response. Dollar recovery and the best cleaning schedule remain undetermined.</li>
+<li><a href="#s13">When is grid power cheapest and cleanest, and do those windows align?</a> The tariff and average grid emissions support a timing comparison. Marginal emissions remain uncomputed.</li>
+<li><a href="#s13">What is NEM 2.0 grandfathering actually worth per year?</a> The comparison uses frozen rates and stated settlement assumptions. The best <a href="#s13">purchase date around NEM expiry</a> remains not determined.</li>
 </ol>
-<h3 id="questions-balcony">Balcony systems and open studies</h3>
+<h3 id="questions-balcony">Question 11: balcony solar and portable storage</h3>
+<ol class="hang" start="11">
+<li><a href="#balcony-solar">Will balcony solar save additional money, is the complete purchase worthwhile, and how long is its payback?</a> Panels and storage need separate comparisons. The answer depends on the starting equipment, supported connection, export treatment and complete cost.</li>
+</ol>
+<p>The <a href="#balcony-legal">legal evidence</a> explains the qualifying PV exemption and its sunset. Export compensation and future account treatment remain undetermined.</p>
+<h3 id="questions-open">Open supporting studies</h3>
 <ul>
-<li><a href="#balcony-solar">What do balcony panels and portable storage add, with or without a proposed home battery?</a> Conditional model; panel-only, storage-only, and joint comparisons use matched starting cases.</li>
-<li><a href="#balcony-solar">Which equipment and complete cost can those savings support?</a> Conditional cost ceilings. Complete quotes, supported connections, and exact system certification remain unknown.</li>
-<li><a href="#balcony-solar">Does a qualifying receptacle-connected PV system preserve NEM treatment, and what changes at the statutory sunset?</a> Approval relief has conditions; export compensation and future account treatment remain not determined.</li>
 <li><a href="#service-voltage-status">Is the service voltage within specification, and does it reduce solar production or cost money?</a> Sampled evidence exists. Formal compliance and causal energy or dollar loss remain not determined.</li>
-<li><a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/issues/18#issuecomment-6354504709">Can this home's data reliably identify individual appliances?</a> Open study. Accuracy untested; independent controlled-load records and scored household results remain missing.</li>
+<li><a href="https://github.com/ookla-ariel-ride/SDGE-Analysis/issues/18#issuecomment-6354504709">Can this home's data reliably identify individual appliances?</a> Accuracy remains untested. The study needs independent controlled-load records and scored household results.</li>
 </ul>
 <p><a href="#s10">Why do modeled bills differ from actual bills?</a> The report explains part of the gap; the remainder stays unresolved. <a href="#s7">Fixed charges remain after improvements</a>, while non-bypassable charges depend on physical flows.</p>
 </div>
@@ -290,6 +307,7 @@
 <p><!-- TODO: state the cheapest rate-plan action from {{S0_VERDICT}} and {{BEST_PLAN}}, and the free change named by {{S0_FREE_WIN_CARD_LABEL}}. Give its own modeled saving and compliance condition first. Do not assume an EV. --></p>
 <p><!-- TODO: lead the purchase comparison with additional battery savings AFTER the free change ({{BATTERY_MARGINAL_SAVINGS}}), the estimated installed cost ({{BATTERY_COST}}), and the matching post-change hardware-alone payback already stated by {{S0_VERDICT}}. Do not use the pre-change range as the purchase headline. State the expansion's marginal saving and payback separately. --></p>
 <p><!-- TODO: state {{RATES_EFFECTIVE_DATE}}, battery ownership, the unresolved absolute-bill gap, and the quote, electrical, backup-circuit and controller checks beside the purchase estimate. Keep savings conditional on those checks. --></p>
+<p>{{BALCONY_VERDICT}} The <a href="#balcony-solar">balcony decision</a> separates panel savings from storage savings. Larger home storage reduces the remaining portable-storage opportunity.</p>
 </div>
 <p>The canonical price-aware purchase simulation holds no standing backup reserve. A permanent reserve changes available energy; that purchase case's saving and payback with a reserve are not calculated here.</p>
 <p>The actual electric bill was <b>{{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo)</b> across a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements ({{BILLING_PERIOD_COUNT}} billing periods<!-- NOTE: exact service dates appear below -->). That historical bill is not the baseline for subtracting modeled savings. The <a href="#s7">package comparison</a> uses one rate date throughout; <a href="#s10">the bill analysis</a> explains the remaining gap.</p>
@@ -319,8 +337,8 @@
   <div class="card"><div class="big blue">~{{ACTUAL_MONTHLY_BILL}}/mo</div><div class="lbl">Actual electric bill: {{ACTUAL_ANNUAL_BILL}}/yr from a complete {{ANALYSIS_DAYS}}-day bill audit</div></div>
   <div class="card"><div class="big">{{S0_FREE_WIN_CARD_FIGURE}}</div><div class="lbl">{{S0_FREE_WIN_CARD_LABEL}}</div></div>
   <div class="card"><div class="big warn">{{BATTERY_PAYBACK_RANGE}}</div><div class="lbl">Modeled battery-alone payback across before/after free-change cases; price-aware controls and installed price need checks ({{BATTERY_PAYBACK_EVENING_ONLY}} evening-only)</div></div>
-  <div class="card"><div class="big">{{PAYBACK_STATUS_SHORT}}</div><div class="lbl">{{SYSTEM_GROSS_COST}} install recovered in the lifetime model ~{{PAYBACK_CROSSOVER_DATE}}; modeled value {{SOLAR_ANNUAL_VALUE}}/yr</div></div>
-  <div class="card"><div class="big blue">{{CHEAP_WINDOW}}</div><div class="lbl">Weekday super-off-peak: {{SUPER_OFF_PEAK_RATE}} midday power, year-round. Run everything flexible here</div></div>
+  <div class="card"><div class="big">{{PAYBACK_STATUS_SHORT}}</div><div class="lbl">{{SYSTEM_GROSS_COST}} gross cost reaches modeled recovery ~{{PAYBACK_CROSSOVER_DATE}}; modeled value {{SOLAR_ANNUAL_VALUE}}/yr</div></div>
+  <div class="card"><div class="big blue">{{CHEAP_WINDOW}}</div><div class="lbl">Weekday super-off-peak: {{SUPER_OFF_PEAK_RATE}} midday power, year-round. Move eligible flexible loads here when their schedules permit</div></div>
 </div>
 
 </details>
@@ -371,7 +389,8 @@
 <p><b>{{S3_WHY_LEAD}}</b> <!-- TODO: the structural reason the table ranks the way it does — e.g. the share of imports landing in the cheapest window and the rate spread between the plans. Follow the lead-in {{S3_WHY_LEAD}} states: it says whether this house's plan wins outright, ties, or is beaten, so a paragraph explaining a win under a lead-in that names another plan as the winner contradicts the table above it. --></p>
 <div class="note"><!-- TODO: generation-provider note — what the bills show about the CCA product, whether any relief credit applies, and what opting out would/wouldn't change. --></div>
 
-<h2 id="s4">4 · Does a battery change which plan is best? {{S4_VERDICT_SHORT}}</h2>
+<h2 id="s4">4 · Does storage change the best rate plan?</h2>
+<p class="verdict">{{S4_VERDICT_SHORT}}</p>
 <p><!-- TODO: framing — battery savings arbitrage the cheap/expensive gap; state the exact rate effective date used by the interval simulation, used for ranking and battery-value, not absolute bill levels. --></p>
 <table>
 <thead><tr><th>Plan</th><th>No battery (modeled)</th><th>With 1 × {{BATTERY_MODEL}} (modeled)</th><th>Battery's value on this plan</th></tr></thead>
@@ -384,16 +403,19 @@
 
 <h2 id="s5">5 · Usage profile — where the money goes</h2>
 <p class="verdict">{{S5_VERDICT}}</p>
-<p>The charts compare grid flows by hour, season, and month. <!-- NOTE: label battery profiles as simulated, and distinguish measured equipment from proposed equipment. --></p>
+<p>The meter shows when the home buys power and exports surplus. The free schedule change addresses mistimed charging before either storage purchase. <!-- NOTE: label battery profiles as simulated, and distinguish measured equipment from proposed equipment. --></p>
 <p class="small"><!-- TODO: which data feeds the charts (meter vs inverter-platform). Label battery profiles as simulated, and distinguish measured equipment from proposed equipment. --></p>
 <div class="chartbox"><canvas id="hourly" height="110"></canvas></div>
 <p class="small">{{CHART_TITLE_HOURLY}}.</p>
+<p class="small">Each hourly curve shows a seasonal average day. Summer means June through October; winter covers the other months. Imports and exports are separate meter channels. Exports are surplus after household use, not gross solar production.</p>
 <div class="chartbox"><canvas id="battery" height="110"></canvas></div>
 <p class="small"><!-- TODO: battery-chart caption — carry {{CHART_TITLE_BATTERY}} as the derived finding; explain what the dispatch policy does to the grid profile, on-peak import reduction percentages for each config, and any deliberately unserved load (e.g. EV spillover awaiting the free schedule fix). --></p>
+<p class="small">This canonical Powerwall comparison uses current behavior before the free schedule change, price-aware controls and no standing reserve. Its midnight increase includes grid charging. Use the <a href="#balcony-chart-heading">matched balcony charts</a> for a comparison after the free change.</p>
 <div class="chartbox"><canvas id="monthly" height="110"></canvas></div>
-<p class="small">Asterisks mark partial months. Costs use the modeled {{BEST_PLAN}} tariff.</p>
+<p class="small">The left axis shows measured imports and physical exports in kWh. The right axis shows modeled cost in dollars, after monthly settlement. Asterisks mark partial months. Costs use the modeled {{BEST_PLAN}} tariff.</p>
 <div class="chartbox"><canvas id="periods" height="90"></canvas></div>
 <p class="small">Super off-peak accounts for {{SOP_IMPORT_SHARE_PCT}}% of imports, off-peak {{OFFPEAK_IMPORT_SHARE_PCT}}%, and {{PEAK_WINDOW}} on-peak {{ONPEAK_IMPORT_SHARE_PCT}}%. {{CHART_TITLE_PERIODS}}.</p>
+<p class="small">The lower axis measures imported kWh; the upper axis measures gross import energy cost in dollars. Compare each series within its own scale. Gross import cost excludes export settlement and other bill components, so it is neither the annual bill nor an available saving.</p>
 <p>These four load patterns overlap. Use the integrated package results in §7 for savings; do not add the examples below together:</p>
 <ul>
 <li><!-- TODO behavior 1: large loads in the on-peak window — kWh/yr and $ at stake. --></li>
@@ -402,11 +424,33 @@
 <li><!-- TODO behavior 4: low-value midday exports vs self-consumption. --></li>
 </ul>
 
+<p>The owner excludes the intentional home-lab load from recommended savings. Its annual cost is an extrapolation from selected quiet nights.</p>
+<details id="usage-floor-evidence"><summary>Quiet-night load: selection, annual cost and excluded savings</summary>
+<h3 id="quiet-night-floor">Quiet-night load: measurements and annual extrapolation <span class="pill g">measured</span></h3>
+<p><!-- TODO: quiet-night floor statistics — the median ({{NIGHT_FLOOR_MEDIAN}}), its spread ({{NIGHT_FLOOR_SPREAD}}), the sample it rests on ({{NIGHT_FLOOR_SAMPLE}}), the energy it implies ({{NIGHT_FLOOR_ANNUAL_KWH}}) and what that costs ({{NIGHT_FLOOR_ANNUAL_COST}}) — both of which are {{NIGHT_FLOOR_PRICING_BASIS}}, a qualifier the annual figures may not appear without, since the floor is measured and the year built from it is not; the within-night cycling ({{NIGHT_FLOOR_CYCLING}}) and the seasonal swing ({{NIGHT_FLOOR_SEASONALITY}}). The cost is priced two ways and both are live, so reconcile them here rather than printing one: {{PHANTOM_METHOD_DISCREPANCY}} — and do not read more into their closeness than that sentence allows. Keep the exclusion rate in view, since the floor is measured on the minority of nights that stayed quiet, and the load's CAUSE is attested by the owner, not metered. Close on what a household could act on: {{NIGHT_FLOOR_SENSITIVITY_PER_100W}}. Split this into two or three paragraphs rather than one long one. --></p>
+<h3>Quiet-night load: its cost and evidence limits</h3>
+<div class="note"><!-- TODO: the honesty note — what the overnight floor is on THIS household and what it costs ({{NIGHT_FLOOR_ANNUAL_KWH}} at {{NIGHT_FLOOR_ANNUAL_COST}}), read off the same window and the same artifact §13 uses, since one load may not carry two sets of figures two sections apart. The annual figures need the sample they rest on ({{NIGHT_FLOOR_SAMPLE}}) and the qualifier they may not appear without ({{NIGHT_FLOOR_PRICING_BASIS}}) here too, not only in §13 — a reader of this note may never open that section. Explain that an annual cost does not establish a recoverable saving, because nothing here meters which appliance behind the floor could be switched off. Give the local rate ({{NIGHT_FLOOR_SENSITIVITY_PER_100W}}) and state that later steps remove less energy where the request exceeds metered imports. It does not scale to arbitrary load removal. If the owner attests a cause for this household's floor, keep that attestation and label it attested rather than metered. --></div>
+</details>
+
 <h2 id="s6">6 · Possible batteries — savings, cost, and backup</h2>
 <p class="verdict">{{S6_VERDICT}}</p>
+<h3 id="balcony-common-choice">Compare the hardware on one operating basis</h3>
+<p>The free schedule change is the starting point. Keeping the existing rooftop with no added hardware costs nothing and adds no battery backup. The table compares hypothetical purchases with that same baseline; it excludes the free saving.</p>
+<p>All storage rows below use the portable study's simple schedule and whole-meter load access. Each controller holds twenty percent reserve, uses eighty-five percent round-trip efficiency and draws ten watts in standby. PV uses a rooftop-shaped production proxy. A portable battery needs its own supported connection. A storage-only row does not establish SB 868 qualification. Actual costs and product eligibility remain unknown.</p>
+<table id="balcony-decision-results">
+<thead><tr><th>Connection track</th><th>Hardware choice</th><th>Hardware saving/yr</th><th>Five-year total initial-cost ceiling</th><th>Ten-year total initial-cost ceiling</th></tr></thead>
+<tbody>
+<!-- TODO: decision depth common assumption hardware choices with both home capacities. -->
+</tbody>
+</table>
+<p>These are total hardware ceilings before ownership costs, at frozen June 2026 rates. The NEM case retains rooftop treatment; extra-export credit for new PV is hypothetical. The no-extra-credit case removes compensation for incremental meter exports. Neither case establishes a qualifying system's actual settlement.</p>
+<p>The canonical Powerwall purchase result below uses no standing reserve and a different control policy. It stays separate from this comparison. Do not combine its saving with a portable-study increment. Joint purchases need the matched <a href="#balcony-solar">component limits and controller-order results</a>.</p>
+
+
 <p class="sub"><!-- TODO: framing — the two questions (annual savings, outage endurance); system context; whether storage affects NEM grandfathering; current incentive status ({{INCENTIVE_STATUS}}, a KNOWN_GAPS token: the CA program side is committed research, the federal residential storage credit's current status is not, so this block needs a human-supplied, dated answer). --></p>
 <p>The purchase comparison uses the battery added after the free change: <b>{{BATTERY_MARGINAL_SAVINGS}}/yr</b> in modeled savings at an estimated installed cost of <b>{{BATTERY_COST}}</b>. The <a href="#s7">packages</a> give the matching payback. The other battery figures below answer separate questions.</p>
 <p>The canonical price-aware purchase simulation holds no standing backup reserve. A permanent reserve changes available energy; that purchase case's saving and payback with a reserve are not calculated here.</p>
+<details id="home-storage-evidence"><summary>Home-storage evidence: controls, sizing, backup and programs</summary>
 <details id="s6-hardware"><summary>Supporting comparison: hardware with on-peak-only operation</summary>
 <h3>On-peak-only simulation (current behavior) <span class="pill y">modeled</span></h3>
 <p class="small">This table uses interval-valued savings from <code>analysis/battery_backup_sims.py</code> → <code>data/battery_sim.json</code>. The dispatch comparison below re-bills the full year through the NEM engine; its savings are a different calculation.</p>
@@ -456,14 +500,52 @@
 <p><!-- TODO: preserve every unique program and resilience fact, figure, citation and assumption. Keep the per-aggregation dispatch basis, event-calendar scope, reserve conventions, pre-staging notice assumption, annualization limit, eligibility and tariff conditions. Do not treat measured inputs as an achieved household result. --></p>
 </details>
 
-<h3 id="balcony-solar">Balcony solar and portable storage: conditional savings, with or without home storage</h3>
-<p>Storage earns more than panels without extra-export credit. A supported connection and complete cost decide the purchase. <span class="pill y">modeled</span></p>
-<p>The pathways differ: keep the existing NEM rooftop array with proposed home storage, add balcony PV and portable storage, or combine both. No battery is installed.</p>
+</details>
+
+<h2 id="balcony-solar">Balcony solar: additional savings, cost and payback</h2>
+<p class="verdict">{{BALCONY_VERDICT}}</p>
+<p>Every case keeps the existing rooftop and starts after the free schedule change. No battery is installed. Compare panels, portable storage and their combined purchase against that same starting bill.</p>
 <p><!-- TODO: mechanically render the checked primary balcony configuration and storage assumptions. --> Home-battery discharge keeps its separate power limit.</p>
 <p>The model assumes access to whole-meter load. Actual circuits, phase coverage, sensing, and controller coordination remain unknown. A refrigerator-only connection cannot claim these savings. New exports receiving NEM credit remain a hypothetical pricing case.</p>
+<h4>Panels only, storage only, or both without home storage</h4>
+<p>Each row starts with the existing rooftop, the free schedule change and no added hardware. The rows share the main balcony output cap. The storage-only row holds its output cap equal to the combined case. It can use existing rooftop surplus and cheap grid energy.</p>
+<table id="balcony-options-results">
+<thead><tr><th>Hardware added</th><th>Annual saving with hypothetical extra-export credit</th><th>Annual saving without extra-export credit</th></tr></thead>
+<tbody>
+<!-- TODO: mechanically render matched-cap PV-only, portable-only, and combined annual savings from the portable artifact. -->
+</tbody>
+</table>
+<p>{{BALCONY_PURCHASE_EXAMPLE}}</p>
+<p>Panels and storage share some of the same opportunity. The combined saving belongs to the whole purchase. A panel added after portable storage earns only its own <a href="#balcony-purchase-choice">incremental saving</a>.</p>
+<section class="balcony-charts" aria-labelledby="balcony-chart-heading">
+<h3 id="balcony-chart-heading">How each addition changes electricity use and the bill</h3>
+<p>All four curves start after the free schedule change and retain the existing rooftop. The starting-equipment selector adds generic home storage first. Each other curve then adds the named equipment to that starting case.</p>
+<p>{{BALCONY_CHART_EQUIPMENT}} The <a href="#balcony-common-choice">matched screen</a> states the operating assumptions. Home storage acts first in joint cases.</p>
+<p>The primary simulation uses a 0.8 kW shared output cap. SB 868 sets a 1.2 kW legal maximum for qualifying receptacle PV. Neither number establishes a particular product's supported output. The <a href="#balcony-higher-cap-results">higher-output sensitivity</a> changes both panels and output. The <a href="#balcony-evening-example">4pm-to-midnight example</a> is tariff arithmetic, not an annual forecast.</p>
+<div class="chart-controls">
+<label for="balcony-home">Starting home storage <select id="balcony-home"><option value="0">No home storage</option><option value="13.5">13.5 kWh generic home storage</option><option value="27">27 kWh generic home storage</option></select></label>
+<label for="balcony-season">Hourly season <select id="balcony-season"><option value="S">Summer: June to October</option><option value="W">Winter: November to May</option></select></label>
+<label for="balcony-purchase">Purchase for savings and payback <select id="balcony-purchase"><option value="combined">Panels + portable battery</option><option value="panels">Panels only</option></select></label>
+</div>
+<p id="balcony-chart-status" class="small" aria-live="polite">The default charts compare additions with no home storage, after the free schedule change.</p>
+<div class="chartbox"><canvas id="balcony-imports" height="115" role="img" aria-label="Matched hourly grid imports" aria-describedby="balcony-hourly-caption">The hourly source table below gives average grid imports in kW.</canvas></div>
+<div class="chartbox"><canvas id="balcony-exports" height="115" role="img" aria-label="Matched hourly physical exports" aria-describedby="balcony-hourly-caption">The hourly source table below gives average physical exports in kW.</canvas></div>
+<p class="small" id="balcony-hourly-caption">Each point divides interval energy by elapsed hours for that season and local clock hour. Repeated daylight-saving hours count twice. The shaded band marks on-peak. Physical exports show energy leaving the meter; export-credit assumptions change dollars, not these physical curves.</p>
+<p class="small">Cheap-hour charging can increase imports while storage reduces expensive-hour imports. Battery discharge is not a net energy saving: charging also incurs losses and standby use. These post-free-change, generic-storage profiles use different controls and reserves from the current-behavior Powerwall chart.</p>
+<div class="chartbox"><canvas id="balcony-monthly-chart" height="110" role="img" aria-label="Matched monthly additional bill savings" aria-describedby="balcony-monthly-caption">The financial source table below gives monthly additional savings in dollars.</canvas></div>
+<p class="small" id="balcony-monthly-caption">Monthly savings equal the starting equipment's modeled bill minus the bill after the selected purchase. Both bills use frozen June 2026 rates. The two bars show separate extra-export-credit assumptions. Asterisks mark partial July buckets; neither bucket is annualized.</p>
+<div class="chartbox"><canvas id="balcony-payback" height="110" role="img" aria-label="Conditional simple payback at assumed complete incremental costs" aria-describedby="balcony-payback-caption">The financial source table below gives assumed complete costs and conditional simple paybacks.</canvas></div>
+<p class="small" id="balcony-payback-caption">Each point divides an assumed complete purchase cost by that purchase's own first-year bill saving. The cost excludes home storage already in the starting case. Simple payback omits discounting, later savings decline and unknown ownership costs. A long ratio does not establish service life.</p>
+<noscript><p>The charts need JavaScript. The source tables remain readable below for the default summer case, without home storage. The joint-result and complete-cost tables cover the other purchase cases.</p></noscript>
+<details id="balcony-chart-records"><summary>Chart source values and the selected comparison</summary>
+<p id="balcony-source-basis">The default source values describe summer with no home storage and the panels-plus-portable-battery purchase.</p>
+<!-- TODO: matched balcony chart source tables with the default no-home-storage summer profiles, monthly bill differences and assumed complete-cost paybacks. -->
+<p>Source: <a href="data/portable_solar_storage.json">portable solar and storage artifact</a>, <code>chart_data</code>, matched scenario bills and <code>incremental_complete_cost_sensitivities</code>. Actual cost and actual payback remain unknown.</p>
+</details>
+</section>
 <details id="balcony-joint-records"><summary>Supporting comparisons: joint savings, complete costs and component limits</summary>
 <table id="balcony-main-results">
-<thead><tr><th>Proposed home storage</th><th>Extra-export treatment</th><th>Balcony + portable added after home storage: extra saving/yr</th><th>All hardware together: total saving/yr</th></tr></thead>
+<thead><tr><th>Starting home storage after the free change</th><th>Extra-export treatment</th><th>Panels + portable battery added: own saving/yr</th><th>All hardware vs. no added hardware: saving/yr</th></tr></thead>
 <tbody>
 <!-- TODO: mechanically render the primary matched joint-scenario annual ranges from portable_solar_storage.json. -->
 </tbody>
@@ -474,7 +556,7 @@
 <h4 id="balcony-complete-cost">What complete incremental cost can the saving support?</h4>
 <p>The ceilings below price only the added balcony system. They exclude the proposed home battery's cost. Actual complete quotes and ownership costs remain unknown.</p>
 <table id="balcony-cost-results">
-<thead><tr><th>Proposed home storage</th><th>Extra-export treatment</th><th>Five-year extra-cost ceiling</th><th>Ten-year extra-cost ceiling</th><th>Assumed complete extra cost / simple payback</th></tr></thead>
+<thead><tr><th>Starting home storage after the free change</th><th>Extra-export treatment</th><th>Five-year extra-cost ceiling</th><th>Ten-year extra-cost ceiling</th><th>Assumed complete extra cost / simple payback</th></tr></thead>
 <tbody>
 <!-- TODO: mechanically render complete incremental cost ceilings and an assumed-cost payback example for the primary combined cases. -->
 </tbody>
@@ -482,18 +564,10 @@
 <p class="small"><!-- TODO: mechanically render the incremental economics assumptions from the artifact. --> The cost table uses home-first priority. These discounted ceilings precede unknown maintenance, subscription, replacement, and transition costs. Those costs reduce the amount available for equipment and installation. Simple payback divides the assumed complete extra cost by its own extra annual saving.</p>
 <p>The manufacturer advertised one EcoFlow Stream Ultra at {{BALCONY_STREAM_PRICE}} on October 23, 2026; that variant was unavailable. This equipment price excludes panels, connection work, tax, and other costs. <!-- TODO: mechanically render separate default and conditional Stream-shaped results with their output and capacity. --> Higher output needs the manual's circuit and app conditions. The main generic storage configuration is not an exact certified Stream package. <a href="https://us.ecoflow.com/products/stream-ultra">Manufacturer page</a>, <a href="https://us.ecoflow.com/products/stream-ultra.js">variant record</a>, <a href="https://ecoflow-service-us-prod.oss-us-west-1.aliyuncs.com/cms/manual/1753783795065/EcoFlow%20STREAM%20Ultra_User%20Manual.pdf#page=13">U.S. manual</a>.</p>
 <details id="balcony-model"><summary>Supporting comparison: panels, storage, controller priority, and bill components</summary>
-<h4>Panels only, storage only, or both without home storage</h4>
-<p>These rows use the main balcony output cap and compare each purchase with the same bill with the existing rooftop after the free schedule change, with no added hardware. The storage-only row holds its output cap equal to the combined case. It can use existing rooftop surplus and cheap grid energy.</p>
-<table id="balcony-options-results">
-<thead><tr><th>Hardware added</th><th>Annual saving with hypothetical extra-export credit</th><th>Annual saving without extra-export credit</th></tr></thead>
-<tbody>
-<!-- TODO: mechanically render matched-cap PV-only, portable-only, and combined annual savings from the portable artifact. -->
-</tbody>
-</table>
 <h4>Higher shared-output sensitivity</h4>
 <p>The higher-cap case changes both panel size and available portable discharge. It is not a panel-only increment. The artifact records its AC cap, DC size, and complete flows.</p>
 <table id="balcony-higher-cap-results">
-<thead><tr><th>Proposed home storage</th><th>Extra-export treatment</th><th>Balcony + portable added after home storage: extra saving/yr</th><th>All hardware together: total saving/yr</th></tr></thead>
+<thead><tr><th>Starting home storage after the free change</th><th>Extra-export treatment</th><th>Panels + portable battery added: own saving/yr</th><th>All hardware vs. no added hardware: saving/yr</th></tr></thead>
 <tbody>
 <!-- TODO: mechanically render the higher-cap matched joint-scenario annual ranges. -->
 </tbody>
@@ -501,7 +575,7 @@
 <h4>Which purchase comes first?</h4>
 <p>Each column below compares complete bills after the named purchase. The home-first and portable-first controller priorities give the range. Purchase sequence and controller priority answer different questions; neither proves that real controllers coordinate.</p>
 <table id="balcony-order-results">
-<thead><tr><th>Home storage</th><th>Shared AC cap</th><th>Extra-export treatment</th><th>Home added after balcony + portable: extra saving/yr</th><th>Portable added after home + PV: extra saving/yr</th><th>Panels added after matched home + portable: extra saving/yr</th></tr></thead>
+<thead><tr><th>Home storage</th><th>Shared AC cap</th><th>Extra-export treatment</th><th>Home storage added after panels + portable battery: own saving/yr</th><th>Portable battery added after home storage + panels: own saving/yr</th><th>Panels added after home + portable storage: own saving/yr</th></tr></thead>
 <tbody>
 <!-- TODO: mechanically render both purchase directions and controller priorities using matched home, PV and portable controls. -->
 </tbody>
@@ -521,7 +595,7 @@
 <details id="balcony-cost-ladders"><summary>Supporting costs: assumed complete prices and added battery capacity</summary>
 <p>These complete incremental costs are assumptions. Actual quotes remain unknown. Long simple-payback ratios do not establish equipment life. Each payback excludes the home battery's cost and the free behavior saving. Combined home cases use home-first priority. PV-only cases provide a separate panels-before-storage comparison.</p>
 <table id="balcony-ladder-results">
-<thead><tr><th>Home storage; added system</th><th>Extra-export treatment</th><th>Five-year ceiling</th><th>Ten-year ceiling</th><!-- TODO: mechanically render the four assumed complete incremental cost headings. --></tr></thead>
+<thead><tr><th>Starting home storage; purchase added</th><th>Extra-export treatment</th><th>Five-year ceiling</th><th>Ten-year ceiling</th><!-- TODO: mechanically render the four assumed complete incremental cost headings. --></tr></thead>
 <tbody>
 <!-- TODO: mechanically render the full PV-only and combined incremental complete-cost ladders. -->
 </tbody>
@@ -543,6 +617,7 @@
 <!-- TODO: decision depth quote priorities from dated candidate allowances. -->
 <!-- TODO: decision depth matched component purchase limits. -->
 </div>
+<details id="balcony-reference"><summary>Equipment, operation and ownership evidence</summary>
 <h4 id="balcony-evening-example">What steady evening output can offset</h4>
 <p>For qualifying receptacle PV, the statutory 1.2 kW aggregate AC limit applies per dwelling. More battery capacity extends duration; it does not raise that limit. The <a href="#balcony-legal">qualification conditions</a> remain separate from this arithmetic.</p>
 <!-- TODO: decision depth illustrative evening power and delivered energy. -->
@@ -588,7 +663,7 @@
 <details id="balcony-monthly"><summary>Supporting operation: monthly savings and both partial Julys</summary>
 <p>The endpoints are partial calendar months. Neither July bucket is annualized. Each column sums to its annual model result before display rounding. Summer means the tariff's June through October months; the remaining months form winter.</p>
 <table id="balcony-monthly-results">
-<thead><tr><th>Calendar month</th><th>Portable only</th><th>Combined; no extra credit</th><th>Combined; hypothetical credit</th><th>Home 13.5 kWh</th><th>Home + combined; no extra credit</th></tr></thead>
+<thead><tr><th>Calendar month</th><th>Portable battery only</th><th>Panels + portable battery; no extra credit</th><th>Panels + portable battery; hypothetical credit</th><th>13.5 kWh home storage</th><th>13.5 kWh home storage + panels + portable battery; no extra credit</th></tr></thead>
 <tbody>
 <!-- TODO: decision depth all matched monthly savings and annual sums. -->
 </tbody>
@@ -597,6 +672,7 @@
 <details id="balcony-robustness"><summary>Supporting decisions: charging policy, stresses, NBT and outage limits</summary>
 <!-- TODO: decision depth existing charging stresses NBT repricing and constant-load runtime. -->
 <p>The charging-source and stress cases use a separate generic output cap; they are not the primary matched comparison. The retained <a href="research/sb868-portable-solar-storage.md#present-2026-nbt-sensitivity-fixed-flows-signed-costs-before-settlement-limits">NBT workpaper</a> explains credit banks, relevant periods, floors and net-surplus limits. No future tariff or adoption date follows from present repricing.</p>
+</details>
 </details>
 <p>A qualifying SB 868 system needs no prior utility approval or interconnection agreement once its exemption takes effect. Exact system certification, electrical-code compliance, and the supported connection remain necessary. Qualification alone establishes neither NEM retention nor export compensation.</p>
 <details id="balcony-legal"><summary>Supporting legal and equipment limits: effective date, notification, sunset, and backup</summary>
@@ -608,14 +684,14 @@
 <p>The study also prices unchanged physical flows under current NBT assumptions. Those signed ledgers omit settlement-credit limits and relevant-period accounting. They establish no payable-bill saving, mandatory tariff migration, or future economics around NEM expiry. Future tariffs, equipment, and the best adoption date remain unknown. <a href="research/sb868-portable-solar-storage.md#present-2026-nbt-sensitivity-fixed-flows-signed-costs-before-settlement-limits">Present NBT sensitivity and limits</a>.</p>
 </details>
 
-<h2 id="s7">7 · The decision: three packages</h2>
+<h2 id="s7">7 · Choose the next step after the free change</h2>
 <p class="verdict">{{S7_VERDICT}}</p>
-<p>All packages keep <b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}} <b>Actual electric cost: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b> The package projections compare modeled cases at the same {{RATES_EFFECTIVE_DATE}} rates.</p>
-<p>Savings are model differences at {{RATES_EFFECTIVE_DATE}} rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the NEM model and its stated limits (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). No year-end lump-sum shortcuts; behavior and battery are simulated in one integrated pipeline ({{FREE_FIX_SHORT_NAME}} shift first, then battery, re-billed end-to-end), so nothing is double-counted.</p>
+<p>The free-change and home-storage cases below retain the analysis labels <code>LOW</code>, <code>MID</code> and <code>HIGH</code> in their supporting records. All keep <b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}} <b>Actual electric cost: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b> The package projections compare modeled cases at the same {{RATES_EFFECTIVE_DATE}} rates.</p>
+<p>The model physically moves energy into destination intervals, then re-bills at {{RATES_EFFECTIVE_DATE}} rates. It applies the {{FREE_FIX_SHORT_NAME}} shift before the battery and prices the whole year once. This sequence accounts for overlap between their savings. The NEM model retains its stated limits (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>).</p>
 
 <div class="grid3">
 <div class="pkg">
-<h3>LOW — $0 · behavior only</h3>
+<h3>Free schedule change · $0</h3>
 <ul>
 <li><!-- TODO: the free behavior fix with savings at 100%/80% compliance and where the energy currently lands. --></li>
 <li><!-- TODO: the stretch add-on (shifting flexible house load) and its value. --></li>
@@ -625,7 +701,7 @@
 </ul>
 </div>
 <div class="pkg best">
-<h3>MID — {{BATTERY_COST}} · + 1 {{BATTERY_MODEL}} · quote candidate</h3>
+<h3>Home storage · {{BATTERY_MODEL}} · estimated {{BATTERY_COST}}</h3>
 <p>The canonical price-aware purchase simulation holds no standing backup reserve. A permanent reserve changes available energy; that purchase case's saving and payback with a reserve are not calculated here.</p>
 <ul>
 <li><!-- TODO: combined savings from the one integrated pipeline (EV shift first, then battery, re-billed end-to-end). --></li>
@@ -635,33 +711,31 @@
 </ul>
 </div>
 <div class="pkg">
-<h3>HIGH — {{BATTERY_EXPANDED_COST}} · + {{BATTERY_EXPANDED_MODEL}}</h3>
+<h3>Portable storage or added panels · complete quote needed</h3>
+<p>{{BALCONY_VERDICT}}</p>
+<p>{{BALCONY_PURCHASE_EXAMPLE}}</p>
+<p>First establish the supported connection and eligible load. Then compare the complete quote with the <a href="#balcony-complete-cost">cost ceiling</a>. The <a href="#balcony-equipment-budget">equipment table</a> separates advertised prices from omitted costs.</p>
+<p>If home storage is also proposed, use the joint addition's own saving. Neither standalone savings nor advertised equipment prices establish the joint purchase payback.</p>
+</div>
+</div>
+<details id="s7-expansion"><summary>Optional home-storage expansion: additional cost and backup duration</summary>
+<div class="pkg">
+<h3>Home-storage expansion · {{BATTERY_EXPANDED_MODEL}} · estimated {{BATTERY_EXPANDED_COST}}</h3>
 <ul>
-<li><!-- TODO: marginal savings over MID and the marginal payback on the expansion. --></li>
-<li><!-- TODO: what the expansion increment really buys, which is outage endurance. READ THE SIGN of packages.HIGH.marginal_vs_mid_yr rather than assuming it. Above zero: say the increment does save, and that what it saves is too little to earn the cost back inside the warranty -- do not deny that it saves at all. DO NOT WRITE THE AMOUNT: no token in this block's scope carries marginal_vs_mid_yr, and the numeral guard hard-fails the run on a bare digit outside a token. At or below zero: say the increment does not earn its cost back, and carry over no wording describing it as an improvement on MID. Separately, packages.HIGH.savings_yr is what the PACKAGE saves against the baseline; while that is positive, never deny that the package saves at all -- a claim about the package and a claim about the increment are different purchase advice. A consistency case checks all of this against the artifact. --></li>
+<li><!-- TODO: marginal savings over <code>MID</code> and the marginal payback on the expansion. --></li>
+<li><!-- TODO: what the expansion increment really buys, which is outage endurance. READ THE SIGN of packages.<code>HIGH</code>.marginal_vs_mid_yr rather than assuming it. Above zero: say the increment does save, and that what it saves is too little to earn the cost back inside the warranty -- do not deny that it saves at all. DO NOT WRITE THE AMOUNT: no token in this block's scope carries marginal_vs_mid_yr, and the numeral guard hard-fails the run on a bare digit outside a token. At or below zero: say the increment does not earn its cost back, and carry over no wording describing it as an improvement on <code>MID</code>. Separately, packages.<code>HIGH</code>.savings_yr is what the PACKAGE saves against the baseline; while that is positive, never deny that the package saves at all -- a claim about the package and a claim about the increment are different purchase advice. A consistency case checks all of this against the artifact. --></li>
 <li><!-- TODO: whether the expansion can be added later. --></li>
 </ul>
 </div>
-</div>
+</details>
+
 
 <div class="rec"><b>Recommendation: {{RECOMMENDED_PACKAGE_SUMMARY}}.</b> <!-- TODO: 3–4 sentences in the reference voice — e.g. "The EV-charging fix is free, immediate, and worth {{EV_FIX_SAVINGS_100}}/yr — do it this week regardless. One {{BATTERY_MODEL}} adds {{BATTERY_MARGINAL_SAVINGS}}/yr of its own savings (…payback) subject to controller support and the installed quote." Close with the action sequence (check schedules, request quotes with electrical/controller assessment, and check optional program enrollment only if its revenue matters). THE REFERENCE VOICE ASSUMES AN EV AND THE HOUSEHOLD MAY NOT HAVE ONE: name the fix the way section 0's free-win card label and the Monday appendix's verdict line already name it, and where those name a house-load shift, open the action sequence with rescheduling that load rather than with a charger. --></div>
 
 
-<h3 id="balcony-common-choice">Compare the hardware on one operating basis</h3>
-<p>The free schedule change is the starting point. Keeping the existing rooftop with no added hardware costs nothing and adds no battery backup. The table compares hypothetical purchases with that same baseline; it excludes the free saving.</p>
-<p>All storage rows below use the portable study's simple schedule, whole-meter load access, twenty percent reserve, eighty-five percent round-trip efficiency, and ten watts standby per controller. PV uses a rooftop-shaped production proxy. Home storage and receptacle-PV remain distinct connection tracks. Actual costs and product eligibility remain unknown.</p>
-<table id="balcony-decision-results">
-<thead><tr><th>Connection track</th><th>Hardware choice</th><th>Hardware saving/yr</th><th>Five-year total initial-cost ceiling</th><th>Ten-year total initial-cost ceiling</th></tr></thead>
-<tbody>
-<!-- TODO: decision depth common assumption hardware choices with both home capacities. -->
-</tbody>
-</table>
-<p>These are total hardware ceilings before ownership costs, at frozen June 2026 rates. The NEM case retains rooftop treatment; extra-export credit for new PV is hypothetical. The no-extra-credit case removes compensation for incremental meter exports. Neither case establishes a qualifying system's actual settlement.</p>
-<p>The canonical price-aware purchase result in MID uses no standing reserve and a different control policy. It stays separate from this comparison. Do not combine its saving with a portable-study increment. Joint purchases need the matched <a href="#balcony-solar">component limits and controller-order results</a>.</p>
-
 <h2 id="s15">What to do Monday — the implementation appendix</h2>
 <p class="verdict">{{S15_VERDICT}}</p>
-<p>Start with the free behavior change. The battery steps apply only if you seek a quote for conventional home storage.</p>
+<p>Start with the free schedule change. Choose either purchase route only after its supported connection and complete cost are clear.</p>
 <!-- TODO: content-only appendix (reusable-prompt.md Phase D spec) — no new analysis, no new artifacts; every item cites its justifying section. Four parts: -->
 <h3>{{S15_STEP1_HEADING}}</h3>
 <ul>
@@ -671,7 +745,15 @@
 <ul>
 <li><!-- TODO: quote checklist — include panel/service headroom and controller-support checks in the quote. Apply interconnection export checks and VPP enrollment only to the proposed conventional export use. Do not describe them as approval requirements for a qualifying SB 868 device. --></li>
 </ul>
-<h3>3 · Check the {{FREE_FIX_SHORT_NAME}} change; keep battery scenarios separate <span class="pill y">modeled targets</span></h3>
+<h3 id="balcony-next-action">3 · Check the portable-storage or balcony route</h3>
+<ol>
+<li>Ask the supplier which circuits, phases and controls the proposed system supports. Match that access to the modeled load.</li>
+<li>Measure a selected appliance before applying whole-meter savings to an appliance-only connection.</li>
+<li>Request the complete incremental quote, including panels, connection work, tax, freight, labor and any subscription.</li>
+<li>Price each added component against its own saving in <a href="#balcony-solar">Question 11</a>. Keep backup and program revenue separate.</li>
+</ol>
+<p>A qualifying receptacle-PV system needs no prior utility approval once the exemption takes effect. Check complete-system certification and the supported connection. The <a href="#balcony-legal">legal evidence</a> states the effective date and sunset; battery-only qualification and actual export treatment remain undetermined.</p>
+<h3>4 · Check the {{FREE_FIX_SHORT_NAME}} change; keep battery scenarios separate <span class="pill y">modeled targets</span></h3>
 <p>Record the criteria before the schedule change. Check timing at the <b>next bill</b> and again after <b>two full billing cycles</b>. Dollar comparisons need matched usage, weather, and rate assumptions:</p>
 <table class="evidence">
 <thead><tr><th>Metric</th><th>Now</th><th>Target or modeled reference</th></tr></thead>
@@ -679,7 +761,7 @@
 <tr><td><!-- TODO: metric; separate behavior-only targets from hypothetical battery results. A modeled annual saving is a reference, not a direct measurement from the next bill. --></td><td>{{METRIC_NOW}}</td><td>{{METRIC_TARGET}}</td></tr>
 </tbody>
 </table>
-<h3>4 · When to re-run this analysis</h3>
+<h3>5 · When to re-run this analysis</h3>
 <table class="evidence">
 <thead><tr><th>Trigger</th><th>When</th></tr></thead>
 <tbody>
@@ -700,7 +782,9 @@
  <span class="adv-inv">7 sections · methods, source records, and limits for the report's findings</span>
 </summary>
 
-<h2 id="s8">8 · Array upgrades: {{S8_VERDICT_SHORT}}</h2>
+<h2 id="s8">8 · Should the rooftop system change?</h2>
+<p class="verdict">{{S8_VERDICT_SHORT}}</p>
+<p><b>More panels: {{EXPANSION_VERDICT_SHORT}}.</b></p>
 <!-- TODO: short connected paragraphs, each with one finding and its material condition:
      1. More panels — the monthly energy settlement value of the year's exports, and what the marginal import they would offset costs.
         Example sentence: "Across the hours the array actually exports in, not the midday cell alone, an exported kWh has a monthly energy settlement value between {{EXPORT_VALUE_SURPLUS_BOUND}} if every export settles as surplus and {{EXPORT_VALUE_NETTING_BOUND}} if every export cancels an import in its own month and period, while the marginal import it would offset costs {{SUPER_OFF_PEAK_RATE}}."
@@ -711,7 +795,7 @@
      3. Repowering with bigger panels — state whether the evidence establishes an economic case for replacement; agreement between meters does not establish panel health.
      4. Microinverter upgrade / clipping — distinguish sampled power from an established annual loss bound. State recoverable value as conditional on its assumed loss and price; compare with an estimated swap cost, pending a quote. Average daily surplus does not establish interval-level battery charging coverage. Check warranty terms.
      Close with the conditions for expansion (structural load growth and installed storage, or available V2H), and cheaper interim moves. Keep every unique datum and source; do not hide missing evidence inside collapsed text. -->
-<p><b>More panels: {{EXPANSION_VERDICT_SHORT}}.</b></p>
+<p>Keep healthy equipment unless fault evidence supports replacement. Conventional rooftop expansion and qualifying receptacle PV follow different connection rules. Each purchase needs its own settlement treatment and installed price.</p>
 <p>The existing array exports {{EXPORTED_SHARE}} of its production.</p>
 <p>One more kW of panels earns about <b>{{MARGINAL_KW_VALUE_YR}}/yr</b> <span class="pill y">modeled</span> at constant {{RATES_EFFECTIVE_DATE}} rates. The model re-bills the changed intervals through NEM 2.0. It adds {{MARGINAL_KW_ADDED_KWH}} kWh/yr on the array's own shape; {{MARGINAL_KW_IMPORT_OFFSET_PCT}} of that displaces an import and the rest leaves the meter. If an option transfers the existing array to NBT, the grandfathering value is {{MARGINAL_KW_GRANDFATHERING_MULTIPLE}} that.</p>
 
@@ -739,12 +823,13 @@
 <h3 id="plan-wildcard">Plan wildcard: can {{WILDCARD_PLAN}} + a battery beat {{BEST_PLAN}}?</h3>
 <p><!-- TODO: report the separate on-peak-only, interval-valued screen from deep_analyses.py and deep_results.json. State assumed event dates, charge outside on-peak, partial-charge top-up, and charge/power limits. It does not establish perfect event avoidance or use monthly NEM billing. Link the matched price-aware NEM comparison in §4; do not mix its bills or policies with this screen. --></p>
 
-<h3>Quiet-night load: its cost and evidence limits</h3>
-<div class="note"><!-- TODO: the honesty note — what the overnight floor is on THIS household and what it costs ({{NIGHT_FLOOR_ANNUAL_KWH}} at {{NIGHT_FLOOR_ANNUAL_COST}}), read off the same window and the same artifact §13 uses, since one load may not carry two sets of figures two sections apart. The annual figures need the sample they rest on ({{NIGHT_FLOOR_SAMPLE}}) and the qualifier they may not appear without ({{NIGHT_FLOOR_PRICING_BASIS}}) here too, not only in §13 — a reader of this note may never open that section. Explain that an annual cost does not establish a recoverable saving, because nothing here meters which appliance behind the floor could be switched off. Give the local rate ({{NIGHT_FLOOR_SENSITIVITY_PER_100W}}) and state that later steps remove less energy where the request exceeds metered imports. It does not scale to arbitrary load removal. If the owner attests a cause for this household's floor, keep that attestation and label it attested rather than metered. --></div>
 </details>
 
 <h2 id="s10">10 · Actual bills, the model gap, and electrification</h2>
 <p class="verdict">{{S10_VERDICT}}</p>
+<p>Use bills for actual spending. The model explains only part of the dollar gap. The appliance decision below also needs measured shares and schedules.</p>
+<details id="bill-evidence"><summary>Actual bills, unresolved model gap and provider comparison</summary>
+
 
 <p>The actual baseline uses {{BILL_COUNT}} detailed electric statements covering {{BILLING_PERIOD_COUNT}} billing periods. Longer comparisons can use larger statement corpora. Their scopes differ from this annual baseline.</p>
 <table>
@@ -756,10 +841,14 @@
 </table>
 <div class="note"><b>Model vs. actual — how the two relate.</b> <!-- TODO: start with the actual annual bill ({{ACTUAL_ANNUAL_BILL}}) and the model's current-rates figure ({{MODELED_ANNUAL_AT_CURRENT_RATES}}). State both coverage windows and the unresolved gap before detailed provider comparisons. Keep all signed adjustments, their separate rate/window/fee bases, missing historical rates, and residual uncertainty. Absolute bill spending comes from statements; savings compare model runs and retain the unresolved-gap limitation. Cite {{BILLING_MODEL_SCRIPT}} and {{BEHAVIOR_MODEL_SCRIPT}}. Point the paired-statement reference to its actual passage. Keep energy-only provider cells separate from whole-period riders/adders; name any unmatched cell explicitly. --></div>
 
-<h3>Gas usage &amp; cost</h3>
+</details>
+<h3 id="electrification-decision">Question 6: measure appliance use before a replacement decision</h3>
+<p>Appliance shares and heating hours determine energy savings. Electrical fit and the purchase comparator also remain unresolved. A standalone replacement and the extra cost over an AC replacement need separate paybacks.</p>
+<h3>Gas usage and cost</h3>
 <p><!-- TODO: annual therms, seasonal shape, heating/non-heating split, actual annual gas $ ({{ACTUAL_ANNUAL_GAS_BILL}}), combined household energy total. --></p>
 
-<h3>Should you electrify? {{ELECTRIFICATION_VERDICT_SHORT}}</h3>
+<h3>Water-heater savings depend on its share of gas use and its schedule</h3>
+<p>{{ELECTRIFICATION_VERDICT_SHORT}}</p>
 <p><!-- TODO: explain one conversion at a time in short connected paragraphs. Define UEF, AFUE, COP, and heating-degree-days beside their first use. Retain all share/schedule cases, cost bases, tier overlap, joint-billing interaction, electrical blockers, and missing evidence. Every water-heater figure here rests on an assumption about this household's gas appliance mix that was never verified, so the caveat is not optional: lead the whole passage with it ({{HPWH_SHARE_CAVEAT}}) and do NOT assert a definitive cost-effective sequence — {{ELECTRIFICATION_SEQUENCE}} states the order together with the share at which it reverses, and must be carried as a conditional, not a recommendation. Then the figures, each with its own qualifier: the water heater at {{HPWH_INSTALL_COST}} — {{HPWH_COST_BASIS}} — for {{HPWH_NET_SAVINGS}}, a {{HPWH_PAYBACK}} payback that moves to {{HPWH_PAYBACK_SENSITIVITY}} across the illustrative share scenarios, on a gas saving that is itself {{HPWH_SAVINGS_BOUND}}; the furnace at {{HEAT_PUMP_INSTALL_COST}} — {{HEAT_PUMP_COST_BASIS}} — for {{HEAT_PUMP_PAYBACK}}; both together, {{ELECTRIFICATION_COMBINED_PAYBACK}}, which inherits the same unverified assumption — and which is NOT a confirmed gas-meter removal: {{ELECTRIFICATION_METER_REMOVAL_CAVEAT}}. Explain that combined electric costs come from one joint physical allocation and rebill. Convex monthly-energy and physical interval NBC charges give a nonnegative interaction before display rounding; strict dollar interaction needs a zero boundary, not physical solar overlap alone. State what incentives are actually claimable and when that was checked ({{ELECTRIFICATION_INCENTIVES}}). Close on replace-on-failure, and price it with the branch that actually prices it: at the moment the air conditioner needs replacing anyway, the furnace conversion costs only the difference, {{HEAT_PUMP_MARGINAL_INSTALL_COST}} for a {{HEAT_PUMP_MARGINAL_PAYBACK}} payback, against {{HEAT_PUMP_INSTALL_COST}} / {{HEAT_PUMP_PAYBACK}} standalone. That gap IS the argument for waiting rather than acting now — make it explicitly, and do not support the recommendation with the standalone figures. --></p>
 <p><!-- TODO: what the gas bills show about fixed vs volumetric charges and what that means for eventually closing the gas account. --></p>
 
@@ -800,10 +889,12 @@
 <p>These studies explain carbon timing, grandfathering value, rate sensitivity, and the value of each tariff period. Their assumptions differ; the dollar and carbon comparisons do not share one charging schedule automatically.</p>
 <h3>Grid-carbon timing <span class="pill y">modeled · {{CARBON_SAMPLE_DESCRIPTION}}</span></h3>
 <div class="chartbox"><canvas id="carbon" height="110"></canvas></div>
+<p class="small">The curve shows mean grid-average carbon intensity by clock hour, in kg CO₂/MWh. It does not show marginal emissions. The shaded band marks on-peak; the dollar saving from a midday-only schedule remains uncomputed.</p>
 <p><!-- TODO: overnight vs midday grid CO2 intensity from grid-operator data ({{CHART_TITLE_CARBON}}); the household's current import emissions; the emissions swing from retiming flexible load; the price-and-carbon alignment (or tension) of the cheap window; sampling caveats. Distinguish attributed grid-average emissions from marginal emissions. Do not attach the separate EV-shift dollar saving to an unbilled midday-only schedule. Keep each battery policy's own emissions, dollar saving, thresholds, throughput, and tradeoff basis together. --></p>
-<h3>What NEM 2.0 grandfathering is worth: {{NEM_GRANDFATHER_VALUE_RANGE}}/yr <span class="pill y">modeled</span></h3>
+<h3 id="nem-value-answer">Question 10: modeled NEM 2.0 grandfathering value: {{NEM_GRANDFATHER_VALUE_RANGE}}/yr <span class="pill y">modeled</span></h3>
 <p><!-- TODO: re-bill the year with successor-tariff export credits vs current NEM netting; the annual delta is conditional on the stated export components and tariff treatment of the proposed addition. Explain the uncertain CEA generation component, both range endpoints, and the hourly versus flat-credit studies separately. A comparison at current prices does not forecast prices at NEM expiry. --></p>
 <h3>Battery payback vs rate escalation <span class="pill y">modeled</span></h3>
+<p>These percentages are assumptions. The bills do not establish growth in the battery's charging-to-discharge price gap. The <a href="#spreadesc">price-gap study</a> explains that limit.</p>
 <table>
 <thead><tr><th>Annual rate escalation</th><th>Battery-alone payback</th><th>10-yr NPV ({{DISCOUNT_RATE}} discount)</th></tr></thead>
 <tbody>
@@ -820,6 +911,7 @@
 <div class="chartbox"><canvas id="spread" height="110"></canvas></div>
 <p class="small"><!-- TODO: caption — carry {{CHART_TITLE_SPREAD}} as the derived finding; one point per rate segment, dated at the segment midpoint;
      what the dashed spans mean (pre-structural-break, excluded from the reported fit). --></p>
+<p class="small">The vertical axis shows the delivery-only on-peak minus super-off-peak price gap, in dollars per kWh. Dates have categorical spacing. Lines bridge gaps between seasons; dashed spans precede each selected break. The statistical fit uses duration, although this chart spaces its dates equally.</p>
 <p><!-- TODO: per season, EITHER the surviving trend (escalation %/yr, 95% CI, r², span in days,
      distinct rate LEVELS, %/yr) OR "not determined" with the reason. Three rules decide it, all of
      which can only suppress a claim and never create one, so applying them after seeing a result is
@@ -847,8 +939,6 @@
      describing generation data as unavailable. Do not treat a printed bundled comparison as a
      charged CCA rate. Cite
      analysis/tou_spread.py -> data/tou_spread.json and the settlement-zero exclusion rule. --></p>
-<h3>Quiet-night load: measurements and annual extrapolation <span class="pill g">measured</span></h3>
-<p><!-- TODO: quiet-night floor statistics — the median ({{NIGHT_FLOOR_MEDIAN}}), its spread ({{NIGHT_FLOOR_SPREAD}}), the sample it rests on ({{NIGHT_FLOOR_SAMPLE}}), the energy it implies ({{NIGHT_FLOOR_ANNUAL_KWH}}) and what that costs ({{NIGHT_FLOOR_ANNUAL_COST}}) — both of which are {{NIGHT_FLOOR_PRICING_BASIS}}, a qualifier the annual figures may not appear without, since the floor is measured and the year built from it is not; the within-night cycling ({{NIGHT_FLOOR_CYCLING}}) and the seasonal swing ({{NIGHT_FLOOR_SEASONALITY}}). The cost is priced two ways and both are live, so reconcile them here rather than printing one: {{PHANTOM_METHOD_DISCREPANCY}} — and do not read more into their closeness than that sentence allows. Keep the exclusion rate in view, since the floor is measured on the minority of nights that stayed quiet, and the load's CAUSE is attested by the owner, not metered. Close on what a household could act on: {{NIGHT_FLOOR_SENSITIVITY_PER_100W}}. Split this into two or three paragraphs rather than one long one. --></p>
 <h3>The marginal price map at {{RATES_EFFECTIVE_DATE}} rates <span class="pill g">measured · bill rates</span></h3>
 <table>
 <thead><tr><th>Season · period</th><th>Import (all-in)</th><th>Export credit</th></tr></thead>
@@ -877,7 +967,7 @@
 <li><b>Lifetime payback (<a href="#s11">§11</a>):</b> <!-- TODO: historical production uses the recent load/value profile from the no-solar counterfactual plus an approximate rate index. Do not claim a numerical uncertainty bound: the model calculates no uncertainty interval for crossover dates. Retain invoice/PTO provenance. --></li>
 <li><b>Carbon (<a href="#s13">§13</a>):</b> <!-- TODO: grid-operator data files, intensity computation, grid-average-vs-marginal caveat; cite {{CARBON_SCRIPT}}. --></li>
 <li><b>NBT counterfactual &amp; price map (<a href="#s13">§13</a>):</b> <!-- TODO: successor-tariff export-rate variants; price-map source file. --></li>
-<li><b>Quiet-night floor method (<a href="#s13">§13</a>):</b> <!-- TODO: the quiet-night selection rule (window, per-night gate, and what the gate does and does not identify), the statistics computed from the kept nights, and the two pricing methods applied to the floor; name the script and the artifact it writes. --></li>
+<li><b>Quiet-night floor method (<a href="#quiet-night-floor">usage evidence</a>):</b> <!-- TODO: the quiet-night selection rule (window, per-night gate, and what the gate does and does not identify), the statistics computed from the kept nights, and the two pricing methods applied to the floor; name the script and the artifact it writes. --></li>
 </ul>
 <p class="small"><b>Data sources:</b> {{DATA_SOURCES_DETAIL}} <!-- TODO: full inventory with platform names and export types. --></p>
 <p class="small"><b>Rate &amp; tariff sources:</b> {{RATE_SOURCES_DETAIL}}</p>
@@ -901,6 +991,7 @@
 // D holds every number the charts draw. ALL values must come from the analysis
 // scripts — regenerate this object programmatically; never hand-edit figures.
 const D = {
+ balcony:/* matched balcony chart data */null,
  // Average kW by hour of day, from utility 15-min interval data (24 values each).
  hourlyS_imp:[/* 24 hourly values — summer avg-kW grid import */],
  hourlyS_exp:[/* 24 hourly values — summer avg-kW solar export */],
@@ -968,10 +1059,10 @@ new Chart(document.getElementById('monthly'),{data:{labels:D.mLabels,datasets:[
  scales:{y:{title:{display:true,text:'kWh'}},y2:{position:'right',grid:{display:false},title:{display:true,text:'$'}}}}});
 new Chart(document.getElementById('periods'),{type:'bar',data:{
  labels:['Super off-peak','Off-peak','On-peak'],
- datasets:[{label:'Annual import kWh',data:[/* 3 values: kWh by TOU period */],backgroundColor:A(PAL.sub,.55)},
-  {label:'Annual import cost $',data:[/* 3 values: gross import $ by TOU period */],backgroundColor:A(PAL.on,.75)}]},
+ datasets:[{label:'Annual import kWh',xAxisID:'xKwh',data:[/* 3 values: kWh by TOU period */],backgroundColor:A(PAL.sub,.55)},
+  {label:'Annual import cost $',xAxisID:'xDollars',data:[/* 3 values: gross import $ by TOU period */],backgroundColor:A(PAL.on,.75)}]},
  // Keep the title terse for mobile screens; put findings, scope, and quantities in the adjacent caption.
- options:{indexAxis:'y',plugins:{title:{display:true,text:'Imports by TOU period',color:PAL.ink}}}});
+ options:{indexAxis:'y',plugins:{title:{display:true,text:'Imports by TOU period',color:PAL.ink}},scales:{xKwh:{position:'bottom',beginAtZero:true,title:{display:true,text:'Annual grid imports (kWh)'}},xDollars:{position:'top',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'Gross import energy cost ($)'}}}}});
 // LAZY CHART REGISTRY — keep this generic; do not special-case a single canvas.
 // A Chart.js canvas built while any ancestor <details> is closed measures 0x0 and never
 // recovers, so every canvas inside a collapsible section (the advanced tier, or any
@@ -1009,6 +1100,56 @@ lazyChart('spread',el=>new Chart(el,{type:'line',data:{labels:D.spLabels,dataset
  options:{plugins:{title:{display:true,text:'Delivery rate spread',color:PAL.ink}},scales:{y:{title:{display:true,text:'$/kWh spread'}}}}}));
 document.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',runLazyCharts));
 runLazyCharts();
+
+// Matched physical profiles and financial projections share one selected baseline.
+// All plotted values come from D.balcony; the browser only selects and formats them.
+const balconyCharts={};
+const balconyNames={baseline:'Starting equipment',panels:'Add panels',portable:'Add portable battery',combined:'Add panels + portable battery'};
+const balconyKeys=['baseline','panels','portable','combined'];
+const balconyMoney=v=>v===null?'Not determined':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(v);
+const balconyYears=v=>v===null?'No simple payback':v.toFixed(2)+' yr';
+const balconyTableRows=(id,rows)=>{
+ const body=document.querySelector('#'+id+' tbody');body.replaceChildren();
+ for(const row of rows){const tr=document.createElement('tr');for(const value of row){const td=document.createElement('td');td.textContent=value;tr.append(td);}body.append(tr);}
+};
+function updateBalcony(){
+ if(!D.balcony)return;
+ const home=document.getElementById('balcony-home').value;
+ const season=document.getElementById('balcony-season').value;
+ const purchase=document.getElementById('balcony-purchase').value;
+ const selected=D.balcony.home_storage[home], cases=selected.purchases[purchase];
+ const profiles=balconyKeys.map(k=>D.balcony.profiles[selected.hourly[k]].seasons[season]);
+ const colors=[PAL.sub,PAL.solar,PAL.off,PAL.sop];
+ const dashes=[[],[7,3],[2,3],[10,3,2,3]];
+ const homeLabel=home==='0'?'no home storage':home+' kWh generic home storage';
+ const seasonLabel=season==='S'?'Summer':'Winter';
+ const purchaseLabel=purchase==='panels'?'panels only':'panels + portable battery';
+ document.getElementById('balcony-chart-status').textContent=seasonLabel+' hourly profiles; starting equipment: existing rooftop + '+homeLabel+'. Purchase shown: '+purchaseLabel+'.';
+ document.getElementById('balcony-source-basis').textContent='Starting source: '+selected.baseline_id+'. Added purchase: '+purchaseLabel+'. Hourly season: '+seasonLabel+'.';
+ for(const [id,key,title] of [['balcony-imports','imports_avg_kw','Hourly grid imports'],['balcony-exports','physical_exports_avg_kw','Hourly physical exports']]){
+  const datasets=profiles.map((p,i)=>({label:balconyNames[balconyKeys[i]],data:p[key],borderColor:colors[i],borderDash:dashes[i],borderWidth:2,pointRadius:0,tension:0}));
+  const max=Math.ceil(Math.max(...Object.values(D.balcony.profiles).flatMap(p=>['S','W'].flatMap(s=>p.seasons[s][key]))));
+  if(balconyCharts[id]){balconyCharts[id].data.datasets=datasets;balconyCharts[id].update();}
+  else balconyCharts[id]=new Chart(document.getElementById(id),{type:'line',data:{labels:hrs,datasets},options:{plugins:{title:{display:true,text:title,color:PAL.ink}},scales:{x:{title:{display:true,text:'Local clock hour'}},y:{min:0,max,title:{display:true,text:'Average power (kW)'}}}},plugins:[onpeakBand]});
+ }
+ const treatments=['zero_credit','credited'];
+ const creditLabels=['No extra-export credit','Hypothetical extra-export credit'];
+ const financialDatasets=key=>treatments.map((t,i)=>({label:creditLabels[i],data:cases[t][key],borderColor:i?PAL.sop:PAL.off,backgroundColor:A(i?PAL.sop:PAL.off,.65),borderWidth:1}));
+ const monthly='balcony-monthly-chart';
+ if(balconyCharts[monthly]){balconyCharts[monthly].data.datasets=financialDatasets('monthly_savings_usd');balconyCharts[monthly].update();}
+ else balconyCharts[monthly]=new Chart(document.getElementById(monthly),{type:'bar',data:{labels:D.balcony.months.map(m=>m.label),datasets:financialDatasets('monthly_savings_usd')},options:{plugins:{title:{display:true,text:'Additional monthly bill savings',color:PAL.ink}},scales:{y:{beginAtZero:true,grid:{color:c=>c.tick.value===0?PAL.ink:A(PAL.sub,.18)},title:{display:true,text:'Additional savings ($)'}}}}});
+ const payback='balcony-payback';
+ const paybackData=treatments.map((t,i)=>({label:creditLabels[i],data:cases[t].cost_sensitivities.map(p=>({x:p.installed_cost_usd,y:p.simple_payback_years})),borderColor:i?PAL.sop:PAL.off,borderDash:i?[6,3]:[],pointRadius:4,showLine:true,spanGaps:false}));
+ if(balconyCharts[payback]){balconyCharts[payback].data.datasets=paybackData;balconyCharts[payback].update();}
+ else balconyCharts[payback]=new Chart(document.getElementById(payback),{type:'scatter',data:{datasets:paybackData},options:{plugins:{title:{display:true,text:'Conditional simple payback',color:PAL.ink}},scales:{x:{title:{display:true,text:'Assumed complete incremental cost ($)'}},y:{min:0,title:{display:true,text:'Simple payback (years)'}}}}});
+ balconyTableRows('balcony-hourly-source',hrs.map((h,i)=>[h,...profiles.flatMap(p=>[p.imports_avg_kw[i].toFixed(3),p.physical_exports_avg_kw[i].toFixed(3)])]));
+ balconyTableRows('balcony-monthly-source',D.balcony.months.map((m,i)=>[m.label,...treatments.map(t=>balconyMoney(cases[t].monthly_savings_usd[i]))]));
+ balconyTableRows('balcony-payback-source',cases.zero_credit.cost_sensitivities.map((p,i)=>[balconyMoney(p.installed_cost_usd),...treatments.map(t=>balconyYears(cases[t].cost_sensitivities[i].simple_payback_years))]));
+}
+if(D.balcony){
+ for(const id of ['balcony-home','balcony-season','balcony-purchase'])document.getElementById(id).addEventListener('change',updateBalcony);
+ updateBalcony();
+}
 
 // --- Navigation enhancements (progressive: page works fully without this script) ---
 // Anchor offset: measure the sticky nav's real height and feed it to h2{scroll-margin-top}.
