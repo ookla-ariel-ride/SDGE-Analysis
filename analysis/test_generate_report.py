@@ -744,11 +744,68 @@ def case_a_real_token_resolution_failure_blocks_the_full_run():
 @case
 def case_only_combined_with_dry_run_still_works_exactly_as_before():
     _require_gitleaks()
-    result = gr.run(provider="anthropic", model="claude-fabricated-for-tests",
-                    dry_run=True, only="s0", human_answers=_all_human_answers())
-    assert result["dry_run"] is True
-    assert not result["wrote"]
+    saved = (gr.DEFAULT_CACHE_DIR, gr.DEFAULT_MANIFEST_PATH, lp._dry_run_dir)
+    with tempfile.TemporaryDirectory() as td:
+        private = pathlib.Path(td) / "private"
+        previews = private / "llm_dry_run"
+        previews.mkdir(parents=True)
+        gr.DEFAULT_CACHE_DIR = private / "report_cache"
+        gr.DEFAULT_MANIFEST_PATH = private / "report_generation_manifest.json"
+        # Redirect only the preview destination. lp.ROOT still selects the
+        # actual input sources and gitleaks/PII rules for every preflight.
+        lp._dry_run_dir = lambda: previews
+        try:
+            # Omit the output arguments: exercise the same default-path branch.
+            result = gr.run(provider="anthropic", model="claude-fabricated-for-tests",
+                            dry_run=True, only="s0", human_answers=_all_human_answers())
+            assert result["dry_run"] is True
+            assert not result["wrote"]
+            manifest = json.loads(gr.DEFAULT_MANIFEST_PATH.read_text())
+            assert manifest["dry_run"] is True and manifest["only"] == "s0"
+            requests = list(previews.glob("*.json"))
+            if not result["failures"]:
+                assert requests, "a successful dry-run produced no preview requests"
+            for path in requests:
+                body = json.loads(path.read_text())
+                assert body["system"] and body["user"], "an incomplete preview request was written"
+        finally:
+            gr.DEFAULT_CACHE_DIR, gr.DEFAULT_MANIFEST_PATH, lp._dry_run_dir = saved
     return "--only combined with --dry-run is unaffected -- still just previews request bodies"
+
+
+@case
+def case_dry_run_preview_fixture_preserves_existing_private_outputs():
+    """Removing either output redirect must fail without touching the real archive."""
+    _require_gitleaks()
+    saved = (gr.DEFAULT_CACHE_DIR, gr.DEFAULT_MANIFEST_PATH, lp._dry_run_dir)
+    with tempfile.TemporaryDirectory() as td:
+        private = pathlib.Path(td) / "private"
+        previews = private / "llm_dry_run"
+        previews.mkdir(parents=True)
+        (previews / "existing.json").write_text('{"keep": "prior evidence"}')
+        manifest = private / "report_generation_manifest.json"
+        manifest.write_text('{"keep": "prior manifest"}')
+        archive = private / "1-raw-data"
+        archive.mkdir()
+        (archive / "fixture.txt").write_text("invented archive sentinel")
+        before = {p.relative_to(private): p.read_bytes()
+                  for p in private.rglob("*") if p.is_file()}
+        gr.DEFAULT_CACHE_DIR = private / "report_cache"
+        gr.DEFAULT_MANIFEST_PATH = manifest
+        lp._dry_run_dir = lambda: previews
+        try:
+            case_only_combined_with_dry_run_still_works_exactly_as_before()
+            after = {p.relative_to(private): p.read_bytes()
+                     for p in private.rglob("*") if p.is_file()}
+            assert after == before, (
+                "the dry-run case changed its caller's private/; preview requests, "
+                "the prior manifest, and unrelated archive evidence must stay untouched")
+            assert gr.DEFAULT_CACHE_DIR == private / "report_cache"
+            assert gr.DEFAULT_MANIFEST_PATH == manifest
+            assert lp._dry_run_dir() == previews
+        finally:
+            gr.DEFAULT_CACHE_DIR, gr.DEFAULT_MANIFEST_PATH, lp._dry_run_dir = saved
+    return "the dry-run case preserves existing private previews, manifest, and archive evidence"
 
 
 @case

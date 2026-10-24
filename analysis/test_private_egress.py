@@ -632,20 +632,25 @@ MOVERS = {
         guard="analysis/test_stage_private_data.py::"
               "case_refuses_a_plain_directory_whose_git_gitfile_forges_membership"),
 
-    ("analysis/check_coverage.sh", "<script>"): Mover(
-        moves="nothing private OUTWARD: it copies analysis/*.py and two committed "
-              "data/*.csv INTO private/verify, then runs the generators there",
-        destination="private/verify inside the checkout the script derives from its "
-                    "own location (cd \"$(dirname \"$0\")/..\")",
-        unguarded="No test asserts where it writes. It is in the census because it "
-                  "is a shell script that copies and touches private/, and the "
-                  "honest answer is that its containment rests on `cd $(dirname "
-                  "$0)/..` and on every path being $ROOT-relative -- reviewed by "
-                  "eye here, not by a mechanism. The exposure is small and in the "
-                  "safe direction: the data moving is public (committed scripts and "
-                  "committed artifacts) and the destination is inside the private "
-                  "tree, so a wrong $ROOT loses a coverage run rather than leaking "
-                  "a household."),
+    ("analysis/coverage_runner.py", "_run_gate"): Mover(
+        moves="requests a complete private input copy through dry_run.Sandbox.build; "
+              "does not implement a second raw-data copier",
+        destination="the guarded disposable snapshot outside the checkout, with "
+                    "copied inputs and an inherited marker lock",
+        kind="declared",
+        invisible="the copy occurs inside Sandbox.build, not at this delegating call",
+        guard="analysis/test_dry_run.py::"
+              "case_the_sandbox_is_outside_the_repo_and_holds_no_path_back_into_private"),
+
+    ("analysis/coverage_runner.py", "Task.start"): Mover(
+        moves="full child stdout and stderr, which can contain private household "
+              "input diagnostics, into this run's retained log",
+        destination="a checked directory directly inside this checkout private/; "
+                    "public paths and symlink escapes are refused before a write",
+        kind="declared",
+        invisible="the log destination arrives through a constructor parameter",
+        guard="analysis/test_private_egress.py::"
+              "case_coverage_logs_refuse_public_or_symlinked_destinations"),
 
     ("analysis/dry_run.py", "Sandbox._copy_private"): Mover(
         moves="the entire private/ tree, copied (never symlinked) into the sandbox",
@@ -798,7 +803,8 @@ MOVERS = {
 # constant was here first, and it passed while an entry was being deleted.
 MOVERS_FLOOR = frozenset({
     ("stage-private-data.sh", "<script>"),
-    ("analysis/check_coverage.sh", "<script>"),
+    ("analysis/coverage_runner.py", "_run_gate"),
+    ("analysis/coverage_runner.py", "Task.start"),
     ("analysis/dry_run.py", "Sandbox._copy_private"),
     ("analysis/dry_run.py", "Sandbox._copy_cwd_fixtures"),
     ("analysis/dry_run.py", "Sandbox.build"),
@@ -1968,6 +1974,46 @@ def _private_verdict(path, *, kind, require_ignored=True, worktrees=None, env=No
 # ===========================================================================
 # CASES -- the census
 # ===========================================================================
+@case
+def case_coverage_logs_refuse_public_or_symlinked_destinations():
+    """The real log writer refuses before it creates anything outside private/."""
+    import coverage_runner as runner
+    with tempfile.TemporaryDirectory() as td:
+        fixture = pathlib.Path(td).resolve() / "checkout"
+        (fixture / "private").mkdir(parents=True)
+        (fixture / "analysis").mkdir()
+        (fixture / "analysis" / "fixture.py").write_text("VALUE = 1\n")
+        (fixture / ".coveragerc").write_text("[run]\nparallel = false\n")
+        outside = pathlib.Path(td).resolve() / "public"
+        outside.mkdir()
+        (fixture / "private" / "linked").symlink_to(outside, target_is_directory=True)
+        for destination in (outside, fixture / "private", fixture / "private" / "linked"):
+            task = runner.Task("fixture", fixture / "analysis" / "fixture.py",
+                               fixture, destination, fixture, {})
+            try:
+                task.start()
+            except runner.GateError:
+                pass
+            else:
+                task.stop()
+                raise AssertionError("the coverage log writer accepted a non-private destination")
+        assert not list(outside.iterdir()), "the refused writer left files in public/"
+        assert runner.checked_run_dir(fixture, fixture / "private" / "fresh") == fixture / "private" / "fresh"
+        (fixture / "private").rename(fixture / "old-private")
+        (fixture / "private").symlink_to(outside, target_is_directory=True)
+        task = runner.Task("fixture", fixture / "analysis" / "fixture.py",
+                           fixture, fixture / "private" / "fresh", fixture, {})
+        try:
+            task.start()
+        except runner.GateError:
+            pass
+        else:
+            task.stop()
+            raise AssertionError("the coverage log writer accepted a symlinked private/ root")
+        assert not list(outside.iterdir()), "the refused writer followed the private/ symlink"
+    return "coverage logs refuse public and symlinked destinations before any write"
+
+
 @case
 def case_every_discovered_mover_is_registered():
     """The half that makes the set enforced rather than declared: a new copy of
