@@ -8435,6 +8435,47 @@ CASES = [
 
 
 
+def case_named_equipment_tables_match_their_cost_and_panel_denominators():
+    data = json.loads((ROOT / 'data/portable_equipment.json').read_text())
+    reader = _BalconyTables.read(HTML)
+    rows = [(a,c) for a,c in reader.tables['balcony-named-results'] if 'data-equipment' in a]
+    assert len(rows) == len(data['costs']['rows']) == 8
+    for (attrs,cells), basket in zip(rows, data['costs']['rows']):
+        assert attrs['data-equipment'] == basket['id']
+        low, high = basket['cases']
+        assert cells[:4] == [basket['name'], f"{basket['nominal_capacity_kwh']:g} kWh",
+                            f"{low['pv_dc_kw']:g} kW DC",
+                            _balcony_expected_money(low['price_sensitivities'][0]['equipment_panel_freight_subtotal_usd'])]
+        for i, item in enumerate((low, high)):
+            subtotal = item['price_sensitivities'][0]['equipment_panel_freight_subtotal_usd']
+            assert cells[4 + i * 2:6 + i * 2] == [_balcony_expected_money(item['annual_savings_usd']),
+                f"{subtotal / item['annual_savings_usd']:.2f} yr"]
+    panel_rows = [(a,c) for a,c in reader.tables['balcony-panel-results'] if 'data-source-case' in a]
+    source_cases = {row['id']: row for row in data['cases']}
+    items = [(r,item) for r in data['costs']['rows'] for item in r['cases']]
+    assert len(panel_rows) == len(items) == 16
+    for (attrs,cells), (row,item) in zip(panel_rows,items):
+        before = source_cases[attrs['data-baseline']]
+        after = source_cases[attrs['data-source-case']]
+        saving = after['summary']['annual_savings_usd'] - before['summary']['annual_savings_usd']
+        assert before['pv_dc_kw'] == 0 and before['battery']['capacity_kwh'] == after['battery']['capacity_kwh']
+        assert cells[2:] == [_balcony_expected_money(before['summary']['annual_savings_usd']),
+                             _balcony_expected_money(saving), _balcony_expected_money(item['panel_increment_cost_usd']),
+                             f"{item['panel_increment_cost_usd'] / saving:.2f} yr"]
+        if row['id'] == 'balco_260_bundle':
+            assert after['pv_dc_kw'] == 1.8
+            assert item['price_sensitivities'][0]['common_us_panel_freight_usd'] == 0
+    named = HTML[HTML.index('id="balcony-named-equipment"'):HTML.index('id="balcony-generic-heading"')]
+    assert 'not measured balcony placement' in named and 'no separate NEM home battery' in named
+    for doc in (HTML, TEMPLATE_HTML):
+        assert 'charts explain joint operation; they do not plot the named product cases' in doc
+        assert 'European products provide cost and design proxies for future US equivalents' in doc
+    return 'all named costs and panel-only returns match their own cases; chart bases remain separate'
+
+
+CASES.append(case_named_equipment_tables_match_their_cost_and_panel_denominators)
+
+
 def main():
     ran = skipped = failures = 0
     skipped_names = []

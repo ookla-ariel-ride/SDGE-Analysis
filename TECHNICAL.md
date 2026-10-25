@@ -5242,6 +5242,116 @@ monthly deltas and complete-cost points directly with their existing artifact ro
 
 ---
 
+### 3.32a `analysis/portable_equipment.py`: European equipment and cost proxies
+
+`analysis/portable_equipment.py` owns only `data/portable_equipment.json`.
+It compares European equipment with assumed US adaptations and dated US battery prices.
+The [supporting study](research/sb868-portable-solar-storage.md#european-equipment-as-a-proxy-for-future-us-designs)
+states the product evidence and source limits. Price observations date to October 24, 2026.
+Neither the artifact nor the modeled paybacks establish US availability, compatibility,
+certification, measured product performance, or a complete installed quote.
+
+The generator uses §3.32's household loader, PV profile, dispatch, and monthly NEM billing.
+It needs the same private meter/SAM inputs and production reconciliation evidence.
+The baseline is the existing rooftop system after the free EV schedule change, without
+home storage. Frozen June 2026 EV-TOU-5/CEA rates price both sides of each comparison.
+The observation window remains July 24, 2025 through July 23, 2026.
+Hardware savings exclude the free schedule saving. They cannot be added to the separate
+home-storage or joint-system results in `portable_solar_storage.json`.
+
+**Physical assumptions.** The capacity cases use 7.68, 11.52, 12.288, 12.8, and
+13.0048 kWh. Aggregate output is 0.8 or 1.2 kW, shared by new PV and battery discharge.
+Every case uses one aggregate controller, 1.2 kW charging, 20% reserve,
+85% round-trip efficiency, and 10 W continuous AC standby. These are comparison
+assumptions. Multiple devices and a separate conversion hub may have different losses,
+standby, accessible loads, and control behavior.
+
+Discharge is allowed from 16:00 to midnight and serves remaining imports.
+Grid charging is allowed only during the tariff's super-off-peak intervals.
+The no-panel case charges through the grid channel. Panel cases also accept new-PV
+surplus. Existing rooftop exports stay outside this controller's solar-charge allocation.
+The calculation restores those exports to the physical and credited accounts before billing.
+That accounting choice preserves their baseline credit; it does not establish physical
+source separation behind one meter. Grid-channel charging can coincide with rooftop exports.
+
+New exports receive no credit. They remain in the physical export array and therefore
+enter the canonical positive interval-net NBC calculation. The model does not impose
+zero export. Source allocation, settlement eligibility, and instantaneous flows remain
+distinct questions. Every annual saving is a difference between complete modeled bills.
+Monthly bills retain their components and physical accounts; they are not actual statements.
+
+Each capacity/output pair has a no-panel control and a 1.6 kW DC case.
+The 12.8 kWh Balco reference also has a 1.8 kW DC case at each output limit.
+The resulting 22 cases use the existing rooftop production proxy.
+AC clipping occurs before storage, so the model excludes direct-DC clipping recovery.
+Panel placement, shade, mounting, and product-specific electrical matching remain unmeasured.
+Annual state of charge must close without an initial stored-energy subsidy.
+
+**Artifact interface.** `cases[].id` has the form
+`equipment_{capacity:g}kwh_{output:g}kw_pv{dc:g}kw`.
+Each `summary` contains annual savings, the complete bill, physical/battery accounts,
+and conditional economics from the shared model. `baseline` stores the comparison basis.
+`window`, `rate_basis`, `load_basis`, `assumptions`, `limits`, and `sources` record its scope.
+`new_pv_marginals`, `output_cap_marginals`, and `capacity_marginals` retain matched
+`before_id` and `after_id` values. Their annual savings subtract complete scenario results;
+they do not allocate a package saving in proportion to equipment cost.
+
+**Cost calculations.** `costs.rows` links each equipment basket to its modeled capacity,
+output, and panel case. The US APEX, DELTA Pro Ultra, and DELTA Pro Ultra X prices stay
+separate from the European hub/meter allowance. Integrated STREAM, Zendure, and Balco
+references use European equipment prices. A future feed-in hub is an assumed alternative
+to a Smart Home Panel, Gateway, or AT1 transfer connection. Transfer equipment is not a
+mandatory cost in that proxy; a supported design must establish the actual route.
+
+The exchange rate is 1.1193 USD/EUR from the ECB's October 23, 2026 reference.
+German EcoFlow and Zendure variants use advertised zero-VAT prices.
+BLUETTI European prices include 19% VAT; the calculation divides those prices by 1.19
+before conversion. US sales tax remains excluded. This tax treatment normalizes price
+references; it does not establish a buyer's tax eligibility or an import cost.
+
+The common panel/freight allowance is $1,593.99 for 1.6 kW DC of US-priced panels.
+The separate Balco bundle uses its European package price and 1.8 kW DC panel capacity.
+Its European panel cost must not be presented as the common US allowance.
+Price sensitivities multiply EU-derived costs by 1, 1.5, or 2 while known US battery
+prices and the common US panel allowance stay fixed. The bundle's European panels
+follow its multiplier. These multipliers are assumptions, not future regional price forecasts.
+
+Each cost case retains `source_case`, `battery_only_source_case`, and their annual savings.
+`panel_increment_annual_savings_usd` subtracts the same battery's no-panel result.
+`panel_increment_cost_usd` prices the corresponding panel addition.
+`panel_only_simple_payback_years` uses those two increments.
+The `price_sensitivities` array divides each component subtotal by the complete case's
+annual saving. Neither ratio includes free behavior or an unrelated home battery's saving.
+
+Component subtotals exclude mounting, meter installation, site wiring, tax, and other
+unquoted costs. Simple payback also excludes degradation, maintenance, financing,
+replacement, and discounting. Five-/ten-year cost ceilings retain the shared model's
+5% real discount, 1% annual savings decline, and zero real tariff escalation.
+They precede unknown ownership costs. Actual installed payback remains undetermined.
+
+**Reproduction.** From the repository root, after private intake and meter/SAM staging:
+
+```bash
+cd private/verify
+test -f usage.csv && test -f samA.csv && test -f samB.csv
+../../.venv/bin/python ../../analysis/portable_equipment.py
+git diff --exit-code -- ../../data/portable_equipment.json
+```
+
+The synthetic suite needs no private archive:
+
+```bash
+./.venv/bin/python analysis/test_portable_equipment.py
+```
+
+Publication also needs artifact reproduction, report consistency, coverage, and privacy
+checks. The generator's exclusive output belongs to the script census.
+Shared dispatch checks cover conservation, reserve, charge/output limits, and annual SOC.
+Equipment checks cover matched savings and panel increments, price arithmetic, and
+the distinction between observed equipment prices and assumed US adaptations.
+
+---
+
 ### 3.33 `analysis/service_voltage.py` — sampled voltage evidence (`data/service_voltage.json`)
 
 The generator describes monitored readings and conditional associations. It does not

@@ -1990,6 +1990,22 @@ def case_balcony_projection_preserves_negative_and_null_economics():
     return 'negative savings and unknown payback remain negative and null'
 
 
+@case
+def case_named_equipment_block_renders_without_a_prose_provider():
+    template = ('<!-- authoring instructions -->\n<h2 id="balcony-solar">Balcony solar</h2>'
+                '<p>{{BALCONY_VERDICT}}</p><!-- TODO: named equipment -->')
+    template += '<script>' + '\n'.join(gr.chart_data_replacements()) + '</script>'
+    template += '<p>' + gr.PROVENANCE_SENTENCE_LITERAL + '</p>'
+    fragment = rb.DATA_BUILDERS['balcony-solar#1']()
+    rendered, missing = gr.render(template, {'balcony-solar#1': fragment},
+                                  {'BALCONY_VERDICT': rt.resolve_token('BALCONY_VERDICT'),
+                                   'GENERATION_TOOL': 'mechanical test'})
+    assert not missing and '{{' not in rendered and 'TODO' not in rendered
+    assert fragment in rendered and 'balcony-panel-results' in rendered
+    assert 'component subtotal' in rendered and 'future US equivalents' in rendered
+    return 'the named equipment block renders mechanically with no external prose call'
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

@@ -18008,6 +18008,54 @@ def case_balcony_purchase_example_uses_own_savings_and_keeps_null_payback():
     return 'purchase example keeps unknown/nonpositive results and refuses an unrelated saving denominator'
 
 
+@case
+def case_named_equipment_verdict_uses_matched_battery_and_panel_values():
+    import json
+    data = json.loads((rt.DATA / 'portable_equipment.json').read_text())
+    row = next(r for r in data['costs']['rows'] if r['id'] == 'stream_x2')
+    source = next(c for c in row['cases'] if c['aggregate_output_kw'] == .8)
+    text = rt.resolve_token('BALCONY_VERDICT')
+    for value in (source['annual_savings_usd'], source['battery_only_annual_savings_usd'],
+                  source['panel_increment_annual_savings_usd']):
+        assert f'${value:,.2f}' in text, (value, text)
+    subtotal = source['price_sensitivities'][0]['equipment_panel_freight_subtotal_usd']
+    assert f'${subtotal:,.0f}' in text
+    assert 'component subtotal' in text and 'future US equivalents' in text
+    assert '$742/yr' in rt.resolve_token('BALCONY_GENERIC_VERDICT')
+    return 'named verdict and generic verdict retain separate artifact bases'
+
+
+@case
+def case_named_equipment_refuses_mismatched_source_costs_and_panel_paybacks():
+    import copy
+    original = rt._json(rt._EQUIPMENT_ARTIFACT)
+    changes = (
+        lambda d: d['costs']['rows'][0]['cases'][0].__setitem__('annual_savings_usd', 1),
+        lambda d: d['costs']['rows'][0]['cases'][0].__setitem__('battery_only_annual_savings_usd', 1),
+        lambda d: d['costs']['rows'][0]['cases'][0].__setitem__('panel_increment_annual_savings_usd', 1),
+        lambda d: d['costs']['rows'][0]['cases'][0].__setitem__('panel_only_simple_payback_years', 1),
+        lambda d: d['costs']['rows'][0].__setitem__('converted_eu_proxy_usd', 1),
+        lambda d: d['costs']['rows'][0]['cases'][0]['price_sensitivities'][0].__setitem__('equipment_panel_freight_subtotal_usd', 1),
+        lambda d: d['costs']['rows'][0]['cases'][0].__setitem__('source_case', 'absent'),
+        lambda d: d['cases'].append(d['cases'][0]),
+        lambda d: d['costs']['rows'].append(d['costs']['rows'][0]),
+        lambda d: d['costs']['rows'][0].__setitem__('eu_ex_vat_eur', float('nan')),
+    )
+    try:
+        for change in changes:
+            broken = copy.deepcopy(original); change(broken)
+            rt._json_cache[rt._EQUIPMENT_ARTIFACT] = broken
+            try:
+                rt._equipment_data()
+            except SystemExit:
+                pass
+            else:
+                raise AssertionError('an inconsistent equipment join rendered')
+    finally:
+        rt._json_cache[rt._EQUIPMENT_ARTIFACT] = original
+    return 'equipment rendering refuses corrupted joins, duplicates, costs and panel paybacks'
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

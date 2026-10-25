@@ -930,11 +930,13 @@ def _depth_quote_priority():
     candidates = {c['id']: c for c in rt._balcony_decision_support()['candidate_allowances']}
     dpu, ultra = candidates['dpu_two_battery'], candidates['ultrax_base']
     return _depth_paragraphs(
-        f"Complete installed costs remain unknown. For bill savings, compare a supported storage quote before buying added panels. The generic two-battery Delta Pro Ultra case saves {_balcony_money(dpu['annual_savings_usd'])}/yr. Its advertised equipment-only cost is {_balcony_money(dpu['equipment_price_usd'])}. "
+        f"At the separate high-output settings, the generic two-battery Delta Pro Ultra case saves {_balcony_money(dpu['annual_savings_usd'])}/yr. Its advertised equipment-only cost is {_balcony_money(dpu['equipment_price_usd'])}. "
         f"The higher-output Ultra X-shaped case saves {_balcony_money(ultra['annual_savings_usd'])}/yr. Its advertised equipment-only cost is {_balcony_money(ultra['equipment_price_usd'])}. "
         "Their nearly equal savings give little bill-savings reason to pay for the extra output under this schedule.",
-        "The Delta Pro Ultra connection and measured eligible load decide whether that comparison applies. Request a complete supported-storage quote if whole-meter access and these controls are feasible. "
-        "If only a selected appliance is accessible, measure that appliance first. Stream's small budget and unavailable stock make it a separate feed-in case; it is not the generic combined system.")
+        "These high-output storage cases use different output limits and charging and discharge settings from the named feed-in comparison. "
+        "The Delta Pro Ultra connection and measured eligible load decide whether they apply. "
+        "If only a selected appliance is accessible, measure that appliance first. The dated US Stream Ultra price and stock describe the smaller product below. "
+        "They do not describe the European Stream Ultra X proxy.")
 
 
 _DEPTH_LABELS = {
@@ -1164,6 +1166,190 @@ def _balcony_chart_tables():
         table("balcony-payback-source", "Conditional simple payback, years", ["Assumed complete incremental cost", "No extra-export credit", "Hypothetical extra-export credit"], costs)))
 
 
+def _equipment_table(table_id, headings, rows, caption=None):
+    return (f'<table id="{table_id}">'
+            + ('<caption>' + _esc(caption) + '</caption>' if caption else '')
+            + '<thead><tr>'
+            + ''.join('<th scope="col">' + _esc(value) + '</th>' for value in headings)
+            + '</tr></thead><tbody>\n' + '\n'.join(rows) + '\n</tbody></table>')
+
+
+def _equipment_years(value):
+    return 'No simple payback' if value is None else f'{value:.2f} yr'
+
+
+def _equipment_section():
+    """Named cost proxies and matched panel increments share one data owner."""
+    data = rt._equipment_data()
+    costs, assumptions = data['costs'], data['assumptions']
+    baskets = {row['id']: row for row in costs['rows']}
+    main, panels, prices, components = [], [], [], []
+    for row in costs['rows']:
+        low, high = [rt._equipment_cost_case(row, cap) for cap in (.8, 1.2)]
+        subtotal = low['price_sensitivities'][0]['equipment_panel_freight_subtotal_usd']
+        cells = [row['name'], f"{row['nominal_capacity_kwh']:g} kWh",
+                 f"{low['pv_dc_kw']:g} kW DC", _balcony_money(subtotal)]
+        for item in (low, high):
+            cells += [_balcony_money(item['annual_savings_usd']),
+                      _equipment_years(item['price_sensitivities'][0]['simple_payback_before_unquoted_costs_years'])]
+        main.append(f'<tr data-equipment="{_esc(row["id"])}">'
+                    + ''.join('<td>' + _esc(value) + '</td>' for value in cells) + '</tr>')
+        for item in (low, high):
+            cells = [row['name'], f"{item['aggregate_output_kw'] * 1000:,.0f} W",
+                     _balcony_money(item['battery_only_annual_savings_usd']),
+                     _balcony_money(item['panel_increment_annual_savings_usd']),
+                     _balcony_money(item['panel_increment_cost_usd']),
+                     _equipment_years(item['panel_only_simple_payback_years'])]
+            panels.append(f'<tr data-equipment="{_esc(row["id"])}" data-source-case="{_esc(item["source_case"])}" '
+                          f'data-baseline="{_esc(item["battery_only_source_case"])}">'
+                          + ''.join('<td>' + _esc(value) + '</td>' for value in cells) + '</tr>')
+        cells = [row['name']]
+        for point in high['price_sensitivities']:
+            cells += [_balcony_money(point['equipment_panel_freight_subtotal_usd']),
+                      _equipment_years(point['simple_payback_before_unquoted_costs_years'])]
+        prices.append(f'<tr data-equipment="{_esc(row["id"])}">'
+                      + ''.join('<td>' + _esc(value) + '</td>' for value in cells) + '</tr>')
+        cells = [row['name'], _balcony_money(row['known_us_equipment_usd'], 2),
+                 f"€{row['eu_ex_vat_eur']:,.2f}", _balcony_money(row['converted_eu_proxy_usd'], 2),
+                 _balcony_money(row['storage_feed_in_meter_subtotal_usd'], 2)]
+        links = []
+        for key in row['source_ids']:
+            source = data['sources'][key]
+            links.append(f'<a href="{_esc(source["url"])}">{_esc(source["title"])}</a>')
+        components.append(f'<tr data-equipment="{_esc(row["id"])}">'
+                          + ''.join('<td>' + _esc(value) + '</td>' for value in cells)
+                          + '<td>' + '; '.join(links) + '</td></tr>')
+    increments = []
+    for cap in (.8, 1.2):
+        before, after = [rt._equipment_cost_case(baskets[key], cap) for key in ('stream_x2', 'stream_x3')]
+        delta = after['annual_savings_usd'] - before['annual_savings_usd']
+        difference = (after['price_sensitivities'][0]['equipment_panel_freight_subtotal_usd']
+                      - before['price_sensitivities'][0]['equipment_panel_freight_subtotal_usd'])
+        increments.append(f"At {cap * 1000:,.0f} W, the third Stream unit adds {_balcony_money(delta, 2)}/yr "
+                          f"for {_balcony_money(difference)} more in components, "
+                          f"or {_equipment_years(difference / delta) if delta > 0 else 'no simple payback'}.")
+    dpu, dpu_x, apex = [baskets[key] for key in ('dpu', 'dpu_x', 'apex')]
+    premium = dpu_x['known_us_equipment_usd'] - dpu['known_us_equipment_usd']
+    standard = [item for row in costs['rows'] if row['included_pv_dc_kw'] == 0 for item in row['cases']]
+    panel_savings = [item['panel_increment_annual_savings_usd'] for item in standard]
+    panel_years = [item['panel_only_simple_payback_years'] for item in standard
+                   if item['panel_only_simple_payback_years'] is not None]
+    bundle = baskets['balco_260_bundle']
+    bundle_item = bundle['cases'][0]
+    parts = [
+        '<h3 id="balcony-named-equipment">Compare named equipment on the same schedule</h3>',
+        '<p><span class="pill y">modeled</span> <span class="pill r">estimated costs</span> '
+        'European designs provide planning proxies for future US equivalents. '
+        'The comparison can price those assumptions now; US release, electrical ratings and complete-system certification remain purchase checks.</p>',
+        _depth_paragraphs(
+            f"These {len(data['cases'])} cases start after the free EV change, retain the rooftop and add no separate NEM home battery. "
+            f"Discharge runs from 4pm to midnight, with {assumptions['reserve_fraction'] * 100:g}% reserve, "
+            f"{assumptions['round_trip_efficiency'] * 100:g}% round-trip efficiency and {assumptions['standby_w_total']:g} W total standby. "
+            f"Charging uses new PV or super-off-peak grid energy through a common {assumptions['charge_kw']:g} kW limit.",
+            "The controller assumes access to whole-meter load. Existing rooftop exports retain their modeled credit; added physical exports receive no credit. "
+            "This accounting excludes existing rooftop surplus from the portable solar-charge allocation. It does not enforce zero export or physically separate energy behind one meter.",
+            "The documented European feed-in reference is 800 W. The 1,200 W columns assume a future US adaptation and one aggregate output cap. "
+            "Balco 260 has European 800, 1,000 and 1,200 VA variants at 230 V; that evidence establishes no US product rating. "
+            "An inverter's larger appliance-output rating cannot raise this modeled feed-in cap."),
+        '<p>The <a href="https://s4.bluettipower.com/bluetti_lgf/support/2026/07/0d47167c-8622-49d0-b8fc-92ce47d61641.pdf">Balco Transfer Hub manual</a> '
+        'supports the European AC-output-to-hub design. It permits compatible stations with at least 1,000 W AC output; advanced controls depend on the supported model. '
+        'The Delta Pro Ultra X pairing, future US voltage and meter compatibility remain assumptions. '
+        'A Smart Home Panel, Gateway or AT1 is a separate connection option, not a mandatory cost in this feed-in proxy.</p>',
+        '<p><a href="https://de.ecoflow.com/products/stream-ultra-x">Stream Ultra X</a> is the integrated European unit; '
+        'Delta Pro Ultra X is the larger portable station. Their appliance-output ratings differ from mains feed-in. '
+        'The <a href="https://s4.bluettipower.com/bluetti_lgf/support/2026/07/69ded012-5399-47f9-a465-7ec07d4f71e9.pdf">Balco 260 manual</a> '
+        'states the European voltage and output variants.</p>',
+        _depth_paragraphs(
+            f"Component prices were checked on {costs['date']}. The exchange reference is €1 = ${costs['eur_usd_reference']:.4f}, dated {costs['reference_date']}. "
+            "German EcoFlow and Zendure prices use the advertised zero value-added tax variants. The calculation removes nineteen percent value-added tax from Bluetti European prices. "
+            "US sales tax remains excluded.",
+            f"The standard baskets add {_balcony_money(costs['panel_freight_usd'], 2)} for four 400 W Renogy panels and published US freight. "
+            "The totals below are component subtotals, not installed quotes. Mounts, meter installation, site wiring, other accessories, labor and ownership costs remain outside them. "
+            "The Balco bundle uses its own included panels and excludes that separate US allowance. Its freight remains unquoted and excluded."),
+        '<p>New PV follows the existing rooftop production shape, not measured balcony placement. '
+        'The table assumes whole-meter load access and no separate NEM home battery. A shaded or differently oriented placement needs its own production estimate.</p>',
+        '<p>Cost sources: <a href="https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf">European Central Bank exchange reference</a> '
+        'and <a href="https://www.renogy.com/products/400w-n-type-bifacial-solar-panel">Renogy panel and freight price</a>. '
+        'The component-source table below links each manufacturer price.</p>',
+        _equipment_table('balcony-named-results',
+            ['Equipment basket', 'Nominal storage', 'New panels', 'Component subtotal',
+             '800 W saving/yr', '800 W subtotal payback', 'Assumed 1,200 W saving/yr', 'Assumed 1,200 W subtotal payback'], main,
+            caption='On narrow screens, scroll the table sideways to see both output limits.'),
+        _depth_paragraphs(
+            "Each payback divides the component subtotal by its own first-year modeled bill saving. "
+            "It excludes unquoted costs, savings decline, financing, maintenance and replacement. A long ratio does not establish equipment life. "
+            "No federal credit, backup value or program revenue enters these returns.",
+            f"The owner's Delta Pro Ultra X proposal starts at {_balcony_money(dpu_x['known_us_equipment_usd'])} for the US station and two batteries. "
+            f"Its future hub and meter raise the storage subtotal to {_balcony_money(dpu_x['storage_feed_in_meter_subtotal_usd'])}, before panels. "
+            f"The ordinary Delta Pro Ultra uses the same modeled capacity and output cap for {_balcony_money(premium)} less. "
+            "The model therefore gives them the same saving.",
+            f"Bluetti Apex 300 plus two B500K batteries starts at {_balcony_money(apex['known_us_equipment_usd'])} in US equipment. "
+            "The lower-cost integrated Stream, Zendure and Balco baskets deserve comparison when bill savings set the priority. "
+            "Portable output and backup functions remain separate reasons to choose a larger station.",
+            f"Expanding Stream storage from {baskets['stream_x2']['nominal_capacity_kwh']:g} to "
+            f"{baskets['stream_x3']['nominal_capacity_kwh']:g} kWh adds little at the lower output cap. "
+            + ' '.join(increments) + ' The output limit changes the return on added capacity. '
+            'The table keeps the two-unit and three-unit configurations separate.'),
+        '<h3 id="balcony-panel-return">Price the panels against their own saving</h3>',
+        _depth_paragraphs(
+            f"Battery time-shifting supplies most of the modeled saving. Across the standard baskets, new panels add "
+            f"{_balcony_money(min(panel_savings), 2)} to {_balcony_money(max(panel_savings), 2)}/yr beyond the same battery without new PV. "
+            f"Their panel-and-freight allowance takes {min(panel_years):.1f} to {max(panel_years):.1f} years to recover before omitted costs.",
+            f"The Balco bundle includes {bundle_item['pv_dc_kw']:g} kW DC from four 450 W panels. "
+            f"Its {_balcony_money(bundle_item['panel_increment_cost_usd'], 2)} panel increment is the converted difference between advertised configurations. "
+            "It is not a standalone panel quote and is not interchangeable with the standard panel allowance. "
+            "Its exact capacity and panel size have a separate matched simulation."),
+        _equipment_table('balcony-panel-results',
+            ['Equipment basket', 'Aggregate output', 'Same battery, no new panels: saving/yr',
+             'Added panels: additional saving/yr', 'Panel cost increment', 'Panel-only subtotal payback'], panels),
+        '<p>The <a href="data/portable_equipment.json">equipment artifact</a> supplies every case, cost and matched increment through '
+        '<code>analysis/portable_equipment.py</code>. The <a href="research/sb868-portable-solar-storage.md">supporting study</a> gives source and model limits. '
+        'Do not add these standalone savings to a NEM home-battery result. A joint purchase needs the separate matched model below.</p>',
+        '<details id="balcony-proxy-prices"><summary>Supporting prices: component sources and assumed US premiums</summary>',
+        _equipment_table('balcony-named-components',
+            ['Equipment basket', 'Fixed US equipment', 'European basket, ex VAT', 'Converted European basket',
+             'Storage, feed-in and meter subtotal', 'Manufacturer sources'], components),
+        _depth_paragraphs(
+            "The European basket includes panels only in the Balco bundle row. Its storage subtotal removes that advertised configuration difference. "
+            "All other rows add the separate US panel allowance only in the complete basket.",
+            "The following sensitivity raises only EU-derived prices. Known US equipment and the standard US panel-and-freight allowance stay fixed. "
+            "The premiums are assumptions, not forecasts. Each payback uses the assumed 1,200 W case; the main table also shows the 800 W reference."),
+        _equipment_table('balcony-price-sensitivity',
+            ['Equipment basket', 'EU price ×1 subtotal', 'Payback', 'EU price ×1.5 subtotal', 'Payback',
+             'EU price ×2 subtotal', 'Payback'], prices),
+        '</details>',
+        '<p>One aggregate controller and total standby apply to every case. Multiple Stream units or a separate hub can have greater standby and conversion losses. '
+        'The AC-coupled PV proxy clips output before storage and excludes direct-DC clipping recovery. '
+        'Actual panel placement, electrical matching, circuit access and controller coordination remain unmeasured.</p>',
+    ]
+    (heading, scope, operation, topology, names, price_basis, placement,
+     price_sources, comparison, choices, panel_heading, panel_prose, panel_table,
+     artifact_sources, prices_open, component_table, sensitivity_basis,
+     sensitivity_table, prices_close, hardware_limits) = parts
+    visible_basis = _depth_paragraphs(
+        "European designs provide planning proxies for future US equivalents. The documented feed-in reference is 800 W. "
+        "The 1,200 W results assume a future US adaptation. Actual US ratings, release and complete-system certification remain purchase checks.",
+        "These cases start after the free EV change, retain the rooftop and add no separate NEM home battery. "
+        "The model discharges from 4pm to midnight against whole-meter load. New PV follows the existing rooftop shape; actual balcony placement remains unmeasured. "
+        "Added physical exports earn no credit; the model does not enforce zero export.",
+        "The component subtotals exclude US sales tax, mounts, meter installation, site wiring, other accessories and labor. Installed quotes remain unknown. "
+        "Ownership costs, financing and replacement remain outside the paybacks.",
+        f"Standard baskets include {costs['panel_dc_kw']:g} kW DC of Renogy panels and published US freight for {_balcony_money(costs['panel_freight_usd'], 2)}. "
+        f"The Balco bundle instead includes its own {bundle_item['pv_dc_kw']:g} kW panels. "
+        "It excludes the separate US allowance; its freight remains unquoted and excluded.")
+    visible_basis = visible_basis.replace('<p>', '<p><span class="pill y">modeled</span> '
+                                          '<span class="pill r">estimated costs</span> ', 1)
+    return '\n'.join((
+        heading,
+        visible_basis, comparison, choices, panel_heading, panel_prose,
+        '<details id="balcony-panel-records"><summary>Matched panel returns: each battery with and without new PV</summary>',
+        panel_table, '</details>', artifact_sources,
+        '<details id="balcony-equipment-assumptions"><summary>Supporting operation: controls, output ratings and connection assumptions</summary>',
+        scope, operation, topology, names, placement, hardware_limits, '</details>',
+        prices_open, price_basis, price_sources, component_table, sensitivity_basis,
+        sensitivity_table, prices_close))
+
+
 DATA_BUILDERS = {
     "balcony-solar#3": _balcony_chart_tables,
 
@@ -1180,7 +1366,7 @@ DATA_BUILDERS = {
     "balcony-solar#26": _depth_sensitivity,
 
     "s6#1": _depth_common_rows,
-    "balcony-solar#1": lambda: _esc(rt._balcony_configuration(None)),
+    "balcony-solar#1": _equipment_section,
     "balcony-solar#4": _balcony_summary_rows,
     "balcony-solar#5": lambda: _esc(rt._balcony_generic_baselines(None)),
     "balcony-solar#6": _balcony_cost_rows,
