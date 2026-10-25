@@ -5691,7 +5691,7 @@ def _s0_verdict(ctx):
     return (f"{fix_clause[0].upper() + fix_clause[1:]}. "
             f"For this house, {plan_clause}. "
             f"{battery_clause[0].upper() + battery_clause[1:]}. "
-            "Compare balcony panels and portable storage against their own additional savings and complete cost.")
+            "The named portable-storage comparison separates battery returns from panel returns.")
 
 
 _tok("S0_VERDICT", phrase=True, kind="derived", get=_s0_verdict,
@@ -6657,7 +6657,7 @@ def _s7_verdict(ctx):
         tail = "and the expansion pack pays back faster than that"
     return (f"{fix_clause[0].upper() + fix_clause[1:]}. After that change, {battery_clause}. "
             f"{tail.removeprefix('and ').removeprefix('while ').capitalize()}. "
-            "The portable-storage route needs its own connection check and complete quote.")
+            "Compare named portable-storage systems by component cost and their own modeled saving.")
 
 
 _tok("S7_VERDICT", phrase=True, kind="derived", get=_s7_verdict,
@@ -9790,7 +9790,7 @@ def _balcony_configuration(ctx):
                         value = _balcony_number(pack[key], "joint " + key)
                         if value != battery[key]:
                             raise SystemExit("report_tokens: balcony joint batteries need separately stated operating assumptions")
-    return (f"The main case adds {row['pv_dc_kw']:g} kW DC of panels and {battery['capacity_kwh']:g} kWh of portable storage. "
+    return (f"The generic case adds {row['pv_dc_kw']:g} kW DC of panels and {battery['capacity_kwh']:g} kWh of portable storage. "
             f"New PV and portable discharge share a {row['shared_new_pv_battery_ac_kw']:g} kW AC cap. "
             f"Each modeled battery holds {battery['reserve'] * 100:g}% reserve, uses {battery['rte'] * 100:g}% round-trip efficiency, "
             f"and draws {battery['standby_w']:g} W continuously.")
@@ -9831,7 +9831,7 @@ def _balcony_chart_equipment(ctx):
             f"Each addition uses a {cap:g} kW AC output cap; the combined case shares that cap.")
 
 
-def _balcony_verdict(ctx):
+def _balcony_generic_verdict(ctx):
     """The panel and combined purchase answer, with signed source values."""
     panels = _balcony_row("pv_0.8kw_zero_credit")["annual_savings_usd"]
     combined = _balcony_cost("combined_0.8kw_zero_credit")
@@ -9839,6 +9839,90 @@ def _balcony_verdict(ctx):
             f"{_usd0_signed(panels)}/yr in savings. "
             f"Panels plus portable storage give {_usd0_signed(combined['incremental_savings_usd'])}/yr against the same no-storage starting case. "
             "Actual payback needs a complete quote and a supported connection.")
+
+
+_EQUIPMENT_ARTIFACT = "portable_equipment.json"
+
+
+def _equipment_data():
+    """Check the report's cost/saving joins against the source case bills."""
+    data = _json(_EQUIPMENT_ARTIFACT)
+    try:
+        cases = {row["id"]: row for row in data["cases"]}
+        if len(cases) != len(data["cases"]):
+            raise ValueError("duplicate case IDs")
+        costs = data["costs"]
+        ids = [row["id"] for row in costs["rows"]]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate equipment IDs")
+
+        def number(value):
+            return _balcony_number(value, "named equipment value")
+
+        def equal(left, right):
+            if abs(number(left) - number(right)) > 0.00001:
+                raise ValueError("cost or saving differs from its matched source")
+
+        def payback(value, cost, saving):
+            if saving > 0:
+                equal(value, cost / saving)
+            elif value is not None:
+                raise ValueError("nonpositive saving needs null payback")
+
+        for row in costs["rows"]:
+            equal(row["converted_eu_proxy_usd"],
+                  row["eu_ex_vat_eur"] * costs["eur_usd_reference"])
+            for item in row["cases"]:
+                source = cases[item["source_case"]]
+                before = cases[item["battery_only_source_case"]]
+                equal(source["battery"]["capacity_kwh"], row["nominal_capacity_kwh"])
+                equal(source["shared_ac_kw"], item["aggregate_output_kw"])
+                equal(source["pv_dc_kw"], item["pv_dc_kw"])
+                equal(before["pv_dc_kw"], 0)
+                equal(before["shared_ac_kw"], source["shared_ac_kw"])
+                equal(before["battery"]["capacity_kwh"], source["battery"]["capacity_kwh"])
+                saving = number(source["summary"]["annual_savings_usd"])
+                base = number(before["summary"]["annual_savings_usd"])
+                equal(item["annual_savings_usd"], saving)
+                equal(item["battery_only_annual_savings_usd"], base)
+                equal(item["panel_increment_annual_savings_usd"], saving - base)
+                payback(item["panel_only_simple_payback_years"],
+                        number(item["panel_increment_cost_usd"]), saving - base)
+                for point in item["price_sensitivities"]:
+                    total = (number(row["known_us_equipment_usd"])
+                             + number(row["converted_eu_proxy_usd"]) * number(point["eu_price_multiplier"])
+                             + number(point["common_us_panel_freight_usd"]))
+                    equal(point["equipment_panel_freight_subtotal_usd"], total)
+                    payback(point["simple_payback_before_unquoted_costs_years"], total, saving)
+        return data
+    except (KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
+        raise SystemExit(f"report_tokens: named equipment source mismatch: {exc}") from exc
+
+
+def _equipment_cost_row(name):
+    rows = [row for row in _equipment_data()["costs"]["rows"] if row["id"] == name]
+    if len(rows) != 1:
+        raise SystemExit(f"report_tokens: named equipment {name!r} needs exactly one row")
+    return rows[0]
+
+
+def _equipment_cost_case(row, output):
+    cases = [item for item in row["cases"] if item["aggregate_output_kw"] == output]
+    if len(cases) != 1:
+        raise SystemExit("report_tokens: named equipment needs one case per output cap")
+    return cases[0]
+
+
+def _balcony_verdict(ctx):
+    row = _equipment_cost_row("stream_x2")
+    item = _equipment_cost_case(row, 0.8)
+    point = item["price_sensitivities"][0]
+    return (f"At {item['aggregate_output_kw'] * 1000:g} W, two Stream Ultra X units with panels save "
+            f"a modeled {_usd2(item['annual_savings_usd'])}/yr on a "
+            f"{_usd0(point['equipment_panel_freight_subtotal_usd'])} component subtotal. "
+            f"Their battery-only case earns {_usd2(item['battery_only_annual_savings_usd'])}/yr; "
+            f"the added panels earn {_usd2(item['panel_increment_annual_savings_usd'])}/yr. "
+            "These future US equivalents use European cost proxies and exclude unquoted costs.")
 
 
 def _balcony_purchase_example(ctx):
@@ -9869,7 +9953,11 @@ def _balcony_purchase_example(ctx):
 _tok("BALCONY_CHART_EQUIPMENT", phrase=True, kind="derived", get=_balcony_chart_equipment,
      sources=["data/portable_solar_storage.json:scenarios.combined_0.8kw_zero_credit"])
 _tok("BALCONY_VERDICT", phrase=True, kind="derived", get=_balcony_verdict,
+     sources=["data/portable_equipment.json:costs.rows.stream_x2 and matched cases"])
+_tok("BALCONY_GENERIC_VERDICT", phrase=True, kind="derived", get=_balcony_generic_verdict,
      sources=["data/portable_solar_storage.json:scenarios and financial_sensitivities.incremental_complete_cost_sensitivities"])
+_tok("BALCONY_CONFIGURATION", phrase=True, kind="derived", get=_balcony_configuration,
+     sources=["data/portable_solar_storage.json:scenarios.combined_0.8kw_credited"])
 _tok("BALCONY_PURCHASE_EXAMPLE", phrase=True, kind="derived", get=_balcony_purchase_example,
      sources=["data/portable_solar_storage.json:financial_sensitivities.incremental_complete_cost_sensitivities"])
 

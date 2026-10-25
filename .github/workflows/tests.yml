@@ -221,6 +221,8 @@ jobs:
       # Staged household/SAM loading and byte reproduction remain local-only.
       - name: exploratory portable solar and storage guard tests
         run: python analysis/test_portable_solar_storage.py
+      - name: equipment proxy physics and cost guard tests
+        run: python analysis/test_portable_equipment.py
 
   coverage-runner:
     runs-on: ubuntu-latest

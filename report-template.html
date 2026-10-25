@@ -290,7 +290,7 @@
 </ol>
 <h3 id="questions-balcony">Question 11: balcony solar and portable storage</h3>
 <ol class="hang" start="11">
-<li><a href="#balcony-solar">Will balcony solar save additional money, is the complete purchase worthwhile, and how long is its payback?</a> Panels and storage need separate comparisons. The answer depends on the starting equipment, supported connection, export treatment and complete cost.</li>
+<li><a href="#balcony-solar">Will balcony solar save additional money, is the complete purchase worthwhile, and how long is its payback?</a> The named equipment comparison separates battery time-shifting from the panels' own return. European products provide cost and design proxies for future US equivalents. Starting equipment, supported load access, export treatment and complete cost still determine the purchase result.</li>
 </ol>
 <p>The <a href="#balcony-legal">legal evidence</a> explains the qualifying PV exemption and its sunset. Export compensation and future account treatment remain undetermined.</p>
 <h3 id="questions-open">Open supporting studies</h3>
@@ -505,7 +505,10 @@
 <h2 id="balcony-solar">Balcony solar: additional savings, cost and payback</h2>
 <p class="verdict">{{BALCONY_VERDICT}}</p>
 <p>Every case keeps the existing rooftop and starts after the free schedule change. No battery is installed. Compare panels, portable storage and their combined purchase against that same starting bill.</p>
-<p><!-- TODO: mechanically render the checked primary balcony configuration and storage assumptions. --> Home-battery discharge keeps its separate power limit.</p>
+<!-- TODO: mechanically render the named equipment, matched battery and panel returns, component sources and EU price sensitivities from portable_equipment.json. Give the named table this caption: On narrow screens, scroll the table sideways to see both output limits. -->
+<h3 id="balcony-generic-heading">Generic systems and joint purchases with home storage</h3>
+<p>{{BALCONY_GENERIC_VERDICT}} The <a href="#balcony-complete-cost">cost ceilings</a> and <a href="#balcony-equipment-budget">high-output equipment cases</a> use this generic study's assumptions.</p>
+<p>{{BALCONY_CONFIGURATION}} Home-battery discharge keeps its separate power limit.</p>
 <p>The model assumes access to whole-meter load. Actual circuits, phase coverage, sensing, and controller coordination remain unknown. A refrigerator-only connection cannot claim these savings. New exports receiving NEM credit remain a hypothetical pricing case.</p>
 <h4>Panels only, storage only, or both without home storage</h4>
 <p>Each row starts with the existing rooftop, the free schedule change and no added hardware. The rows share the main balcony output cap. The storage-only row holds its output cap equal to the combined case. It can use existing rooftop surplus and cheap grid energy.</p>
@@ -519,7 +522,8 @@
 <p>Panels and storage share some of the same opportunity. The combined saving belongs to the whole purchase. A panel added after portable storage earns only its own <a href="#balcony-purchase-choice">incremental saving</a>.</p>
 <section class="balcony-charts" aria-labelledby="balcony-chart-heading">
 <h3 id="balcony-chart-heading">How each addition changes electricity use and the bill</h3>
-<p>All four curves start after the free schedule change and retain the existing rooftop. The starting-equipment selector adds generic home storage first. Each other curve then adds the named equipment to that starting case.</p>
+<p>All four curves start after the free schedule change and retain the existing rooftop. The starting-equipment selector adds generic home storage first. Each other curve then adds the labeled generic equipment to that starting case.</p>
+<p>These charts use the generic study's wider discharge schedule and permit existing rooftop surplus to charge storage. The named equipment table uses evening discharge and excludes that surplus from its solar-charge allocation. The charts explain joint operation; they do not plot the named product cases.</p>
 <p>{{BALCONY_CHART_EQUIPMENT}} The <a href="#balcony-common-choice">matched screen</a> states the operating assumptions. Home storage acts first in joint cases.</p>
 <p>The primary simulation uses a 0.8 kW shared output cap. SB 868 sets a 1.2 kW legal maximum for qualifying receptacle PV. Neither number establishes a particular product's supported output. The <a href="#balcony-higher-cap-results">higher-output sensitivity</a> changes both panels and output. The <a href="#balcony-evening-example">4pm-to-midnight example</a> is tariff arithmetic, not an annual forecast.</p>
 <div class="chart-controls">
@@ -713,8 +717,8 @@
 <div class="pkg">
 <h3>Portable storage or added panels · complete quote needed</h3>
 <p>{{BALCONY_VERDICT}}</p>
-<p>{{BALCONY_PURCHASE_EXAMPLE}}</p>
-<p>First establish the supported connection and eligible load. Then compare the complete quote with the <a href="#balcony-complete-cost">cost ceiling</a>. The <a href="#balcony-equipment-budget">equipment table</a> separates advertised prices from omitted costs.</p>
+<p>Compare the <a href="#balcony-named-equipment">named equipment baskets</a> before choosing the larger portable station. The <a href="#balcony-panel-return">panel comparison</a> prices new generation against its own additional saving. The component subtotals exclude installation, tax and ownership costs.</p>
+<p>Check the supported connection and eligible load before purchase. Then compare the complete quote with its matched saving. The <a href="#balcony-proxy-prices">price sensitivity</a> keeps US prices fixed while changing the EU cost proxy.</p>
 <p>If home storage is also proposed, use the joint addition's own saving. Neither standalone savings nor advertised equipment prices establish the joint purchase payback.</p>
 </div>
 </div>

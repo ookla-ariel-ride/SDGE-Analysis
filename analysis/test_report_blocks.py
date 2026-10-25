@@ -1266,6 +1266,30 @@ def case_balcony_chart_fallback_has_one_data_owner_and_matches_rendered_tables()
     return 'all three no-JS source tables have one data owner and reproduce exactly'
 
 
+@case
+def case_named_equipment_block_has_one_owner_and_preserves_the_bundle_basis():
+    blocks = rb.validate_classification()
+    owners = [b for b in blocks if 'portable_equipment.json' in b.text]
+    assert len(owners) == 1 and owners[0].id == 'balcony-solar#1'
+    output = rb.DATA_BUILDERS[owners[0].id]()
+    for table in ('balcony-named-results', 'balcony-panel-results',
+                  'balcony-named-components', 'balcony-price-sensitivity'):
+        assert output.count(f'id="{table}"') == 1
+    for text in ('no separate NEM home battery', 'not installed quotes',
+                 'Its freight remains unquoted and excluded', 'not a standalone panel quote',
+                 'does not enforce zero export', 'excludes direct-DC clipping recovery'):
+        assert text in output, text
+    assert output.count('data-source-case=') == 16
+    before_table = output[:output.index('<table id="balcony-named-results"')]
+    assert before_table.count('<p>') <= 4, 'main comparison sits behind too much setup'
+    panel_details = output[output.index('<details id="balcony-panel-records">'):]
+    assert panel_details.index('id="balcony-panel-results"') < panel_details.index('</details>')
+    assert '<details id="balcony-equipment-assumptions">' in output
+    assert rb._equipment_years(None) == 'No simple payback'
+    assert output in (rt.ROOT / 'index.html').read_text()
+    return 'one data builder renders all named tables and keeps price/model limits beside them'
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

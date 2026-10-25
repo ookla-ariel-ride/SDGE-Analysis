@@ -17,14 +17,12 @@ GitHub's file viewer shows the HTML source; the link above opens the report.
 - Want to run this on your own home? Jump to [Reproduce this for your own home](#reproduce-this-for-your-own-home--start-here).
 - Auditing the methods? Start with [TECHNICAL.md](TECHNICAL.md).
 
-**Original analysis**
+**Report production**
 
-> **How this report was produced:** generated with **Claude Cowork (Fable 5)**, independently
-> reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
-> then re-worked in Claude Cowork to incorporate the findings of both reviews.
-
-> **This revision:** **Codex (GPT-6.1 Sol and GPT-6 Astra)** revised the report, charts, and supporting documents.
-> Separate Codex agents reviewed the data, implementation, and prose.
+> **How this report was produced:** generated with **Codex**; the data, methodology, and
+> conclusions were independently reviewed with **Codex (GPT-6.1 Sol)** and adversarially
+> reviewed with **Codex (GPT-6 Astra)**. The analysis was then re-worked in **Codex**
+> to incorporate the findings of both reviews.
 
 **Companion documents:**
 [**TECHNICAL.md**](TECHNICAL.md) — the full methods documentation: every script, data schema, algorithm, and validation chain, written so the analysis can be audited or rebuilt ·
@@ -65,6 +63,11 @@ Its eleven questions cover these decisions:
 [Question 11](index.html#balcony-solar) asks whether balcony solar adds savings, whether the complete purchase is worthwhile, and how long payback takes.
 It separates panels, a portable battery, and their combined purchase. It also tests each addition after proposed home storage.
 Each purchase uses its own additional bill saving after the free schedule change.
+
+The [equipment comparison](research/sb868-portable-solar-storage.md#european-equipment-as-a-proxy-for-future-us-designs) uses European designs and prices to study possible US systems.
+It compares EcoFlow, BLUETTI, and Zendure, with separate assumptions for a future feed-in hub and installed transfer equipment.
+Equipment subtotals use dated manufacturer prices. They exclude site costs and do not establish US availability, compatibility, or certification.
+The comparison shows the panels' own return separately from the combined battery-and-panel return.
 
 Free behavior savings do not repay hardware. Complete incremental cost includes the added equipment and its connection or installation costs.
 Assumed costs show conditional paybacks and spending limits. Actual payback needs a complete quote, supported connection, and eligible configuration.

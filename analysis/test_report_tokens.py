@@ -12879,7 +12879,7 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     A short repeated number is not flagged, and neither is a figure repeated
 #     in a DIFFERENT CONTAINER. The live example of the latter is the lifetime
 #     table, which prints the first year's value in both the annual and the
-#     cumulative cell (report-template.html:861) -- and be precise about WHICH
+#     cumulative cell (report-template.html:865) -- and be precise about WHICH
 #     rule spares it, because there are two and only one of them is load-
 #     bearing. Today's FIRST_YEAR_VALUE happens to be 7 characters, one under
 #     _SEAM_MIN_ECHO, so the length floor would exclude it anyway; that is an
@@ -13228,7 +13228,7 @@ _SEAM_INLINE_TAGS = frozenset((
 # or list items are not one run of text however few characters of markup the
 # author put between them, so the echo rule does not compare ACROSS one at all
 # -- not "at a distance", not at all. That is what spares the lifetime table's
-# cumulative column (report-template.html:861, which prints FIRST_YEAR_VALUE in
+# cumulative column (report-template.html:865, which prints FIRST_YEAR_VALUE in
 # both the annual and the cumulative cell) no matter how long that value grows,
 # and it does so without a second threshold to tune.
 #
@@ -13398,7 +13398,7 @@ _SEAM_CLASSES = ("doubled-sigil", "missing-unit", "echoed-phrase")
 #
 # ONE STATED LIMIT: a marker cannot separate two occurrences of the SAME token
 # on the SAME line. Several template lines print a token twice -- the lifetime
-# table's row (report-template.html:861, FIRST_YEAR_VALUE in both the annual
+# table's row (report-template.html:865, FIRST_YEAR_VALUE in both the annual
 # and the cumulative cell) is the one this file has reason to name elsewhere --
 # and none of them is allowlisted, so an entry for one would excuse both.
 # Line numbers are the next granularity down and they do not help here either.
@@ -16182,14 +16182,14 @@ def case_the_lifetime_tables_cumulative_cell_is_not_an_echo():
     clear the floor, and a case that passed only because of the floor fails.
 
     The line number is pinned too. Three contextual comments in this file name
-    report-template.html:861 as this row. Keep those citations synchronized
+    report-template.html:865 as this row. Keep those citations synchronized
     when template edits move it."""
     text = rt.TEMPLATE.read_text()
     row = _seam_template_line("FIRST_YEAR_VALUE", text)
     lineno = text.splitlines().index(row) + 1
-    assert lineno == 861, (
+    assert lineno == 865, (
         f"the lifetime table's repeated-value row is report-template.html:{lineno}, "
-        "not 861. Update the three contextual comments that name that line -- "
+        "not 865. Update the three contextual comments that name that line -- "
         "the class 3 explanation, container-boundary policy, and allowlist "
         "limitation -- in the same edit, which is what this assertion exists to force")
     assert row.count("{{FIRST_YEAR_VALUE}}") == 2, (
@@ -18006,6 +18006,54 @@ def case_balcony_purchase_example_uses_own_savings_and_keeps_null_payback():
     finally:
         rt._balcony_cost = original
     return 'purchase example keeps unknown/nonpositive results and refuses an unrelated saving denominator'
+
+
+@case
+def case_named_equipment_verdict_uses_matched_battery_and_panel_values():
+    import json
+    data = json.loads((rt.DATA / 'portable_equipment.json').read_text())
+    row = next(r for r in data['costs']['rows'] if r['id'] == 'stream_x2')
+    source = next(c for c in row['cases'] if c['aggregate_output_kw'] == .8)
+    text = rt.resolve_token('BALCONY_VERDICT')
+    for value in (source['annual_savings_usd'], source['battery_only_annual_savings_usd'],
+                  source['panel_increment_annual_savings_usd']):
+        assert f'${value:,.2f}' in text, (value, text)
+    subtotal = source['price_sensitivities'][0]['equipment_panel_freight_subtotal_usd']
+    assert f'${subtotal:,.0f}' in text
+    assert 'component subtotal' in text and 'future US equivalents' in text
+    assert '$742/yr' in rt.resolve_token('BALCONY_GENERIC_VERDICT')
+    return 'named verdict and generic verdict retain separate artifact bases'
+
+
+@case
+def case_named_equipment_refuses_mismatched_source_costs_and_panel_paybacks():
+    import copy
+    original = rt._json(rt._EQUIPMENT_ARTIFACT)
+    changes = (
+        lambda d: d['costs']['rows'][0]['cases'][0].__setitem__('annual_savings_usd', 1),
+        lambda d: d['costs']['rows'][0]['cases'][0].__setitem__('battery_only_annual_savings_usd', 1),
+        lambda d: d['costs']['rows'][0]['cases'][0].__setitem__('panel_increment_annual_savings_usd', 1),
+        lambda d: d['costs']['rows'][0]['cases'][0].__setitem__('panel_only_simple_payback_years', 1),
+        lambda d: d['costs']['rows'][0].__setitem__('converted_eu_proxy_usd', 1),
+        lambda d: d['costs']['rows'][0]['cases'][0]['price_sensitivities'][0].__setitem__('equipment_panel_freight_subtotal_usd', 1),
+        lambda d: d['costs']['rows'][0]['cases'][0].__setitem__('source_case', 'absent'),
+        lambda d: d['cases'].append(d['cases'][0]),
+        lambda d: d['costs']['rows'].append(d['costs']['rows'][0]),
+        lambda d: d['costs']['rows'][0].__setitem__('eu_ex_vat_eur', float('nan')),
+    )
+    try:
+        for change in changes:
+            broken = copy.deepcopy(original); change(broken)
+            rt._json_cache[rt._EQUIPMENT_ARTIFACT] = broken
+            try:
+                rt._equipment_data()
+            except SystemExit:
+                pass
+            else:
+                raise AssertionError('an inconsistent equipment join rendered')
+    finally:
+        rt._json_cache[rt._EQUIPMENT_ARTIFACT] = original
+    return 'equipment rendering refuses corrupted joins, duplicates, costs and panel paybacks'
 
 
 def main():
