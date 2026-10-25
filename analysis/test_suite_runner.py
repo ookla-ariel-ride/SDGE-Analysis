@@ -63,7 +63,7 @@ SUITES = [
     "test_lifetime_payback", "test_llm_providers", "test_marginal_capacity_value",
     "test_nbc_bill_reconciliation", "test_nem3_grandfathering",
     "test_package_results", "test_parse_bills", "test_perfect_foresight_dispatch",
-    "test_portable_solar_storage",
+    "test_portable_solar_storage", "test_portable_equipment",
     "test_privacy_tiers", "test_private_egress", "test_prose_blocks",
     "test_prose_lint", "test_prose_rhythm", "test_publish",
     "test_quiet_night_floor", "test_rates",

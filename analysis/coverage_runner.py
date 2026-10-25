@@ -38,7 +38,7 @@ SUITES = (
     'test_prose_lint', 'test_prose_rhythm', 'test_stamp_report_version',
     'test_generate_report', 'test_quiet_night_floor', 'test_heat_pump_conversion',
     'test_stage_private_data', 'test_extra_results', 'test_all_electric_endgame',
-    'test_marginal_capacity_value', 'test_portable_solar_storage',
+    'test_marginal_capacity_value', 'test_portable_solar_storage', 'test_portable_equipment',
     'test_dry_run', 'test_private_egress', 'test_suite_runner',
     'test_coverage_runner',
 )

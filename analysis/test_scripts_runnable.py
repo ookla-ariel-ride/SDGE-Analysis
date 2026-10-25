@@ -186,6 +186,7 @@ MANIFEST = {
     "threeway_production_validation.py": "generator",
     "marginal_capacity_value.py": "generator",
     "portable_solar_storage.py": "generator",
+    "portable_equipment.py": "generator",
     "heat_pump_conversion.py": "generator",
     "extra_results.py": "generator",
     "all_electric_endgame.py": "generator",
@@ -252,6 +253,7 @@ OWNS = {
     # convention as threeway_production_validation.py/quiet_night_floor.py
     "marginal_capacity_value.py":   [("data", "marginal_capacity_value.json")],
     "portable_solar_storage.py":    [("data", "portable_solar_storage.json")],
+    "portable_equipment.py":        [("data", "portable_equipment.json")],
     # writes directly into ROOT/data via its own repo_root() walk-up, same
     # convention as threeway_production_validation.py/quiet_night_floor.py
     "heat_pump_conversion.py":      [("data", "heat_pump_conversion.json")],
@@ -553,6 +555,10 @@ NEEDS_PRIVATE_ARCHIVE = {
                                    "and monitoring reconciliation inherited from "
                                    "marginal_capacity_value.py; the shared synthetic "
                                    "fixture cannot satisfy those evidence checks"),
+    "portable_equipment.py": ("the staged usage.csv and SAM 8760 pair (samA.csv/"
+                              "samB.csv), with canonical portable-study production "
+                              "tie-outs; dated equipment prices alone cannot replace "
+                              "the household load and production evidence"),
 }
 
 # Generators listed above that nonetheless run END TO END IN CI -- just not
@@ -610,6 +616,10 @@ VERIFIED_ELSEWHERE_IN_CI = {
                                  ["case_matrix_integrates_each_pair_and_keeps_free_behavior_out_of_hardware",
                                   "case_storage_reserve_losses_and_charge_discharge_limits",
                                   "case_monthly_rebill_crosses_credit_bucket_and_preserves_nbc"]),
+    "portable_equipment.py": ("test_portable_equipment.py",
+                              ["case_matrix_has_22_cases_and_matched_marginals",
+                               "case_dispatch_limits_soc_and_export_allocation",
+                               "case_hardware_savings_exclude_free_behavior"]),
 }
 
 # The fixture window is DERIVED from the pipeline's anchor date so re-pointing
